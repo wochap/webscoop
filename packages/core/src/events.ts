@@ -1,0 +1,112 @@
+import type { FieldType, SelectorCandidate } from './recipe/schema';
+
+export type FieldStatus = 'ok' | 'partial' | 'missing';
+
+export type Row = Record<string, unknown> & { _page: number; _index: number };
+
+export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'error';
+
+export interface FieldReport {
+  name: string;
+  type: FieldType;
+  optional: boolean;
+  /** Index into the field's selector list of the candidate that resolved, or null when none did. */
+  candidateIndex: number | null;
+  candidate: SelectorCandidate | null;
+  status: FieldStatus;
+  /** Rows (0-based `_index`) where the field resolved nothing. */
+  missingRows: number[];
+}
+
+export interface RunReport {
+  recipe: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  finalUrl: string | null;
+  pageCount: number;
+  rowCount: number;
+  item: { candidateIndex: number | null; candidate: SelectorCandidate | null; count: number } | null;
+  fields: FieldReport[];
+  warnings: string[];
+}
+
+export interface RunEvents {
+  'run.start': { recipe: string; url: string; profileDir: string; at: string };
+  'page.loaded': { page: number; url: string; title: string; status: number | null };
+  'field.resolved': { page: number; field: FieldReport };
+  'row.emitted': { page: number; row: Row };
+  'page.done': { page: number; rows: number };
+  'run.done': { report: RunReport };
+  'run.failed': { reason: FailureReason; message: string; fields?: string[]; report: RunReport };
+}
+
+export type RunEventName = keyof RunEvents;
+
+export const RUN_EVENT_NAMES: readonly RunEventName[] = [
+  'run.start',
+  'page.loaded',
+  'field.resolved',
+  'row.emitted',
+  'page.done',
+  'run.done',
+  'run.failed',
+];
+
+type Listener<K extends RunEventName> = (payload: RunEvents[K]) => void;
+type AnyListener = <K extends RunEventName>(name: K, payload: RunEvents[K]) => void;
+
+/** Synchronous, typed, in-process event emitter. Listener errors do not affect the run. */
+export class RunEmitter {
+  private readonly listeners = new Map<RunEventName, Set<Listener<never>>>();
+  private readonly anyListeners = new Set<AnyListener>();
+
+  on<K extends RunEventName>(name: K, listener: Listener<K>): () => void {
+    let set = this.listeners.get(name);
+    if (!set) this.listeners.set(name, (set = new Set()));
+    set.add(listener as Listener<never>);
+    return () => set.delete(listener as Listener<never>);
+  }
+
+  onAny(listener: AnyListener): () => void {
+    this.anyListeners.add(listener);
+    return () => this.anyListeners.delete(listener);
+  }
+
+  emit<K extends RunEventName>(name: K, payload: RunEvents[K]): void {
+    for (const listener of this.listeners.get(name) ?? []) {
+      try {
+        (listener as Listener<K>)(payload);
+      } catch {
+        // A faulty subscriber must not change runner behavior.
+      }
+    }
+    for (const listener of this.anyListeners) {
+      try {
+        listener(name, payload);
+      } catch {
+        // Same as above.
+      }
+    }
+  }
+}
+
+export interface RecordedEvent<K extends RunEventName = RunEventName> {
+  name: K;
+  payload: RunEvents[K];
+}
+
+/** Record every event from an emitter, for tests and diagnostics. */
+export function recordEvents(emitter: RunEmitter) {
+  const events: RecordedEvent[] = [];
+  const stop = emitter.onAny((name, payload) => events.push({ name, payload }));
+  return {
+    events,
+    stop,
+    names: () => events.map((e) => e.name),
+    /** Event names with consecutive repeats collapsed, e.g. `field.resolved` x5 becomes one entry. */
+    sequence: () => events.map((e) => e.name).filter((name, i, all) => i === 0 || all[i - 1] !== name),
+    of: <K extends RunEventName>(name: K): RunEvents[K][] =>
+      events.filter((e) => e.name === name).map((e) => e.payload as RunEvents[K]),
+  };
+}

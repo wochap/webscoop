@@ -8,3 +8,9 @@ RTK.md
 .pi
 .agents
 webscoop-recorder-ui/
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.tsbuildinfo
+result

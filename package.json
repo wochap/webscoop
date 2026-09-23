@@ -1,0 +1,31 @@
+{
+  "name": "webscoop-workspace",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "test": "vitest run",
+    "test:e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
+    "lint": "eslint .",
+    "playground": "tsx packages/playground/src/main.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.59.1",
+    "@types/node": "24.13.6",
+    "@webscoop/core": "workspace:*",
+    "@webscoop/playground": "workspace:*",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "playwright": "1.59.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.1"
+  }
+}

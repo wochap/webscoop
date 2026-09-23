@@ -1,0 +1,122 @@
+import { z } from 'zod';
+
+export const SCHEMA_VERSION = 1 as const;
+
+export const STRATEGIES = ['role', 'testid', 'id', 'text', 'css', 'xpath'] as const;
+export const STABILITIES = ['stable', 'medium', 'fragile'] as const;
+export const FIELD_TYPES = ['text', 'number', 'url', 'image', 'date', 'html'] as const;
+export const FIELD_SCOPES = ['item', 'page'] as const;
+export const PAGINATION_KINDS = ['none', 'url', 'next', 'more', 'scroll'] as const;
+export const STOP_RULES = ['no-new-items', 'first-item-repeats', 'target-missing'] as const;
+export const GUARD_KINDS = ['login', 'captcha', 'zero-fields'] as const;
+
+const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function oneOf<T extends readonly [string, ...string[]]>(what: string, values: T) {
+  return z.enum(values, {
+    error: (issue) => `unknown ${what} ${JSON.stringify(issue.input)}, expected one of ${values.join(', ')}`,
+  });
+}
+
+export const SelectorCandidateSchema = z.object({
+  strategy: oneOf('strategy', STRATEGIES),
+  value: z.string().min(1),
+  stability: oneOf('stability', STABILITIES),
+});
+
+export const FingerprintSchema = z.object({
+  tag: z.string().min(1),
+  role: z.string().optional(),
+  name: z.string().optional(),
+  textSample: z.string().max(80),
+  attrs: z.record(z.string(), z.string()),
+  ancestors: z.array(z.string()).max(6),
+  bbox: z.object({
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number(),
+  }),
+});
+
+export const VarSchema = z.object({
+  name: z.string().regex(IDENTIFIER, 'variable names must be identifiers'),
+  type: z.literal('string'),
+  default: z.string().optional(),
+});
+
+export const ItemSchema = z.object({
+  selectors: z.array(SelectorCandidateSchema).min(1),
+  exclude: z.array(SelectorCandidateSchema).optional(),
+  fingerprint: FingerprintSchema.optional(),
+});
+
+export const FieldSchema = z.object({
+  name: z.string().regex(IDENTIFIER, 'field names must be identifiers'),
+  type: oneOf('field type', FIELD_TYPES),
+  scope: oneOf('scope', FIELD_SCOPES),
+  selectors: z.array(SelectorCandidateSchema).min(1),
+  attr: z.string().min(1).optional(),
+  optional: z.boolean().default(false),
+  key: z.boolean().optional(),
+  fingerprint: FingerprintSchema.optional(),
+});
+
+export const PaginationSchema = z.object({
+  kind: oneOf('pagination kind', PAGINATION_KINDS).default('none'),
+  target: z
+    .object({
+      selectors: z.array(SelectorCandidateSchema).min(1),
+      fingerprint: FingerprintSchema.optional(),
+    })
+    .optional(),
+  param: z
+    .object({
+      name: z.string().regex(IDENTIFIER),
+      start: z.number().int(),
+      step: z.number().int(),
+    })
+    .optional(),
+  limit: z.union([z.number().int().positive(), z.literal('all')]).default(1),
+  stopRules: z.array(oneOf('stop rule', STOP_RULES)).default([]),
+  delayMs: z.number().int().nonnegative().default(0),
+});
+
+export const GuardSchema = z.object({
+  kind: oneOf('guard kind', GUARD_KINDS),
+  enabled: z.boolean(),
+});
+
+export const HealingSchema = z.object({
+  fuzzyThreshold: z.number().min(0).max(1).default(0.7),
+  llm: z.boolean().default(true),
+});
+
+const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
+
+export const RecipeSchema = z.object({
+  schemaVersion: z.literal(SCHEMA_VERSION),
+  name: z.string().regex(KEBAB, 'recipe names must be kebab-case'),
+  url: z.string().min(1),
+  vars: z.array(VarSchema).default([]),
+  item: ItemSchema.optional(),
+  fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field'),
+  pagination: PaginationSchema.default(() => PaginationSchema.parse({})),
+  guards: z.array(GuardSchema).default(defaultGuards),
+  healing: HealingSchema.default(() => HealingSchema.parse({})),
+});
+
+export type SelectorCandidate = z.infer<typeof SelectorCandidateSchema>;
+export type Strategy = SelectorCandidate['strategy'];
+export type Fingerprint = z.infer<typeof FingerprintSchema>;
+export type RecipeVar = z.infer<typeof VarSchema>;
+export type RecipeItem = z.infer<typeof ItemSchema>;
+export type RecipeField = z.infer<typeof FieldSchema>;
+export type FieldType = RecipeField['type'];
+export type Pagination = z.infer<typeof PaginationSchema>;
+export type Guard = z.infer<typeof GuardSchema>;
+export type Healing = z.infer<typeof HealingSchema>;
+export type Recipe = z.infer<typeof RecipeSchema>;
+/** Recipe as written on disk, before defaults are filled in. */
+export type RecipeInput = z.input<typeof RecipeSchema>;
