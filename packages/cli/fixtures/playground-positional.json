@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "name": "playground-positional",
+  "url": "http://127.0.0.1:{port}/catalog?tier={tier}",
+  "vars": [
+    { "name": "port", "type": "string", "default": "4777" },
+    { "name": "tier", "type": "string", "default": "0" }
+  ],
+  "item": {
+    "selectors": [
+      { "strategy": "xpath", "value": "//ul/li/article", "stability": "fragile" }
+    ],
+    "exclude": [],
+    "fingerprint": {
+      "tag": "article",
+      "role": "article",
+      "textSample": "Wireless Mouse $24.99 4.5 View details",
+      "attrs": { "data-testid": "product-card", "id": "product-p01" },
+      "ancestors": ["listitem", "list", "main", "body", "html"],
+      "bbox": { "x": 32, "y": 99, "w": 282, "h": 371 }
+    }
+  },
+  "fields": [
+    {
+      "name": "title",
+      "type": "text",
+      "scope": "item",
+      "selectors": [
+        { "strategy": "xpath", "value": "./h2[1]", "stability": "fragile" }
+      ],
+      "optional": false,
+      "fingerprint": {
+        "tag": "h2",
+        "role": "heading",
+        "name": "Wireless Mouse",
+        "textSample": "Wireless Mouse",
+        "attrs": {},
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 300, "w": 248, "h": 35 }
+      }
+    },
+    {
+      "name": "price",
+      "type": "number",
+      "scope": "item",
+      "selectors": [
+        { "strategy": "xpath", "value": "./p[1]", "stability": "fragile" }
+      ],
+      "optional": false,
+      "fingerprint": {
+        "tag": "p",
+        "role": "paragraph",
+        "textSample": "$24.99",
+        "attrs": { "data-testid": "price" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 355, "w": 248, "h": 22 }
+      }
+    },
+    {
+      "name": "url",
+      "type": "url",
+      "scope": "item",
+      "selectors": [
+        { "strategy": "xpath", "value": "./a[1]", "stability": "fragile" }
+      ],
+      "attr": "href",
+      "optional": false,
+      "key": true,
+      "fingerprint": {
+        "tag": "a",
+        "role": "link",
+        "name": "View details",
+        "textSample": "View details",
+        "attrs": { "href": "/p/p##" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 431, "w": 79, "h": 22 }
+      }
+    }
+  ],
+  "pagination": { "kind": "none", "limit": 1, "stopRules": [], "delayMs": 0 },
+  "guards": [
+    { "kind": "login", "enabled": true },
+    { "kind": "captcha", "enabled": true },
+    { "kind": "zero-fields", "enabled": true }
+  ],
+  "healing": { "fuzzyThreshold": 0.7, "llm": true }
+}

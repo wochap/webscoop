@@ -38,6 +38,7 @@ const sampleState: RecorderState = {
   selected: null,
   proposal: null,
   repick: null,
+  repickContext: null,
   test: null,
   saved: null,
   busy: null,
@@ -86,6 +87,9 @@ describe('protocol', () => {
     { kind: 'test.run' },
     { kind: 'test.clear' },
     { kind: 'save.request' },
+    { kind: 'repick.confirm' },
+    { kind: 'repick.skip' },
+    { kind: 'repick.abort' },
   ];
   const host: HostMessage[] = [
     { kind: 'draft.state', state: sampleState },
@@ -97,6 +101,15 @@ describe('protocol', () => {
     },
     { kind: 'save.result', ok: false, errors: [{ path: '$.fields', message: 'a recipe needs at least one field' }], state: sampleState },
     { kind: 'session.error', message: 'boom' },
+    { kind: 'session.detach' },
+    {
+      kind: 'draft.state',
+      state: {
+        ...sampleState,
+        repick: 0,
+        repickContext: { field: 'price', index: 0, oldSelector: candidate, fingerprint: fp, sample: '$1', threshold: 0.7, reason: 'run', picked: { score: 0.91, sample: '$2', selector: candidate } },
+      },
+    },
   ];
 
   it('round-trips every message kind through JSON and parse', () => {

@@ -68,12 +68,17 @@ function serializeInPage(element: Element | null): SerializedNode {
       const out = walk(child);
       if (out) children.push(out);
     }
-    return { type: 'element', tag: el.tagName.toLowerCase(), attrs, children };
+    const r = el.getBoundingClientRect();
+    const bbox = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    return { type: 'element', tag: el.tagName.toLowerCase(), attrs, children, bbox };
   };
   return walk(element ?? document.documentElement) ?? { type: 'text', text: '' };
 }
 
 class PlaywrightSession implements InteractiveSession {
+  /** Current handler per exposed name; a binding can be registered only once per context. */
+  private readonly bindings = new Map<string, (msg: unknown) => Promise<unknown>>();
+
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
@@ -137,7 +142,9 @@ class PlaywrightSession implements InteractiveSession {
   }
 
   async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
-    await this.context.exposeBinding(name, (_source, msg: unknown) => fn(msg));
+    const known = this.bindings.has(name);
+    this.bindings.set(name, fn);
+    if (!known) await this.context.exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
   }
 
   async dispatch(msg: unknown): Promise<void> {

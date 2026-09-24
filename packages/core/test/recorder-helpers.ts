@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   annotate,
   descendantsOf,
@@ -21,7 +22,7 @@ import { FakeBrowser, type FakeInteractiveSession } from '../src/testing';
 export const CATALOG = 'http://127.0.0.1:4777/catalog?tier=0';
 
 export function referenceRecipe(): Recipe {
-  return loadRecipe(readFileSync(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url), 'utf8'));
+  return loadRecipe(readFileSync(join(import.meta.dirname, '../../cli/fixtures/playground-catalog.json'), 'utf8'));
 }
 
 export class MemoryStorage implements StoragePort {

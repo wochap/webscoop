@@ -131,6 +131,40 @@ export function readDocument(target: Element | null, doc: Document = document): 
   return { root, nodeOf };
 }
 
+/**
+ * The element as an annotated node for fingerprint scoring, without reading
+ * the whole document: its own subtree (for text) and its ancestor chain, each
+ * with role, name, and geometry.
+ */
+export function nodeForScore(el: Element): AnnotatedNode {
+  const subtree = (e: Element, parent: AnnotatedNode | null): AnnotatedNode => {
+    const attrs: Record<string, string> = {};
+    for (const attr of Array.from(e.attributes)) attrs[attr.name] = attr.value;
+    const node: AnnotatedNode = { type: 'element', tag: e.tagName.toLowerCase(), attrs, children: [], parent };
+    if (OPAQUE.has(node.tag)) return node;
+    for (const child of Array.from(e.childNodes)) {
+      if (child.nodeType === 3) node.children.push({ type: 'text', text: child.textContent ?? '' });
+      else if (child.nodeType === 1 && !OWN_TAGS.has((child as Element).tagName.toLowerCase())) node.children.push(subtree(child as Element, node));
+    }
+    return node;
+  };
+  let parent: AnnotatedNode | null = null;
+  const chain: Element[] = [];
+  for (let cur = el.parentElement; cur; cur = cur.parentElement) chain.unshift(cur);
+  for (const ancestor of chain) {
+    const attrs: Record<string, string> = {};
+    for (const attr of Array.from(ancestor.attributes)) attrs[attr.name] = attr.value;
+    const node: AnnotatedNode = { type: 'element', tag: ancestor.tagName.toLowerCase(), attrs, children: [], parent };
+    annotateElement(node, ancestor);
+    parent?.children.push(node);
+    parent = node;
+  }
+  const node = subtree(el, parent);
+  annotateElement(node, el);
+  parent?.children.push(node);
+  return node;
+}
+
 /** JSON snapshot for the host: no parent links, long text nodes shortened. */
 export function snapshotOf(node: AnnotatedNode): SerializedElement {
   const { parent: _parent, children, ...rest } = node;

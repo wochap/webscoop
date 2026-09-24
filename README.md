@@ -76,9 +76,11 @@ dependencies, update the `npmDeps` hash in `flake.nix` (build once, copy the
 
 ```sh
 webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms]
-webscoop record --edit <recipe>
+webscoop record --edit <recipe> [--repick field]
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
+                      [--no-heal] [--no-save] [--interactive]
+webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json]
 webscoop recipes [--json]
 webscoop doctor
 ```
@@ -95,13 +97,71 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   cannot share a profile at once; the second waits `--lock-timeout` (default
   30000 ms), then exits 1.
 - `--timeout` bounds navigation and network settling (default 30000 ms).
-- `--report` prints the full run report (candidate used and status per field)
-  to stderr.
+- `--report` prints the full run report (candidate used, healing outcome, and
+  status per field, and where the recipe was written back) to stderr.
+- `--no-heal`, `--no-save`, and `--interactive` control healing; see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
 webscoop run shop --jsonl > rows.jsonl
 ```
+
+### Healing
+
+Sites change their markup. When a stored selector stops matching, `run` does
+not give up at once. For the item container and every field it tries, in
+order:
+
+1. the stored selector candidates, in listed order;
+2. a fuzzy match of the fingerprint the recorder stored (tag, role,
+   accessible name, text, stable attributes, ancestors, position), accepted
+   at or above the recipe's `healing.fuzzyThreshold` (default 0.7) and only
+   when it beats the runner-up by 0.05;
+3. with `--interactive`, you: for a required field nothing else found, the
+   browser shows the recorder's re-pick panel and the run waits (no timeout)
+   until you click the field's new location, skip it, or abort.
+
+A field found by anything but its first candidate has status `healed` in the
+report, and the stderr summary counts it (`24 rows from 1 page, 2 healed in
+1.52s`). After a successful run the recipe file is rewritten where it was
+loaded from, with fresh selectors for each healed target (the working one
+first, old ones that still match after it, dead ones dropped) and a refreshed
+fingerprint; nothing else in the file changes. A failed run never writes.
+
+- `--no-save` heals but leaves the recipe file alone.
+- `--no-heal` tries only the first candidate per target and never writes;
+  anything else missing is missing (exit 3 when required).
+- `--interactive` opens the browser with the page's Content-Security-Policy
+  bypassed so the panel can load; without it a run never injects anything.
+
+### Checking a recipe
+
+```sh
+webscoop test shop            # table on stdout, exit 0 or 3
+webscoop test shop --json     # the same as a JSON array
+```
+
+`test` runs the recipe's first page with healing on and write-back off, prints
+one line per target (`item` and every field) with its status, how many rows it
+resolved in, and the selector or rung that found it, and prints no rows. It
+exits 0 when every required field resolved on at least one row, 3 when one did
+not, 1 on errors. Use it from cron before trusting a recipe.
+
+### Re-picking a field
+
+```sh
+webscoop record --edit shop --repick price
+```
+
+opens the recipe's page with the recorder in a focused mode for one field: the
+panel shows the field's old selector, last value, and stored fingerprint, and
+while you hover, the overlay tag and a score bar show how well each element
+matches the fingerprint (`likely` at or above the threshold). Click the new
+location, then **Use and save**: the field gets fresh selectors for that
+element, the picked one first, and a new fingerprint, and the command exits 0.
+`s` skips and `Esc` aborts (the first `Esc` only stops picking); both leave
+the recipe unchanged. An unknown field name exits 1. `run --interactive` shows
+the same panel when a run needs it, with **Use and continue**.
 
 ### Recording a recipe
 
@@ -149,6 +209,8 @@ recipe under `--edit`, no display, browser failure).
 | `Left` / `Right` | walk the selection up and back down its ancestors |
 | `Alt`+`Up` / `Alt`+`Down` | move the focused field |
 | `Ctrl+S` | save |
+| `s` | skip the field (re-pick mode) |
+| `Esc` | stop picking, then abort (re-pick mode) |
 
 Shortcuts do not fire while typing in an input.
 
@@ -159,7 +221,7 @@ Shortcuts do not fire while typing in an input.
 | 0 | Success | carry on |
 | 1 | Error to fix or unexpected failure: bad arguments, invalid recipe, missing variable, no display, busy profile, navigation timeout, browser crash, interrupted | fix the setup |
 | 2 | A run paused for user input and the wait timed out | retry later |
-| 3 | A required field matched no element and nothing could recover it | alert a human |
+| 3 | A required field matched no element and no healing rung could recover it (`test`: a required field is unresolved) | alert a human |
 
 ### Files
 
@@ -181,8 +243,8 @@ Config file, all keys optional:
 }
 ```
 
-The `llm` block is read and reported by `doctor`; selector healing uses it in a
-later change.
+The `llm` block is read and reported by `doctor`; a later change adds a
+model-assisted healing rung that uses it.
 
 ## Recipe format
 
@@ -203,8 +265,13 @@ used by the end-to-end tests, is
   `role` (`"heading|Wireless Mouse"`: role, then optional exact accessible
   name), `testid`, `id`, `text` (exact), `css`, or `xpath`. The first candidate
   that matches wins.
-- `pagination`, `guards`, `healing`: fixed now, used by later changes, filled
-  with defaults when absent.
+- `fingerprint` (on the item and on fields): what the element looked like when
+  it was recorded; fuzzy healing matches against it. Recipes without
+  fingerprints skip that rung.
+- `healing`: `fuzzyThreshold` (0 to 1, default 0.7) and `llm` (used by a later
+  change).
+- `pagination`, `guards`: fixed now, used by later changes, filled with
+  defaults when absent.
 
 ## Playground
 
@@ -213,8 +280,13 @@ npm run playground   # serves http://127.0.0.1:4777 (PLAYGROUND_PORT to change)
 ```
 
 `/catalog?tier=0&seed=1&delayMs=0` renders 24 products from
-`packages/playground/src/dataset.ts`. Tiers 1 to 4 return 501 until later
-changes add them. `chrome=hostile` wraps the catalog in adversarial page
+`packages/playground/src/dataset.ts`. Tier 0 is stable markup with ids, test
+ids, roles, and readable classes. Tier 1 replaces every class name, `id`, and
+`data-testid` value with a seeded hash-like token (`x` plus 6 characters), so
+only roles, text, and structure survive. Tier 2 adds tier 1's churn, wraps each
+card's content in one or two extra `div` elements, moves the price above or
+below the title, and shuffles the cards, all by `seed`; only the fingerprint
+survives. Tiers 3 and 4 return 501 until later changes add them. `chrome=hostile` wraps the catalog in adversarial page
 chrome (fixed header, promo bar, cookie modal, aggressive global CSS, a click
 recorder in `window.__hostClicks`), and `sponsored=N` marks the first N cards
 with class `sponsored`; the recorder tests use both. `POST /__control` with `{"tier","seed","delayMs"}` sets
@@ -228,12 +300,13 @@ extracts all 24 products.
 packages/
   core        recipe schema, URL template, value conversion, runner, events, ports (pure TypeScript)
     src/selectors   selector candidates, stability, item inference, fingerprints
+    src/healing     healing ladder, fingerprint score, fuzzy match, promotion
     src/recorder    recorder protocol, draft state, host-side session controller
   browser     BrowserPort adapter over Playwright
   cli         webscoop command, paths, config, profile lock, output
   llm         placeholder for the LLM adapter
   inject      recorder UI injected into the page (React in a closed shadow root, esbuild IIFE)
-  playground  fixture site, dataset, tier renderer
+  playground  fixture site, dataset, tier renderers
 e2e/          Playwright tests that run the built CLI against the playground
 ```
 

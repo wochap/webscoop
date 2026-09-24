@@ -22,6 +22,8 @@ export const OVERLAY_CSS = `
 .ws-tag { position: fixed; padding: 2px 6px; border-radius: 4px; background: #161826; color: #e9e9ed; font: 500 10px/14px '${MONO}', ui-monospace, monospace; box-shadow: 0 0 0 1px #9184d9; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .ws-tag b { color: #b5abfc; font-weight: 500; }
 .ws-tag i { color: #b2b6ca; font-style: normal; font-family: '${SANS}', system-ui, sans-serif; }
+.ws-tag em { color: #e6c98f; font-style: normal; }
+.ws-tag em.ws-likely { color: #9fdcbc; }
 `;
 
 /** Relative luminance of an `rgb()`/`rgba()` color, or null when transparent or unparsable. */
@@ -65,16 +67,26 @@ export class Overlay {
   private readonly tag: HTMLDivElement;
   private tagText = '';
   private frame = 0;
+  private readonly onViewport = () => this.schedule();
 
   constructor(private readonly layer: HTMLElement) {
     this.tag = layer.ownerDocument.createElement('div');
     this.tag.className = 'ws-tag';
     this.tag.style.display = 'none';
     layer.appendChild(this.tag);
-    const schedule = () => this.schedule();
     const win = layer.ownerDocument.defaultView!;
-    win.addEventListener('scroll', schedule, { capture: true, passive: true });
-    win.addEventListener('resize', schedule, { passive: true });
+    win.addEventListener('scroll', this.onViewport, { capture: true, passive: true });
+    win.addEventListener('resize', this.onViewport, { passive: true });
+  }
+
+  /** Remove every box and stop listening to the page. */
+  dispose(): void {
+    this.clear();
+    const win = this.layer.ownerDocument.defaultView!;
+    win.removeEventListener('scroll', this.onViewport, { capture: true });
+    win.removeEventListener('resize', this.onViewport);
+    if (this.frame) win.cancelAnimationFrame(this.frame);
+    this.frame = 0;
   }
 
   private make(el: Element, variant: BoxVariant, index?: number): Tracked {
@@ -96,17 +108,23 @@ export class Overlay {
     t?.box.remove();
   }
 
-  /** Hover highlight with its tag, or null to clear. */
-  setHover(el: Element | null, text = ''): void {
+  /** Hover highlight with its tag, or null to clear. A score (while re-picking) is appended to the tag. */
+  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }): void {
     if (this.hover?.el === el) return;
     this.drop(this.hover);
     this.hover = el ? this.make(el, 'hover') : null;
     if (el) {
       const role = roleOf(el);
       const tag = el.tagName.toLowerCase();
-      this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}`;
+      const suffix = score ? ` <em class="ws-score${score.likely ? ' ws-likely' : ''}">${score.value.toFixed(2)}${score.likely ? ' likely' : ''}</em>` : '';
+      this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}${suffix}`;
     }
     this.schedule();
+  }
+
+  /** Current tag markup, for tests. */
+  get tagMarkup(): string {
+    return this.hover ? this.tagText : '';
   }
 
   setSelected(el: Element | null): void {

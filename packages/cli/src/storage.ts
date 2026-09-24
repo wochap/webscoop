@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { loadRecipe, RecipeError, saveRecipe, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
 import { CliError } from './exit';
 
@@ -70,7 +70,13 @@ export class FsStorage implements StoragePort {
   }
 
   async save(recipe: Recipe): Promise<void> {
-    await mkdir(this.recipesDir, { recursive: true });
-    await writeFile(join(this.recipesDir, `${recipe.name}.json`), saveRecipe(recipe));
+    await this.saveTo(join(this.recipesDir, `${recipe.name}.json`), recipe);
+  }
+
+  /** Write a recipe to an explicit path, such as the file a recipe was loaded from. */
+  async saveTo(path: string, recipe: Recipe): Promise<string> {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, saveRecipe(recipe));
+    return path;
   }
 }

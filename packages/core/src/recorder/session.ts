@@ -1,7 +1,8 @@
 import { convertValue, defaultAttr } from '../convert';
 import { excludeContainers, extractPage, resolveFirst } from '../extract';
 import type { ElementRef, InteractiveSession, PageInfo, StoragePort } from '../ports';
-import type { FieldScope, FieldType } from '../recipe/schema';
+import { scoreFingerprint } from '../healing/score';
+import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
 import { validateRecipe } from '../recipe/validate';
 import {
   annotate,
@@ -43,8 +44,20 @@ import {
   type ProposalView,
   type ProtocolCandidate,
   type RecorderState,
+  type RepickContext,
   type TestResults,
 } from './protocol';
+
+/** `full` records a whole recipe; `repick` focuses on replacing one field's selectors. */
+export type RecorderMode =
+  | { kind: 'full' }
+  | { kind: 'repick'; fieldIndex: number; reason: 'run' | 'cli'; sample?: string | null };
+
+/** How a focused re-pick ended. */
+export type RepickOutcome =
+  | { kind: 'picked'; selectors: SelectorCandidate[]; fingerprint?: Fingerprint }
+  | { kind: 'skip' }
+  | { kind: 'abort' };
 
 export interface RecorderOptions {
   session: InteractiveSession;
@@ -59,6 +72,8 @@ export interface RecorderOptions {
   /** Where the storage writes a recipe, for messages. */
   pathFor?: (name: string) => string;
   now?: () => Date;
+  /** Default `full`. */
+  mode?: RecorderMode;
 }
 
 /** Rows sent to the panel after a test run; the count is always the full count. */
@@ -106,21 +121,46 @@ export class RecorderController {
   private readonly unsubscribe: (() => void)[] = [];
   private closedResolve!: (reason: 'closed' | 'ended') => void;
   private readonly closedPromise: Promise<'closed' | 'ended'>;
+  private repickResolve!: (outcome: RepickOutcome) => void;
+  private readonly repickPromise: Promise<RepickOutcome>;
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
+    const mode = opts.mode ?? { kind: 'full' };
+    let repickContext: RepickContext | null = null;
+    if (mode.kind === 'repick') {
+      const field = opts.draft.fields[mode.fieldIndex];
+      if (!field) throw new Error(`no field at index ${mode.fieldIndex}`);
+      repickContext = {
+        field: field.name,
+        index: mode.fieldIndex,
+        oldSelector: bare(field.selectors[0]!),
+        fingerprint: field.fingerprint ?? null,
+        sample: mode.sample ?? field.sample ?? (field.fingerprint?.textSample || null),
+        threshold: opts.draft.healing?.fuzzyThreshold ?? 0.7,
+        reason: mode.reason,
+        picked: null,
+      };
+    }
     this.current = {
       url: 'about:blank',
       draft: opts.draft,
       selected: null,
       proposal: null,
-      repick: null,
+      repick: repickContext ? repickContext.index : null,
+      repickContext,
       test: null,
       saved: null,
       busy: null,
       error: null,
     };
     this.closedPromise = new Promise((resolve) => (this.closedResolve = resolve));
+    this.repickPromise = new Promise((resolve) => (this.repickResolve = resolve));
+  }
+
+  /** Resolves when a focused re-pick is confirmed, skipped, or aborted; closing the browser aborts. */
+  awaitRepick(): Promise<RepickOutcome> {
+    return this.repickPromise;
   }
 
   get state(): RecorderState {
@@ -152,6 +192,17 @@ export class RecorderController {
 
   /** Expose the bridge, inject the bundle, and open the target URL. */
   async start(): Promise<PageInfo> {
+    await this.attach();
+    const info = await this.session.goto(this.targetUrl(), { timeoutMs: this.opts.timeoutMs ?? 30_000 });
+    this.current = { ...this.current, url: info.url };
+    return info;
+  }
+
+  /**
+   * Expose the bridge and inject the bundle into the page already open, without
+   * navigating. The page announces itself with `session.ready` and gets the state.
+   */
+  async attach(): Promise<void> {
     await this.session.expose(HOST_BINDING, (msg) => this.handle(msg));
     await this.session.inject(this.opts.bundle);
     this.unsubscribe.push(
@@ -159,11 +210,22 @@ export class RecorderController {
         this.current = { ...this.current, url };
         this.emitter.emit('recorder.navigated', { url });
       }),
-      this.session.onClosed(() => this.closedResolve('closed')),
+      this.session.onClosed(() => {
+        this.repickResolve({ kind: 'abort' });
+        this.closedResolve('closed');
+      }),
     );
-    const info = await this.session.goto(this.targetUrl(), { timeoutMs: this.opts.timeoutMs ?? 30_000 });
-    this.current = { ...this.current, url: info.url };
-    return info;
+  }
+
+  /** Remove the recorder from the page (panel, overlay, page margin, listeners) and stop listening. The session stays open. */
+  async detach(): Promise<void> {
+    await this.idle();
+    try {
+      await this.session.dispatch({ kind: 'session.detach' } satisfies HostMessage);
+    } catch {
+      // The page is gone or navigating; nothing is left to remove.
+    }
+    this.dispose();
   }
 
   dispose(): void {
@@ -220,6 +282,7 @@ export class RecorderController {
         });
         return;
       case 'session.end':
+        this.repickResolve({ kind: 'abort' });
         this.closedResolve('ended');
         return;
       case 'picker.hover':
@@ -305,7 +368,36 @@ export class RecorderController {
         return;
       case 'save.request':
         return this.save();
+      case 'repick.confirm':
+        return this.confirmRepick();
+      case 'repick.skip':
+        if (!this.current.repickContext) throw new Error('no re-pick is in progress');
+        this.repickResolve({ kind: 'skip' });
+        return;
+      case 'repick.abort':
+        if (!this.current.repickContext) throw new Error('no re-pick is in progress');
+        this.repickResolve({ kind: 'abort' });
+        return;
     }
+  }
+
+  /** Accept the picked element for the re-picked field; from the command line this also saves the recipe. */
+  private async confirmRepick(): Promise<HostMessage | void> {
+    const ctx = this.current.repickContext;
+    if (!ctx) throw new Error('no re-pick is in progress');
+    if (!ctx.picked) throw new Error(`pick the new location of ${ctx.field} first`);
+    const field = this.draft.fields[ctx.index]!;
+    let reply: HostMessage | undefined;
+    if (ctx.reason === 'cli') {
+      reply = await this.save();
+      if (reply.kind === 'save.result' && !reply.ok) return reply;
+    }
+    this.repickResolve({
+      kind: 'picked',
+      selectors: field.selectors.map(bare),
+      ...(field.fingerprint ? { fingerprint: field.fingerprint } : {}),
+    });
+    return reply;
   }
 
   /** Run work on the message queue, reporting errors to the page. */
@@ -466,6 +558,13 @@ export class RecorderController {
       const sample = await this.sample({ ...field, scope, selectors }, containers);
       this.apply({ type: 'replaceSelectors', index: repick, selectors, fingerprint: selection.fingerprint, count: selectors[0]?.count ?? null, sample });
       if (field.scope !== scope) this.apply({ type: 'updateField', index: repick, patch: { scope } });
+      const ctx = this.current.repickContext;
+      if (ctx && ctx.index === repick) {
+        // Focused mode stays on this field until the pick is confirmed.
+        const score = ctx.fingerprint ? scoreFingerprint(ctx.fingerprint, node) : null;
+        this.current = { ...this.current, repickContext: { ...ctx, picked: { score, sample, selector: bare(selectors[0]!) } } };
+        return;
+      }
       this.current = { ...this.current, repick: null };
       return;
     }

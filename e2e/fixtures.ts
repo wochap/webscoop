@@ -43,6 +43,8 @@ export interface Scoop {
   run(args: string[], env?: Record<string, string | undefined>): Promise<CliResult>;
   /** Start `webscoop record` and attach Playwright to its browser over CDP. */
   record(args: string[]): Promise<Recording>;
+  /** Start `webscoop run --interactive` and attach once its re-pick panel shows up. */
+  interactiveRun(args: string[]): Promise<Recording>;
 }
 
 export function referenceRecipe(port: number): RecipeInput {
@@ -96,6 +98,7 @@ export const test = base.extend<{ scoop: Scoop }>({
       spawn: spawnCli,
       run: (args, env) => spawnCli(args, env).done,
       record: (args) => startRecording(scoop, args, cleanups),
+      interactiveRun: (args) => startRecording(scoop, args, cleanups, 'run'),
     };
     await use(scoop);
 

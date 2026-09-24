@@ -1,20 +1,57 @@
 import { RunEmitter, type FailureReason, type Row, type RunReport } from './events';
 import { extractPage } from './extract';
-import { TimeoutError, type BrowserPort, type OpenOptions, type Session } from './ports';
-import type { Recipe } from './recipe/schema';
+import { applyPromotions } from './healing/apply';
+import { defaultLadder } from './healing/ladder';
+import type { Promotion } from './healing/promote';
+import { isHealed, targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
+import { TimeoutError, type BrowserPort, type ElementRef, type OpenOptions, type Session } from './ports';
+import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { fillTemplate, MissingVariableError } from './template';
 
-export type RunState = 'idle' | 'opening' | 'navigating' | 'extracting' | 'done' | 'failed';
+export type RunState = 'idle' | 'opening' | 'navigating' | 'extracting' | 'repicking' | 'done' | 'failed';
 
 /** Allowed transitions. Later changes insert states such as `guarded` and `paginating`. */
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
   idle: ['opening', 'failed'],
   opening: ['navigating', 'failed'],
   navigating: ['extracting', 'failed'],
-  extracting: ['done', 'failed'],
+  extracting: ['repicking', 'done', 'failed'],
+  repicking: ['extracting', 'failed'],
   done: [],
   failed: [],
 };
+
+export interface HealingOptions {
+  /** Go past the first stored candidate. When false, no promotion happens either. */
+  enabled: boolean;
+  /** Write the promoted recipe through `saveRecipe` after a successful run. */
+  writeBack: boolean;
+  /** Extra rungs tried after fuzzy matching, before a user re-pick. */
+  resolvers?: Resolver[];
+}
+
+/** What the user is asked to re-pick. */
+export interface RepickRequest {
+  page: number;
+  target: HealTarget;
+  /** Field name. */
+  name: string;
+  oldSelector: SelectorCandidate;
+  fingerprint: Fingerprint | null;
+  /** Last known value of the field, from the stored fingerprint's text. */
+  sample: string | null;
+  session: Session;
+  /** The recipe with every promotion made so far in this run applied. */
+  recipe: Recipe;
+}
+
+export type RepickResult =
+  | { kind: 'picked'; selectors: SelectorCandidate[]; fingerprint?: Fingerprint }
+  | { kind: 'skip' }
+  | { kind: 'abort' };
+
+/** Asks a human for the new location of a required field the ladder could not resolve. */
+export type RepickHandler = (request: RepickRequest) => Promise<RepickResult>;
 
 export interface RunOptions {
   recipe: Recipe;
@@ -28,6 +65,12 @@ export interface RunOptions {
   openOptions?: OpenOptions;
   /** Clock, injectable for tests. */
   now?: () => Date;
+  /** Default: enabled, with write-back. */
+  healing?: HealingOptions;
+  /** Write the promoted recipe to where it came from; returns the path written. */
+  saveRecipe?: (recipe: Recipe) => Promise<string>;
+  /** Last rung of the ladder for required fields, when a human is available. */
+  repick?: RepickHandler;
 }
 
 export type RunResult =
@@ -71,6 +114,51 @@ export class Runner {
     this.history.push(to);
   }
 
+  /** The user as the last rung: only for required fields, and only while a handler is available. */
+  private repickResolver(handler: RepickHandler, page: number, current: () => Recipe): Resolver {
+    return {
+      name: 'user',
+      resolve: async (target, ctx): Promise<Resolution | null> => {
+        if (target.kind !== 'field' || target.optional) return null;
+        const oldSelector = target.selectors[0]!;
+        const fingerprint = target.fingerprint ?? null;
+        this.transition('repicking');
+        this.emitter.emit('repick.requested', { page, target: target.name, oldSelector, fingerprint });
+        const result = await handler({
+          page,
+          target,
+          name: target.name,
+          oldSelector,
+          fingerprint,
+          sample: fingerprint?.textSample || null,
+          session: ctx.session,
+          recipe: current(),
+        });
+        this.emitter.emit('repick.resolved', { page, target: target.name, result: result.kind });
+        if (result.kind === 'abort') throw new RunFailure('aborted', `the re-pick of ${target.name} was aborted`);
+        this.transition('extracting');
+        if (result.kind === 'skip') return null;
+        const scopes: (ElementRef | undefined)[] = ctx.containers && ctx.containers.length > 0 ? [...ctx.containers] : [ctx.within];
+        for (const selector of result.selectors) {
+          for (const within of scopes) {
+            const refs = await ctx.session.resolve(selector, within);
+            if (refs.length > 0) {
+              return {
+                refs,
+                outcome: { kind: 'user' },
+                selector,
+                ...(within ? { within } : {}),
+                selectors: result.selectors,
+                ...(result.fingerprint ? { fingerprint: result.fingerprint } : {}),
+              };
+            }
+          }
+        }
+        return null;
+      },
+    };
+  }
+
   async run(): Promise<RunResult> {
     const { recipe, browser, profileDir, signal } = this.opts;
     const now = this.opts.now ?? (() => new Date());
@@ -86,6 +174,8 @@ export class Runner {
       item: null,
       fields: [],
       warnings: [],
+      healed: 0,
+      savedTo: null,
     };
     const finish = () => {
       const ended = now();
@@ -126,9 +216,29 @@ export class Runner {
       this.emitter.emit('page.loaded', { page, url: info.url, title: info.title, status: info.status });
 
       this.transition('extracting');
-      const extraction = await extractPage(session, recipe, { pageUrl: info.url, page });
+      const healing = this.opts.healing ?? { enabled: true, writeBack: true };
+      const promotions: Promotion[] = [];
+      const current = () => applyPromotions(recipe, promotions);
+      const extra = [...(healing.resolvers ?? []), ...(this.opts.repick ? [this.repickResolver(this.opts.repick, page, current)] : [])];
+      const extraction = await extractPage(session, recipe, {
+        pageUrl: info.url,
+        page,
+        ladder: defaultLadder({ enabled: healing.enabled, extra }),
+        promote: healing.enabled,
+        onHealed: (promotion) => {
+          promotions.push(promotion);
+          this.emitter.emit('field.healed', {
+            page,
+            target: targetName(promotion.target),
+            outcome: promotion.outcome,
+            oldPrimary: promotion.oldPrimary,
+            newPrimary: promotion.newPrimary,
+          });
+        },
+      });
       report.item = extraction.item;
       report.fields = extraction.fields;
+      report.healed = extraction.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(extraction.item?.outcome) ? 1 : 0);
       report.warnings.push(...extraction.warnings);
       for (const field of extraction.fields) this.emitter.emit('field.resolved', { page, field });
       if (extraction.missingRequired.length > 0) {
@@ -145,6 +255,12 @@ export class Runner {
       report.pageCount = page;
       report.rowCount = extraction.rows.length;
       this.emitter.emit('page.done', { page, rows: extraction.rows.length });
+
+      if (promotions.length > 0 && healing.enabled && healing.writeBack && this.opts.saveRecipe) {
+        const path = await this.opts.saveRecipe(applyPromotions(recipe, promotions));
+        report.savedTo = path;
+        this.emitter.emit('recipe.saved', { path });
+      }
 
       await closeSession();
       finish();

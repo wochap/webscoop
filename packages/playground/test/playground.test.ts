@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dataset, formatPrice, render, startPlayground, type Playground } from '../src';
 
@@ -65,7 +66,117 @@ describe('render', () => {
   });
 
   it('throws for unimplemented tiers', () => {
-    expect(() => render(dataset, { tier: 2, seed: 1 })).toThrow('tier 2');
+    expect(() => render(dataset, { tier: 3, seed: 1 })).toThrow('tier 3');
+  });
+});
+
+const CHURNED = ['class', 'id', 'data-testid'];
+
+function doc(html: string): Document {
+  return new JSDOM(html).window.document;
+}
+
+/** Every element as tag, the attributes tiers must keep, and own text, in document order. */
+function shape(d: Document): string[] {
+  return Array.from(d.querySelectorAll('*')).map((el) => {
+    const attrs = Array.from(el.attributes)
+      .filter((a) => !CHURNED.includes(a.name))
+      .map((a) => `${a.name}=${a.value}`)
+      .join(' ');
+    const names = CHURNED.filter((n) => el.hasAttribute(n)).join(',');
+    const own = el.tagName === 'STYLE' ? '' : Array.from(el.childNodes)
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent)
+      .join('');
+    return `${el.tagName} [${attrs}] {${names}} ${own.trim()}`;
+  });
+}
+
+function products(d: Document) {
+  return Array.from(d.querySelectorAll('article')).map((card) => ({
+    id: card.getAttribute('data-product-id'),
+    title: card.querySelector('h2')!.textContent,
+    price: card.querySelector('p:not([aria-label])')!.textContent,
+    rating: card.querySelector('p[aria-label]')!.textContent,
+    url: card.querySelector('a')!.getAttribute('href'),
+    image: card.querySelector('img')!.getAttribute('src'),
+  }));
+}
+
+const expected = dataset.map((p) => ({ id: p.id, title: p.title, price: formatPrice(p.price), rating: String(p.rating), url: p.url, image: p.image }));
+
+describe('tier 1', () => {
+  it('keeps tags, roles, text, and attribute names, and renames every class, id, and test id', () => {
+    const zero = doc(render(dataset, { tier: 0, seed: 3 }));
+    const one = doc(render(dataset, { tier: 1, seed: 3 }));
+    expect(shape(one)).toEqual(shape(zero));
+    const testids = new Set(Array.from(zero.querySelectorAll('[data-testid]')).map((el) => el.getAttribute('data-testid')));
+    for (const el of Array.from(one.querySelectorAll('[data-testid]'))) expect(testids.has(el.getAttribute('data-testid'))).toBe(false);
+    const classes = new Set(Array.from(zero.querySelectorAll('[class]')).flatMap((el) => Array.from(el.classList)));
+    for (const el of Array.from(one.querySelectorAll('[class]'))) for (const c of Array.from(el.classList)) expect(classes.has(c)).toBe(false);
+    const ids = new Set(Array.from(zero.querySelectorAll('[id]')).map((el) => el.id));
+    for (const el of Array.from(one.querySelectorAll('[id]'))) expect(ids.has(el.id)).toBe(false);
+    expect(one.querySelector('h1')!.textContent).toBe('Electronics');
+    expect(products(one)).toEqual(expected);
+  });
+
+  it('uses hash-like tokens that are stable within a seed', () => {
+    const html = render(dataset, { tier: 1, seed: 3 });
+    expect(html).toBe(render(dataset, { tier: 1, seed: 3 }));
+    expect(html).not.toBe(render(dataset, { tier: 1, seed: 4 }));
+    const one = doc(html);
+    const cards = Array.from(one.querySelectorAll('article'));
+    expect(new Set(cards.map((c) => c.getAttribute('data-testid'))).size).toBe(1);
+    expect(new Set(cards.map((c) => c.id)).size).toBe(24);
+    for (const token of cards.map((c) => c.getAttribute('data-testid')!)) expect(token).toMatch(/^x(?=[a-z0-9]*\d)[a-z0-9]{6}$/);
+  });
+
+  it('renames the classes in its own stylesheet too', () => {
+    const html = render(dataset, { tier: 1, seed: 3 });
+    const list = doc(html).querySelector('ul')!.className;
+    expect(html).toContain(`.${list} { list-style: none;`);
+  });
+});
+
+describe('tier 2', () => {
+  const tier0Price = '/html/body/main/ul/li[1]/article/p[1]';
+
+  it('breaks a tier 0 positional XPath for the price', () => {
+    const zero = doc(render(dataset, { tier: 0, seed: 3 }));
+    const two = doc(render(dataset, { tier: 2, seed: 3 }));
+    const at = (d: Document) => d.evaluate(tier0Price, d, null, 9, null).singleNodeValue?.textContent ?? null;
+    expect(at(zero)).toBe(formatPrice(dataset[0]!.price));
+    expect(at(two)).not.toBe(formatPrice(dataset[0]!.price));
+    const text = two.body.textContent!;
+    for (const p of dataset) expect(text).toContain(formatPrice(p.price));
+  });
+
+  it('wraps content, moves prices, and shuffles cards by seed while each card keeps its content', () => {
+    const html = render(dataset, { tier: 2, seed: 3 });
+    expect(html).toBe(render(dataset, { tier: 2, seed: 3 }));
+    const two = doc(html);
+    const rows = products(two);
+    expect(rows.map((r) => r.id)).not.toEqual(dataset.map((p) => p.id));
+    expect([...rows].sort((a, b) => a.url!.localeCompare(b.url!))).toEqual(expected);
+    const cards = Array.from(two.querySelectorAll('article'));
+    const depths = cards.map((card) => {
+      let depth = 0;
+      for (let el = card.firstElementChild; el?.tagName === 'DIV'; el = el.firstElementChild) depth++;
+      return depth;
+    });
+    expect(new Set(depths)).toEqual(new Set([1, 2]));
+    const priceFirst = cards.map((card) => {
+      const kids = Array.from(card.querySelectorAll('h2, p:not([aria-label])'));
+      return kids[0]!.tagName === 'P';
+    });
+    expect(new Set(priceFirst)).toEqual(new Set([true, false]));
+    expect(shape(two).filter((s) => s.startsWith('H2')).length).toBe(24);
+  });
+
+  it('applies sponsored marks and chrome like tier 0', () => {
+    const html = render(dataset, { tier: 2, seed: 3, sponsored: 2, chrome: 'hostile' });
+    expect(count(html, 'data-sponsored="true"')).toBe(2);
+    expect(html).toContain('id="cookie-backdrop"');
   });
 });
 
@@ -87,22 +198,31 @@ describe('server', () => {
     expect(one).toBe(two);
   });
 
-  it('returns 501 naming the tier for tiers 1 to 4', async () => {
+  it('serves tiers 1 and 2', async () => {
     const pg = await start();
-    for (const tier of [1, 2, 3, 4]) {
+    for (const tier of [1, 2]) {
+      const res = await fetch(`${pg.url}/catalog?tier=${tier}&seed=3`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(render(dataset, { tier, seed: 3 }));
+    }
+  });
+
+  it('returns 501 naming the tier for tiers 3 and 4', async () => {
+    const pg = await start();
+    for (const tier of [3, 4]) {
       const res = await fetch(`${pg.url}/catalog?tier=${tier}`);
       expect(res.status).toBe(501);
       expect(await res.text()).toContain(`tier ${tier}`);
     }
   });
 
-  it('serves chrome and sponsored options, and still returns 501 for tiers 1 to 4 with them', async () => {
+  it('serves chrome and sponsored options, and still returns 501 for tiers 3 and 4 with them', async () => {
     const pg = await start();
     const hostile = await (await fetch(`${pg.url}/catalog?tier=0&chrome=hostile&sponsored=2`)).text();
     expect(hostile).toContain('id="cookie-backdrop"');
     expect(count(hostile, 'data-sponsored="true"')).toBe(2);
     expect(await (await fetch(`${pg.url}/catalog?tier=0`)).text()).not.toContain('cookie-backdrop');
-    for (const tier of [1, 2, 3, 4]) {
+    for (const tier of [3, 4]) {
       const res = await fetch(`${pg.url}/catalog?tier=${tier}&chrome=hostile&sponsored=1`);
       expect(res.status).toBe(501);
       expect(await res.text()).toContain(`tier ${tier}`);

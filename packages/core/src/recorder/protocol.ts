@@ -163,10 +163,27 @@ export const SelectedSchema = z.object({
 export const TestResultsSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())),
   rowCount: count(),
-  fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'partial', 'missing']) })),
+  fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'healed', 'partial', 'missing']) })),
   durationMs: z.number().check(z.nonnegative()),
   warnings: z.array(z.string()),
   error: z.optional(z.string()),
+});
+
+/** What the focused re-pick mode shows about the field being re-picked. */
+export const RepickContextSchema = z.object({
+  field: z.string(),
+  index: index(),
+  /** Primary selector before the re-pick. */
+  oldSelector: SelectorSchema,
+  fingerprint: z.nullable(ProtocolFingerprintSchema),
+  /** Last known value of the field. */
+  sample: z.nullable(z.string()),
+  /** The recipe's fuzzy threshold: hovered scores at or above it are likely matches. */
+  threshold: z.number(),
+  /** `run` when a run is waiting on the pick, `cli` for `record --repick`. */
+  reason: z.enum(['run', 'cli']),
+  /** The element picked so far, waiting for confirmation. */
+  picked: z.nullable(z.object({ score: z.nullable(z.number()), sample: z.nullable(z.string()), selector: SelectorSchema })),
 });
 
 export const RecorderStateSchema = z.object({
@@ -176,6 +193,8 @@ export const RecorderStateSchema = z.object({
   proposal: z.nullable(ProposalSchema),
   /** Field index waiting for a re-pick. */
   repick: z.nullable(index()),
+  /** Set in the focused re-pick mode. */
+  repickContext: z._default(z.nullable(RepickContextSchema), null),
   test: z.nullable(TestResultsSchema),
   saved: z.nullable(z.object({ name: z.string(), path: z.optional(z.string()), at: z.string() })),
   busy: z.nullable(z.string()),
@@ -229,6 +248,9 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('test.run', {}),
   msg('test.clear', {}),
   msg('save.request', {}),
+  msg('repick.confirm', {}),
+  msg('repick.skip', {}),
+  msg('repick.abort', {}),
 ]);
 
 export const HostMessageSchema = z.discriminatedUnion('kind', [
@@ -242,6 +264,8 @@ export const HostMessageSchema = z.discriminatedUnion('kind', [
     state: RecorderStateSchema,
   }),
   msg('session.error', { message: z.string() }),
+  /** Remove the recorder from the page; the host keeps the session. */
+  msg('session.detach', {}),
 ]);
 
 export const MessageSchema = z.union([PageMessageSchema, HostMessageSchema]);
@@ -262,6 +286,7 @@ export type Draft = z.infer<typeof DraftSchema>;
 export type SelectedView = z.infer<typeof SelectedSchema>;
 export type TestResults = z.infer<typeof TestResultsSchema>;
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
+export type RepickContext = z.infer<typeof RepickContextSchema>;
 export type FieldPatch = z.infer<typeof FieldPatchSchema>;
 export type PaginationPatch = z.infer<typeof PaginationPatchSchema>;
 export type PageMessage = z.input<typeof PageMessageSchema>;

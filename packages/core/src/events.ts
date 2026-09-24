@@ -1,6 +1,7 @@
-import type { FieldType, SelectorCandidate } from './recipe/schema';
+import type { HealOutcome } from './healing/types';
+import type { Fingerprint, FieldType, SelectorCandidate } from './recipe/schema';
 
-export type FieldStatus = 'ok' | 'partial' | 'missing';
+export type FieldStatus = 'ok' | 'healed' | 'partial' | 'missing';
 
 export type Row = Record<string, unknown> & { _page: number; _index: number };
 
@@ -13,6 +14,8 @@ export interface FieldReport {
   /** Index into the field's selector list of the candidate that resolved, or null when none did. */
   candidateIndex: number | null;
   candidate: SelectorCandidate | null;
+  /** Which rung of the healing ladder resolved the field. */
+  outcome: HealOutcome;
   status: FieldStatus;
   /** Rows (0-based `_index`) where the field resolved nothing. */
   missingRows: number[];
@@ -26,17 +29,41 @@ export interface RunReport {
   finalUrl: string | null;
   pageCount: number;
   rowCount: number;
-  item: { candidateIndex: number | null; candidate: SelectorCandidate | null; count: number } | null;
+  item: { candidateIndex: number | null; candidate: SelectorCandidate | null; count: number; outcome: HealOutcome } | null;
   fields: FieldReport[];
   warnings: string[];
+  /** Targets (item container and fields) resolved by a rung other than their first candidate. */
+  healed: number;
+  /** Path the promoted recipe was written to, or null when it was not written. */
+  savedTo: string | null;
+}
+
+/** What a re-pick asks the user about. */
+export interface RepickInfo {
+  page: number;
+  /** Field name, `item`, or `pagination`. */
+  target: string;
+  oldSelector: SelectorCandidate;
+  fingerprint: Fingerprint | null;
 }
 
 export interface RunEvents {
   'run.start': { recipe: string; url: string; profileDir: string; at: string };
   'page.loaded': { page: number; url: string; title: string; status: number | null };
   'field.resolved': { page: number; field: FieldReport };
+  'field.healed': {
+    page: number;
+    /** Field name, `item`, or `pagination`. */
+    target: string;
+    outcome: HealOutcome;
+    oldPrimary: SelectorCandidate;
+    newPrimary: SelectorCandidate;
+  };
+  'repick.requested': RepickInfo;
+  'repick.resolved': { page: number; target: string; result: 'picked' | 'skip' | 'abort' };
   'row.emitted': { page: number; row: Row };
   'page.done': { page: number; rows: number };
+  'recipe.saved': { path: string };
   'run.done': { report: RunReport };
   'run.failed': { reason: FailureReason; message: string; fields?: string[]; report: RunReport };
 }
@@ -47,8 +74,12 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'run.start',
   'page.loaded',
   'field.resolved',
+  'field.healed',
+  'repick.requested',
+  'repick.resolved',
   'row.emitted',
   'page.done',
+  'recipe.saved',
   'run.done',
   'run.failed',
 ];

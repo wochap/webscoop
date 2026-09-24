@@ -7,7 +7,9 @@ export type Shortcut =
   | 'walkDown'
   | 'moveUp'
   | 'moveDown'
-  | 'save';
+  | 'save'
+  | 'skip'
+  | 'abort';
 
 export interface KeyLike {
   key: string;
@@ -25,6 +27,8 @@ export interface ShortcutContext {
   hasProposal: boolean;
   hasSelection: boolean;
   focusedField: number | null;
+  /** The focused re-pick mode is active. */
+  repicking?: boolean;
 }
 
 /** Whether the event target is a place the user types into. */
@@ -44,6 +48,7 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * Map a key press to a panel shortcut: `p` picks, Esc cancels picking or
  * closes a menu, Enter confirms the item proposal, Left and Right walk the
  * breadcrumb, Alt+Up and Alt+Down reorder the focused field, Ctrl+S saves.
+ * While re-picking, `s` skips the field and Esc (when not picking) aborts.
  * Nothing fires while typing.
  */
 export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
@@ -53,9 +58,11 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (e.key === 'Escape') {
     if (ctx.menuOpen) return 'closeMenu';
     if (ctx.picking) return 'cancel';
+    if (ctx.repicking) return 'abort';
     return null;
   }
   if (mod) return null;
+  if (ctx.repicking && !e.altKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) return 'skip';
   if (e.altKey) {
     if (ctx.focusedField === null) return null;
     if (e.key === 'ArrowUp') return 'moveUp';

@@ -8,6 +8,7 @@ import { ItemDetectCard, ItemSummary } from './items';
 import { PaginationEditor } from './pagination';
 import { ElementInspector, PickModeStrip } from './picking';
 import { RecipeBar } from './recipe';
+import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 
@@ -50,6 +51,12 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
     case 'save':
       void actions.send({ kind: 'save.request' });
       return;
+    case 'skip':
+      void actions.send({ kind: 'repick.skip' });
+      return;
+    case 'abort':
+      void actions.send({ kind: 'repick.abort' });
+      return;
   }
 }
 
@@ -62,6 +69,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     hasProposal: Boolean(snap.host?.proposal),
     hasSelection: Boolean(snap.host?.selected),
     focusedField: snap.ui.focusedField,
+    repicking: Boolean(snap.host?.repickContext),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions);
@@ -88,6 +96,29 @@ export function ScoopRoot() {
         <PanelShell header={<PanelHeader mode={mode} onEnd={() => void actions.send({ kind: 'session.end' })} />} footer={null}>
           <span className="ws-meta">Connecting to webscoop…</span>
         </PanelShell>
+      </div>
+    );
+  }
+
+  if (host.repickContext) {
+    const ctx = host.repickContext;
+    return (
+      <div onKeyDown={onKeyDown} style={{ display: 'contents' }} data-ws="panel">
+        <PanelShell
+          header={<PanelHeader mode={mode} onEnd={() => void actions.send({ kind: 'repick.abort' })} />}
+          footer={
+            <RepickFooter
+              canConfirm={ctx.picked !== null}
+              reason={ctx.reason}
+              onConfirm={() => void actions.send({ kind: 'repick.confirm' })}
+              onSkip={() => void actions.send({ kind: 'repick.skip' })}
+              onAbort={() => void actions.send({ kind: 'repick.abort' })}
+            />
+          }
+        >
+          <RepickPanel context={ctx} hoverScore={ui.hoverScore} picking={ui.picking} onPick={actions.startPicking} onCancel={actions.cancelPicking} />
+        </PanelShell>
+        <ToastStack toasts={ui.toasts} />
       </div>
     );
   }

@@ -65,6 +65,15 @@ export class Picker {
     win.addEventListener('keydown', this.onKey, opts);
   }
 
+  /** Remove every listener, so the page gets its events back. */
+  dispose(): void {
+    const opts = { capture: true } as const;
+    this.win.removeEventListener('mousemove', this.onMove, opts);
+    for (const type of BLOCKED) this.win.removeEventListener(type, this.onBlocked, opts);
+    this.win.removeEventListener('keydown', this.onKey, opts);
+    this.last = null;
+  }
+
   private target(e: MouseEvent): Element | null {
     const doc = this.win.document;
     const raw = e.altKey ? elementThrough(doc, e.clientX, e.clientY) : (e.target as Element | null);

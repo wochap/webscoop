@@ -1,6 +1,6 @@
 import type { Crumb, PageMessage, Path, RecorderState } from '@webscoop/core/page';
 
-export type Mode = 'idle' | 'picking' | 'selected' | 'items' | 'editing' | 'test';
+export type Mode = 'idle' | 'picking' | 'repick' | 'selected' | 'items' | 'editing' | 'test';
 
 export interface Toast {
   id: number;
@@ -23,6 +23,8 @@ export interface UiState {
   level: 'proposed' | 'broader' | 'narrower';
   /** Whether item matches are highlighted on the page. */
   highlight: boolean;
+  /** Fingerprint score of the hovered element while re-picking, null when nothing is hovered. */
+  hoverScore: number | null;
   toasts: Toast[];
 }
 
@@ -36,6 +38,7 @@ export const initialUi: UiState = {
   editingVar: null,
   level: 'proposed',
   highlight: true,
+  hoverScore: null,
   toasts: [],
 };
 
@@ -75,6 +78,7 @@ export class Store {
 /** The panel mode shown in the header pill. */
 export function modeOf({ host, ui }: Snapshot): Mode {
   if (ui.picking) return 'picking';
+  if (host?.repickContext) return 'repick';
   if (ui.drawerOpen && host?.test) return 'test';
   if (host?.proposal) return 'items';
   if (host?.selected) return 'selected';

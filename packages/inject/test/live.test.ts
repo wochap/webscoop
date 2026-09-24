@@ -137,4 +137,34 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     expect(await page.evaluate(() => (window as unknown as { __hostClicks: unknown[] }).__hostClicks)).toEqual([]);
     expect(await page.locator('#cookie-backdrop').count()).toBe(1);
   });
+
+  it('removes itself on detach, gives the page its clicks and margin back, and attaches again', async () => {
+    const { page, controller } = await open('tier=0&chrome=hostile');
+    await page.click('#cookie-accept');
+    await page.keyboard.press('p');
+    expect(await hook(page, (h) => h.state().ui.picking)).toBe(true);
+    await controller.detach();
+    await expect.poll(() => page.evaluate(() => document.querySelector('webscoop-root, webscoop-overlay, webscoop-drawer'))).toBeNull();
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).marginRight)).toBe('0px');
+    expect(await page.evaluate(() => '__webscoopPage' in window || '__webscoopTest' in window)).toBe(false);
+
+    await page.evaluate(() => ((window as unknown as { __hostClicks: unknown[] }).__hostClicks = []));
+    await page.locator('h2.product-title').nth(1).click();
+    expect(await page.evaluate(() => (window as unknown as { __hostClicks: { tag: string }[] }).__hostClicks.map((c) => c.tag))).toEqual(['h2']);
+    await page.keyboard.press('p');
+    await page.locator('h2.product-title').nth(2).click();
+    expect(await page.evaluate(() => (window as unknown as { __hostClicks: unknown[] }).__hostClicks)).toHaveLength(2);
+
+    const again = new RecorderController({
+      session: session!,
+      storage: new MemoryStorage(),
+      bundle,
+      draft: emptyDraft({ name: 'shop', url: `${playground.url}/catalog?tier=0`, vars: [] }),
+    });
+    await again.attach();
+    await page.waitForFunction(() => (window as unknown as { __webscoopTest?: { state(): { host: unknown } } }).__webscoopTest?.state().host != null);
+    expect(await page.evaluate(() => document.querySelectorAll('webscoop-root').length)).toBe(1);
+    await again.detach();
+    await expect.poll(() => page.evaluate(() => document.querySelectorAll('webscoop-root').length)).toBe(0);
+  });
 });

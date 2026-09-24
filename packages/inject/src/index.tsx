@@ -21,7 +21,7 @@ function boot(win: Window & typeof globalThis): void {
   globals[PAGE_GLOBAL] = { dispatch: (msg) => (runtime ? runtime.dispatch(msg) : void pending.push(msg)) };
 
   // Registered now, before page scripts run, so host handlers never see picking clicks.
-  new Picker(win, {
+  const picker = new Picker(win, {
     isActive: () => runtime?.picking ?? false,
     onHover: (el) => runtime?.hover(el),
     onPick: (el) => runtime?.pick(el),
@@ -32,8 +32,19 @@ function boot(win: Window & typeof globalThis): void {
     loadFonts(win.document);
     const mounted = mount(win.document);
     const overlay = new Overlay(mounted.overlay);
-    runtime = new Runtime({ win, overlay, setDrawerSpace: mounted.setDrawerSpace });
-    createRoot(mounted.panel).render(
+    const onDetach = () => {
+      reactRoot.unmount();
+      overlay.dispose();
+      picker.dispose();
+      mounted.unmount();
+      runtime = null;
+      // A later injection boots the recorder again from scratch.
+      delete globals[PAGE_GLOBAL];
+      if (__WEBSCOOP_E2E__) delete (win as unknown as Record<string, unknown>).__webscoopTest;
+    };
+    runtime = new Runtime({ win, overlay, setDrawerSpace: mounted.setDrawerSpace, onDetach });
+    const reactRoot = createRoot(mounted.panel);
+    reactRoot.render(
       <RecorderProvider store={runtime.store} actions={runtime} drawerHost={mounted.drawer}>
         <ScoopRoot />
       </RecorderProvider>,

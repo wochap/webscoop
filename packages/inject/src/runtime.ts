@@ -1,13 +1,14 @@
 import {
   HOST_BINDING,
   parseHostMessage,
+  scoreFingerprint,
   type HostMessage,
   type PageMessage,
   type Path,
   type ProtocolCandidate,
   type RecorderState,
 } from '@webscoop/core/page';
-import { describeSelection, elementAt, excerpt, isOwn, resolveFirstLocal, resolveLocal } from './dom';
+import { describeSelection, elementAt, excerpt, isOwn, nodeForScore, resolveFirstLocal, resolveLocal } from './dom';
 import type { Overlay } from './overlay';
 import { Store, type Actions, type Toast, type UiState } from './store';
 import { handleKey } from './ui/App';
@@ -20,6 +21,8 @@ export interface RuntimeOptions {
   overlay: Overlay;
   /** Reserve page space for the results drawer. */
   setDrawerSpace?: (open: boolean) => void;
+  /** Remove the recorder from the page, when the host detaches. */
+  onDetach?: () => void;
 }
 
 const TOAST_MS = { ok: 4000, neutral: 4000, danger: 9000 } as const;
@@ -92,7 +95,17 @@ export class Runtime implements Actions {
       case 'session.error':
         this.toast('danger', msg.message);
         return;
+      case 'session.detach':
+        this.dispose();
+        this.opts.onDetach?.();
+        return;
     }
+  }
+
+  /** Stop listening to the page. */
+  dispose(): void {
+    this.opts.win.removeEventListener('keydown', this.onWindowKey, { capture: true });
+    this.store.setUi({ picking: false });
   }
 
   private setHost(next: RecorderState): void {
@@ -104,6 +117,8 @@ export class Runtime implements Actions {
     }
     if (!next.proposal && prev?.proposal) this.store.setUi({ level: 'proposed' });
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
+    // The focused re-pick mode opens ready to pick.
+    if (next.repickContext && !next.repickContext.picked && !prev?.repickContext && !this.store.get().ui.picking) this.startPicking();
     this.syncOverlay();
   }
 
@@ -144,7 +159,14 @@ export class Runtime implements Actions {
   };
 
   hover(el: Element | null): void {
-    this.opts.overlay.setHover(el, el ? excerpt(el) : '');
+    const ctx = this.store.get().host?.repickContext;
+    if (!ctx?.fingerprint) {
+      this.opts.overlay.setHover(el, el ? excerpt(el) : '');
+      return;
+    }
+    const score = el ? scoreFingerprint(ctx.fingerprint, nodeForScore(el)) : null;
+    this.opts.overlay.setHover(el, el ? excerpt(el) : '', score === null ? undefined : { value: score, likely: score >= ctx.threshold });
+    this.store.setUi({ hoverScore: score });
   }
 
   /** The user clicked an element while picking. */

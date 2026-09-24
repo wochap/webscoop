@@ -6,7 +6,7 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { doctorCommand } from './commands/doctor';
 import { recipesCommand } from './commands/recipes';
 import { recordCommand, type RecordCommandOptions } from './commands/record';
-import { runCommand, type RunCommandOptions } from './commands/run';
+import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
 import { loadRecorderBundle } from './bundle';
 import { chromiumOverride, type ChromiumInfo, type CliIo } from './context';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
@@ -24,6 +24,13 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 const EXIT_HELP = `
+Healing:
+  run heals selectors that stopped matching and rewrites the recipe after a
+  successful run. --no-save keeps the file, --no-heal tries only the first
+  selector, --interactive asks you to re-pick a field nothing else could find.
+  test <recipe> checks a recipe without saving; record --edit <recipe>
+  --repick <field> picks one field again.
+
 Exit codes:
   0  success
   1  error to fix or unexpected failure (bad arguments, invalid recipe, no display, browser crash)
@@ -54,7 +61,30 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--report', 'print the full run report to stderr')
+    .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
+    .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
+    .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')
+    .addHelpText(
+      'after',
+      `
+Healing: when stored selectors stop matching, the run tries the other stored
+selectors, then the element that best matches the field's fingerprint. Fields
+resolved that way are reported as "healed", and after a successful run the
+recipe file is rewritten with the working selector first (unless --no-save).`,
+    )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
+
+  program
+    .command('test')
+    .description('check a recipe on its first page: heal without saving and print each field\'s status')
+    .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
+    .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
+    .option('--profile <name>', 'browser profile name (default: the recipe name)')
+    .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .option('--json', 'print the field table as a JSON array')
+    .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 1 on error.')
+    .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
   program
     .command('record')
@@ -64,6 +94,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .option('--var <name=value>', 'set a URL template variable (repeatable); missing ones are asked for', collect, [])
     .option('--profile <name>', 'browser profile name (default: the recipe name)')
     .option('--edit <recipe>', 'edit an existing recipe, by name or path, instead of starting from a URL')
+    .option('--repick <field>', 'with --edit: pick a new location for one field, save, and exit')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .addHelpText(
@@ -71,7 +102,8 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
       `
 In the browser: p picks an element, Esc cancels, Enter confirms the found items,
 Left and Right walk the element's ancestors, Alt+Up and Alt+Down reorder fields,
-Ctrl+S saves. Close the window or press Ctrl+C here to end the session.`,
+Ctrl+S saves. Close the window or press Ctrl+C here to end the session.
+With --repick: click the field's new location, then "Use and save"; S skips, Esc aborts.`,
     )
     .action(async (template: string | undefined, opts: RecordCommandOptions) => setCode(await recordCommand(io, template, opts)));
 

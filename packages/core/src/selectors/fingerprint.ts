@@ -5,7 +5,8 @@ import { classifyToken } from './tokens';
 
 const ALLOWED = new Set(['id', 'data-testid', 'name', 'type', 'href', 'alt', 'title']);
 
-function stableAttrs(node: AnnotatedNode): Record<string, string> {
+/** Attributes kept in a fingerprint: ids and test ids that do not look hashed, names, types, digit-masked hrefs, alt, title, and ARIA. */
+export function stableAttrs(node: AnnotatedNode): Record<string, string> {
   const attrs: Record<string, string> = {};
   for (const name of Object.keys(node.attrs).sort()) {
     const value = node.attrs[name]!;

@@ -61,7 +61,7 @@ export interface Recording {
 async function connect(port: number, run: CliRun, timeoutMs = 30_000): Promise<Browser> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (run.child.exitCode !== null) throw new Error(`webscoop record exited with ${run.child.exitCode}`);
+    if (run.child.exitCode !== null) throw new Error(`webscoop exited with ${run.child.exitCode}`);
     try {
       return await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 2000 });
     } catch (error) {
@@ -85,10 +85,19 @@ async function recorderPage(browser: Browser, timeoutMs = 30_000): Promise<Page>
   }
 }
 
-/** Start `webscoop record` with a DevTools port and attach to its page. */
-export async function startRecording(scoop: Scoop, args: string[], cleanups: (() => Promise<void>)[]): Promise<Recording> {
+/**
+ * Start `webscoop record` (or `webscoop run --interactive`, whose recorder
+ * shows up when a re-pick is needed) with a DevTools port and attach to its page.
+ */
+export async function startRecording(
+  scoop: Scoop,
+  args: string[],
+  cleanups: (() => Promise<void>)[],
+  command: 'record' | 'run' = 'record',
+): Promise<Recording> {
   const port = await freePort();
-  const run = scoop.spawn(['record', ...args], { WEBSCOOP_E2E_CDP_PORT: String(port) });
+  const argv = command === 'run' ? ['run', ...args, ...(args.includes('--interactive') ? [] : ['--interactive'])] : ['record', ...args];
+  const run = scoop.spawn(argv, { WEBSCOOP_E2E_CDP_PORT: String(port) });
   const browser = await connect(port, run);
   cleanups.push(async () => {
     await browser.close().catch(() => {});

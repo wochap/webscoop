@@ -81,9 +81,10 @@ test('a missing --var exits 1 and names the variable', async ({ scoop }) => {
 test('a required field missing everywhere exits 3 with no rows', async ({ scoop }) => {
   const name = await scoop.writeRecipe(
     variant(scoop, 'price-gone', (r) => {
-      r.fields.find((f) => f.name === 'price')!.selectors = [
-        { strategy: 'testid', value: 'no-such-price', stability: 'stable' },
-      ];
+      const price = r.fields.find((f) => f.name === 'price')!;
+      price.selectors = [{ strategy: 'testid', value: 'no-such-price', stability: 'stable' }];
+      // Without a fingerprint no healing rung can find it either.
+      delete price.fingerprint;
     }),
   );
   const result = await scoop.run(['run', name, '--jsonl']);

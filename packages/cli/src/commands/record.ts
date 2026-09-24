@@ -9,7 +9,9 @@ import {
   RecorderEmitter,
   templateVariables,
   type Recipe,
+  type RecorderMode,
   type Session,
+  type StoragePort,
 } from '@webscoop/core';
 import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
@@ -27,6 +29,8 @@ export interface RecordCommandOptions {
   timeout: number;
   lockTimeout: number;
   edit?: string;
+  /** With `--edit`: re-pick only this field, then save and end. */
+  repick?: string;
 }
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -108,10 +112,19 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   const storage = new FsStorage(paths.recipesDir, io.cwd);
 
   let recipe: Recipe | undefined;
+  if (opts.repick !== undefined && !opts.edit) throw new CliError('--repick needs --edit <recipe>');
   if (opts.edit) {
     if (template) throw new CliError('pass either a URL template or --edit <recipe>, not both');
     recipe = await storage.load(opts.edit);
     template = recipe.url;
+  }
+  let mode: RecorderMode = { kind: 'full' };
+  if (opts.repick !== undefined && recipe) {
+    const fieldIndex = recipe.fields.findIndex((f) => f.name === opts.repick);
+    if (fieldIndex === -1) {
+      throw new CliError(`recipe "${recipe.name}" has no field named "${opts.repick}" (fields: ${recipe.fields.map((f) => f.name).join(', ')})`);
+    }
+    mode = { kind: 'repick', fieldIndex, reason: 'cli' };
   }
   if (!template) throw new CliError('a URL template is required (or --edit <recipe>)');
   checkTemplate(template);
@@ -153,17 +166,22 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
       : emptyDraft({ name, url: template, vars: templateVariables(template).map((v) => ({ name: v, value: values[v]! })) });
     const emitter = new RecorderEmitter();
     logEvents(io, emitter);
+    // A re-pick writes the recipe back where it was loaded from, even when that is a path.
+    const target = mode.kind === 'repick' ? storage.pathFor(opts.edit!) : null;
+    const saveTo: StoragePort = target ? { list: () => storage.list(), load: (ref) => storage.load(ref), save: async (r) => void (await storage.saveTo(target, r)) } : storage;
     const controller = new RecorderController({
       session,
-      storage,
+      storage: saveTo,
       bundle,
       draft,
       emitter,
       timeoutMs: opts.timeout,
-      pathFor: (n) => storage.pathFor(n),
+      pathFor: (n) => target ?? storage.pathFor(n),
+      mode,
     });
 
-    log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} on profile "${profile}": ${url}`);
+    if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} on profile "${profile}": ${url}`);
+    else log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} on profile "${profile}": ${url}`);
     const closed = controller.closed().then(() => 'closed' as const);
     // The user may close the window while the first page is still settling; that ends the session, it is not an error.
     const started = controller.start().then(
@@ -175,6 +193,18 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
       },
     );
     const first = await Promise.race([started, closed, interrupt]);
+    if (first === 'started' && mode.kind === 'repick') {
+      log(io, `click the new location of ${opts.repick}, then "Use and save" (S skips, Esc aborts)`);
+      const outcome = await Promise.race([controller.awaitRepick(), interrupt]);
+      controller.dispose();
+      if (outcome !== 'interrupted' && outcome.kind === 'picked') {
+        const saved = controller.state.saved;
+        log(io, `saved the new location of ${opts.repick}${saved?.path ? ` to ${saved.path}` : ''}`);
+      } else {
+        log(io, `re-pick ${outcome === 'interrupted' ? 'interrupted' : outcome.kind === 'skip' ? 'skipped' : 'aborted'}; the recipe is unchanged`);
+      }
+      return ExitCode.Ok;
+    }
     if (first === 'started') {
       log(io, 'close the browser window or press Ctrl+C to end the session');
       await Promise.race([closed, interrupt]);

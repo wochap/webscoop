@@ -14,6 +14,8 @@ export interface SerializedElement {
   tag: string;
   attrs: Record<string, string>;
   children: SerializedNode[];
+  /** Bounding box in viewport CSS pixels, rounded, when the adapter measured it. */
+  bbox?: Geometry;
 }
 
 export interface SerializedText {
@@ -77,7 +79,7 @@ export interface Geometry {
 export interface InteractiveSession extends Session {
   /** Run the script in the current page now and in every page loaded afterwards. */
   inject(source: string): Promise<void>;
-  /** Expose `window[name](msg)` to the page; the page receives the handler's result. */
+  /** Expose `window[name](msg)` to the page; the page receives the handler's result. Exposing a name again replaces its handler. */
   expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void>;
   /** Deliver a message to the injected page (`window.__webscoopPage.dispatch`). */
   dispatch(msg: unknown): Promise<void>;

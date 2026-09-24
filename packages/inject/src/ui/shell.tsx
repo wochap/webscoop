@@ -5,6 +5,7 @@ import { useActions } from './context';
 export const MODE_LABEL: Record<Mode, string> = {
   idle: 'Idle',
   picking: 'Picking',
+  repick: 'Re-pick',
   selected: 'Selected',
   items: 'Items found',
   editing: 'Editing',
@@ -14,6 +15,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 export const MODE_TONE: Record<Mode, 'neutral' | 'accent' | 'ok' | 'warn'> = {
   idle: 'neutral',
   picking: 'accent',
+  repick: 'warn',
   selected: 'accent',
   items: 'ok',
   editing: 'warn',

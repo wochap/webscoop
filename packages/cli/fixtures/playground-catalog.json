@@ -11,7 +11,15 @@
       { "strategy": "testid", "value": "product-card", "stability": "stable" },
       { "strategy": "css", "value": "article.product-card", "stability": "medium" }
     ],
-    "exclude": []
+    "exclude": [],
+    "fingerprint": {
+      "tag": "article",
+      "role": "article",
+      "textSample": "Wireless Mouse $24.99 4.5 View details",
+      "attrs": { "data-testid": "product-card", "id": "product-p01" },
+      "ancestors": ["listitem", "list", "main", "body", "html"],
+      "bbox": { "x": 32, "y": 99, "w": 282, "h": 371 }
+    }
   },
   "fields": [
     {
@@ -29,9 +37,9 @@
         "role": "heading",
         "name": "Wireless Mouse",
         "textSample": "Wireless Mouse",
-        "attrs": { "class": "product-title" },
-        "ancestors": ["article", "li", "list", "main", "body", "html"],
-        "bbox": { "x": 32, "y": 118, "w": 280, "h": 28 }
+        "attrs": {},
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 300, "w": 248, "h": 35 }
       }
     },
     {
@@ -42,7 +50,15 @@
         { "strategy": "testid", "value": "price", "stability": "stable" },
         { "strategy": "css", "value": ".product-price", "stability": "medium" }
       ],
-      "optional": false
+      "optional": false,
+      "fingerprint": {
+        "tag": "p",
+        "role": "paragraph",
+        "textSample": "$24.99",
+        "attrs": { "data-testid": "price" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 355, "w": 248, "h": 22 }
+      }
     },
     {
       "name": "url",
@@ -54,17 +70,33 @@
       ],
       "attr": "href",
       "optional": false,
-      "key": true
+      "key": true,
+      "fingerprint": {
+        "tag": "a",
+        "role": "link",
+        "name": "View details",
+        "textSample": "View details",
+        "attrs": { "href": "/p/p##" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 431, "w": 79, "h": 22 }
+      }
     },
     {
       "name": "image",
       "type": "image",
       "scope": "item",
-      "selectors": [
-        { "strategy": "css", "value": "img.product-image", "stability": "medium" }
-      ],
+      "selectors": [{"strategy": "css", "value": "img.product-image", "stability": "medium"}],
       "attr": "src",
-      "optional": false
+      "optional": false,
+      "fingerprint": {
+        "tag": "img",
+        "role": "img",
+        "name": "Wireless Mouse",
+        "textSample": "",
+        "attrs": { "alt": "Wireless Mouse" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 116, "w": 248, "h": 158 }
+      }
     },
     {
       "name": "rating",
@@ -74,7 +106,16 @@
         { "strategy": "testid", "value": "rating", "stability": "stable" },
         { "strategy": "css", "value": ".product-rating", "stability": "medium" }
       ],
-      "optional": false
+      "optional": false,
+      "fingerprint": {
+        "tag": "p",
+        "role": "paragraph",
+        "name": "Rated 4.5 out of 5",
+        "textSample": "4.5",
+        "attrs": { "aria-label": "Rated 4.5 out of 5", "data-testid": "rating" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 393, "w": 248, "h": 22 }
+      }
     },
     {
       "name": "category",
@@ -84,22 +125,23 @@
         { "strategy": "testid", "value": "category", "stability": "stable" },
         { "strategy": "css", "value": "h1.category-heading", "stability": "medium" }
       ],
-      "optional": false
+      "optional": false,
+      "fingerprint": {
+        "tag": "h1",
+        "role": "heading",
+        "name": "Electronics",
+        "textSample": "Electronics",
+        "attrs": { "data-testid": "category", "id": "category" },
+        "ancestors": ["main", "body", "html"],
+        "bbox": { "x": 32, "y": 32, "w": 879, "h": 46 }
+      }
     }
   ],
-  "pagination": {
-    "kind": "none",
-    "limit": 1,
-    "stopRules": [],
-    "delayMs": 0
-  },
+  "pagination": { "kind": "none", "limit": 1, "stopRules": [], "delayMs": 0 },
   "guards": [
     { "kind": "login", "enabled": true },
     { "kind": "captcha", "enabled": true },
     { "kind": "zero-fields", "enabled": true }
   ],
-  "healing": {
-    "fuzzyThreshold": 0.7,
-    "llm": true
-  }
+  "healing": { "fuzzyThreshold": 0.7, "llm": true }
 }

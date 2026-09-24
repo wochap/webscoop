@@ -6,3 +6,4 @@ export * from './rank';
 export * from './relativize';
 export * from './infer';
 export * from './fingerprint';
+export * from './xpath';

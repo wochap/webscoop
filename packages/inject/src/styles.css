@@ -409,3 +409,9 @@
 .ws-table td { padding: 4px 10px; border-bottom: 1px solid rgba(233, 233, 237, 0.06); font-family: var(--ws-mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-json { margin: 0; padding: 10px 12px; font-family: var(--ws-mono); font-size: 11px; white-space: pre; color: var(--ws-text-muted); }
 .ws-status { display: inline-flex; gap: 4px; align-items: center; }
+
+/* Re-pick */
+.ws-scorebar { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--ws-surface-2); }
+.ws-scorebar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--ws-accent); }
+.ws-scorebar-likely { background: var(--ws-ok); }
+.ws-scorebar-threshold { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ws-warn); }

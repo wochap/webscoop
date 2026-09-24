@@ -13,7 +13,7 @@ export function TestRunSummary({ results }: { results: TestResults }) {
   );
 }
 
-const STATUS_TONE = { ok: 'ws-stable', partial: 'ws-medium', missing: 'ws-fragile' } as const;
+const STATUS_TONE = { ok: 'ws-stable', healed: 'ws-stable', partial: 'ws-medium', missing: 'ws-fragile' } as const;
 
 export function FieldStatusList({ fields }: { fields: TestResults['fields'] }) {
   return (

@@ -16,6 +16,8 @@ export interface Mounted {
   shadows: ShadowRoot[];
   /** Reserve room for the results drawer at the bottom of the page, or release it. */
   setDrawerSpace(open: boolean): void;
+  /** Take the hosts out of the page and give the page its margin back. */
+  unmount(): void;
 }
 
 function styleShadow(shadow: ShadowRoot, text: string): void {
@@ -96,6 +98,13 @@ export function mount(doc: Document = document): Mounted {
     setDrawerSpace(open) {
       if (open) root.style.setProperty('padding-bottom', '40vh', 'important');
       else root.style.removeProperty('padding-bottom');
+    },
+    unmount() {
+      observer.disconnect();
+      for (const h of hosts) h.remove();
+      root.style.removeProperty('margin-right');
+      root.style.removeProperty('padding-bottom');
+      if (root.getAttribute('style') === '') root.removeAttribute('style');
     },
   };
 }

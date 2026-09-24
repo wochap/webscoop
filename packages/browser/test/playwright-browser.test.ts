@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TimeoutError, type SelectorCandidate, type SerializedElement, type Session } from '@webscoop/core';
+import { annotate, descendantsOf, refForNode, TimeoutError, xpathFor, type SelectorCandidate, type SerializedElement, type Session } from '@webscoop/core';
 import { FakeBrowser } from '@webscoop/core/testing';
 import { dataset, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -106,5 +106,32 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     const [card] = await session.resolve(c('testid', 'product-card'));
     const sub = (await session.snapshot(card)) as SerializedElement;
     expect(sub.attrs['data-testid']).toBe('product-card');
+  });
+
+  it('measures every element in snapshots, and positional xpaths address the same element', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const root = annotate((await session.snapshot()) as SerializedElement);
+    const cards = descendantsOf(root).filter((n) => n.attrs['data-testid'] === 'product-card');
+    expect(cards).toHaveLength(24);
+    for (const card of cards) {
+      expect(card.bbox!.w).toBeGreaterThan(0);
+      expect(card.bbox!.h).toBeGreaterThan(0);
+    }
+    const prices = descendantsOf(root).filter((n) => n.attrs['data-testid'] === 'price');
+    const byXpath = await refForNode(session, prices[6]!);
+    const byTestid = (await session.resolve(c('testid', 'price')))[6]!;
+    expect(xpathFor(prices[6]!)).toBe('/html[1]/body[1]/main[1]/ul[1]/li[7]/article[1]/p[1]');
+    expect(await session.same(byXpath!, byTestid)).toBe(true);
+
+    const fake = await new FakeBrowser({ [catalog()]: (await session.snapshot()) as SerializedElement }).open('/fake');
+    await fake.goto(catalog(), { timeoutMs: 1000 });
+    const fakeRef = await refForNode(fake, prices[6]!);
+    expect(await fake.read(fakeRef!, { mode: 'text' })).toBe(await session.read(byXpath!, { mode: 'text' }));
+
+    const [card] = await session.resolve(c('testid', 'product-card'));
+    const sub = annotate((await session.snapshot(card)) as SerializedElement);
+    const title = descendantsOf(sub).find((n) => n.tag === 'h2')!;
+    expect(xpathFor(title)).toBe('./h2[1]');
+    expect((await session.read((await refForNode(session, title, card))!, { mode: 'text' })).trim()).toBe(dataset[0]!.title);
   });
 });
