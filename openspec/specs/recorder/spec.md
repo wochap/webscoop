@@ -152,3 +152,10 @@ The recorder SHALL support a focused re-pick mode for one field. The panel SHALL
 #### Scenario: Skip in a run
 - **WHEN** the user skips during an interactive run
 - **THEN** the run continues and treats the field as missing
+
+### Requirement: Guard banner
+During an interactive run, when a guard is raised the recorder bundle SHALL render a banner across the top of the page, above host content and outside the sidebar, showing the guard kind, a one-line reason, a countdown to the guard timeout, and Continue and Abort buttons. The countdown SHALL switch to the warning tone with under 90 seconds remaining. The banner SHALL be removed when the guard clears or the run ends.
+
+#### Scenario: Banner shows and clears
+- **WHEN** a login guard is raised in an interactive run and the user logs in
+- **THEN** the banner appears with the countdown and disappears once the guard clears

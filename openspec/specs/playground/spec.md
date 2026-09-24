@@ -59,13 +59,6 @@ When `delayMs` is set by query or control, the catalog SHALL wait that many mill
 - **WHEN** `/catalog?delayMs=1500` is requested
 - **THEN** the response arrives no sooner than 1.5 seconds after the request
 
-### Requirement: Reserved routes
-The routes `/login` and `/challenge` and the query parameter `wall` SHALL be reserved for the guards change. Requesting a reserved route or parameter SHALL return HTTP 501.
-
-#### Scenario: Reserved route
-- **WHEN** `/login` is requested before the guards change exists
-- **THEN** the response is HTTP 501
-
 ### Requirement: Hostile page chrome
 `/catalog` SHALL accept a `chrome` query parameter. With `chrome=hostile` the catalog SHALL be wrapped in adversarial page chrome: a fixed header at `z-index: 99` spanning the full viewport width, a promo bar stacked under it, a cookie consent modal with a backdrop at `z-index: 2147483000` that intercepts clicks until dismissed, a light theme with a serif font and global `!important` rules on headings, links, and buttons, and a global click handler on the document that records clicks to `window.__hostClicks`. Without the parameter, the catalog SHALL render as before.
 
@@ -146,3 +139,39 @@ Without `paginate`, the catalog SHALL render all 24 products as before.
 #### Scenario: More disappears
 - **WHEN** `moreDisappears=1` is set and the button is clicked once
 - **THEN** 16 products are present and no button remains
+
+### Requirement: Login wall
+With `wall=login`, `GET /catalog` SHALL redirect with 302 to `/login?next=<original path and query>` unless the request carries a valid `ws_sess` cookie. `GET /login` SHALL render a form with `username`, `password`, and a submit button. `POST /login` SHALL set `ws_sess` and redirect to `next`, or to `/` when `next` is absent. Any credentials SHALL be accepted. `GET /logout` SHALL clear the cookie.
+
+#### Scenario: Wall redirects
+- **WHEN** `/catalog?wall=login` is requested without the cookie
+- **THEN** the response is 302 to `/login?next=%2Fcatalog%3Fwall%3Dlogin`
+
+#### Scenario: Login returns to the catalog
+- **WHEN** the form on `/login?next=%2Fcatalog%3Fwall%3Dlogin` is submitted
+- **THEN** the response sets `ws_sess` and redirects to `/catalog?wall=login`, which then renders the catalog
+
+### Requirement: Captcha wall
+With `wall=captcha`, `GET /catalog` SHALL respond with 403 and the challenge page unless the request carries a `ws_human` cookie. The challenge page SHALL contain an iframe whose `src` contains `turnstile`, an element with id `challenge-form`, the visible text `Verify you are human`, and a button `I am human` that, when clicked, sets `ws_human` via `POST /challenge` and reloads the original URL. `/challenge` SHALL also be reachable directly for inspection.
+
+#### Scenario: Challenge served
+- **WHEN** `/catalog?wall=captcha` is requested without the cookie
+- **THEN** the response is 403 and contains the turnstile iframe and the button
+
+#### Scenario: Button clears the wall
+- **WHEN** the button is clicked
+- **THEN** `ws_human` is set and the next request to `/catalog?wall=captcha` renders the catalog
+
+### Requirement: Wall after a page
+`wallAfterPage=N` SHALL restrict the wall to requests whose `page` parameter is greater than N; pages up to N SHALL render normally. It SHALL apply to both wall kinds and to the `next` pagination cookie page.
+
+#### Scenario: Wall on page 3 only
+- **WHEN** `wall=captcha&wallAfterPage=2&paginate=url` is set
+- **THEN** pages 1 and 2 render the catalog and page 3 returns the challenge
+
+### Requirement: Short interstitial
+`wall=interstitial` SHALL serve `/catalog` with HTTP 503 and a page whose visible text is under 200 characters and contains no product, until the `ws_human` cookie is present.
+
+#### Scenario: Interstitial served
+- **WHEN** `/catalog?wall=interstitial` is requested without the cookie
+- **THEN** the response is 503 with fewer than 200 visible characters

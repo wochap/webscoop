@@ -83,7 +83,7 @@ The runner SHALL produce a run report available to the CLI with: start and end t
 - **THEN** the summary line contains the page count 3 and the duplicate count 2
 
 ### Requirement: Run events
-The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
+The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
 
 #### Scenario: Event order
 - **WHEN** a run succeeds on one page
@@ -97,9 +97,17 @@ The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `fi
 - **WHEN** a run extracts two pages
 - **THEN** `page.done` for page 1 is observed before `page.advanced` for page 2, which precedes `page.loaded` for page 2
 
+#### Scenario: Guard events
+- **WHEN** a login guard is raised on page 1 and cleared
+- **THEN** `guard.raised` follows `page.loaded` and `guard.cleared` precedes the first `field.resolved`
+
 ### Requirement: Clean shutdown
-On success, failure, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits.
+On success, failure, guard timeout, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits. A run that ends while paused on a guard SHALL close the browser like any other run.
 
 #### Scenario: Interrupted run
 - **WHEN** SIGINT is received mid-run
+- **THEN** the browser closes, the lock is released, and the exit code is 1
+
+#### Scenario: Interrupted while paused
+- **WHEN** SIGINT is received while the run is paused on a guard
 - **THEN** the browser closes, the lock is released, and the exit code is 1

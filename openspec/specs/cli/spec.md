@@ -197,3 +197,28 @@ For a `url` kind recipe, a `--var` for the page parameter SHALL set the starting
 #### Scenario: Start at page 3
 - **WHEN** the page parameter is `n` and `--var n=3 --pages 2` are passed
 - **THEN** pages 3 and 4 are extracted
+
+### Requirement: Guard flags
+`webscoop run` and `webscoop test` SHALL accept `--guard-timeout <ms>` (default 600000) and `--no-guards`. `test` SHALL default to a guard timeout of 0 unless `--guard-timeout` is given, so a wall makes `test` exit 2 promptly.
+
+#### Scenario: Cron-friendly timeout
+- **WHEN** `webscoop run shop --guard-timeout 300000` hits a login wall nobody clears
+- **THEN** the process exits 2 after five minutes
+
+#### Scenario: Test hits a wall
+- **WHEN** `webscoop test shop` hits a captcha wall
+- **THEN** the process exits 2 without waiting
+
+### Requirement: Desktop notification
+When a guard is raised, the CLI SHALL send a desktop notification through `notify-send` when it is on the PATH, with critical urgency, the recipe name, the guard kind, and the page number. When `notify-send` is absent, the CLI SHALL log the same text to stderr and continue. `--no-notify` SHALL suppress notifications.
+
+#### Scenario: notify-send absent
+- **WHEN** `notify-send` is not installed and a guard is raised
+- **THEN** stderr carries the notification text and the run keeps waiting
+
+### Requirement: Exit 2 semantics
+Exit code 2 SHALL be used only when a run was paused on a guard and the guard timeout elapsed. The stderr message SHALL name the guard kind, the page, and the URL. Rows emitted before the guard SHALL remain on stdout in JSONL mode; in JSON array mode the array SHALL contain the rows of completed pages.
+
+#### Scenario: Partial JSON array on timeout
+- **WHEN** pages 1 and 2 completed and page 3 timed out on a guard in JSON array mode
+- **THEN** stdout holds an array with the rows of pages 1 and 2 and the exit code is 2
