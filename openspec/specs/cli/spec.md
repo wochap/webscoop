@@ -94,3 +94,29 @@ Every command that opens a browser SHALL check for a display first and exit 1 wi
 #### Scenario: Run without display
 - **WHEN** `webscoop run shop` is executed with no display variables set
 - **THEN** stderr explains that a display is required and the exit code is 1
+
+### Requirement: `record` command
+`webscoop record <url-template> [--name <recipe>] [--var name=value]... [--profile <name>] [--timeout <ms>]` SHALL start a recording session for the given URL template. `webscoop record --edit <recipe>` SHALL start a session for an existing recipe by name or path. The command SHALL require a display, take the profile lock like `run`, and hold the process open until the session ends. When `--name` is omitted, the session SHALL propose a name derived from the URL host and path and let the user change it before saving.
+
+#### Scenario: Record with a template variable
+- **WHEN** `webscoop record "http://127.0.0.1:4777/catalog?cat={category}"` is executed
+- **THEN** the browser opens after the user supplies `category`, and the panel shows the template
+
+#### Scenario: Edit existing recipe
+- **WHEN** `webscoop record --edit playground-catalog` is executed
+- **THEN** the session opens the recipe's URL with its fields loaded
+
+#### Scenario: Variable given on the command line
+- **WHEN** `--var category=shoes` is passed
+- **THEN** the session does not prompt for `category`
+
+### Requirement: `record` exit behavior
+The `record` command SHALL exit 0 when the session ends after a save or with no unsaved changes, exit 0 with a stderr warning naming the recipe when the session ends with unsaved changes, and exit 1 on error (invalid URL template, invalid recipe under `--edit`, display or browser failure). Ctrl+C SHALL end the session cleanly, releasing the profile lock.
+
+#### Scenario: Close after save
+- **WHEN** the user saves and closes the window
+- **THEN** the exit code is 0 and stderr reports the saved recipe path
+
+#### Scenario: Invalid template
+- **WHEN** the template is `http://host/{`
+- **THEN** stderr reports the template error and the exit code is 1

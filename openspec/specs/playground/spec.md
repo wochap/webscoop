@@ -65,3 +65,21 @@ The routes `/login`, `/challenge`, and the query parameters `wall`, `paginate`, 
 #### Scenario: Reserved route
 - **WHEN** `/login` is requested before the guards change exists
 - **THEN** the response is HTTP 501
+
+### Requirement: Hostile page chrome
+`/catalog` SHALL accept a `chrome` query parameter. With `chrome=hostile` the catalog SHALL be wrapped in adversarial page chrome: a fixed header at `z-index: 99` spanning the full viewport width, a promo bar stacked under it, a cookie consent modal with a backdrop at `z-index: 2147483000` that intercepts clicks until dismissed, a light theme with a serif font and global `!important` rules on headings, links, and buttons, and a global click handler on the document that records clicks to `window.__hostClicks`. Without the parameter, the catalog SHALL render as before.
+
+#### Scenario: Hostile chrome present
+- **WHEN** `/catalog?tier=0&chrome=hostile` is requested
+- **THEN** the response contains the fixed header, the promo bar, the cookie modal, and the global click handler
+
+#### Scenario: Default unchanged
+- **WHEN** `/catalog?tier=0` is requested
+- **THEN** the response contains none of the hostile chrome elements
+
+### Requirement: Sponsored cards
+`/catalog` SHALL accept a `sponsored` query parameter with a non-negative integer. The first N product cards SHALL gain the class `sponsored` and a `data-sponsored="true"` attribute while keeping their dataset content and order. The default is 0.
+
+#### Scenario: Two sponsored cards
+- **WHEN** `/catalog?tier=0&sponsored=2` is requested
+- **THEN** cards for p01 and p02 carry class `sponsored` and the remaining 22 do not
