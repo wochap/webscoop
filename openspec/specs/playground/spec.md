@@ -83,3 +83,21 @@ The routes `/login`, `/challenge`, and the query parameters `wall`, `paginate`, 
 #### Scenario: Two sponsored cards
 - **WHEN** `/catalog?tier=0&sponsored=2` is requested
 - **THEN** cards for p01 and p02 carry class `sponsored` and the remaining 22 do not
+
+### Requirement: Tier 1, cosmetic churn
+`/catalog?tier=1` SHALL render the same structure as tier 0 with every class name replaced by a seeded hash-like token, every `id` and `data-testid` value replaced by a seeded token, and no other change. Roles, text, tag names, attribute names, and nesting SHALL be identical to tier 0.
+
+#### Scenario: Tier 1 keeps roles and text
+- **WHEN** `/catalog?tier=1&seed=3` is requested
+- **THEN** headings, prices, and links carry the same text as tier 0 and no `data-testid` value from tier 0 is present
+
+### Requirement: Tier 2, structural churn
+`/catalog?tier=2` SHALL apply tier 1 changes and additionally: wrap each card's content in one or two extra `div` elements chosen by seed, move the price above or below the title by seed, and shuffle the order of cards by seed while keeping every card's own content intact. Roles and text SHALL be preserved.
+
+#### Scenario: Tier 2 breaks positional selectors
+- **WHEN** `/catalog?tier=2&seed=3` is requested
+- **THEN** a positional xpath recorded on tier 0 for the price resolves nothing or a different element, while the price text of every product is still present
+
+#### Scenario: Ground truth independent of order
+- **WHEN** rows are extracted from tier 2
+- **THEN** sorting them by `url` yields the dataset

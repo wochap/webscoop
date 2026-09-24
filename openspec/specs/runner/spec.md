@@ -35,11 +35,15 @@ The runner SHALL navigate to the substituted URL and wait until the document is 
 - **THEN** the run completes normally
 
 ### Requirement: Candidate resolution order
-For the item container and for each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. The candidate used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and name, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` by CSS selector, `xpath` by XPath.
+For the item container and for each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. When no candidate resolves and healing is enabled, the runner SHALL continue down the healing ladder defined by the healing capability before treating the target as missing. The candidate or healing rung used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and name, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` by CSS selector, `xpath` by XPath.
 
 #### Scenario: First candidate fails, second succeeds
 - **WHEN** a field's first candidate matches nothing and its second matches one element
 - **THEN** the field is extracted from the second candidate and the report names it as used
+
+#### Scenario: All candidates fail, fuzzy match succeeds
+- **WHEN** no candidate of a field matches and its fingerprint matches a live element above the threshold
+- **THEN** the field is extracted from that element and the report records the fuzzy outcome
 
 ### Requirement: Item scoped extraction
 When the recipe has an `item` block, the runner SHALL resolve containers, drop those matching an `exclude` selector, and resolve each `item` scoped field relative to each remaining container. A field that resolves more than one element within a container SHALL use the first. Page scoped fields SHALL be resolved once against the document and repeated on every row.
@@ -49,10 +53,10 @@ When the recipe has an `item` block, the runner SHALL resolve containers, drop t
 - **THEN** 24 rows are emitted and each carries the same `category` value
 
 ### Requirement: Missing fields
-A required field that resolves no element for a given row SHALL mark the row's field status `missing`. After the page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing.
+A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing`. After the page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once.
 
 #### Scenario: Required field absent everywhere
-- **WHEN** `price` is required and no container resolves it
+- **WHEN** `price` is required and no rung of the ladder resolves it
 - **THEN** no rows are emitted to stdout and the exit code is 3
 
 #### Scenario: Required field absent on one row
@@ -60,18 +64,26 @@ A required field that resolves no element for a given row SHALL mark the row's f
 - **THEN** 24 rows are emitted, one with `price: null`, and a warning names the row index
 
 ### Requirement: Run report
-The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, and per field the candidate used and a status among `ok`, `partial`, `missing`. The CLI SHALL print a one-line summary to stderr and the full report with `--report`.
+The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, and per field the candidate used, the healing outcome, and a status among `ok`, `healed`, `partial`, `missing`. The report SHALL state whether the recipe was written back and to which path. The CLI SHALL print a one-line summary to stderr including the number of healed fields, and the full report with `--report`.
 
 #### Scenario: Report after success
 - **WHEN** a run extracts 24 rows with all fields ok
 - **THEN** stderr ends with a summary line containing the row count and duration
 
+#### Scenario: Report after healing
+- **WHEN** a run heals two fields and writes the recipe back
+- **THEN** the summary line reports 2 healed fields and the report names the written path
+
 ### Requirement: Run events
-The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `field.resolved`, `row.emitted`, `page.done`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
+The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
 
 #### Scenario: Event order
 - **WHEN** a run succeeds on one page
 - **THEN** events are observed in the order `run.start`, `page.loaded`, `field.resolved` (one or more), `row.emitted` (one or more), `page.done`, `run.done`
+
+#### Scenario: Healing events
+- **WHEN** a field heals and the recipe is written back
+- **THEN** `field.healed` is observed before that field's `field.resolved`, and `recipe.saved` is observed before `run.done`
 
 ### Requirement: Clean shutdown
 On success, failure, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits.

@@ -120,3 +120,36 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 #### Scenario: Invalid template
 - **WHEN** the template is `http://host/{`
 - **THEN** stderr reports the template error and the exit code is 1
+
+### Requirement: Healing flags on `run`
+`webscoop run` SHALL accept `--no-heal` (try only the first candidate per target, never promote), `--no-save` (heal but never write the recipe back), and `--interactive` (open the recorder's re-pick mode when a required target cannot be healed, instead of failing). `--interactive` SHALL require a display like every browser command and SHALL wait for the user without a timeout.
+
+#### Scenario: Default heals and saves
+- **WHEN** `webscoop run shop` heals a field on a successful run
+- **THEN** the recipe file in the recipes directory is updated
+
+#### Scenario: No-save keeps the file
+- **WHEN** `webscoop run shop --no-save` heals a field
+- **THEN** rows are emitted and the recipe file is unchanged
+
+#### Scenario: Interactive re-pick
+- **WHEN** `webscoop run shop --interactive` cannot heal `price`
+- **THEN** the browser shows the re-pick panel for `price` and the run continues after the user picks
+
+### Requirement: `test` command
+`webscoop test <recipe> [--var name=value]... [--profile <name>] [--timeout <ms>] [--json]` SHALL run the recipe on its first page with healing enabled and write-back disabled, print a per-field table to stdout with name, status, matches, and the selector or rung used, and exit 0 when every required field resolved on at least one row, 3 when a required field is unresolved, 1 on error. With `--json` the table SHALL be a JSON array. No rows SHALL be printed.
+
+#### Scenario: Healthy recipe
+- **WHEN** `webscoop test playground-catalog` runs against tier 0
+- **THEN** every field shows `ok` and the exit code is 0
+
+#### Scenario: Broken field
+- **WHEN** a required field cannot be resolved by any rung
+- **THEN** its row shows `missing` and the exit code is 3
+
+### Requirement: Re-pick from the command line
+`webscoop record --edit <recipe> --repick <field>` SHALL open the recipe's page in the recorder's re-pick mode focused on that field, save the new selection into the recipe on confirmation, and exit 0. An unknown field name SHALL exit 1 naming the field.
+
+#### Scenario: Re-pick a field
+- **WHEN** `webscoop record --edit shop --repick price` is executed and the user picks the new price element
+- **THEN** the recipe's `price` selectors and fingerprint are replaced and the exit code is 0

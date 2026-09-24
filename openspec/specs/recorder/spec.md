@@ -137,3 +137,18 @@ Closing the browser window or pressing Ctrl+C SHALL end the session. If the draf
 #### Scenario: Unsaved close
 - **WHEN** the user closes the window with unsaved fields
 - **THEN** stderr warns that the draft was not saved and the exit code is 0
+
+### Requirement: Re-pick mode
+The recorder SHALL support a focused re-pick mode for one field. The panel SHALL replace its body with the field's name, its old primary selector, its last known sample value, and its stored fingerprint summary, and prompt the user to click the new location. While hovering, the overlay tag SHALL show the fingerprint similarity score of the hovered element, and the panel SHALL mark scores at or above the recipe threshold as likely. Confirming SHALL replace the field's selectors with freshly generated candidates for the picked element, the picked element's selector first, and refresh the fingerprint. The mode SHALL offer skip and abort. In a run, confirming resumes the run; from `record --repick`, confirming saves the recipe.
+
+#### Scenario: Score shown on hover
+- **WHEN** re-pick is active for `price` and the user hovers the new price element
+- **THEN** the overlay tag shows a score at or above the threshold and the panel marks it likely
+
+#### Scenario: Confirm replaces selectors
+- **WHEN** the user clicks the new element and confirms
+- **THEN** the field's first candidate resolves that element and the fingerprint reflects it
+
+#### Scenario: Skip in a run
+- **WHEN** the user skips during an interactive run
+- **THEN** the run continues and treats the field as missing
