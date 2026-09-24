@@ -52,7 +52,8 @@ export function loadRecipe(json: string | unknown, source = '<recipe>'): Recipe 
   return result.recipe;
 }
 
-/** Serialize a recipe as stable, human editable JSON. */
+/** Serialize a recipe as stable, human editable JSON. An empty `steps` list is left out, so recipes without steps keep their shape. */
 export function saveRecipe(recipe: Recipe): string {
-  return `${JSON.stringify(recipe, null, 2)}\n`;
+  const { steps, ...rest } = recipe;
+  return `${JSON.stringify(steps.length > 0 ? recipe : rest, null, 2)}\n`;
 }

@@ -10,6 +10,7 @@ import {
 } from '@webscoop/core/page';
 import { describeSelection, elementAt, excerpt, isOwn, nodeForScore, resolveFirstLocal, resolveLocal } from './dom';
 import type { Overlay } from './overlay';
+import type { ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
 import { handleKey } from './ui/App';
 
@@ -23,6 +24,8 @@ export interface RuntimeOptions {
   setDrawerSpace?: (open: boolean) => void;
   /** Remove the recorder from the page, when the host detaches. */
   onDetach?: () => void;
+  /** Report typing the browse observer holds back, before browse mode ends. */
+  flushBrowse?: () => void;
 }
 
 const TOAST_MS = { ok: 4000, neutral: 4000, danger: 9000 } as const;
@@ -95,6 +98,10 @@ export class Runtime implements Actions {
       case 'session.error':
         this.toast('danger', msg.message);
         return;
+      case 'step.replayResult':
+        this.setHost(msg.state);
+        this.toast(msg.ok ? 'ok' : 'danger', msg.message);
+        return;
       case 'session.detach':
         this.dispose();
         this.opts.onDetach?.();
@@ -105,7 +112,7 @@ export class Runtime implements Actions {
   /** Stop listening to the page. */
   dispose(): void {
     this.opts.win.removeEventListener('keydown', this.onWindowKey, { capture: true });
-    this.store.setUi({ picking: false });
+    this.store.setUi({ picking: false, browsing: false });
   }
 
   private setHost(next: RecorderState): void {
@@ -117,6 +124,7 @@ export class Runtime implements Actions {
     }
     if (!next.proposal && prev?.proposal) this.store.setUi({ level: 'proposed' });
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
+    if (next.repickStep !== null && (prev?.repickStep ?? null) === null && !this.store.get().ui.picking) this.startPicking();
     // The focused re-pick mode opens ready to pick.
     if (next.repickContext && !next.repickContext.picked && !prev?.repickContext && !this.store.get().ui.picking) this.startPicking();
     this.syncOverlay();
@@ -147,6 +155,7 @@ export class Runtime implements Actions {
   }
 
   startPicking = (): void => {
+    if (this.browsing) this.stopBrowsing();
     this.store.setUi({ picking: true, menu: null });
     this.opts.overlay.setHover(null);
   };
@@ -157,6 +166,37 @@ export class Runtime implements Actions {
     this.opts.overlay.setHover(null);
     void this.send({ kind: 'picker.cancel' });
   };
+
+  // Browsing -------------------------------------------------------------------
+
+  get browsing(): boolean {
+    return this.store.get().ui.browsing;
+  }
+
+  startBrowsing = (): void => {
+    if (this.picking) this.cancelPicking();
+    this.store.setUi({ browsing: true, menu: null });
+  };
+
+  stopBrowsing = (): void => {
+    if (!this.browsing) return;
+    this.opts.flushBrowse?.();
+    this.store.setUi({ browsing: false });
+  };
+
+  /**
+   * The user acted on the page while browsing: send the step at once, in the
+   * same task as the event, so a navigation the action starts cannot drop it.
+   */
+  record(action: ObservedAction): void {
+    const { selection } = describeSelection(action.el, [], this.doc);
+    const candidates = selection.candidates.map((c) => ({ ...c, count: resolveLocal(c, undefined, this.doc).length }));
+    void this.send({
+      kind: 'draft.addStep',
+      step: { kind: action.kind, ...('value' in action ? { value: action.value } : {}) },
+      selection: { ...selection, candidates },
+    });
+  }
 
   hover(el: Element | null): void {
     const ctx = this.store.get().host?.repickContext;

@@ -152,3 +152,53 @@ describe('FakeBrowser page text and focus', () => {
     expect((session as unknown as { focused: number }).focused).toBe(1);
   });
 });
+
+describe('FakeBrowser page actions', () => {
+  const modal = () =>
+    h('html', {}, h('body', {}, h('div', { id: 'modal' }, h('button', { id: 'accept' }, 'Accept all')), h('ul', { id: 'list' })));
+  const revealed = () => h('html', {}, h('body', {}, h('ul', { id: 'list' }, h('li', {}, 'Mouse'), h('li', {}, 'Keyboard'))));
+
+  it('drops a modal when its button is clicked', async () => {
+    const browser = new FakeBrowser({ [PAGE]: { dom: modal(), on: { click: (el) => (el?.attrs.id === 'accept' ? revealed() : undefined) } } });
+    const session = await browser.open('/p');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    expect(await session.resolve(c('css', 'li'))).toHaveLength(0);
+    await session.click((await session.resolve(c('id', 'accept')))[0]!);
+    expect(await session.resolve(c('id', 'modal'))).toHaveLength(0);
+    expect(await texts(session, c('css', 'li'))).toEqual(['Mouse', 'Keyboard']);
+    expect(browser.clicks).toHaveLength(1);
+  });
+
+  it('fills, selects, and presses, navigating on a redirect', async () => {
+    const form = h(
+      'html',
+      {},
+      h('body', {}, h('input', { name: 'q' }), h('select', { id: 'sort' }, h('option', { value: 'a' }, 'Name'), h('option', { value: 'p' }, 'Price'))),
+    );
+    const browser = new FakeBrowser({
+      [PAGE]: { dom: form, on: { press: (el, key) => (key === 'Enter' && el?.attrs.name === 'q' ? { redirect: `/search?q=${el.attrs.value}` } : undefined) } },
+      'https://shop.test/search?q=mouse': revealed(),
+    });
+    const session = await browser.open('/p');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    const [input] = await session.resolve(c('css', 'input'));
+    await session.fill(input!, 'mouse');
+    expect(await session.read(input!, { attr: 'value', mode: 'text' })).toBe('mouse');
+    const [select] = await session.resolve(c('id', 'sort'));
+    await session.selectOption(select!, 'Price');
+    await expect(session.selectOption(select!, 'Rating')).rejects.toThrow(/no option/);
+    await session.press('Enter');
+    const info = await session.settle({ timeoutMs: 1000, previousUrl: PAGE });
+    expect(info.url).toBe('https://shop.test/search?q=mouse');
+    expect(browser.actions.map((a) => `${a.kind}:${a.value}`)).toEqual(['fill:mouse', 'select:Price', 'press:Enter']);
+  });
+
+  it('swaps in a late DOM after its delay', async () => {
+    const browser = new FakeBrowser({ [PAGE]: { dom: modal(), later: { afterMs: 30, dom: revealed() } } });
+    const session = await browser.open('/p');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    expect(await session.resolve(c('css', 'li'))).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(await session.resolve(c('css', 'li'))).toHaveLength(2);
+  });
+});

@@ -22,6 +22,11 @@ export function applyPromotions(recipe: Recipe, promotions: readonly Promotion[]
       case 'pagination':
         if (out.pagination.target) out.pagination.target = { ...out.pagination.target, ...patch };
         break;
+      case 'step': {
+        const step = out.steps[p.target.index];
+        if (step?.target) out.steps[p.target.index] = { ...step, target: { ...step.target, ...patch } };
+        break;
+      }
     }
   }
   return out;

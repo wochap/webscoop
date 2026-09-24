@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import {
   DEFAULT_GUARD_TIMEOUT_MS,
+  fillText,
   firstPageUrl,
   type GuardBannerHandler,
   type GuardOptions,
@@ -21,6 +22,8 @@ import {
   Runner,
   type RunReport,
   type SelectorCandidate,
+  type StepOptions,
+  type StepReport,
 } from '@webscoop/core';
 import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
@@ -60,6 +63,13 @@ export interface RunCommandOptions {
   guards?: boolean;
   /** False with `--no-notify`. */
   notify?: boolean;
+  /** `--skip-steps`: replay none of the recipe's steps. */
+  skipSteps?: boolean;
+}
+
+/** Step options for the runner from `--skip-steps`. */
+export function stepsFromFlags(opts: { skipSteps?: boolean }): StepOptions {
+  return { enabled: opts.skipSteps !== true };
 }
 
 /** Guard options for the runner from `--guard-timeout`, `--no-guards`, and `--no-notify`. */
@@ -111,7 +121,9 @@ export function summary(report: RunReport): string {
   const cleared = report.guards.filter((g) => g.cleared).length;
   const guards = cleared > 0 ? `, ${cleared} guard${cleared === 1 ? '' : 's'} cleared` : '';
   const duplicates = report.duplicateCount > 0 ? `, ${report.duplicateCount} duplicate${report.duplicateCount === 1 ? '' : 's'} dropped` : '';
-  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates} in ${seconds}s (${report.recipe})`;
+  const skippedSteps = report.steps.filter((s) => s.outcome === 'skipped').length;
+  const skipped = skippedSteps > 0 ? `, ${skippedSteps} step${skippedSteps === 1 ? '' : 's'} skipped` : '';
+  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates}${skipped} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -130,6 +142,14 @@ export function describeOutcome(outcome: HealOutcome, selector: SelectorCandidat
     case 'unresolved':
       return 'unresolved';
   }
+}
+
+/** One stderr line for a replayed or skipped step: index, kind, page, outcome, and how its target resolved. */
+export function formatStep(step: StepReport): string {
+  const name = `step ${step.index}${step.label ? ` "${step.label}"` : ''} (${step.kind}) on page ${step.page}`;
+  const how = step.heal ? `, ${describeOutcome(step.heal, step.candidate)}` : '';
+  const notes = step.notes && step.notes.length > 0 ? ` (${step.notes.join('; ')})` : '';
+  return `${name}: ${step.outcome}${step.outcome === 'skipped' ? '' : how}${notes}`;
 }
 
 /** Where rows go: stdout or `--out`, JSON array or streamed JSONL. */
@@ -190,6 +210,7 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
   const vars = parseVars(opts.var);
   try {
     firstPageUrl(recipe, vars);
+    for (const step of recipe.steps) if (step.kind === 'type' && step.value) fillText(step.value, recipe.vars, vars);
   } catch (error) {
     if (error instanceof MissingVariableError) {
       throw new CliError(`${error.message}; pass --var ${error.names[0]}=<value>`);
@@ -216,6 +237,8 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
   emitter.on('guard.cleared', (e) => log(io, `guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
   emitter.on('guard.timeout', (e) => log(io, `guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
+  emitter.on('step.replayed', (e) => log(io, formatStep(e.step)));
+  emitter.on('step.skipped', (e) => log(io, formatStep(e.step)));
   emitter.on('field.healed', (e) =>
     log(io, `healed ${e.target}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
   );
@@ -285,6 +308,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       healing,
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
+      steps: stepsFromFlags(opts),
       saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
       ...(openOptions ? { openOptions } : {}),
       ...(repick ? { repick } : {}),
@@ -328,6 +352,8 @@ export interface TestCommandOptions {
   guards?: boolean;
   /** False with `--no-notify`. */
   notify?: boolean;
+  /** `--skip-steps`: replay none of the recipe's steps. */
+  skipSteps?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -419,13 +445,15 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       guards: guardsFromFlags(io, opts, 0),
+      steps: stepsFromFlags(opts),
       ...(port !== undefined ? { openOptions: { remoteDebuggingPort: port } } : {}),
     });
     const result = await runner.run();
     const rows = testRows(result.report);
     io.stdout.write(opts.json ? `${JSON.stringify(rows, null, 2)}\n` : formatTable(rows));
     if (result.ok) {
-      log(io, `every required field resolved (${result.report.rowCount} rows, ${result.report.healed} healed, nothing written)`);
+      const skipped = result.report.steps.filter((s) => s.outcome === 'skipped').length;
+      log(io, `every required field resolved (${result.report.rowCount} rows, ${result.report.healed} healed${skipped > 0 ? `, ${skipped} step${skipped === 1 ? '' : 's'} skipped` : ''}, nothing written)`);
       return ExitCode.Ok;
     }
     log(io, `test failed (${result.reason}): ${result.message}`);

@@ -7,6 +7,8 @@ import {
   GUARD_KINDS,
   PAGINATION_KINDS,
   STABILITIES,
+  STEP_KINDS,
+  STEP_WHENS,
   STOP_RULES,
   STRATEGIES,
 } from '../recipe/constants';
@@ -119,17 +121,31 @@ export const DraftItemSchema = z.object({
   total: z.nullable(count()),
 });
 
+const TargetSchema = z.object({ selectors: z.array(CandidateSchema).check(z.minLength(1)), fingerprint: z.optional(ProtocolFingerprintSchema) });
+
 const LimitSchema = z.union([z.int().check(z.positive()), z.literal('all')]);
 const ParamSchema = z.object({ name: z.string(), start: z.int(), step: z.int() });
 const StopRulesSchema = z.array(z.enum(STOP_RULES));
 
 export const DraftPaginationSchema = z.object({
   kind: z.enum(PAGINATION_KINDS),
-  target: z.optional(z.object({ selectors: z.array(CandidateSchema).check(z.minLength(1)), fingerprint: z.optional(ProtocolFingerprintSchema) })),
+  target: z.optional(TargetSchema),
   param: z.optional(ParamSchema),
   limit: LimitSchema,
   stopRules: StopRulesSchema,
   delayMs: z.int().check(z.nonnegative()),
+});
+
+export const DraftStepSchema = z.object({
+  kind: z.enum(STEP_KINDS),
+  target: z.optional(TargetSchema),
+  value: z.optional(z.string()),
+  when: z.enum(STEP_WHENS),
+  optional: z.boolean(),
+  label: z.optional(z.string()),
+  /** Matches of the target's primary selector on the current page, null until counted or without a target. */
+  count: z.nullable(count()),
+  error: z.optional(z.string()),
 });
 
 export const ErrorEntrySchema = z.object({ path: z.string(), message: z.string() });
@@ -141,6 +157,7 @@ export const DraftSchema = z.object({
   vars: z.array(VarValueSchema),
   item: z.nullable(DraftItemSchema),
   fields: z.array(DraftFieldSchema),
+  steps: z._default(z.array(DraftStepSchema), []),
   pagination: z.nullable(DraftPaginationSchema),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
@@ -203,6 +220,8 @@ export const RecorderStateSchema = z.object({
   proposal: z.nullable(ProposalSchema),
   /** Field index waiting for a re-pick. */
   repick: z.nullable(index()),
+  /** Step index waiting for a re-pick. */
+  repickStep: z._default(z.nullable(index()), null),
   /** Set in the focused re-pick mode. */
   repickContext: z._default(z.nullable(RepickContextSchema), null),
   /** Set while an interactive run is paused on a guard. */
@@ -220,6 +239,22 @@ const FieldPatchSchema = z.object({
   attr: z.optional(z.nullable(z.string())),
   optional: z.optional(z.boolean()),
   key: z.optional(z.boolean()),
+});
+
+const StepPatchSchema = z.object({
+  kind: z.optional(z.enum(STEP_KINDS)),
+  value: z.optional(z.nullable(z.string())),
+  when: z.optional(z.enum(STEP_WHENS)),
+  optional: z.optional(z.boolean()),
+  label: z.optional(z.nullable(z.string())),
+});
+
+/** A step recorded on the page: its kind and value; the target comes from the selection, or from the picked element when absent. */
+const NewStepSchema = z.object({
+  kind: z.enum(STEP_KINDS),
+  value: z.optional(z.string()),
+  when: z.optional(z.enum(STEP_WHENS)),
+  optional: z.optional(z.boolean()),
 });
 
 export const PaginationPatchSchema = z.object({
@@ -250,7 +285,12 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.updateField', { index: index(), patch: FieldPatchSchema }),
   msg('draft.removeField', { index: index() }),
   msg('draft.moveField', { from: index(), to: index() }),
-  msg('draft.repickField', { index: z.nullable(index()) }),
+  msg('draft.repickTarget', { target: z.enum(['field', 'step']), index: z.nullable(index()) }),
+  msg('draft.addStep', { step: NewStepSchema, selection: z.optional(z.nullable(SelectionSchema)) }),
+  msg('draft.updateStep', { index: index(), patch: StepPatchSchema }),
+  msg('draft.removeStep', { index: index() }),
+  msg('draft.moveStep', { from: index(), to: index() }),
+  msg('draft.replayStep', { index: index() }),
   msg('draft.markPagination', {}),
   msg('draft.updatePagination', { patch: PaginationPatchSchema }),
   msg('draft.clearPagination', {}),
@@ -278,6 +318,8 @@ export const HostMessageSchema = z.discriminatedUnion('kind', [
     state: RecorderStateSchema,
   }),
   msg('session.error', { message: z.string() }),
+  /** How replaying one step on the live page went, for a toast. */
+  msg('step.replayResult', { index: index(), ok: z.boolean(), message: z.string(), state: RecorderStateSchema }),
   /** Remove the recorder from the page; the host keeps the session. */
   msg('session.detach', {}),
 ]);
@@ -296,6 +338,9 @@ export type VarValue = z.infer<typeof VarValueSchema>;
 export type DraftField = z.infer<typeof DraftFieldSchema>;
 export type DraftItem = z.infer<typeof DraftItemSchema>;
 export type DraftPagination = z.infer<typeof DraftPaginationSchema>;
+export type DraftStep = z.infer<typeof DraftStepSchema>;
+export type StepPatch = z.infer<typeof StepPatchSchema>;
+export type NewStep = z.infer<typeof NewStepSchema>;
 export type Draft = z.infer<typeof DraftSchema>;
 export type SelectedView = z.infer<typeof SelectedSchema>;
 export type TestResults = z.infer<typeof TestResultsSchema>;

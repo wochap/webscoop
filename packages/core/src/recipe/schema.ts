@@ -6,11 +6,13 @@ import {
   PAGINATION_KINDS,
   SCHEMA_VERSION,
   STABILITIES,
+  STEP_KINDS,
+  STEP_WHENS,
   STOP_RULES,
   STRATEGIES,
 } from './constants';
 
-export { FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STOP_RULES, STRATEGIES };
+export { FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STEP_KINDS, STEP_WHENS, STOP_RULES, STRATEGIES };
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -65,14 +67,15 @@ export const FieldSchema = z.object({
   fingerprint: FingerprintSchema.optional(),
 });
 
+/** An element the runner acts on or waits for: ranked selectors plus a fingerprint for healing. */
+export const TargetSchema = z.object({
+  selectors: z.array(SelectorCandidateSchema).min(1),
+  fingerprint: FingerprintSchema.optional(),
+});
+
 export const PaginationSchema = z.object({
   kind: oneOf('pagination kind', PAGINATION_KINDS).default('none'),
-  target: z
-    .object({
-      selectors: z.array(SelectorCandidateSchema).min(1),
-      fingerprint: FingerprintSchema.optional(),
-    })
-    .optional(),
+  target: TargetSchema.optional(),
   param: z
     .object({
       name: z.string().regex(IDENTIFIER),
@@ -95,6 +98,16 @@ export const HealingSchema = z.object({
   llm: z.boolean().default(true),
 });
 
+/** A recorded action replayed before extraction. Which kinds need a target or value is checked across fields. */
+export const StepSchema = z.object({
+  kind: oneOf('step kind', STEP_KINDS),
+  target: TargetSchema.optional(),
+  value: z.string().optional(),
+  when: oneOf('step when', STEP_WHENS).default('first-page'),
+  optional: z.boolean().default(false),
+  label: z.string().min(1).optional(),
+});
+
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
 
 export const RecipeSchema = z.object({
@@ -104,6 +117,7 @@ export const RecipeSchema = z.object({
   vars: z.array(VarSchema).default([]),
   item: ItemSchema.optional(),
   fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field'),
+  steps: z.array(StepSchema).default([]),
   pagination: PaginationSchema.default(() => PaginationSchema.parse({})),
   guards: z.array(GuardSchema).default(defaultGuards),
   healing: HealingSchema.default(() => HealingSchema.parse({})),
@@ -118,6 +132,10 @@ export type RecipeItem = z.infer<typeof ItemSchema>;
 export type RecipeField = z.infer<typeof FieldSchema>;
 export type FieldType = RecipeField['type'];
 export type FieldScope = RecipeField['scope'];
+export type Target = z.infer<typeof TargetSchema>;
+export type Step = z.infer<typeof StepSchema>;
+export type StepKind = Step['kind'];
+export type StepWhen = Step['when'];
 export type Pagination = z.infer<typeof PaginationSchema>;
 export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;

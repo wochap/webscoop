@@ -48,6 +48,23 @@ describe('shortcuts', () => {
     expect(shortcutFor(key('Escape'), ctx())).toBeNull();
   });
 
+  it('toggles browse mode with b and leaves it with Esc', () => {
+    expect(shortcutFor(key('b'), ctx())).toBe('browse');
+    expect(shortcutFor(key('B'), ctx({ browsing: true }))).toBe('stopBrowse');
+    expect(shortcutFor(key('Escape'), ctx({ browsing: true }))).toBe('stopBrowse');
+    expect(shortcutFor(key('Escape'), ctx({ browsing: true, picking: true }))).toBe('cancel');
+    expect(shortcutFor(key('b'), ctx({ typing: true }))).toBeNull();
+    expect(shortcutFor(key('b'), ctx({ picking: true }))).toBeNull();
+    expect(shortcutFor(key('b'), ctx({ repicking: true }))).toBeNull();
+  });
+
+  it('moves the focused step with Alt+Up and Alt+Down before the focused field', () => {
+    expect(shortcutFor(key('ArrowUp', { alt: true }), ctx({ focusedStep: 1 }))).toBe('moveStepUp');
+    expect(shortcutFor(key('ArrowDown', { alt: true }), ctx({ focusedStep: 0, focusedField: 2 }))).toBe('moveStepDown');
+    expect(shortcutFor(key('ArrowDown', { alt: true }), ctx({ focusedStep: null, focusedField: 2 }))).toBe('moveDown');
+    expect(shortcutFor(key('x', { alt: true }), ctx({ focusedStep: 1 }))).toBeNull();
+  });
+
   it('walks a breadcrumb trail', () => {
     const trail = [{ path: [1] }, { path: [1, 0] }, { path: [1, 0, 3] }];
     expect(walkTrail(trail, [1, 0, 3], -1)).toEqual({ path: [1, 0] });

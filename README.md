@@ -88,10 +88,10 @@ webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
-                      [--guard-timeout ms] [--no-guards] [--no-notify]
+                      [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
 webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
-                       [--guard-timeout ms] [--no-guards] [--no-notify]
+                       [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop recipes [--json]
 webscoop doctor
@@ -115,6 +115,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
 - `--guard-timeout`, `--no-guards`, and `--no-notify` control guards; see below.
+- `--skip-steps` replays none of the recipe's steps; see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
@@ -256,6 +257,49 @@ kind, page, URL, wait, cleared), and counted in the summary line.
 webscoop run shop --guard-timeout 300000 >> rows.json   # cron: give up after five minutes, exit 2
 ```
 
+### Steps
+
+Some pages need a few actions before the data shows: accept a cookie banner,
+type a search term, open a tab, choose a sort order. A recipe records them as
+`steps`, and every run replays them.
+
+- `click` a button, link, or tab; `type` text into an input (the value may use
+  `{variable}` placeholders, filled from `--var` or the default); `select` an
+  option of a `select` by value or visible label; `press` a key (`Enter`,
+  `Escape`, `Tab`, or one character) on an element or on whatever has focus;
+  `wait` a number of milliseconds or until an element shows up.
+- `first-page` steps (the default) run once, after the first page loads and its
+  guards clear. `every-page` steps run after every page navigation, including
+  the first, for content a page hides again on each load. Steps run in order,
+  and the page settles after each one before extraction.
+- Step targets go through the same healing ladder as fields (stored selectors,
+  fingerprint, model) and are written back when they heal. `every-page` steps
+  reuse what worked on the first page until it stops matching.
+- When a step's element is gone, an `optional` step is skipped and reported; a
+  required one fails the run with exit 3 naming the step. A step that
+  navigates (a search submitted with Enter) is followed: guards are checked on
+  the new page, and extraction happens on the page the steps end on.
+
+Stderr prints one line per replayed or skipped step (`step 0 (click) on page
+1: ok, candidate 0: role=button|Accept all`), the summary line counts skipped
+steps, and `--report` lists every step with its page and outcome (`ok`,
+`healed`, `skipped`, `failed`). `test` replays steps like a run, so its result
+matches what a run will do. `--skip-steps` turns them off, to see what the
+page looks like without them.
+
+In the recorder, press `b` (or **Record steps**) to browse the page normally
+while the panel records what you do: a click on a button, link, or tab becomes
+a `click` step, typing into an input becomes one `type` step with the final
+value, a `select` change becomes a `select` step, and Enter in an input becomes
+a `press` step. Clicks in the panel are never recorded; `b` or `Esc` stops. A
+picked element can also be added with **Record as step**, which does not
+perform the action. In the steps list, edit the value (click a `{variable}`
+chip to insert it), switch `every page` and `optional`, reorder by drag or
+`Alt`+`Up` / `Alt`+`Down`, delete, and replay one step on the live page with
+▶. A step whose element no longer matches shows the zero-match warning with
+**Re-pick**. The panel's **Test run** does not replay steps: you already
+performed them on the live page.
+
 ### Checking a recipe
 
 ```sh
@@ -263,7 +307,8 @@ webscoop test shop            # table on stdout, exit 0 or 3
 webscoop test shop --json     # the same as a JSON array
 ```
 
-`test` runs the recipe's first page with healing on and write-back off, prints
+`test` runs the recipe's first page with healing on and write-back off, replays
+its steps (unless `--skip-steps`), prints
 one line per target (`item` and every field) with its status, how many rows it
 resolved in, and the selector or rung that found it, and prints no rows. It
 exits 0 when every required field resolved on at least one row, 3 when one did
@@ -343,11 +388,12 @@ recipe under `--edit`, no display, browser failure).
 | Key | In the panel |
 | --- | ------------ |
 | `p` | start picking |
-| `Esc` | cancel picking, close a menu |
+| `b` | record steps while you use the page (browse mode), or stop |
+| `Esc` | cancel picking, close a menu, stop browse mode |
 | `Alt`+click | pick through overlays while picking |
 | `Enter` | confirm the proposed item container |
 | `Left` / `Right` | walk the selection up and back down its ancestors |
-| `Alt`+`Up` / `Alt`+`Down` | move the focused field |
+| `Alt`+`Up` / `Alt`+`Down` | move the focused field or step |
 | `Ctrl+S` | save |
 | `s` | skip the field (re-pick mode) |
 | `Esc` | stop picking, then abort (re-pick mode) |
@@ -462,6 +508,22 @@ used by the end-to-end tests, is
 - `guards`: `[{ "kind": "login" | "captcha" | "zero-fields", "enabled" }]`,
   all enabled by default; `enabled: false` turns one guard off for this
   recipe (see Guards).
+- `steps`: ordered actions replayed before extraction (see Steps), default
+  `[]`. Each has `kind` (`click`, `type`, `select`, `press`, `wait`), `target`
+  (`selectors` and optional `fingerprint`, required for `click`, `type`, and
+  `select`), `value` (required for `type`, `select`, and `press`; for `wait`
+  a number of milliseconds when there is no target; `{variable}` placeholders
+  in a `type` value must be declared in `vars`), `when` (`first-page` or
+  `every-page`, default `first-page`), `optional` (default false), and an
+  optional `label` used in logs.
+
+```json
+"steps": [
+  { "kind": "click", "target": { "selectors": [{ "strategy": "role", "value": "button|Accept all", "stability": "stable" }] }, "optional": true },
+  { "kind": "type", "target": { "selectors": [{ "strategy": "css", "value": "input[name=\"q\"]", "stability": "medium" }] }, "value": "{q}" },
+  { "kind": "press", "value": "Enter" }
+]
+```
 
 ## Playground
 
@@ -517,6 +579,18 @@ reloads) until `ws_human` is set; `/challenge` shows the same page directly.
 until `ws_human` is set. `wallAfterPage=N` raises the wall only on pages after
 N (the `page` parameter, or the `ws_page` cookie of the `next` kind), so
 `wall=captcha&wallAfterPage=2&paginate=url` walls page 3 only.
+
+Gates for steps keep the products out of the DOM until an action, so a recipe
+without the step finds nothing (exit 3). `gate=cookie` shows a consent modal
+with a backdrop and an `Accept all` button (`#consent-accept`); the list waits
+in a `template` until the click, which stores `ws_consent` in `localStorage`,
+so later loads show no modal. `gate=search` shows a `GET` search form with an
+input named `q` above an empty list; `q=<text>` lists the products whose title
+contains the text, case-insensitive, in dataset order, and keeps the input
+filled. `gate=tabs` shows two `role="tab"` buttons, `About` (active) and
+`Products`; the list is inserted into the Products panel when that tab is
+clicked, and nothing persists, so every page load needs the click. Gates
+compose with tiers (their classes and ids churn too), `paginate`, and walls.
 
 ## Layout
 

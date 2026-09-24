@@ -1,6 +1,6 @@
 import type { Crumb, PageMessage, Path, RecorderState } from '@webscoop/core/page';
 
-export type Mode = 'idle' | 'picking' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
+export type Mode = 'idle' | 'picking' | 'browsing' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
 
 export interface Toast {
   id: number;
@@ -10,10 +10,14 @@ export interface Toast {
 
 export interface UiState {
   picking: boolean;
+  /** Browse mode: the page works normally and clicks, typing, and key presses are recorded as steps. */
+  browsing: boolean;
   /** Breadcrumb of the element originally picked, so Right can walk back down. */
   trail: Crumb[];
   /** Field row that has keyboard focus, for Alt+Up and Alt+Down. */
   focusedField: number | null;
+  /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
+  focusedStep: number | null;
   /** Open menu id (for example a type select); Esc closes it. */
   menu: string | null;
   drawerOpen: boolean;
@@ -30,8 +34,10 @@ export interface UiState {
 
 export const initialUi: UiState = {
   picking: false,
+  browsing: false,
   trail: [],
   focusedField: null,
+  focusedStep: null,
   menu: null,
   drawerOpen: false,
   drawerView: 'table',
@@ -79,11 +85,12 @@ export class Store {
 export function modeOf({ host, ui }: Snapshot): Mode {
   if (host?.guardContext) return 'guard';
   if (ui.picking) return 'picking';
+  if (ui.browsing) return 'browsing';
   if (host?.repickContext) return 'repick';
   if (ui.drawerOpen && host?.test) return 'test';
   if (host?.proposal) return 'items';
   if (host?.selected) return 'selected';
-  if (ui.focusedField !== null || (host?.repick ?? null) !== null) return 'editing';
+  if (ui.focusedField !== null || ui.focusedStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
   return 'idle';
 }
 
@@ -92,6 +99,9 @@ export interface Actions {
   send(msg: PageMessage): Promise<void>;
   startPicking(): void;
   cancelPicking(): void;
+  /** Turn browse mode on or off. */
+  startBrowsing(): void;
+  stopBrowsing(): void;
   /** Select the element at a path, keeping the original breadcrumb trail. */
   selectPath(path: Path): void;
   setUi(patch: Partial<UiState>): void;

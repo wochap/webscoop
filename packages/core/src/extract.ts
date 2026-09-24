@@ -141,8 +141,8 @@ export async function countItems(session: Session, recipe: Recipe, resolved: Res
   return (await containersFor(session, resolved.item, recipe.item.exclude ?? [])).length;
 }
 
-export interface PaginationTargetResult {
-  /** The element to click, or null when no rung found it. */
+export interface TargetResult {
+  /** The element to act on, or null when no rung found it. */
   ref: ElementRef | null;
   /** Selectors to reuse on later pages. */
   selectors: SelectorCandidate[];
@@ -151,15 +151,16 @@ export interface PaginationTargetResult {
   notes: string[];
 }
 
-/** Resolve `pagination.target` through the healing ladder, like a page scoped field. */
-export async function resolvePaginationTarget(
-  session: Session,
-  recipe: Recipe,
-  opts: { ladder?: readonly Resolver[]; promote?: boolean; viewport?: Viewport },
-): Promise<PaginationTargetResult> {
-  const stored = recipe.pagination.target;
-  if (!stored) return { ref: null, selectors: [], outcome: UNRESOLVED, promotion: null, notes: [] };
-  const target: HealTarget = { kind: 'pagination', selectors: stored.selectors, ...(stored.fingerprint ? { fingerprint: stored.fingerprint } : {}) };
+export type PaginationTargetResult = TargetResult;
+
+export interface TargetOptions {
+  ladder?: readonly Resolver[];
+  promote?: boolean;
+  viewport?: Viewport;
+}
+
+/** Resolve a page scoped target (the pagination target, a step target) through the healing ladder against the document. */
+export async function resolveDocumentTarget(session: Session, recipe: Recipe, target: HealTarget, opts: TargetOptions): Promise<TargetResult> {
   const notes: string[] = [];
   const ctx = healContext({
     session,
@@ -169,7 +170,7 @@ export async function resolvePaginationTarget(
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
   });
   const settled = await resolveTarget(opts.ladder ?? [candidatesResolver], target, ctx, settleWith(target, ctx, opts.promote ?? false));
-  if (!settled) return { ref: null, selectors: stored.selectors, outcome: UNRESOLVED, promotion: null, notes };
+  if (!settled) return { ref: null, selectors: target.selectors, outcome: UNRESOLVED, promotion: null, notes };
   return {
     ref: settled.resolution.refs[0] ?? null,
     selectors: settled.selectors,
@@ -177,6 +178,14 @@ export async function resolvePaginationTarget(
     promotion: settled.promotion,
     notes,
   };
+}
+
+/** Resolve `pagination.target` through the healing ladder, like a page scoped field. */
+export async function resolvePaginationTarget(session: Session, recipe: Recipe, opts: TargetOptions): Promise<PaginationTargetResult> {
+  const stored = recipe.pagination.target;
+  if (!stored) return { ref: null, selectors: [], outcome: UNRESOLVED, promotion: null, notes: [] };
+  const target: HealTarget = { kind: 'pagination', selectors: stored.selectors, ...(stored.fingerprint ? { fingerprint: stored.fingerprint } : {}) };
+  return resolveDocumentTarget(session, recipe, target, opts);
 }
 
 function fieldTarget(field: RecipeField, index: number): HealTarget {

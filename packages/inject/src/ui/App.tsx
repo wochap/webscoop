@@ -12,6 +12,7 @@ import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
+import { StepList } from './steps';
 
 /** Carry out a shortcut against the current state. */
 export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions): void {
@@ -22,6 +23,12 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
       return;
     case 'cancel':
       actions.cancelPicking();
+      return;
+    case 'browse':
+      actions.startBrowsing();
+      return;
+    case 'stopBrowse':
+      actions.stopBrowsing();
       return;
     case 'closeMenu':
       actions.setUi({ menu: null });
@@ -49,6 +56,17 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
       actions.setUi({ focusedField: to });
       return;
     }
+    case 'moveStepUp':
+    case 'moveStepDown': {
+      const from = ui.focusedStep;
+      const count = host?.draft.steps.length ?? 0;
+      if (from === null) return;
+      const to = shortcut === 'moveStepUp' ? from - 1 : from + 1;
+      if (to < 0 || to >= count) return;
+      void actions.send({ kind: 'draft.moveStep', from, to });
+      actions.setUi({ focusedStep: to });
+      return;
+    }
     case 'save':
       void actions.send({ kind: 'save.request' });
       return;
@@ -72,11 +90,20 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     hasProposal: Boolean(snap.host?.proposal),
     hasSelection: Boolean(snap.host?.selected),
     focusedField: snap.ui.focusedField,
+    focusedStep: snap.ui.focusedStep,
+    browsing: snap.ui.browsing,
     repicking: Boolean(snap.host?.repickContext),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions);
   return true;
+}
+
+/** The step "record as step" makes from a picked element: typing for text boxes, a click for anything else. */
+export function recordAsStep(tag: string, attrs: Record<string, string>): { kind: 'click' } | { kind: 'type'; value: string } {
+  const type = (attrs.type ?? '').toLowerCase();
+  const typed = tag === 'textarea' || (tag === 'input' && ['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(type));
+  return typed ? { kind: 'type', value: '' } : { kind: 'click' };
 }
 
 /** The whole panel. */
@@ -148,6 +175,8 @@ export function ScoopRoot() {
         footer={
           <PanelFooter
             dirty={draft.dirty}
+            fieldCount={draft.fields.length}
+            stepCount={draft.steps.length}
             canTest={draft.fields.length > 0}
             savedName={host.saved?.name ?? null}
             onTest={() => {
@@ -174,6 +203,7 @@ export function ScoopRoot() {
                 hasItem={draft.item !== null}
                 repicking={host.repick !== null}
                 onAddField={() => void actions.send({ kind: 'draft.addField' })}
+                onRecordStep={() => void actions.send({ kind: 'draft.addStep', step: recordAsStep(selected.selection.tag, selected.selection.attrs) })}
                 onUseAsItems={() => void actions.send({ kind: 'draft.setItem' })}
                 onPagination={() => void actions.send({ kind: 'draft.markPagination' })}
                 onDismiss={actions.startPicking}
@@ -191,7 +221,15 @@ export function ScoopRoot() {
           />
         )}
         {draft.item && !proposal && <ItemSummary item={draft.item} />}
-        <FieldList fields={draft.fields} focused={ui.focusedField} repick={host.repick} onFocus={(focusedField) => actions.setUi({ focusedField })} />
+        <FieldList fields={draft.fields} focused={ui.focusedField} repick={host.repick} onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })} />
+        <StepList
+          steps={draft.steps}
+          vars={draft.vars}
+          focused={ui.focusedStep}
+          repick={host.repickStep}
+          browsing={ui.browsing}
+          onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null })}
+        />
         {draft.pagination && <PaginationEditor pagination={draft.pagination} />}
         {draft.errors.length > 0 && draft.fields.length > 0 && (
           <div className="ws-col" data-ws="draft-errors">

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { convertValue, parseDate } from '../convert';
 import { completeJson } from '../llm/json';
 import type { ChatMessage, LlmPort } from '../ports';
-import type { Fingerprint } from '../recipe/schema';
+import type { Fingerprint, StepKind } from '../recipe/schema';
 import { ancestorsOf, descendantsOf, type AnnotatedNode } from '../selectors/annotated';
 import { normalize, textContent } from '../selectors/aria';
 import { classifyToken } from '../selectors/tokens';
@@ -62,6 +62,17 @@ export function directText(node: AnnotatedNode): string {
 const hasBackgroundImage = (node: AnnotatedNode) =>
   /url\(/i.test(node.attrs.style ?? '') || ['data-bg', 'data-background', 'data-background-image'].some((a) => a in node.attrs);
 
+const CLICK_ROLES = new Set(['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'switch', 'option']);
+
+/** Whether a step of the given kind can act on the element: form controls for typing and choosing, anything clickable otherwise. */
+function actionable(node: AnnotatedNode, step: StepKind): boolean {
+  const input = node.tag === 'input' || node.tag === 'textarea' || node.attrs.contenteditable === 'true';
+  if (step === 'type') return input;
+  if (step === 'select') return node.tag === 'select';
+  if (step === 'wait') return true;
+  return input || node.tag === 'a' || node.tag === 'button' || node.tag === 'select' || node.tag === 'label' || (!!node.role && CLICK_ROLES.has(node.role));
+}
+
 /** Whether an element can hold the target's value, by field type. */
 export function plausible(node: AnnotatedNode, target: HealTarget): boolean {
   switch (target.kind) {
@@ -69,6 +80,8 @@ export function plausible(node: AnnotatedNode, target: HealTarget): boolean {
       return node.children.some((c) => c.type === 'element') && normalize(textContent(node)) !== '';
     case 'pagination':
       return node.tag === 'a' || node.tag === 'button' || node.role === 'link' || node.role === 'button';
+    case 'step':
+      return actionable(node, target.step);
     case 'field':
       if (target.attr) return target.attr in node.attrs;
       switch (target.type ?? 'text') {
@@ -153,12 +166,22 @@ const SYSTEM_PROMPT = [
   'Use null when no candidate is the field. Never pick an element that holds a different kind of value.',
 ].join('\n');
 
+const STEP_TARGETS: Record<StepKind, string> = {
+  click: 'button, link, or tab the user clicks',
+  type: 'text input the user types into',
+  select: 'drop-down list the user chooses from',
+  press: 'element the user presses a key in',
+  wait: 'element the page shows once it is ready',
+};
+
 function describeTarget(target: HealTarget): string[] {
   switch (target.kind) {
     case 'item':
       return ['Field: item', 'Type: container of one repeated result (a card, row, or list entry)'];
     case 'pagination':
       return ['Field: pagination', 'Type: link or button to the next page'];
+    case 'step':
+      return [`Field: ${targetName(target)}`, `Type: ${STEP_TARGETS[target.step]}`];
     case 'field':
       return [`Field: ${target.name}`, `Type: ${target.type ?? 'text'}${target.attr ? ` read from attribute ${target.attr}` : ''}`];
   }

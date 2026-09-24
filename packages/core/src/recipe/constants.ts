@@ -8,3 +8,5 @@ export const FIELD_SCOPES = ['item', 'page'] as const;
 export const PAGINATION_KINDS = ['none', 'url', 'next', 'more', 'scroll'] as const;
 export const STOP_RULES = ['no-new-items', 'first-item-repeats', 'target-missing'] as const;
 export const GUARD_KINDS = ['login', 'captcha', 'zero-fields'] as const;
+export const STEP_KINDS = ['click', 'type', 'select', 'press', 'wait'] as const;
+export const STEP_WHENS = ['first-page', 'every-page'] as const;

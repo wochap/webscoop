@@ -1,5 +1,5 @@
 import type { ElementRef, Session } from '../ports';
-import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
+import type { FieldScope, FieldType, Fingerprint, SelectorCandidate, StepKind } from '../recipe/schema';
 import type { AnnotatedNode } from '../selectors/annotated';
 import type { Viewport } from './score';
 
@@ -22,16 +22,31 @@ export type HealTarget =
       /** Attribute the value is read from, when not the content. */
       attr?: string;
     })
-  | (TargetBase & { kind: 'pagination' });
+  | (TargetBase & { kind: 'pagination' })
+  | (TargetBase & {
+      kind: 'step';
+      index: number;
+      /** The step's kind, for rungs that describe or filter what they look for. */
+      step: StepKind;
+      optional: boolean;
+      label?: string;
+    });
 
-/** Name used in reports and events: the field name, `item`, or `pagination`. */
+/** Name used in reports and events: the field name, `item`, `pagination`, or the step's label or `step:N`. */
 export function targetName(target: HealTarget): string {
-  return target.kind === 'field' ? target.name : target.kind;
+  switch (target.kind) {
+    case 'field':
+      return target.name;
+    case 'step':
+      return target.label ?? `step:${target.index}`;
+    default:
+      return target.kind;
+  }
 }
 
 /** Whether a run fails when the target stays unresolved. */
 export function isRequired(target: HealTarget): boolean {
-  return target.kind === 'item' || (target.kind === 'field' && !target.optional);
+  return target.kind === 'item' || ((target.kind === 'field' || target.kind === 'step') && !target.optional);
 }
 
 /** Which rung resolved a target. */

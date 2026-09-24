@@ -10,6 +10,8 @@ export * from './healing';
 export * from './guards';
 export * from './llm';
 export * from './pagination';
+export * from './failure';
 export * from './runner';
+export * from './steps';
 export * from './selectors';
 export * from './recorder';

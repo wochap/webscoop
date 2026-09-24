@@ -180,4 +180,36 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     const settled = await session.settle({ timeoutMs: 10_000 });
     expect(settled.url).toBe(`${playground.url}/catalog?paginate=scroll&tier=0`);
   });
+
+  it('fills the playground search form and submits it with Enter', async () => {
+    const url = `${playground.url}/catalog?gate=search&tier=0`;
+    await session.goto(url, { timeoutMs: 10_000 });
+    expect(await session.resolve(c('testid', 'product-card'))).toHaveLength(0);
+    const [input] = await session.resolve(c('css', 'input[name="q"]'));
+    await session.fill(input!, 'mouse');
+    await session.press('Enter', input);
+    const info = await session.settle({ timeoutMs: 10_000, previousUrl: url });
+    expect(new URL(info.url).searchParams.get('q')).toBe('mouse');
+    const titles = await texts(c('css', '.product-title'));
+    expect(titles.length).toBeGreaterThan(0);
+    for (const title of titles) expect(title.toLowerCase()).toContain('mouse');
+    const [kept] = await session.resolve(c('css', 'input[name="q"]'));
+    const page = (session as unknown as { page: import('playwright').Page }).page;
+    expect(await page.locator('input[name="q"]').inputValue()).toBe('mouse');
+    expect(kept).toBeDefined();
+  });
+
+  it('selects an option by value or label and fails fast on a missing one', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const page = (session as unknown as { page: import('playwright').Page }).page;
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', '<select id="sort"><option value="a">Name</option><option value="p">Price</option></select>');
+    });
+    const [select] = await session.resolve(c('id', 'sort'));
+    await session.selectOption(select!, 'Price');
+    expect(await page.locator('#sort').inputValue()).toBe('p');
+    await session.selectOption(select!, 'a');
+    expect(await page.locator('#sort').inputValue()).toBe('a');
+    await expect(session.selectOption(select!, 'Rating')).rejects.toThrow(/no option/);
+  });
 });

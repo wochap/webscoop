@@ -5,6 +5,7 @@ import { useActions } from './context';
 export const MODE_LABEL: Record<Mode, string> = {
   idle: 'Idle',
   picking: 'Picking',
+  browsing: 'Recording steps',
   repick: 'Re-pick',
   guard: 'Paused',
   selected: 'Selected',
@@ -16,6 +17,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 export const MODE_TONE: Record<Mode, 'neutral' | 'accent' | 'ok' | 'warn'> = {
   idle: 'neutral',
   picking: 'accent',
+  browsing: 'accent',
   repick: 'warn',
   guard: 'warn',
   selected: 'accent',
@@ -65,12 +67,16 @@ export function PanelShell({ header, footer, children }: { header: ReactNode; fo
 
 export function PanelFooter({
   dirty,
+  fieldCount = 0,
+  stepCount = 0,
   canTest,
   onTest,
   onSave,
   savedName,
 }: {
   dirty: boolean;
+  fieldCount?: number;
+  stepCount?: number;
   canTest: boolean;
   onTest: () => void;
   onSave: () => void;
@@ -81,6 +87,10 @@ export function PanelFooter({
       <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest} data-ws="test-run">
         Test run
       </button>
+      <span className="ws-meta" data-ws="footer-count">
+        {plural(fieldCount, 'field')}
+        {stepCount > 0 ? ` · ${plural(stepCount, 'step')}` : ''}
+      </span>
       <span className="ws-spacer" />
       <span className="ws-meta" data-ws="save-status">
         {dirty ? 'Unsaved changes' : savedName ? `Saved ${savedName}` : ''}
@@ -91,6 +101,8 @@ export function PanelFooter({
     </footer>
   );
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function Toast({ toast }: { toast: ToastData }) {
   const actions = useActions();

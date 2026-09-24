@@ -1,4 +1,5 @@
 import { RunEmitter, type FailureReason, type Row, type RunReport } from './events';
+import { RunFailure } from './failure';
 import { countItems, extractPage, resolveFirst, resolvePaginationTarget, type PageExtraction, type ResolvedSelectors } from './extract';
 import type { GuardBannerHandler, GuardBannerHooks } from './guards/banner';
 import { DEFAULT_GUARD_TIMEOUT_MS, GuardBudget } from './guards/budget';
@@ -23,17 +24,19 @@ import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { Dedup, evaluateStop, type PageSummary } from './pagination/dedup';
 import { createStrategy } from './pagination/strategies';
 import { DEFAULT_PAGE_CAP, PaginationInputError, type PagerContext, type PageStrategy, type StopReason } from './pagination/types';
-import { MissingVariableError } from './template';
+import { replaySteps, stepsFor, type StepCache } from './steps/replay';
+import { fillText, MissingVariableError } from './template';
 
-export type RunState = 'idle' | 'opening' | 'navigating' | 'extracting' | 'guarded' | 'repicking' | 'paginating' | 'done' | 'failed';
+export type RunState = 'idle' | 'opening' | 'navigating' | 'stepping' | 'extracting' | 'guarded' | 'repicking' | 'paginating' | 'done' | 'failed';
 
 /** Allowed transitions. */
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
   idle: ['opening', 'failed'],
   opening: ['navigating', 'failed'],
-  navigating: ['extracting', 'guarded', 'failed'],
+  navigating: ['stepping', 'extracting', 'guarded', 'failed'],
+  stepping: ['extracting', 'guarded', 'failed'],
   extracting: ['repicking', 'guarded', 'paginating', 'done', 'failed'],
-  guarded: ['navigating', 'extracting', 'failed'],
+  guarded: ['navigating', 'stepping', 'extracting', 'failed'],
   repicking: ['extracting', 'failed'],
   paginating: ['navigating', 'extracting', 'done', 'failed'],
   done: [],
@@ -94,6 +97,13 @@ export interface RunOptions {
   pagination?: PaginationOverrides;
   /** Guard detection and the pause while a human clears a wall. Default: no guards. */
   guards?: GuardOptions;
+  /** Replay of the recipe's steps. Default: enabled. */
+  steps?: StepOptions;
+}
+
+export interface StepOptions {
+  /** False replays no step, for debugging a recipe (`--skip-steps`). */
+  enabled: boolean;
 }
 
 export interface GuardOptions {
@@ -124,16 +134,7 @@ export type RunResult =
   | { ok: true; rows: Row[]; report: RunReport }
   | { ok: false; reason: FailureReason; message: string; fields?: string[]; rows: Row[]; report: RunReport };
 
-export class RunFailure extends Error {
-  constructor(
-    readonly reason: FailureReason,
-    message: string,
-    readonly fields?: string[],
-  ) {
-    super(message);
-    this.name = 'RunFailure';
-  }
-}
+export { RunFailure };
 
 export class Runner {
   readonly emitter: RunEmitter;
@@ -228,6 +229,7 @@ export class Runner {
       healed: 0,
       savedTo: null,
       guards: [],
+      steps: [],
     };
     const finish = () => {
       const ended = now();
@@ -250,6 +252,8 @@ export class Runner {
       let strategy: PageStrategy;
       try {
         strategy = createStrategy(recipe, this.opts.vars);
+        // Step values need their variables too; a missing one fails before the browser opens.
+        for (const step of recipe.steps) if (step.kind === 'type' && step.value) fillText(step.value, recipe.vars, this.opts.vars);
       } catch (error) {
         if (error instanceof MissingVariableError || error instanceof PaginationInputError) {
           throw new RunFailure('invalid-input', error.message, error.names);
@@ -399,6 +403,40 @@ export class Runner {
         }
       };
 
+      const stepsEnabled = this.opts.steps?.enabled ?? true;
+      const stepCache: StepCache = new Map();
+      /** Replay the steps that apply to this page; the page they end on is the one to extract and to come back to. */
+      const step = async (): Promise<void> => {
+        this.transition('stepping');
+        const replay = await replaySteps(live, recipe, {
+          page,
+          ...(this.opts.vars ? { vars: this.opts.vars } : {}),
+          timeoutMs,
+          ladder: defaultLadder({ enabled: healing.enabled, extra: resolvers }),
+          promote: healing.enabled,
+          onHealed: onHealed(page),
+          cache: stepCache,
+          sleep: (ms) => delay(ms, signal),
+          onEvent: (step) => {
+            report.steps.push(step);
+            if (step.outcome === 'healed') report.healed++;
+            if (step.outcome === 'skipped') this.emitter.emit('step.skipped', { page, step });
+            else if (step.outcome !== 'failed') this.emitter.emit('step.replayed', { page, step });
+          },
+          // A step that navigated lands on a new page, which may be walled.
+          onNavigated: async (at) => {
+            intended = at.url;
+            report.finalUrl = at.url;
+            return detectors.length > 0 ? guardLoad(at, at.url) : at;
+          },
+        });
+        if (replay.info) {
+          info = replay.info;
+          intended = info.url;
+          report.finalUrl = info.url;
+        }
+      };
+
       let intended = strategy.url;
       this.transition('navigating');
       let info = await strategy.first(pager);
@@ -407,6 +445,7 @@ export class Runner {
           report.finalUrl = info.url;
           this.emitter.emit('page.loaded', { page, url: info.url, title: info.title, status: info.status });
           if (detectors.length > 0) info = await guardLoad(info, intended);
+          if (stepsEnabled && stepsFor(recipe, page).length > 0) await step();
         }
         this.transition('extracting');
         const extract = () =>

@@ -1,5 +1,6 @@
 import type { HealOutcome } from './healing/types';
 import type { StopReason } from './pagination/types';
+import type { StepReport } from './steps/replay';
 import type { Fingerprint, FieldType, GuardKind, PaginationKind, SelectorCandidate } from './recipe/schema';
 
 export type FieldStatus = 'ok' | 'healed' | 'partial' | 'missing';
@@ -67,12 +68,14 @@ export interface RunReport {
   /** Every extracted page: its URL and the rows it contributed after dedup. */
   pages: PageReport[];
   warnings: string[];
-  /** Targets (item container, fields, pagination target) resolved by a rung other than their first candidate. */
+  /** Targets (item container, fields, pagination target, step targets) resolved by a rung other than their first candidate. */
   healed: number;
   /** Path the promoted recipe was written to, or null when it was not written. */
   savedTo: string | null;
   /** Every guard raised during the run, in order. */
   guards: GuardEntry[];
+  /** Every step replay, in the order it ran; `every-page` steps appear once per page. */
+  steps: StepReport[];
 }
 
 export interface PageReport {
@@ -96,10 +99,14 @@ export interface RunEvents {
   'guard.raised': { kind: GuardKind; page: number; url: string; reason: string };
   'guard.cleared': { kind: GuardKind; page: number; url: string; waitedMs: number };
   'guard.timeout': { kind: GuardKind; page: number; url: string; waitedMs: number };
+  /** A step ran; `step.outcome` is `ok` or `healed`. */
+  'step.replayed': { page: number; step: StepReport };
+  /** An optional step found no target (or could not run) and was left out. */
+  'step.skipped': { page: number; step: StepReport };
   'field.resolved': { page: number; field: FieldReport };
   'field.healed': {
     page: number;
-    /** Field name, `item`, or `pagination`. */
+    /** Field name, `item`, `pagination`, or a step's label or `step:N`. */
     target: string;
     outcome: HealOutcome;
     oldPrimary: SelectorCandidate;
@@ -126,6 +133,8 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'guard.raised',
   'guard.cleared',
   'guard.timeout',
+  'step.replayed',
+  'step.skipped',
   'field.resolved',
   'field.healed',
   'repick.requested',

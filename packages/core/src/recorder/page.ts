@@ -6,4 +6,4 @@ export * from '../selectors';
 export { scoreFingerprint, scoreParts, SCORE_WEIGHTS, type ScoreParts } from '../healing/score';
 export { collapseWhitespace } from '../convert';
 export { templateVariables } from '../template';
-export { FIELD_TYPES, PAGINATION_KINDS, STOP_RULES } from '../recipe/constants';
+export { FIELD_TYPES, PAGINATION_KINDS, STEP_KINDS, STEP_WHENS, STOP_RULES } from '../recipe/constants';

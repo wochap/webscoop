@@ -70,6 +70,12 @@ export interface Session {
   snapshot(within?: ElementRef): Promise<SerializedNode>;
   /** Scroll the element into view and click it. */
   click(ref: ElementRef): Promise<void>;
+  /** Clear an input, textarea, or editable element and type the value into it. */
+  fill(ref: ElementRef, value: string): Promise<void>;
+  /** Press a key (`Enter`, `Escape`, `Tab`, or one character) on the element, or on the focused element without one. */
+  press(key: string, ref?: ElementRef): Promise<void>;
+  /** Choose the option of a `select` whose value or visible label equals the value. */
+  selectOption(ref: ElementRef, value: string): Promise<void>;
   /** Scroll the document to its bottom. */
   scrollToBottom(): Promise<void>;
   /**

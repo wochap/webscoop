@@ -4,6 +4,7 @@ import type { ElementRef, InteractiveSession, PageInfo, StoragePort } from '../p
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
 import { validateRecipe } from '../recipe/validate';
+import { replaySteps } from '../steps/replay';
 import {
   annotate,
   compoundOf,
@@ -39,6 +40,7 @@ import {
   type Draft,
   type HostMessage,
   type LevelView,
+  type NewStep,
   type ParsedPageMessage,
   type ParsedSelection,
   type ProposalView,
@@ -162,6 +164,7 @@ export class RecorderController {
       selected: null,
       proposal: null,
       repick: repickContext ? repickContext.index : null,
+      repickStep: null,
       repickContext,
       guardContext: null,
       test: null,
@@ -380,9 +383,25 @@ export class RecorderController {
       case 'draft.moveField':
         this.apply({ type: 'moveField', from: msg.from, to: msg.to });
         return;
-      case 'draft.repickField':
-        this.current = { ...this.current, repick: msg.index };
+      case 'draft.repickTarget':
+        this.current =
+          msg.target === 'field' ? { ...this.current, repick: msg.index, repickStep: null } : { ...this.current, repickStep: msg.index, repick: null };
         return;
+      case 'draft.addStep':
+        return void (await this.addStep(msg.step, msg.selection));
+      case 'draft.updateStep':
+        if (!this.draft.steps[msg.index]) throw new Error(`no step at index ${msg.index}`);
+        this.apply({ type: 'updateStep', index: msg.index, patch: msg.patch });
+        return;
+      case 'draft.removeStep':
+        if (!this.draft.steps[msg.index]) throw new Error(`no step at index ${msg.index}`);
+        this.apply({ type: 'removeStep', index: msg.index });
+        return;
+      case 'draft.moveStep':
+        this.apply({ type: 'moveStep', from: msg.from, to: msg.to });
+        return;
+      case 'draft.replayStep':
+        return this.replayStep(msg.index);
       case 'draft.markPagination':
         return void this.markPagination();
       case 'draft.updatePagination':
@@ -557,6 +576,9 @@ export class RecorderController {
       counts.push({ count, sample: count > 0 ? await this.sample(field, containers) : null });
     }
     this.apply({ type: 'setFieldCounts', counts });
+    const stepCounts: (number | null)[] = [];
+    for (const step of this.draft.steps) stepCounts.push(step.target ? await this.countPage(step.target.selectors[0]!) : null);
+    this.apply({ type: 'setStepCounts', counts: stepCounts });
   }
 
   // Selection ---------------------------------------------------------------
@@ -597,6 +619,14 @@ export class RecorderController {
     };
     this.proposal = null;
     this.emitter.emit('recorder.selected', { tag: node.tag, path: selection.path, scope, candidates });
+
+    const repickStep = this.current.repickStep;
+    if (repickStep !== null && this.draft.steps[repickStep]) {
+      const selectors = orderForSave(rank(await this.withCounts(generate(node), 'page', [])), 0);
+      this.apply({ type: 'replaceStepTarget', index: repickStep, selectors, fingerprint: selection.fingerprint, count: selectors[0]?.count ?? null });
+      this.current = { ...this.current, repickStep: null };
+      return;
+    }
 
     const repick = this.current.repick;
     if (repick !== null && this.draft.fields[repick]) {
@@ -803,6 +833,67 @@ export class RecorderController {
       },
     });
     this.emitter.emit('recorder.fieldAdded', { name, type, scope, count: selectors[0]!.count ?? null });
+  }
+
+  /**
+   * Add a step. With a selection (browse mode) its candidates are the target;
+   * without one (`undefined`) the picked element is; `null` means no target,
+   * such as a key press on whatever has focus.
+   */
+  private async addStep(step: NewStep, selection: ParsedSelection | null | undefined): Promise<void> {
+    let target: { selectors: ProtocolCandidate[]; fingerprint: ParsedSelection['fingerprint'] } | undefined;
+    if (selection) {
+      target = { selectors: orderForSave(rank(dedupe(selection.candidates)), 0), fingerprint: selection.fingerprint };
+    } else if (selection === undefined) {
+      const selected = this.current.selected;
+      if (!selected || !this.node) throw new Error('select an element first');
+      // The pick may be item scoped; a step target is always found in the whole document.
+      target = { selectors: orderForSave(rank(await this.withCounts(generate(this.node), 'page', [])), 0), fingerprint: selected.selection.fingerprint };
+    }
+    if (target && target.selectors.length === 0) throw new Error('the element has no selector candidates');
+    this.apply({
+      type: 'addStep',
+      step: {
+        kind: step.kind,
+        ...(target ? { target } : {}),
+        ...(step.value !== undefined ? { value: step.value } : {}),
+        ...(step.when ? { when: step.when } : {}),
+        ...(step.optional !== undefined ? { optional: step.optional } : {}),
+        count: target?.selectors[0]?.count ?? null,
+      },
+    });
+    const primary = target?.selectors[0];
+    this.emitter.emit('recorder.stepAdded', {
+      index: this.draft.steps.length - 1,
+      kind: step.kind,
+      target: primary ? `${primary.strategy}=${primary.value}` : null,
+      ...(step.value !== undefined ? { value: step.value } : {}),
+    });
+  }
+
+  /** Run one step on the live page, the way a run would, and report how it went. */
+  private async replayStep(index: number): Promise<HostMessage> {
+    const step = this.draft.steps[index];
+    if (!step) throw new Error(`no step at index ${index}`);
+    const validated = validateRecipe(draftToRecipe(this.draft));
+    let ok = false;
+    let message: string;
+    if (!validated.ok) {
+      message = validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n');
+    } else {
+      const recipe = { ...validated.recipe, steps: [validated.recipe.steps[index]!] };
+      const values = Object.fromEntries(this.draft.vars.filter((v) => v.value !== '').map((v) => [v.name, v.value]));
+      try {
+        const result = await replaySteps(this.session, recipe, { page: 1, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache: new Map() });
+        const report = result.steps[0];
+        ok = report?.outcome === 'ok' || report?.outcome === 'healed';
+        message = ok ? `replayed step ${index + 1} (${step.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
+      } catch (error) {
+        message = `step ${index + 1} failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    this.emitter.emit('recorder.stepReplayed', { index, kind: step.kind, ok, message });
+    return { kind: 'step.replayResult', index, ok, message, state: this.current };
   }
 
   private markPagination(): void {

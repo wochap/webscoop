@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { loadFonts } from './fonts';
 import { mount } from './mount';
 import { Overlay } from './overlay';
-import { Picker } from './picker';
+import { BrowseObserver, Picker } from './picker';
 import { Runtime } from './runtime';
 import { installTestHook } from './testhook';
 import { RecorderProvider } from './ui/context';
@@ -27,6 +27,10 @@ function boot(win: Window & typeof globalThis): void {
     onPick: (el) => runtime?.pick(el),
     onCancel: () => runtime?.cancelPicking(),
   });
+  const observer = new BrowseObserver(win, {
+    isActive: () => (runtime?.browsing ?? false) && !runtime?.picking,
+    onAction: (action) => runtime?.record(action),
+  });
 
   const start = () => {
     loadFonts(win.document);
@@ -36,13 +40,14 @@ function boot(win: Window & typeof globalThis): void {
       reactRoot.unmount();
       overlay.dispose();
       picker.dispose();
+      observer.dispose();
       mounted.unmount();
       runtime = null;
       // A later injection boots the recorder again from scratch.
       delete globals[PAGE_GLOBAL];
       if (__WEBSCOOP_E2E__) delete (win as unknown as Record<string, unknown>).__webscoopTest;
     };
-    runtime = new Runtime({ win, overlay, setDrawerSpace: mounted.setDrawerSpace, onDetach });
+    runtime = new Runtime({ win, overlay, setDrawerSpace: mounted.setDrawerSpace, onDetach, flushBrowse: observer.flush });
     const reactRoot = createRoot(mounted.panel);
     reactRoot.render(
       <RecorderProvider store={runtime.store} actions={runtime} drawerHost={mounted.drawer}>

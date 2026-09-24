@@ -37,12 +37,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
   const errors: ValidationError[] = [];
 
+  const declared = new Set(
+    Array.isArray(input.vars)
+      ? input.vars.filter(isRecord).map((v) => v.name).filter((n): n is string => typeof n === 'string')
+      : [],
+  );
   if (typeof input.url === 'string') {
-    const declared = new Set(
-      Array.isArray(input.vars)
-        ? input.vars.filter(isRecord).map((v) => v.name).filter((n): n is string => typeof n === 'string')
-        : [],
-    );
     for (const name of templateVariables(input.url)) {
       if (!declared.has(name)) {
         errors.push({ path: '$.url', message: `template variable "${name}" is not declared under vars` });
@@ -80,6 +80,32 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
         message: `only one field may set key: true (already set at ${jsonPath(['fields', keys[0]!])})`,
       });
     }
+  }
+
+  if (Array.isArray(input.steps)) {
+    input.steps.forEach((step, index) => {
+      if (!isRecord(step) || typeof step.kind !== 'string') return;
+      const kind = step.kind;
+      if (['click', 'type', 'select'].includes(kind) && step.target === undefined) {
+        errors.push({ path: jsonPath(['steps', index, 'target']), message: `step ${index} (${kind}) needs a target` });
+      }
+      if (['type', 'select', 'press'].includes(kind) && step.value === undefined) {
+        errors.push({ path: jsonPath(['steps', index, 'value']), message: `step ${index} (${kind}) needs a value` });
+      }
+      if (kind === 'wait' && step.target === undefined && !(typeof step.value === 'string' && /^\d+$/.test(step.value))) {
+        errors.push({
+          path: jsonPath(['steps', index]),
+          message: `step ${index} (wait) needs a target or a value in milliseconds`,
+        });
+      }
+      if (kind === 'type' && typeof step.value === 'string') {
+        for (const name of templateVariables(step.value)) {
+          if (!declared.has(name)) {
+            errors.push({ path: jsonPath(['steps', index, 'value']), message: `template variable "${name}" is not declared under vars` });
+          }
+        }
+      }
+    });
   }
 
   return errors;

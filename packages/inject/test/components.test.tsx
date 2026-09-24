@@ -181,7 +181,7 @@ describe('fields', () => {
     fireEvent.click(p.q('make-optional')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateField', index: 2, patch: { optional: true } });
     fireEvent.click(p.q('repick')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.repickField', index: 2 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.repickTarget', target: 'field', index: 2 });
     expect(p.store.get().ui.picking).toBe(true);
   });
 });

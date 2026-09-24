@@ -96,6 +96,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--guard-timeout <ms>', 'longest total wait for you to clear login walls and bot checks before exiting 2 (default: 600000)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
+    .option('--skip-steps', "replay none of the recipe's steps (clicks, typing) before extracting, for debugging")
     .addHelpText(
       'after',
       `
@@ -104,6 +105,11 @@ short or errored page where nothing resolves), the run brings the browser
 window to the front, sends a desktop notification, and waits for you to clear
 it, then resumes on the same page. With --interactive a banner over the page
 shows a countdown with Continue and Abort. Nobody within --guard-timeout: exit 2.
+
+Steps: actions recorded in the recipe (accept a cookie banner, type a search,
+open a tab) are replayed after the first page loads, and after every page for
+steps marked every-page. A step whose element is gone is skipped when it is
+optional and fails the run with exit 3 when it is not.
 
 Pagination: the recipe says how to reach the next page (a page number in the
 URL, a next link, a load-more button, or infinite scroll) and how many pages
@@ -135,6 +141,7 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--guard-timeout <ms>', 'how long to wait for you to clear a login wall or bot check (default: 0, exit 2 at once)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
+    .option('--skip-steps', "replay none of the recipe's steps, which test replays like a run by default")
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 

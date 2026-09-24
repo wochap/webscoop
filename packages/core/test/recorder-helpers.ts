@@ -17,7 +17,7 @@ import {
   type SerializedElement,
   type StoragePort,
 } from '../src';
-import { FakeBrowser, type FakeInteractiveSession } from '../src/testing';
+import { FakeBrowser, type FakeInteractiveSession, type FakePage } from '../src/testing';
 
 export const CATALOG = 'http://127.0.0.1:4777/catalog?tier=0';
 
@@ -57,8 +57,8 @@ export interface Harness {
   send(msg: unknown): Promise<unknown>;
 }
 
-export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG): Promise<Harness> {
-  const browser = new FakeBrowser({ [url]: dom });
+export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG, extra: Omit<FakePage, 'dom'> = {}): Promise<Harness> {
+  const browser = new FakeBrowser({ [url]: { dom, ...extra } });
   const session = await browser.open('/profile');
   const storage = new MemoryStorage();
   const emitter = new RecorderEmitter();

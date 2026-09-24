@@ -7,6 +7,10 @@ export type Shortcut =
   | 'walkDown'
   | 'moveUp'
   | 'moveDown'
+  | 'moveStepUp'
+  | 'moveStepDown'
+  | 'browse'
+  | 'stopBrowse'
   | 'save'
   | 'skip'
   | 'abort';
@@ -27,6 +31,10 @@ export interface ShortcutContext {
   hasProposal: boolean;
   hasSelection: boolean;
   focusedField: number | null;
+  /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
+  focusedStep?: number | null;
+  /** Browse mode is on: page interaction is recorded as steps. */
+  browsing?: boolean;
   /** The focused re-pick mode is active. */
   repicking?: boolean;
 }
@@ -45,9 +53,10 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Map a key press to a panel shortcut: `p` picks, Esc cancels picking or
- * closes a menu, Enter confirms the item proposal, Left and Right walk the
- * breadcrumb, Alt+Up and Alt+Down reorder the focused field, Ctrl+S saves.
+ * Map a key press to a panel shortcut: `p` picks, `b` toggles browse mode,
+ * Esc cancels picking, closes a menu, or leaves browse mode, Enter confirms
+ * the item proposal, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
+ * reorder the focused field or step, Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
  * Nothing fires while typing.
  */
@@ -58,20 +67,23 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (e.key === 'Escape') {
     if (ctx.menuOpen) return 'closeMenu';
     if (ctx.picking) return 'cancel';
+    if (ctx.browsing) return 'stopBrowse';
     if (ctx.repicking) return 'abort';
     return null;
   }
   if (mod) return null;
   if (ctx.repicking && !e.altKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) return 'skip';
   if (e.altKey) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return null;
+    const up = e.key === 'ArrowUp';
+    if (ctx.focusedStep !== undefined && ctx.focusedStep !== null) return up ? 'moveStepUp' : 'moveStepDown';
     if (ctx.focusedField === null) return null;
-    if (e.key === 'ArrowUp') return 'moveUp';
-    if (e.key === 'ArrowDown') return 'moveDown';
-    return null;
+    return up ? 'moveUp' : 'moveDown';
   }
   if (e.shiftKey) return null;
   if (ctx.picking) return null;
   if (e.key === 'p' || e.key === 'P') return 'pick';
+  if ((e.key === 'b' || e.key === 'B') && !ctx.repicking) return ctx.browsing ? 'stopBrowse' : 'browse';
   if (e.key === 'Enter' && ctx.hasProposal) return 'confirm';
   if (e.key === 'ArrowLeft' && ctx.hasSelection) return 'walkUp';
   if (e.key === 'ArrowRight' && ctx.hasSelection) return 'walkDown';

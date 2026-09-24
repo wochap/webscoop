@@ -167,4 +167,38 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     await again.detach();
     await expect.poll(() => page.evaluate(() => document.querySelectorAll('webscoop-root').length)).toBe(0);
   });
+
+  it('records a click in browse mode while the click still does what it does', async () => {
+    const { page, controller } = await open('tier=0&gate=cookie');
+    expect(await page.locator('article').count()).toBe(0);
+    await page.keyboard.press('b');
+    expect(await hook(page, (h) => h.state().mode)).toBe('browsing');
+    await page.click('#consent-accept');
+    await expect.poll(() => page.locator('article').count()).toBe(24);
+    await controller.idle();
+    await expect.poll(() => controller.draft.steps.length).toBe(1);
+    const [step] = controller.draft.steps;
+    expect(step!.kind).toBe('click');
+    expect(step!.target!.fingerprint!.textSample).toBe('Accept all');
+    // Panel clicks are not steps.
+    await hook(page, (h) => h.click('[data-ws="browse-stop"]'));
+    expect(await hook(page, (h) => h.state().ui.picking)).toBe(false);
+    expect(controller.draft.steps).toHaveLength(1);
+  });
+
+  it('records typing and Enter as two steps and keeps the panel on the results page', async () => {
+    const { page, controller } = await open('tier=0&gate=search');
+    await page.keyboard.press('b');
+    await page.click('input[name="q"]');
+    await page.keyboard.type('mouse');
+    await page.keyboard.press('Enter');
+    await page.waitForURL(/q=mouse/);
+    await page.waitForFunction(() => (window as unknown as { __webscoopTest?: { state(): { host: unknown } } }).__webscoopTest?.state().host != null);
+    await controller.idle();
+    expect(controller.draft.steps.map((s) => [s.kind, s.value])).toEqual([
+      ['type', 'mouse'],
+      ['press', 'Enter'],
+    ]);
+    expect(await hook(page, (h) => h.query('[data-ws="steps"]'))).not.toBeNull();
+  });
 });

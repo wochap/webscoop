@@ -38,3 +38,14 @@ export function fillTemplate(
   if (missing.length > 0) throw new MissingVariableError(missing);
   return template.replace(VARIABLE, (_, name: string) => encodeURIComponent(resolved.get(name)!));
 }
+
+/**
+ * Replace every `{name}` in a step value with the raw value, taken from
+ * `values` first and the declared default second. Unlike `fillTemplate`
+ * nothing is encoded: the text is typed, not put in a URL.
+ */
+export function fillText(template: string, vars: readonly RecipeVar[], values: Readonly<Record<string, string>> = {}): string {
+  const missing = templateVariables(template).filter((name) => (values[name] ?? vars.find((v) => v.name === name)?.default) === undefined);
+  if (missing.length > 0) throw new MissingVariableError(missing);
+  return template.replace(VARIABLE, (_, name: string) => values[name] ?? vars.find((v) => v.name === name)!.default!);
+}

@@ -38,6 +38,30 @@ export interface FakePage {
   scroll?: number[];
   /** Serve this URL's page instead, as an HTTP redirect would; `dom` is ignored. */
   redirect?: string;
+  /**
+   * What the page does when the user acts on an element, for steps: return a
+   * new DOM for the same URL, a `redirect` to navigate (loaded by the next
+   * `settle`), or nothing to leave the page as it is. A click handler runs
+   * before the `href` and `more` behavior and replaces it when it returns.
+   */
+  on?: {
+    click?: FakeAction;
+    fill?: FakeAction;
+    select?: FakeAction;
+    press?: FakeAction;
+  };
+  /** Replace the DOM this many milliseconds after the page loads, for content that shows up late. */
+  later?: { afterMs: number; dom: SerializedElement };
+}
+
+/** A fake page's reaction to an action: the element acted on (null for a key press without one) and the value typed, chosen, or pressed. */
+export type FakeAction = (el: SerializedElement | null, value: string, url: string) => SerializedElement | { redirect: string } | void;
+
+/** One action a fake session performed, for assertions. */
+export interface FakeActionRecord {
+  kind: 'fill' | 'select' | 'press';
+  target: string | null;
+  value: string;
 }
 
 const HIDDEN_TAGS = new Set(['script', 'style', 'template', 'noscript', 'head']);
@@ -62,6 +86,10 @@ export class FakeSession implements Session {
   private steps = { more: 0, scroll: 0 };
   /** Page a click navigated to, loaded for real by the next `settle`. */
   private pendingUrl: string | null = null;
+  /** When the current page was loaded, for `FakePage.later`. */
+  private loadedAt = 0;
+  /** Last element filled or clicked, where a key press without a target goes. */
+  private focusedNode: DomNode | null = null;
 
   constructor(protected readonly browser: FakeBrowser) {}
 
@@ -71,6 +99,13 @@ export class FakeSession implements Session {
     root.parent = document;
     this.tree = { root, document };
     this.currentUrl = url;
+    this.focusedNode = null;
+  }
+
+  /** Load a page freshly: its DOM now, and its late DOM when due. */
+  private enter(url: string, page: FakePage): void {
+    this.load(url, page.dom);
+    this.loadedAt = Date.now();
   }
 
   private page(url: string): FakePage {
@@ -97,7 +132,23 @@ export class FakeSession implements Session {
   private assertOpen(): { root: DomNode; document: DomNode } {
     if (this.closed) throw new Error('session is closed');
     if (!this.tree) throw new Error('no page loaded');
-    return this.tree;
+    const later = this.browser.pages.get(this.currentUrl)?.later;
+    if (later && this.loadedAt > 0 && Date.now() - this.loadedAt >= later.afterMs) {
+      this.loadedAt = 0;
+      this.load(this.currentUrl, later.dom);
+    }
+    return this.tree!;
+  }
+
+  /** Run the page's handler for an action; true when it handled the action. */
+  private react(kind: keyof NonNullable<FakePage['on']>, node: DomNode | null, value: string): boolean {
+    const handler = this.browser.pages.get(this.currentUrl)?.on?.[kind];
+    if (!handler) return false;
+    const result = handler(node ? node.el : null, value, this.currentUrl);
+    if (!result) return false;
+    if ('redirect' in result) this.pendingUrl = new URL(result.redirect, this.currentUrl).href;
+    else this.load(this.currentUrl, result);
+    return true;
   }
 
   async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
@@ -110,20 +161,60 @@ export class FakeSession implements Session {
     url = final;
     this.pendingUrl = null;
     this.steps = { more: 0, scroll: 0 };
-    this.load(url, page.dom);
+    this.enter(url, page);
     return this.info(url, page);
   }
 
-  /** Follow a link's `href`, or take the page's next `more` step for any other element. */
+  /** Run the page's click handler, else follow a link's `href`, else take the page's next `more` step. */
   async click(ref: ElementRef): Promise<void> {
     this.assertOpen();
     this.browser.clicks.push(ref.description);
-    const href = (ref as FakeRef).node.el.attrs.href;
+    const node = (ref as FakeRef).node;
+    this.focusedNode = node;
+    if (this.react('click', node, '')) return;
+    const href = node.el.attrs.href;
     if (href !== undefined) {
       this.pendingUrl = new URL(href, this.currentUrl).href;
       return;
     }
     this.grow('more');
+  }
+
+  /** Set the element's `value` attribute, then run the page's fill handler. */
+  async fill(ref: ElementRef, value: string): Promise<void> {
+    this.assertOpen();
+    const node = (ref as FakeRef).node;
+    this.browser.actions.push({ kind: 'fill', target: ref.description, value });
+    node.el.attrs.value = value;
+    this.focusedNode = node;
+    this.react('fill', node, value);
+  }
+
+  async press(key: string, ref?: ElementRef): Promise<void> {
+    this.assertOpen();
+    const node = ref ? (ref as FakeRef).node : this.focusedNode;
+    this.browser.actions.push({ kind: 'press', target: ref?.description ?? null, value: key });
+    this.react('press', node, key);
+  }
+
+  /** Mark the matching option selected, then run the page's select handler. Fails when no option matches. */
+  async selectOption(ref: ElementRef, value: string): Promise<void> {
+    this.assertOpen();
+    const node = (ref as FakeRef).node;
+    const options: DomNode[] = [];
+    const collect = (n: DomNode) => {
+      for (const child of n.children) {
+        if (child.el.tag === 'option') options.push(child);
+        collect(child);
+      }
+    };
+    collect(node);
+    const option = options.find((o) => (o.el.attrs.value ?? normalize(textContent(o.el))) === value || normalize(textContent(o.el)) === value);
+    if (!option) throw new Error(`no option ${JSON.stringify(value)} in ${ref.description}`);
+    for (const o of options) delete o.el.attrs.selected;
+    option.el.attrs.selected = '';
+    this.browser.actions.push({ kind: 'select', target: ref.description, value });
+    this.react('select', node, value);
   }
 
   async scrollToBottom(): Promise<void> {
@@ -151,7 +242,7 @@ export class FakeSession implements Session {
     }
     url = final;
     this.steps = { more: 0, scroll: 0 };
-    this.load(url, page.dom);
+    this.enter(url, page);
     return this.info(url, page);
   }
 
@@ -319,6 +410,8 @@ export class FakeBrowser implements BrowserPort {
   readonly visited: string[] = [];
   /** Descriptions of every clicked element, in order. */
   readonly clicks: string[] = [];
+  /** Every fill, select, and key press, in order. */
+  readonly actions: FakeActionRecord[] = [];
   readonly openedProfiles: string[] = [];
   openSessions = 0;
 

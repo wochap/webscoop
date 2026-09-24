@@ -156,6 +156,31 @@ class PlaywrightSession implements InteractiveSession {
     await locator.click();
   }
 
+  async fill(ref: ElementRef, value: string): Promise<void> {
+    const { locator } = ref as PwRef;
+    this.navigationsBefore = this.navigations;
+    await locator.fill(value);
+  }
+
+  async press(key: string, ref?: ElementRef): Promise<void> {
+    this.navigationsBefore = this.navigations;
+    if (ref) await (ref as PwRef).locator.press(key);
+    else await this.page.keyboard.press(key);
+  }
+
+  async selectOption(ref: ElementRef, value: string): Promise<void> {
+    const { locator } = ref as PwRef;
+    this.navigationsBefore = this.navigations;
+    // An option matches by value first, then by visible label; looked up in the page so a miss fails at once instead of waiting.
+    const option = await locator.evaluate((el, wanted) => {
+      const options = Array.from((el as HTMLSelectElement).options ?? []);
+      const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
+      return hit ? hit.value : null;
+    }, value);
+    if (option === null) throw new Error(`no option ${JSON.stringify(value)} in ${ref.description}`);
+    await locator.selectOption({ value: option });
+  }
+
   async scrollToBottom(): Promise<void> {
     this.navigationsBefore = this.navigations;
     await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));

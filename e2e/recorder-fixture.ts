@@ -26,7 +26,7 @@ interface PanelInfo {
 
 export interface HookState {
   host: RecorderState | null;
-  ui: { picking: boolean; drawerOpen: boolean; focusedField: number | null };
+  ui: { picking: boolean; browsing: boolean; drawerOpen: boolean; focusedField: number | null; focusedStep: number | null };
   mode: string;
 }
 
@@ -52,6 +52,12 @@ export interface Recording {
   /** Click a page element with the real mouse, optionally holding Alt. */
   click(selector: string, index?: number, opts?: { alt?: boolean }): Promise<void>;
   key(key: string): Promise<void>;
+  /** Turn browse mode on with `b`, so what the page is used for is recorded as steps. */
+  browse(): Promise<void>;
+  /** Click a page element with the real mouse and type into it with the keyboard. */
+  typeOnPage(selector: string, text: string): Promise<void>;
+  /** Choose an option of a page `select`, as the user would. */
+  selectOnPage(selector: string, value: string): Promise<void>;
   /** Start picking with `p`, click the element, and wait for the host's selection. */
   pick(selector: string, index?: number, opts?: { alt?: boolean }): Promise<HookState>;
   /** Close the browser window like the user would, and wait for the CLI to exit. */
@@ -147,6 +153,17 @@ export async function startRecording(
       if (opts.alt) await page.keyboard.up('Alt');
     },
     key: (key) => page.keyboard.press(key),
+    async browse() {
+      await page.keyboard.press('b');
+      await recording.until((s) => s.ui.browsing);
+    },
+    async typeOnPage(selector, text) {
+      await recording.click(selector);
+      await page.keyboard.type(text);
+    },
+    async selectOnPage(selector, value) {
+      await page.locator(selector).selectOption(value);
+    },
     async pick(selector, index = 0, opts = {}) {
       const before = (await recording.state()).host?.selected?.selection;
       await page.keyboard.press('p');

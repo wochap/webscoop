@@ -11,6 +11,9 @@ import {
   firstCandidateResolver,
   fuzzyResolver,
   healContext,
+  isRequired,
+  plausible,
+  targetName,
   loadRecipe,
   pickMatch,
   promote,
@@ -31,6 +34,9 @@ import { FakeBrowser, h } from '../src/testing';
 import { catalogSnapshot, fingerprintedRecipe, tier0Nodes } from './healing-helpers';
 import { CATALOG, referenceRecipe } from './recorder-helpers';
 import { css, PAGE, recipe, testid } from './helpers';
+
+/** A recipe as plain input again, so a test can add keys before loading it. */
+const saveRecipeInput = (recipe: ReturnType<typeof loadRecipe>) => JSON.parse(saveRecipe(recipe)) as Record<string, unknown>;
 
 async function open(dom: SerializedElement, url = CATALOG) {
   const s = await new FakeBrowser({ [url]: dom }).open('/profile');
@@ -282,6 +288,46 @@ describe('applyPromotions', () => {
     const urlAtX = x.findIndex((l) => l.includes('"name": "url"'));
     const urlAtY = y.findIndex((l) => l.includes('"name": "url"'));
     expect(y.slice(urlAtY)).toEqual(x.slice(urlAtX));
+  });
+});
+
+describe('step targets', () => {
+  const accept = [css('.consent-accept')];
+  const stepTarget = (optional: boolean): HealTarget => ({ kind: 'step', index: 1, step: 'click', optional, selectors: accept });
+
+  it('applies a step promotion at steps[index].target and leaves other steps alone', () => {
+    const before = loadRecipe({
+      ...saveRecipeInput(fingerprintedRecipe()),
+      steps: [
+        { kind: 'wait', value: '100' },
+        { kind: 'click', target: { selectors: accept }, optional: true },
+      ],
+    });
+    const selectors = [testid('accept-all')];
+    const after = applyPromotions(before, [{ target: stepTarget(true), outcome: { kind: 'fuzzy', score: 0.8 }, oldPrimary: accept[0]!, newPrimary: selectors[0]!, selectors }]);
+    expect(after.steps[1]).toEqual({ ...before.steps[1], target: { selectors } });
+    expect(after.steps[0]).toEqual(before.steps[0]);
+    expect(after.fields).toEqual(before.fields);
+  });
+
+  it('names a step by label or index and requires it only when not optional', () => {
+    expect(targetName(stepTarget(false))).toBe('step:1');
+    expect(targetName({ ...stepTarget(false), label: 'consent' } as HealTarget)).toBe('consent');
+    expect(isRequired(stepTarget(false))).toBe(true);
+    expect(isRequired(stepTarget(true))).toBe(false);
+  });
+
+  it('considers only elements a step can act on plausible', () => {
+    const root = annotate(
+      h('body', {}, h('button', {}, 'Accept'), h('p', {}, 'Text'), h('input', { name: 'q' }), h('select', {}), h('div', { role: 'tab' }, 'Products')) as SerializedElement,
+    );
+    const tags = (step: 'click' | 'type' | 'select') =>
+      descendantsOf(root)
+        .filter((n) => plausible(n, { ...stepTarget(false), step } as HealTarget))
+        .map((n) => n.tag);
+    expect(tags('click')).toEqual(['button', 'input', 'select', 'div']);
+    expect(tags('type')).toEqual(['input']);
+    expect(tags('select')).toEqual(['select']);
   });
 });
 

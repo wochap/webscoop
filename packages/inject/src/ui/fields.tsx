@@ -141,7 +141,7 @@ export function FieldRow({
         <ZeroMatchWarning
           optional={field.optional}
           onRepick={() => {
-            void actions.send({ kind: 'draft.repickField', index });
+            void actions.send({ kind: 'draft.repickTarget', target: 'field', index });
             actions.startPicking();
           }}
           onOptional={() => update({ optional: true })}

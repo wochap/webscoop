@@ -1,5 +1,5 @@
 import { Emitter } from '../events';
-import type { FieldScope, FieldType, PaginationKind } from '../recipe/schema';
+import type { FieldScope, FieldType, PaginationKind, StepKind } from '../recipe/schema';
 import type { ProtocolCandidate } from './protocol';
 
 export interface RecorderEvents {
@@ -12,6 +12,9 @@ export interface RecorderEvents {
   'recorder.fieldAdded': { name: string; type: FieldType; scope: FieldScope; count: number | null };
   'recorder.fieldRemoved': { name: string };
   'recorder.paginationSet': { kind: PaginationKind };
+  /** `target` is the primary selector as `strategy=value`, null for a step without a target. */
+  'recorder.stepAdded': { index: number; kind: StepKind; target: string | null; value?: string };
+  'recorder.stepReplayed': { index: number; kind: StepKind; ok: boolean; message: string };
   'recorder.testRun': { rows: number; durationMs: number; error?: string };
   'recorder.saved': { name: string; path?: string };
   'recorder.error': { message: string };

@@ -143,6 +143,7 @@ describe('summary', () => {
     healed: 0,
     savedTo: null,
     guards: [],
+    steps: [],
     ...extra,
   });
 

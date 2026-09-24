@@ -1,15 +1,17 @@
 import { parseNumber } from '../convert';
 import { templateVariables } from '../template';
-import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate } from '../recipe/schema';
+import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
 import { validateRecipe } from '../recipe/validate';
 import type {
   Draft,
   DraftField,
   DraftItem,
   DraftPagination,
+  DraftStep,
   FieldPatch,
   PaginationPatch,
   ProtocolCandidate,
+  StepPatch,
   VarValue,
 } from './protocol';
 
@@ -70,6 +72,24 @@ export function fieldDefaults(el: PickedElement, taken: readonly string[]): Fiel
   return { name, type: 'text' };
 }
 
+/** Variables the draft uses: those of the URL template, then those of `type` step values, in order of first use. */
+export function draftVariables(draft: Pick<Draft, 'url' | 'steps'>): string[] {
+  const names = templateVariables(draft.url);
+  for (const step of draft.steps) {
+    if (step.kind !== 'type' || !step.value) continue;
+    for (const name of templateVariables(step.value)) if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/** The draft's variable list after its URL or steps changed: one entry per used variable, keeping entered values. */
+function syncVars(draft: Draft): Draft {
+  const names = draftVariables(draft);
+  const vars = names.map((name) => draft.vars.find((v) => v.name === name) ?? { name, value: '' });
+  const same = vars.length === draft.vars.length && vars.every((v, i) => v === draft.vars[i]);
+  return same ? draft : { ...draft, vars };
+}
+
 export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }): Draft {
   return validateDraft({
     name: opts.name,
@@ -77,6 +97,7 @@ export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }
     vars: opts.vars,
     item: null,
     fields: [],
+    steps: [],
     pagination: null,
     dirty: false,
     errors: [],
@@ -92,7 +113,7 @@ export const DEFAULT_PAGINATION: DraftPagination = {
 
 /** Build the recipe document the draft describes, before validation. */
 export function draftToRecipe(draft: Draft): RecipeInput {
-  const declared = templateVariables(draft.url);
+  const declared = draftVariables(draft);
   const recipe: RecipeInput = {
     schemaVersion: 1,
     name: draft.name,
@@ -111,6 +132,16 @@ export function draftToRecipe(draft: Draft): RecipeInput {
       ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
     })),
   };
+  if (draft.steps.length > 0) {
+    recipe.steps = draft.steps.map((s) => ({
+      kind: s.kind,
+      ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+      ...(s.value !== undefined ? { value: s.value } : {}),
+      when: s.when,
+      optional: s.optional,
+      ...(s.label ? { label: s.label } : {}),
+    }));
+  }
   if (draft.item) {
     recipe.item = {
       selectors: draft.item.selectors.map(bare),
@@ -136,13 +167,18 @@ export function draftToRecipe(draft: Draft): RecipeInput {
 export function validateDraft(draft: Draft): Draft {
   const result = validateRecipe(draftToRecipe(draft));
   const fieldErrors = new Map<number, string>();
+  const stepErrors = new Map<number, string>();
   let nameError: string | undefined;
   const errors: Draft['errors'] = [];
   for (const error of result.errors) {
     const field = /^\$\.fields\[(\d+)\]/.exec(error.path);
+    const step = /^\$\.steps\[(\d+)\]/.exec(error.path);
     if (field) {
       const index = Number(field[1]);
       if (!fieldErrors.has(index)) fieldErrors.set(index, error.message);
+    } else if (step) {
+      const index = Number(step[1]);
+      if (!stepErrors.has(index)) stepErrors.set(index, error.message);
     } else if (error.path === '$.name') nameError ??= error.message;
     else errors.push(error);
   }
@@ -151,13 +187,27 @@ export function validateDraft(draft: Draft): Draft {
     const error = fieldErrors.get(i);
     return error ? { ...rest, error } : rest;
   });
+  const steps = draft.steps.map((s, i) => {
+    const { error: _old, ...rest } = s;
+    const error = stepErrors.get(i);
+    return error ? { ...rest, error } : rest;
+  });
   const { nameError: _oldName, ...rest } = draft;
-  return { ...rest, ...(nameError ? { nameError } : {}), fields, errors };
+  return { ...rest, ...(nameError ? { nameError } : {}), fields, steps, errors };
 }
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
 export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
-  const vars = templateVariables(recipe.url).map((name) => ({
+  const steps: DraftStep[] = recipe.steps.map((s) => ({
+    kind: s.kind,
+    ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+    ...(s.value !== undefined ? { value: s.value } : {}),
+    when: s.when,
+    optional: s.optional,
+    ...(s.label ? { label: s.label } : {}),
+    count: null,
+  }));
+  const vars = draftVariables({ url: recipe.url, steps }).map((name) => ({
     name,
     value: values[name] ?? recipe.vars.find((v) => v.name === name)?.default ?? '',
   }));
@@ -200,6 +250,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     vars,
     item,
     fields,
+    steps,
     pagination,
     guards: recipe.guards,
     healing: recipe.healing,
@@ -221,6 +272,15 @@ export interface NewField {
   sample?: string | null;
 }
 
+export interface NewDraftStep {
+  kind: StepKind;
+  target?: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint'] };
+  value?: string;
+  when?: DraftStep['when'];
+  optional?: boolean;
+  count?: number | null;
+}
+
 export type DraftAction =
   | { type: 'addField'; field: NewField }
   | { type: 'updateField'; index: number; patch: FieldPatch }
@@ -234,12 +294,36 @@ export type DraftAction =
   | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[] }
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
+  | { type: 'addStep'; step: NewDraftStep }
+  | { type: 'updateStep'; index: number; patch: StepPatch }
+  | { type: 'replaceStepTarget'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; count: number | null }
+  | { type: 'removeStep'; index: number }
+  | { type: 'moveStep'; from: number; to: number }
+  | { type: 'setStepCounts'; counts: (number | null)[] }
   | { type: 'setName'; name: string }
   | { type: 'setVar'; name: string; value: string }
   | { type: 'markSaved' };
 
 /** Actions that only refresh live data and do not make the draft dirty. */
-const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'markSaved']);
+const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved']);
+
+/** Primary selector as a key, to tell whether two steps act on the same element. */
+const targetKey = (step: { target?: { selectors: ProtocolCandidate[] } }) => {
+  const primary = step.target?.selectors[0];
+  return primary ? `${primary.strategy}=${primary.value}` : null;
+};
+
+function applyStepPatch(step: DraftStep, patch: StepPatch): DraftStep {
+  const next: DraftStep = { ...step };
+  if (patch.kind !== undefined) next.kind = patch.kind;
+  if (patch.when !== undefined) next.when = patch.when;
+  if (patch.optional !== undefined) next.optional = patch.optional;
+  if (patch.value === null) delete next.value;
+  else if (patch.value !== undefined) next.value = patch.value;
+  if (patch.label === null || patch.label === '') delete next.label;
+  else if (patch.label !== undefined) next.label = patch.label;
+  return next;
+}
 
 function move<T>(list: readonly T[], from: number, to: number): T[] {
   const out = [...list];
@@ -343,6 +427,44 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'updatePagination':
       next = { ...draft, pagination: { ...(draft.pagination ?? DEFAULT_PAGINATION), ...action.patch } };
       break;
+    case 'addStep': {
+      const s = action.step;
+      const step: DraftStep = {
+        kind: s.kind,
+        ...(s.target ? { target: { selectors: s.target.selectors, ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+        ...(s.value !== undefined ? { value: s.value } : {}),
+        when: s.when ?? 'first-page',
+        optional: s.optional ?? false,
+        count: s.count ?? null,
+      };
+      const last = draft.steps.at(-1);
+      // Typing into the same input again replaces the value instead of adding a step.
+      const replaces = step.kind === 'type' && last?.kind === 'type' && targetKey(last) !== null && targetKey(last) === targetKey(step);
+      next = { ...draft, steps: replaces ? [...draft.steps.slice(0, -1), { ...last, value: step.value ?? '' }] : [...draft.steps, step] };
+      break;
+    }
+    case 'updateStep':
+      next = { ...draft, steps: draft.steps.map((s, i) => (i === action.index ? applyStepPatch(s, action.patch) : s)) };
+      break;
+    case 'replaceStepTarget':
+      next = {
+        ...draft,
+        steps: draft.steps.map((s, i) =>
+          i === action.index
+            ? { ...s, target: { selectors: action.selectors, ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}) }, count: action.count }
+            : s,
+        ),
+      };
+      break;
+    case 'removeStep':
+      next = { ...draft, steps: draft.steps.filter((_, i) => i !== action.index) };
+      break;
+    case 'moveStep':
+      next = { ...draft, steps: move(draft.steps, action.from, action.to) };
+      break;
+    case 'setStepCounts':
+      next = { ...draft, steps: draft.steps.map((s, i) => (action.counts[i] !== undefined ? { ...s, count: action.counts[i]! } : s)) };
+      break;
     case 'setName':
       next = { ...draft, name: action.name };
       break;
@@ -354,7 +476,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       break;
   }
   if (!CLEAN_ACTIONS.has(action.type)) next = { ...next, dirty: true };
-  return validateDraft(next);
+  return validateDraft(syncVars(next));
 }
 
 /** Whether the draft can be saved: it validates with the recipe schema. */

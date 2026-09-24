@@ -13,7 +13,33 @@ export interface RenderOptions {
   sponsored?: number;
   /** Pagination controls rendered after the product list. Default none. */
   pager?: Pager | null;
+  /** Put the product list behind an action. Default none. */
+  gate?: Gate | null;
+  /** Heading for the page. Default the first product's category, `Catalog` for none. */
+  category?: string;
 }
+
+export const GATE_KINDS = ['cookie', 'search', 'tabs'] as const;
+export type GateKind = (typeof GATE_KINDS)[number];
+
+/**
+ * What stands between the page load and the product list. `cookie` and `tabs`
+ * keep the list in a `template` until a click clones it in, so nothing in it
+ * resolves before the action; `search` renders a form above the list the
+ * server already filtered by `query`.
+ */
+export type Gate =
+  | { kind: 'cookie' }
+  | { kind: 'tabs' }
+  | {
+      kind: 'search';
+      /** Form action, the catalog path. */
+      action: string;
+      /** The submitted query, empty for none. */
+      query: string;
+      /** Other query parameters the form carries as hidden inputs, in order. */
+      params: [name: string, value: string][];
+    };
 
 export const PAGINATE_KINDS = ['url', 'next', 'more', 'scroll'] as const;
 export type PaginateKind = (typeof PAGINATE_KINDS)[number];
@@ -42,6 +68,9 @@ export interface RenderContext {
   chrome: ChromeMode | null;
   /** Pagination controls; `catalogPage` renders them after the list. */
   pager: Pager | null;
+  /** Gate around the list; `catalogPage` renders it, so tier churn renames its tokens too. */
+  gate: Gate | null;
+  category: string | undefined;
 }
 
 /** Class and attribute markup for a sponsored card, empty for a regular one. */
@@ -63,7 +92,7 @@ export function formatPrice(price: number): string {
   return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function page(title: string, body: string): string {
+function page(title: string, body: string, style = ''): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -74,7 +103,7 @@ body { font-family: system-ui, sans-serif; margin: 2rem; }
 .product-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
 .product-card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; }
 .product-image { width: 100%; height: auto; }
-</style>
+${style}</style>
 </head>
 <body>
 ${body}
@@ -130,7 +159,7 @@ export const DEFAULT_MARKUP: Readonly<Markup> = Object.freeze({
 
 function catalogPage(ctx: RenderContext, layout: Layout, markup: Markup = DEFAULT_MARKUP): string {
   const { products } = ctx;
-  const category = products[0]?.category ?? 'Catalog';
+  const category = ctx.category ?? products[0]?.category ?? 'Catalog';
   const testid = markup.testidAttr;
   const items = layout.order
     .map((productIndex, position) => ({ p: products[productIndex]!, position, s: sponsoredAttrs(ctx, position) }))
@@ -156,15 +185,103 @@ ${content}
 </li>`;
     })
     .join('\n');
+  const list = `<ul class="product-list" ${testid}="product-list">
+${items}
+</ul>`;
   return page(
     `${category} | Playground`,
     `<main id="catalog" class="catalog">
 <h1 class="category-heading" id="category" ${testid}="category">${escapeHtml(category)}</h1>
-<ul class="product-list" ${testid}="product-list">
-${items}
-</ul>${ctx.pager ? `\n${pagerHtml(ctx.pager)}` : ''}
+${ctx.gate ? gateHtml(ctx.gate, list) : list}${ctx.pager ? `\n${pagerHtml(ctx.pager)}` : ''}
 </main>`,
+    ctx.gate ? GATE_STYLES[ctx.gate.kind] : '',
   );
+}
+
+/** Class rules each gate adds to the page stylesheet; tier churn renames them with the markup. */
+const GATE_STYLES: Record<GateKind, string> = {
+  cookie: `.consent-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; }
+.consent-modal { background: #fff; padding: 2rem; max-width: 420px; border-radius: 8px; }
+`,
+  search: `.search-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+`,
+  tabs: `.tab-list { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.tab[aria-selected="true"] { font-weight: 700; }
+`,
+};
+
+/**
+ * The gate markup around the product list, with its script. Scripts find
+ * elements by role, ARIA label, and structure, which tier churn leaves alone.
+ */
+function gateHtml(gate: Gate, list: string): string {
+  if (gate.kind === 'search') {
+    const hidden = gate.params.map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`);
+    return `<form class="search-form" role="search" method="get" action="${escapeHtml(gate.action)}">
+${hidden.map((h) => `${h}\n`).join('')}<label class="search-label">Search <input class="search-input" type="search" name="q" value="${escapeHtml(gate.query)}" placeholder="Search products"></label>
+<button class="search-button" type="submit">Search</button>
+</form>
+${list}`;
+  }
+  if (gate.kind === 'cookie') {
+    // The script runs while the page parses, so a stored consent never shows the modal.
+    return `<template class="gated-list">
+${list}
+</template>
+<div class="consent-backdrop" id="consent-backdrop">
+<div class="consent-modal" role="dialog" aria-modal="true" aria-label="Consent preferences">
+<p class="consent-title"><strong>We value your privacy</strong></p>
+<p class="consent-text">Accept cookies to browse the catalog.</p>
+<button class="consent-button btn-primary" id="consent-accept" type="button">Accept all</button>
+</div>
+</div>
+<script>
+(function () {
+  var dialog = document.querySelector('[role="dialog"][aria-label="Consent preferences"]');
+  var template = document.querySelector('main template');
+  function reveal() {
+    dialog.parentElement.remove();
+    template.replaceWith(template.content.cloneNode(true));
+  }
+  if (localStorage.getItem('ws_consent') === '1') return reveal();
+  dialog.querySelector('button').addEventListener('click', function () {
+    localStorage.setItem('ws_consent', '1');
+    reveal();
+  });
+})();
+</script>`;
+  }
+  // Tabs: nothing persists, so every load starts on About with the list in its template.
+  return `<div class="tabs">
+<div class="tab-list" role="tablist" aria-label="Catalog sections">
+<button class="tab" id="tab-about" type="button" role="tab" aria-selected="true">About</button>
+<button class="tab" id="tab-products" type="button" role="tab" aria-selected="false">Products</button>
+</div>
+<div class="tab-panel" id="panel-about" role="tabpanel" aria-label="About">
+<p class="about-text">Everything on this shelf ships in two days. Open the Products tab to browse it.</p>
+</div>
+<div class="tab-panel" id="panel-products" role="tabpanel" aria-label="Products" hidden>
+<template class="gated-list">
+${list}
+</template>
+</div>
+</div>
+<script>
+(function () {
+  var tabs = document.querySelectorAll('[role="tablist"] [role="tab"]');
+  var panels = document.querySelectorAll('[role="tabpanel"]');
+  Array.prototype.forEach.call(tabs, function (tab, i) {
+    tab.addEventListener('click', function () {
+      Array.prototype.forEach.call(tabs, function (other, j) {
+        other.setAttribute('aria-selected', String(i === j));
+        panels[j].hidden = i !== j;
+      });
+      var template = panels[i].querySelector('template');
+      if (template) template.replaceWith(template.content.cloneNode(true));
+    });
+  });
+})();
+</script>`;
 }
 
 /**
@@ -175,10 +292,11 @@ function pagerScript(kind: 'more' | 'scroll', more: NonNullable<Pager['more']>):
   return `<script>
 (function () {
   var cfg = ${JSON.stringify({ kind, ...more })};
-  var list = document.querySelector('main ul');
   var busy = false;
   function load(done) {
-    if (busy || cfg.after >= cfg.total) return;
+    // Looked up per load: behind a gate the list only exists once the gate is passed.
+    var list = document.querySelector('main ul');
+    if (!list || busy || cfg.after >= cfg.total) return;
     busy = true;
     fetch('/catalog/more?after=' + cfg.after + '&tier=' + cfg.tier + '&seed=' + cfg.seed)
       .then(function (r) { return r.ok ? r.text() : ''; })
@@ -397,6 +515,8 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
     sponsored: Math.max(0, opts.sponsored ?? 0),
     chrome: opts.chrome ?? null,
     pager: opts.pager ?? null,
+    gate: opts.gate ?? null,
+    category: opts.category,
   };
   return applyChrome(renderer(ctx), ctx.chrome);
 }

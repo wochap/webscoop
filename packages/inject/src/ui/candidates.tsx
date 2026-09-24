@@ -67,6 +67,7 @@ export function SelectorCandidateList({
 export function PickActionGrid({
   scope,
   onAddField,
+  onRecordStep,
   onUseAsItems,
   onPagination,
   onDismiss,
@@ -75,6 +76,7 @@ export function PickActionGrid({
 }: {
   scope: 'item' | 'page';
   onAddField: () => void;
+  onRecordStep: () => void;
   onUseAsItems: () => void;
   onPagination: () => void;
   onDismiss: () => void;
@@ -91,6 +93,9 @@ export function PickActionGrid({
       </button>
       <button type="button" className="ws-btn" onClick={onPagination} data-ws="mark-pagination">
         Pagination target
+      </button>
+      <button type="button" className="ws-btn" onClick={onRecordStep} data-ws="record-step" title="Add a step that acts on this element, without acting now">
+        Record as step
       </button>
       <button type="button" className="ws-btn ws-btn-ghost" onClick={onDismiss} data-ws="dismiss">
         Pick another

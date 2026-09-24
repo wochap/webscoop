@@ -226,6 +226,54 @@ describe('reserved blocks', () => {
   });
 });
 
+describe('steps', () => {
+  const accept = { selectors: [{ strategy: 'role' as const, value: 'button|Accept', stability: 'stable' as const }] };
+
+  it('defaults to an empty list', () => {
+    expect(loadRecipe(base()).steps).toEqual([]);
+    expect(JSON.parse(saveRecipe(loadRecipe(base()))).steps).toBeUndefined();
+  });
+
+  it('accepts a click step and defaults when to first-page', () => {
+    const recipe = loadRecipe(base({ steps: [{ kind: 'click', target: accept, optional: true }] }));
+    expect(recipe.steps[0]).toEqual({ kind: 'click', target: accept, optional: true, when: 'first-page' });
+  });
+
+  it('rejects a type step without a target, naming the step index', () => {
+    const errors = errorsOf(base({ steps: [{ kind: 'type', value: 'mouse' }] }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.steps[0].target');
+    expect(errors[0]!.message).toContain('step 0');
+  });
+
+  it('requires values for type, select, and press', () => {
+    const errors = errorsOf(base({ steps: [{ kind: 'select', target: accept }, { kind: 'press' }] }));
+    expect(errors.map((e) => e.path)).toEqual(['$.steps[0].value', '$.steps[1].value']);
+  });
+
+  it('requires a target or milliseconds for wait', () => {
+    expect(errorsOf(base({ steps: [{ kind: 'wait', value: 'soon' }] }))[0]!.path).toBe('$.steps[0]');
+    expect(validateRecipe(base({ steps: [{ kind: 'wait', value: '500' }, { kind: 'wait', target: accept }] })).ok).toBe(true);
+  });
+
+  it('rejects an undeclared variable in a type value and names it', () => {
+    const errors = errorsOf(base({ steps: [{ kind: 'type', target: accept, value: '{query}' }] }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.steps[0].value');
+    expect(errors[0]!.message).toContain('query');
+  });
+
+  it('round-trips steps through save and load', () => {
+    const input = base({
+      vars: [{ name: 'category', type: 'string' }, { name: 'q', type: 'string' }],
+      steps: [{ kind: 'type', target: accept, value: '{q}', when: 'every-page', label: 'search' }],
+    });
+    const once = saveRecipe(loadRecipe(input));
+    expect(saveRecipe(loadRecipe(once))).toBe(once);
+    expect(JSON.parse(once).steps[0].value).toBe('{q}');
+  });
+});
+
 describe('fingerprints and round-trip', () => {
   it('preserves a fingerprint through load and save', () => {
     const fingerprint = {

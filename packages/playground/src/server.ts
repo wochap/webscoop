@@ -4,12 +4,14 @@ import { dataset, type Product } from './dataset';
 import {
   CHROME_MODES,
   escapeHtml,
+  GATE_KINDS,
   MAX_TIER,
   PAGINATE_KINDS,
   render,
   renderCards,
   UnimplementedTierError,
   type ChromeMode,
+  type Gate,
   type PaginateKind,
   type Pager,
 } from './render';
@@ -171,6 +173,28 @@ function pagedView(
   };
 }
 
+/**
+ * The `gate` parameter as a render gate. A search gate carries the query and
+ * every other parameter but `page`, so submitting the form starts over at page 1
+ * with the same options.
+ */
+function parseGate(url: URL): Gate | null {
+  const kind = url.searchParams.get('gate');
+  if (kind === null) return null;
+  if (!(GATE_KINDS as readonly string[]).includes(kind)) {
+    throw new HttpError(400, `invalid gate ${JSON.stringify(kind)}, expected one of ${GATE_KINDS.join(', ')}`);
+  }
+  if (kind !== 'search') return { kind: kind as 'cookie' | 'tabs' };
+  const params = [...url.searchParams].filter(([name]) => name !== 'q' && name !== 'page');
+  return { kind: 'search', action: url.pathname, query: url.searchParams.get('q') ?? '', params };
+}
+
+/** Products whose title contains the query, case-insensitive, in order; none for an empty query. */
+function searched(products: readonly Product[], query: string): readonly Product[] {
+  const needle = query.trim().toLowerCase();
+  return needle ? products.filter((p) => p.title.toLowerCase().includes(needle)) : [];
+}
+
 interface Wall {
   kind: WallKind;
   /** Pages up to this one render normally. */
@@ -283,13 +307,15 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
         throw new HttpError(400, `invalid chrome ${JSON.stringify(chromeParam)}, expected one of ${CHROME_MODES.join(', ')}`);
       }
       const chrome = chromeParam as ChromeMode | null;
+      const gate = parseGate(url);
       const headers: Record<string, string | string[]> = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
       const setCookies: string[] = [];
       if (!req.headers.cookie?.includes(`${VISITOR_COOKIE}=`)) {
         setCookies.push(`${VISITOR_COOKIE}=v${++visitors}; Path=/; Max-Age=31536000; SameSite=Lax`);
       }
 
-      let shown: readonly Product[] = products;
+      // A search gate filters before pagination, so pages slice the matches.
+      let shown: readonly Product[] = gate?.kind === 'search' ? searched(products, gate.query) : products;
       let pager: Pager | null = null;
       const paginate = url.searchParams.get('paginate');
       if (paginate === null && walled(wall, 1, jar)) return sendWall(res, wall, url, method);
@@ -325,12 +351,12 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
           setCookies.push(`${PAGE_COOKIE}=${page}; Path=/; SameSite=Lax`, `${ADVANCED_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`);
         }
         if (kind !== 'next' && walled(wall, page, jar)) return sendWall(res, wall, url, method);
-        ({ products: shown, pager } = pagedView(products, url, kind, page, opts));
+        ({ products: shown, pager } = pagedView(shown, url, kind, page, opts));
       }
 
       let html: string;
       try {
-        html = render(shown, { tier, seed, chrome, sponsored, pager });
+        html = render(shown, { tier, seed, chrome, sponsored, pager, gate, category: products[0]?.category });
       } catch (error) {
         if (error instanceof UnimplementedTierError) throw new HttpError(501, error.message);
         throw error;
