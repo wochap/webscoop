@@ -222,3 +222,14 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: Partial JSON array on timeout
 - **WHEN** pages 1 and 2 completed and page 3 timed out on a guard in JSON array mode
 - **THEN** stdout holds an array with the rows of pages 1 and 2 and the exit code is 2
+
+### Requirement: Steps flags and test behavior
+`webscoop run` and `webscoop test` SHALL accept `--skip-steps`, which replays no steps. `webscoop test` SHALL replay steps by default so its result matches a run. The stderr log SHALL print one line per replayed or skipped step with its index, kind, and outcome.
+
+#### Scenario: Test replays steps
+- **WHEN** `webscoop test shop` runs a recipe with a required click step behind a cookie gate
+- **THEN** the step is replayed and every field resolves
+
+#### Scenario: Skip steps
+- **WHEN** `webscoop run shop --skip-steps` runs the same recipe
+- **THEN** no step is replayed and the run reports the fields as missing behind the gate

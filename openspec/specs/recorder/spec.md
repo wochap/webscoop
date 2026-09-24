@@ -159,3 +159,32 @@ During an interactive run, when a guard is raised the recorder bundle SHALL rend
 #### Scenario: Banner shows and clears
 - **WHEN** a login guard is raised in an interactive run and the user logs in
 - **THEN** the banner appears with the countdown and disappears once the guard clears
+
+### Requirement: Browse mode records steps
+The panel SHALL offer a browse mode, toggled with `b`, in which host page interaction works normally and the recorder captures actions as steps: a click on an element becomes a `click` step targeting that element; typing into an input or textarea becomes one `type` step with the final value, replacing a previous `type` step for the same target in the same browse session; changing a `select` becomes a `select` step; pressing Enter in an input becomes a `press` step. Clicks and keys inside the panel SHALL NOT be recorded. Leaving browse mode with `b` or Esc SHALL stop capturing. Steps recorded while browsing SHALL survive navigations caused by them.
+
+#### Scenario: Accept cookie banner
+- **WHEN** browse mode is on and the user clicks the consent button
+- **THEN** a `click` step targeting that button appears in the steps list and the banner closes as it would without the recorder
+
+#### Scenario: Search then Enter
+- **WHEN** the user types `mouse` in the search box and presses Enter
+- **THEN** the steps list shows a `type` step with value `mouse` and a `press` step with `Enter`, and the panel is still present on the results page
+
+### Requirement: Record a pick as a step
+From a selected element, the panel SHALL offer "record as step", creating a `click` step for the element, or a `type` step with an empty value when the element is an input, without performing the action.
+
+#### Scenario: Pick a tab as a step
+- **WHEN** the user picks the Products tab and chooses record as step
+- **THEN** a `click` step is added and the tab is not activated
+
+### Requirement: Steps list editing
+The panel SHALL list steps in order with kind, target summary, value, `when`, and `optional`. The user SHALL be able to edit the value (including inserting a `{var}` chip), toggle `when` and `optional`, reorder with drag or Alt+Up and Alt+Down, delete, and replay a single step on the live page. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
+
+#### Scenario: Mark the consent click optional
+- **WHEN** the user toggles `optional` on the consent step and saves
+- **THEN** the recipe's step has `optional: true`
+
+#### Scenario: Replay one step
+- **WHEN** the user replays the search `type` step
+- **THEN** the search box on the live page contains the step's value

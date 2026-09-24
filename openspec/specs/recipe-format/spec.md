@@ -94,3 +94,18 @@ Validation SHALL collect every error in the document and report them together, e
 #### Scenario: Multiple errors reported
 - **WHEN** a recipe has an undeclared variable and a field with an unknown type
 - **THEN** validation reports two errors with distinct JSON paths
+
+### Requirement: Steps block
+A recipe MAY declare `steps`, an ordered list. Each step SHALL have `kind` among `click`, `type`, `select`, `press`, `wait`; an optional `target` with ranked `selectors` and an optional `fingerprint`; an optional `value` string; `when` among `first-page` and `every-page`, default `first-page`; `optional` boolean, default false; and an optional `label`. Validation SHALL require a `target` for `click`, `type`, and `select`; a `value` for `type`, `select`, and `press`; and for `wait` either a `target` or a numeric `value` in milliseconds. A `type` value MAY reference template variables, which SHALL be declared under `vars`. When `steps` is absent it SHALL default to an empty list.
+
+#### Scenario: Valid click step
+- **WHEN** a step is `{ "kind": "click", "target": { "selectors": [ { "strategy": "role", "value": "button|Accept", "stability": "stable" } ] }, "optional": true }`
+- **THEN** validation succeeds with `when` defaulting to `first-page`
+
+#### Scenario: Type without target is rejected
+- **WHEN** a `type` step has a value and no target
+- **THEN** validation fails and the error names the step index
+
+#### Scenario: Undeclared variable in a step value
+- **WHEN** a `type` step value is `{query}` and `vars` does not declare `query`
+- **THEN** validation fails and the error names `query`

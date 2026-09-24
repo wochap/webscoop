@@ -175,3 +175,28 @@ With `wall=captcha`, `GET /catalog` SHALL respond with 403 and the challenge pag
 #### Scenario: Interstitial served
 - **WHEN** `/catalog?wall=interstitial` is requested without the cookie
 - **THEN** the response is 503 with fewer than 200 visible characters
+
+### Requirement: Cookie gate
+With `gate=cookie`, `/catalog` SHALL render a consent modal with a backdrop that intercepts clicks and an `Accept all` button, and SHALL keep the product list out of the DOM until the button is clicked. Clicking SHALL set `ws_consent` in `localStorage`, remove the modal, and insert the list; on later loads with consent stored the modal SHALL NOT appear.
+
+#### Scenario: Gate blocks extraction
+- **WHEN** the reference recipe runs on `/catalog?gate=cookie` without steps
+- **THEN** no product resolves and the run exits 3
+
+#### Scenario: Accept reveals products
+- **WHEN** `Accept all` is clicked
+- **THEN** 24 products are visible and the modal is gone
+
+### Requirement: Search gate
+With `gate=search`, `/catalog` SHALL render a search form with an input named `q` and no products until a query is submitted; `/catalog?gate=search&q=<text>` SHALL render the products whose title contains the text, case-insensitive, and keep the form filled. Submitting with Enter SHALL navigate with the query.
+
+#### Scenario: Query filters
+- **WHEN** `q=mouse` is submitted
+- **THEN** only products whose title contains `mouse` are rendered, in dataset order
+
+### Requirement: Tabs gate
+With `gate=tabs`, `/catalog` SHALL render two tabs, `About` (active by default, with text only) and `Products`, implemented with `role="tab"` buttons and `role="tabpanel"` panels; the product list SHALL be absent from the DOM until that tab is activated with a click, which inserts it into the Products panel. Activation SHALL be client-side and SHALL NOT persist across loads, so every page load needs the click.
+
+#### Scenario: Products tab needed on every page
+- **WHEN** `gate=tabs&paginate=url&page=2` is loaded
+- **THEN** no product element exists until the Products tab is clicked

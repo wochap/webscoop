@@ -83,7 +83,7 @@ The runner SHALL produce a run report available to the CLI with: start and end t
 - **THEN** the summary line contains the page count 3 and the duplicate count 2
 
 ### Requirement: Run events
-The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
+The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `step.replayed`, `step.skipped`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
 
 #### Scenario: Event order
 - **WHEN** a run succeeds on one page
@@ -100,6 +100,10 @@ The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `gu
 #### Scenario: Guard events
 - **WHEN** a login guard is raised on page 1 and cleared
 - **THEN** `guard.raised` follows `page.loaded` and `guard.cleared` precedes the first `field.resolved`
+
+#### Scenario: Step events
+- **WHEN** a recipe has one `first-page` step
+- **THEN** `step.replayed` is observed after `page.loaded` and any guard events, and before the first `field.resolved`
 
 ### Requirement: Clean shutdown
 On success, failure, guard timeout, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits. A run that ends while paused on a guard SHALL close the browser like any other run.

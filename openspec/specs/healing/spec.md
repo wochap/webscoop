@@ -7,7 +7,7 @@ Defines how a run recovers when stored selectors no longer match: the ordered ru
 ## Requirements
 
 ### Requirement: Healing ladder
-For each target (item container, each field, pagination target) the runner SHALL try, in order: (1) the stored candidates in listed order; (2) fuzzy fingerprint match against the live page when the target has a fingerprint; (3) the model rung when a language model is available and enabled for the recipe; (4) the human re-pick rung when a handler is available; (5) failure. The first rung that resolves at least one element SHALL win and later rungs SHALL NOT run for that target. Healing SHALL be attempted once per target per run, not per row.
+For each target (item container, each field, pagination target, each step target) the runner SHALL try, in order: (1) the stored candidates in listed order; (2) fuzzy fingerprint match against the live page when the target has a fingerprint; (3) the model rung when a language model is available and enabled for the recipe; (4) the human re-pick rung when a handler is available; (5) failure. The first rung that resolves at least one element SHALL win and later rungs SHALL NOT run for that target. Healing SHALL be attempted once per target per run, not per row.
 
 #### Scenario: Candidate rung wins
 - **WHEN** the second stored candidate resolves elements
@@ -24,6 +24,10 @@ For each target (item container, each field, pagination target) the runner SHALL
 #### Scenario: Ladder exhausted
 - **WHEN** no rung resolves a required field
 - **THEN** the field is treated as missing per the runner's missing-field policy
+
+#### Scenario: Step target healed
+- **WHEN** a step's stored candidates fail and the fuzzy rung finds its target
+- **THEN** the step runs on that element and the outcome is `fuzzy`
 
 ### Requirement: Fingerprint similarity score
 The score between a stored fingerprint and a live element SHALL be a weighted sum in the range 0 to 1 of: tag equality (0.15), role equality (0.15), accessible name similarity (0.15), text sample similarity (0.20), stable attribute overlap (0.15), ancestor token sequence similarity (0.10), and bounding box proximity relative to the viewport (0.10). String similarities SHALL use a normalized edit distance on trimmed, case-folded text. A component whose data is absent on both sides SHALL contribute its full weight; absent on one side SHALL contribute zero.
