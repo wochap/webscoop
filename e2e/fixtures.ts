@@ -14,6 +14,8 @@ const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 export const CLI = join(root, 'packages/cli/dist/webscoop.js');
 export const REFERENCE_RECIPE = join(root, 'packages/cli/fixtures/playground-catalog.json');
 export const PAGED_RECIPE = join(root, 'packages/cli/fixtures/playground-paged.json');
+export const POSITIONAL_RECIPE = join(root, 'packages/cli/fixtures/playground-positional.json');
+export const STEPS_RECIPE = join(root, 'packages/cli/fixtures/playground-steps.json');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 

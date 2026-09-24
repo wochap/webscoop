@@ -100,6 +100,7 @@ webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
                        [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
+webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
 webscoop doctor
 ```
@@ -489,6 +490,47 @@ recipe under `--edit`, no display, browser failure).
 
 Shortcuts do not fire while typing in an input.
 
+### Export
+
+```sh
+webscoop export shop > shop.ts                        # TypeScript for Node, on stdout
+webscoop export shop --format py --out scrape/shop.py # Python, to a file
+webscoop export shop --headless                       # the script runs without a window by default
+```
+
+`export` writes a standalone Playwright script that runs the recipe without
+webscoop, for another project, a CI job, or a language you already use. It
+reads the recipe only: no browser, no display, no profile lock. The script
+navigates, replays the steps, extracts rows with the same value conversion,
+walks the pagination with the same limit, stop rules, and dedup, and prints
+rows like `webscoop run` does on a healthy site.
+
+Run the TypeScript script with `npx tsx shop.ts` in a directory where the
+`playwright` package is installed (`npm install playwright`, then
+`npx playwright install chromium`). The Python script needs Python 3.9 or
+later with Playwright for Python (`pip install playwright`, then
+`playwright install chromium`) and runs with `python3 shop.py`. Both take:
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--var name=value` | a recipe variable (repeatable); `WEBSCOOP_VAR_<NAME>` (uppercased) works too, `--var` wins, recipe defaults fill the rest |
+| `--jsonl` | one JSON object per line instead of a JSON array |
+| `--out <path>` | rows to a file instead of stdout |
+| `--pages <1\|N\|all>` | pages to walk, replacing the recipe limit (`all` stops at 500) |
+| `--headless` / `--headed` | run without or with a browser window (default: headed, or headless when exported with `--headless`) |
+| `--profile <dir>` | keep the browser profile in this directory; without it each run uses a temporary profile removed at exit |
+
+Use `--profile` for sites that need a login: run once headed, log in by hand
+in the window, and later runs reuse the cookies. Exit codes are 0, 1, and 3
+with the meanings below; logs go to stderr.
+
+The script tries each target's stored selector candidates in order and nothing
+more. It does not include fingerprint healing, model healing, guards,
+notifications, window hiding, or recipe write-back; its header says so. When a
+site changes, re-record (or `webscoop run` to heal) the recipe and export it
+again rather than editing selectors in the script: the recipe stays the source
+of truth.
+
 ### Exit codes
 
 | Code | Meaning | Cron should |
@@ -691,6 +733,7 @@ packages/
     src/healing     healing ladder, fingerprint score, fuzzy match, model rung, promotion
     src/llm         JSON answers from a language model: stripping, validation, one retry
     src/recorder    recorder protocol, draft state, host-side session controller
+    src/export      recipe to standalone Playwright script: plan, TypeScript and Python renderers
   browser     BrowserPort adapter over Playwright
   cli         webscoop command, paths, config, profile lock, output
   llm         OpenAI-compatible chat client, endpoint probe, scripted mock

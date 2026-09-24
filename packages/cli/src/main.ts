@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { doctorCommand } from './commands/doctor';
+import { exportCommand, type ExportCommandOptions } from './commands/export';
 import { recipesCommand } from './commands/recipes';
 import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
@@ -181,6 +182,25 @@ With --repick: click the field's new location, then "Use and save"; S skips, Esc
     .description('list saved recipes')
     .option('--json', 'print a JSON array')
     .action(async (opts: { json?: boolean }) => setCode(await recipesCommand(io, opts)));
+
+  program
+    .command('export')
+    .description('write a standalone Playwright script (TypeScript or Python) that runs the recipe without webscoop')
+    .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
+    .option('--format <ts|py>', 'script language: ts (Node, run with npx tsx) or py (Python sync API)', 'ts')
+    .option('--out <path>', 'write the script to a file instead of stdout')
+    .option('--headless', 'make the script run without a browser window unless it is given --headed')
+    .addHelpText(
+      'after',
+      `
+The script takes --var name=value (or WEBSCOOP_VAR_<NAME>), --jsonl, --out,
+--pages <1|N|all>, --headless, --headed, and --profile <dir>, prints rows like
+webscoop run, and exits 0, 1, or 3 like it. It tries the stored selector
+candidates in order and nothing more: no fingerprint or model healing, no
+guards, no notifications, no window hiding, no recipe write-back. Re-record
+and export again when the site changes. Needs no display.`,
+    )
+    .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
 
   program
     .command('bench')

@@ -1,0 +1,1149 @@
+// Standalone Playwright script exported from the webscoop recipe "playground-steps".
+// Exported at 2026-01-02T03:04:05.000Z by webscoop 0.0.0-test.
+//
+// It navigates, replays the recipe steps, extracts rows, and paginates like
+// `webscoop run` on a healthy site. Selector candidates are tried in their
+// stored order; nothing else heals. Not included:
+//   - fingerprint healing
+//   - model healing
+//   - guards
+//   - notifications
+//   - window hiding
+//   - recipe write-back
+//
+// When the site changes, re-record the recipe with webscoop and export it
+// again rather than editing selectors here; the recipe is the source of truth.
+
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { chromium, errors, type Locator, type Page } from 'playwright';
+
+// ---------------------------------------------------------------------------
+// Recipe shapes (the constants at the end of the file)
+// ---------------------------------------------------------------------------
+
+type Strategy = 'role' | 'testid' | 'id' | 'text' | 'css' | 'xpath';
+interface Selector {
+  strategy: Strategy;
+  value: string;
+}
+interface Var {
+  name: string;
+  default: string | null;
+  required: boolean;
+}
+type Action =
+  | { kind: 'click' }
+  | { kind: 'type'; text: string }
+  | { kind: 'select'; value: string }
+  | { kind: 'press'; key: string }
+  | { kind: 'wait-for' }
+  | { kind: 'sleep'; ms: number };
+interface Step {
+  index: number;
+  kind: string;
+  name: string;
+  when: 'first-page' | 'every-page';
+  optional: boolean;
+  target: Selector[] | null;
+  action: Action;
+}
+interface Item {
+  selectors: Selector[];
+  exclude: Selector[];
+}
+type FieldType = 'text' | 'number' | 'url' | 'image' | 'date' | 'html';
+interface Field {
+  name: string;
+  type: FieldType;
+  scope: 'item' | 'page';
+  optional: boolean;
+  selectors: Selector[];
+  read: 'attr' | 'html' | 'text';
+  attr: string | null;
+}
+interface Pagination {
+  kind: 'none' | 'url' | 'next' | 'more' | 'scroll';
+  param: { name: string; start: number; step: number } | null;
+  paramInTemplate: boolean;
+  target: Selector[] | null;
+  limit: number | 'all';
+  stopRules: string[];
+  delayMs: number;
+}
+type Value = string | number | null;
+type Row = Record<string, Value>;
+
+// ---------------------------------------------------------------------------
+// Exit codes and failures (cli exit.ts)
+// ---------------------------------------------------------------------------
+
+const EXIT_OK = 0;
+/** Bad arguments, a missing variable, a timeout, or any other error. */
+const EXIT_ERROR = 1;
+/** A required field, the item container, or a required step matched nothing. */
+const EXIT_UNRESOLVED = 3;
+
+class Failure extends Error {
+  constructor(
+    message: string,
+    readonly code: number,
+  ) {
+    super(message);
+  }
+}
+
+function log(message: string): void {
+  process.stderr.write(RECIPE_NAME + ': ' + message + '\n');
+}
+
+const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+// ---------------------------------------------------------------------------
+// Command line
+// ---------------------------------------------------------------------------
+
+interface Options {
+  vars: Record<string, string>;
+  jsonl: boolean;
+  out: string | null;
+  pages: number | 'all' | null;
+  headless: boolean;
+  profile: string | null;
+}
+
+const USAGE = [
+  'usage: npx tsx <script> [options]',
+  '',
+  'options:',
+  '  --var <name=value>  set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too',
+  '  --jsonl             print one JSON object per line instead of a JSON array',
+  '  --out <path>        write the rows to a file instead of stdout',
+  '  --pages <1|N|all>   pages to walk, replacing the recipe limit',
+  '  --headless          run the browser without a window',
+  '  --headed            show the browser window',
+  '  --profile <dir>     browser profile directory to keep (default: a temporary one)',
+  '  -h, --help          show this help',
+  '',
+  'exit codes: 0 success, 1 error, 3 a required field or step matched no element',
+].join('\n');
+
+class HelpRequested extends Error {}
+
+function parsePages(value: string): number | 'all' {
+  if (value === 'all') return 'all';
+  if (!/^\d+$/.test(value) || Number(value) < 1) throw new Failure('invalid --pages "' + value + '", expected "all" or a positive integer', EXIT_ERROR);
+  return Number(value);
+}
+
+function parseArgs(argv: readonly string[]): Options {
+  const opts: Options = { vars: {}, jsonl: false, out: null, pages: null, headless: DEFAULT_HEADLESS, profile: null };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    const eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    const inline = eq === -1 ? undefined : arg.slice(eq + 1);
+    const value = (): string => {
+      if (inline !== undefined) return inline;
+      const next = argv[++i];
+      if (next === undefined) throw new Failure('option ' + flag + ' needs a value', EXIT_ERROR);
+      return next;
+    };
+    switch (flag) {
+      case '--var': {
+        const pair = value();
+        const at = pair.indexOf('=');
+        if (at <= 0) throw new Failure('invalid --var "' + pair + '", expected name=value', EXIT_ERROR);
+        opts.vars[pair.slice(0, at)] = pair.slice(at + 1);
+        break;
+      }
+      case '--jsonl':
+        opts.jsonl = true;
+        break;
+      case '--out':
+        opts.out = resolve(value());
+        break;
+      case '--pages':
+        opts.pages = parsePages(value());
+        break;
+      case '--headless':
+        opts.headless = true;
+        break;
+      case '--headed':
+        opts.headless = false;
+        break;
+      case '--profile':
+        opts.profile = resolve(value());
+        break;
+      case '-h':
+      case '--help':
+        throw new HelpRequested();
+      default:
+        throw new Failure('unknown option "' + arg + '"\n' + USAGE, EXIT_ERROR);
+    }
+  }
+  return opts;
+}
+
+// ---------------------------------------------------------------------------
+// Variables and templates (core template.ts)
+// ---------------------------------------------------------------------------
+
+const VARIABLE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+const envName = (name: string) => 'WEBSCOOP_VAR_' + name.toUpperCase();
+
+/** A value the user gave: the --var argument first, then the environment. */
+function givenValue(given: Record<string, string>, name: string): string | undefined {
+  return given[name] ?? process.env[envName(name)];
+}
+
+/** Every variable value for the run: given values first, recipe defaults second. */
+function resolveVars(given: Record<string, string>): Record<string, string> {
+  const values: Record<string, string> = { ...given };
+  const missing: string[] = [];
+  for (const v of VARS) {
+    const value = givenValue(given, v.name) ?? v.default ?? undefined;
+    if (value !== undefined) values[v.name] = value;
+    else if (v.required) missing.push(v.name);
+  }
+  if (missing.length > 0) {
+    const first = missing[0]!;
+    throw new Failure(
+      'missing value for variable' + (missing.length > 1 ? 's ' : ' ') + missing.join(', ') + '; pass --var ' + first + '=<value> or set ' + envName(first),
+      EXIT_ERROR,
+    );
+  }
+  return values;
+}
+
+/** Fill a URL template: every value URL-encoded. */
+function fillTemplate(template: string, values: Record<string, string>): string {
+  return template.replace(VARIABLE, (_, name: string) => encodeURIComponent(values[name] ?? ''));
+}
+
+/** Fill a typed value: inserted as it is. */
+function fillText(template: string, values: Record<string, string>): string {
+  return template.replace(VARIABLE, (_, name: string) => values[name] ?? '');
+}
+
+/** First value of the page variable: the user's value when given, else the recipe's start. */
+function pageStart(given: Record<string, string>): number {
+  const param = PAGINATION.param;
+  if (!param) return 0;
+  const value = givenValue(given, param.name);
+  if (value === undefined) return param.start;
+  if (!/^-?\d+$/.test(value.trim())) throw new Failure('page variable ' + param.name + ' must be an integer, got "' + value + '"', EXIT_ERROR);
+  return Number(value);
+}
+
+/** URL of a page: for kind url the page variable is filled in, or set as a query parameter when the template lacks it. */
+function urlFor(values: Record<string, string>, start: number, page: number): string {
+  const param = PAGINATION.param;
+  if (PAGINATION.kind !== 'url') return fillTemplate(URL_TEMPLATE, values);
+  if (!param) throw new Failure('pagination kind url needs pagination.param', EXIT_ERROR);
+  const value = String(start + param.step * (page - 1));
+  const filled = fillTemplate(URL_TEMPLATE, { ...values, [param.name]: value });
+  if (PAGINATION.paramInTemplate) return filled;
+  const url = new URL(filled);
+  url.searchParams.set(param.name, value);
+  return url.href;
+}
+
+// ---------------------------------------------------------------------------
+// Value conversion (core convert.ts)
+// ---------------------------------------------------------------------------
+
+function collapseWhitespace(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+/** First numeric token in the text, with thousands separators removed. */
+function parseNumber(raw: string): number | null {
+  const match = /-?\d[\d,]*(?:\.\d+)?|-?\.\d+/.exec(raw);
+  if (!match) return null;
+  const value = Number(match[0].replace(/,/g, ''));
+  return Number.isFinite(value) ? value : null;
+}
+
+function resolveUrl(raw: string, pageUrl: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  try {
+    return new URL(trimmed, pageUrl).href;
+  } catch {
+    return trimmed;
+  }
+}
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+function monthIndex(name: string): number | null {
+  const index = MONTHS.indexOf(name.slice(0, 3).toLowerCase());
+  return index === -1 ? null : index + 1;
+}
+
+function isoDate(year: number, month: number, day: number): string | null {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+/** ISO 8601 for: ISO date or date-time, MM/DD/YYYY, DD.MM.YYYY, Month D, YYYY, D Month YYYY. Else null. */
+function parseDate(raw: string): string | null {
+  const text = collapseWhitespace(raw);
+  let m: RegExpExecArray | null;
+  if ((m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text))) return isoDate(+m[1]!, +m[2]!, +m[3]!);
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(text)) {
+    const date = new Date(text.replace(' ', 'T'));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(text))) return isoDate(+m[3]!, +m[1]!, +m[2]!);
+  if ((m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(text))) return isoDate(+m[3]!, +m[2]!, +m[1]!);
+  if ((m = /^([A-Za-z]{3,9})\.? (\d{1,2}),? (\d{4})$/.exec(text))) {
+    const month = monthIndex(m[1]!);
+    return month === null ? null : isoDate(+m[3]!, month, +m[2]!);
+  }
+  if ((m = /^(\d{1,2}) ([A-Za-z]{3,9})\.? (\d{4})$/.exec(text))) {
+    const month = monthIndex(m[2]!);
+    return month === null ? null : isoDate(+m[3]!, month, +m[1]!);
+  }
+  return null;
+}
+
+function convertValue(type: FieldType, raw: string, pageUrl: string): Value {
+  switch (type) {
+    case 'text':
+      return collapseWhitespace(raw);
+    case 'number':
+      return parseNumber(raw);
+    case 'url':
+    case 'image':
+      return resolveUrl(raw, pageUrl);
+    case 'date':
+      return parseDate(raw) ?? collapseWhitespace(raw);
+    case 'html':
+      return raw.trim();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Browser session (browser playwright-browser.ts)
+// ---------------------------------------------------------------------------
+
+/** Launch flags that keep Chromium from advertising automation. */
+const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
+const IGNORED_DEFAULT_ARGS = ['--enable-automation'];
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof errors.TimeoutError;
+}
+
+class Session {
+  /** Main frame navigations so far, so settling can tell whether an action navigated. */
+  private navigations = 0;
+  /** Navigations counted when the last action started. */
+  private navigationsBefore = 0;
+
+  constructor(readonly page: Page) {
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) this.navigations++;
+    });
+  }
+
+  /** Load the URL, then wait for network idle, within the navigation timeout. */
+  async goto(url: string): Promise<string> {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    try {
+      await this.page.goto(url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS });
+      await this.page.waitForLoadState('networkidle', { timeout: Math.max(1, deadline - Date.now()) });
+      return this.page.url();
+    } catch (error) {
+      if (isTimeout(error)) throw new Failure('navigation to ' + url + ' timed out after ' + NAVIGATION_TIMEOUT_MS + ' ms', EXIT_ERROR);
+      throw error;
+    }
+  }
+
+  /** Call right before an action, so settle can tell whether it navigated. */
+  mark(): string {
+    this.navigationsBefore = this.navigations;
+    return this.page.url();
+  }
+
+  /**
+   * After an action: when it navigated (now or within a short grace period),
+   * wait for load and network idle; otherwise wait briefly for network idle.
+   */
+  async settle(previousUrl: string): Promise<string> {
+    const page = this.page;
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    const left = () => Math.max(1, deadline - Date.now());
+    const navigated = () => this.navigations !== this.navigationsBefore || page.url() !== previousUrl;
+    try {
+      if (!navigated()) {
+        await page
+          .waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame(), timeout: Math.min(SETTLE_GRACE_MS, left()) })
+          .catch(() => {});
+      }
+      if (navigated()) {
+        await page.waitForLoadState('load', { timeout: left() });
+        await page.waitForLoadState('networkidle', { timeout: left() });
+      } else {
+        await page.waitForLoadState('networkidle', { timeout: Math.min(SETTLE_IDLE_MS, left()) }).catch(() => {});
+      }
+      return page.url();
+    } catch (error) {
+      if (isTimeout(error)) throw new Failure('waiting for ' + page.url() + ' to load timed out after ' + NAVIGATION_TIMEOUT_MS + ' ms', EXIT_ERROR);
+      throw error;
+    }
+  }
+
+  async click(target: Locator): Promise<string> {
+    const before = this.mark();
+    await target.scrollIntoViewIfNeeded();
+    await target.click();
+    return before;
+  }
+
+  async fill(target: Locator, text: string): Promise<string> {
+    const before = this.mark();
+    await target.fill(text);
+    return before;
+  }
+
+  async press(key: string, target: Locator | null): Promise<string> {
+    const before = this.mark();
+    if (target) await target.press(key);
+    else await this.page.keyboard.press(key);
+    return before;
+  }
+
+  /** Select an option by value first, then by visible label. */
+  async select(target: Locator, value: string): Promise<string> {
+    const before = this.mark();
+    const option = await target.evaluate((el, wanted) => {
+      const options = Array.from((el as HTMLSelectElement).options ?? []);
+      const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
+      return hit ? hit.value : null;
+    }, value);
+    if (option === null) throw new Error('no option ' + JSON.stringify(value));
+    await target.selectOption({ value: option });
+    return before;
+  }
+
+  async scrollToBottom(): Promise<void> {
+    this.mark();
+    await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Selectors (browser locate, core resolveFirst)
+// ---------------------------------------------------------------------------
+
+type Root = Page | Locator;
+
+function locate(root: Root, selector: Selector): Locator {
+  const { value } = selector;
+  switch (selector.strategy) {
+    case 'role': {
+      const bar = value.indexOf('|');
+      const role = (bar === -1 ? value : value.slice(0, bar)) as Parameters<Page['getByRole']>[0];
+      return bar === -1 ? root.getByRole(role) : root.getByRole(role, { name: value.slice(bar + 1), exact: true });
+    }
+    case 'testid':
+      return root.getByTestId(value);
+    case 'id':
+      return root.locator('css=[id=' + JSON.stringify(value) + ']');
+    case 'text':
+      return root.getByText(value, { exact: true });
+    case 'css':
+      return root.locator('css=' + value);
+    case 'xpath':
+      return root.locator('xpath=' + value);
+  }
+}
+
+interface Found {
+  /** Position of the candidate that matched. */
+  index: number;
+  locator: Locator;
+  count: number;
+}
+
+/** Try candidates in stored order; the first with at least one match wins. */
+async function resolveFirst(root: Root, selectors: readonly Selector[]): Promise<Found | null> {
+  for (const [index, selector] of selectors.entries()) {
+    const locator = locate(root, selector);
+    const count = await locator.count();
+    if (count > 0) return { index, locator, count };
+  }
+  return null;
+}
+
+/** Item containers the candidates found, minus those an exclusion candidate matches anywhere in the document. */
+async function keptContainers(page: Page, found: Found): Promise<Locator[]> {
+  const all = Array.from({ length: found.count }, (_, i) => found.locator.nth(i));
+  const exclude = ITEM?.exclude ?? [];
+  if (exclude.length === 0) return all;
+  const excluded = [];
+  for (const selector of exclude) excluded.push(...(await locate(page, selector).elementHandles()));
+  if (excluded.length === 0) return all;
+  const handles = await found.locator.elementHandles();
+  try {
+    const drop = await page.evaluate(([containers, others]) => containers.map((c) => others.includes(c)), [handles, excluded] as const);
+    return all.filter((_, i) => !drop[i]);
+  } finally {
+    await Promise.all([...handles, ...excluded].map((h) => h.dispose()));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Steps (core steps/replay.ts)
+// ---------------------------------------------------------------------------
+
+/** Selectors every-page steps settled on, by step index. */
+type StepCache = Map<number, Selector[]>;
+
+/** A step's target: cached selectors first, polling until the timeout for wait steps, then the stored candidates. */
+async function findStepTarget(page: Page, step: Step, cache: StepCache): Promise<Locator | null> {
+  const stored = step.target!;
+  const cached = step.when === 'every-page' ? cache.get(step.index) : undefined;
+  if (cached) {
+    const hit = await resolveFirst(page, cached);
+    if (hit) return hit.locator.nth(0);
+  }
+  if (step.action.kind === 'wait-for') {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    for (;;) {
+      const hit = await resolveFirst(page, cached ?? stored);
+      if (hit) return hit.locator.nth(0);
+      if (Date.now() >= deadline) break;
+      await sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
+    }
+  }
+  const found = await resolveFirst(page, stored);
+  if (!found) return null;
+  if (step.when === 'every-page') cache.set(step.index, stored.slice(found.index));
+  return found.locator.nth(0);
+}
+
+async function act(session: Session, step: Step, target: Locator | null, values: Record<string, string>): Promise<string> {
+  const { action } = step;
+  switch (action.kind) {
+    case 'click':
+      return session.click(target!);
+    case 'type':
+      return session.fill(target!, fillText(action.text, values));
+    case 'select':
+      return session.select(target!, action.value);
+    case 'press':
+      return session.press(action.key, target);
+    case 'wait-for':
+    case 'sleep':
+      return session.page.url();
+  }
+}
+
+/**
+ * Replay the steps that apply to the page, in order. An optional step whose
+ * target is missing is skipped; a required one fails the run with exit 3.
+ */
+async function replaySteps(session: Session, page: number, values: Record<string, string>, cache: StepCache): Promise<void> {
+  for (const step of STEPS) {
+    if (step.when !== 'every-page' && page !== 1) continue;
+    const label = 'step ' + step.index + (step.name === 'step:' + step.index ? '' : ' "' + step.name + '"') + ' (' + step.kind + ') on page ' + page;
+    const fail = (why: string): void => {
+      if (!step.optional) throw new Failure('required step ' + step.index + ' (' + step.kind + ') ' + why + ' [' + step.name + ']', EXIT_UNRESOLVED);
+      log(label + ': skipped (' + why + ')');
+    };
+    if (step.action.kind === 'sleep') {
+      await sleep(step.action.ms);
+      log(label + ': ok');
+      continue;
+    }
+    let target: Locator | null = null;
+    if (step.target) {
+      target = await findStepTarget(session.page, step, cache);
+      if (!target) {
+        fail(step.action.kind === 'wait-for' ? 'found no element within ' + NAVIGATION_TIMEOUT_MS + ' ms' : 'found no element');
+        continue;
+      }
+    }
+    let previousUrl: string;
+    try {
+      previousUrl = await act(session, step, target, values);
+    } catch (error) {
+      if (error instanceof Failure) throw error;
+      fail('could not run: ' + (error instanceof Error ? error.message : String(error)));
+      continue;
+    }
+    if (step.action.kind !== 'wait-for') await session.settle(previousUrl);
+    log(label + ': ok');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Extraction and the missing field policy (core extract.ts)
+// ---------------------------------------------------------------------------
+
+/** The selectors page 1 settled on; later pages use them as they are. */
+interface Resolved {
+  item: Selector[] | null;
+  fields: (Selector[] | null)[];
+}
+
+interface Extraction {
+  rows: Row[];
+  /** Required fields that matched on no row, or "item" when no container matched. */
+  missingRequired: string[];
+  warnings: string[];
+  resolved: Resolved;
+}
+
+async function readValue(field: Field, element: Locator, pageUrl: string): Promise<Value> {
+  let raw: string;
+  if (field.read === 'attr') raw = (await element.getAttribute(field.attr!)) ?? '';
+  else if (field.read === 'html') raw = await element.innerHTML();
+  else raw = (await element.textContent()) ?? '';
+  return convertValue(field.type, raw, pageUrl);
+}
+
+/** First candidate, in stored order, that matches in any of the scopes; its selectors from there on. */
+async function settleSelectors(selectors: readonly Selector[], scopes: readonly Root[]): Promise<Selector[] | null> {
+  for (const [index, selector] of selectors.entries()) {
+    for (const scope of scopes) {
+      if ((await locate(scope, selector).count()) > 0) return selectors.slice(index);
+    }
+  }
+  return null;
+}
+
+/** Every row of the current page, from item container fromIndex on (a page that grew). */
+async function extractPage(page: Page, pageNumber: number, pageUrl: string, resolved: Resolved | null, fromIndex: number): Promise<Extraction> {
+  // Item container.
+  let containers: (Locator | undefined)[] = [undefined];
+  let itemSelectors: Selector[] | null = null;
+  if (ITEM) {
+    const selectors = resolved ? resolved.item : ITEM.selectors;
+    const found = selectors ? await resolveFirst(page, selectors) : null;
+    containers = found ? await keptContainers(page, found) : [];
+    itemSelectors = resolved ? resolved.item : found ? ITEM.selectors.slice(found.index) : null;
+  }
+  const real = containers.filter((c): c is Locator => c !== undefined);
+
+  // Fields: settle each once, then read every row.
+  interface State {
+    field: Field;
+    selectors: Selector[] | null;
+    pageValue?: { value: Value; found: boolean };
+    missingRows: number[];
+  }
+  const states: State[] = [];
+  for (const [index, field] of FIELDS.entries()) {
+    let selectors: Selector[] | null;
+    if (resolved) selectors = resolved.fields[index] ?? null;
+    else if (field.scope === 'page') selectors = await settleSelectors(field.selectors, [page]);
+    else if (ITEM && real.length === 0) selectors = null;
+    else selectors = await settleSelectors(field.selectors, real.length > 0 ? real : [page]);
+    const state: State = { field, selectors, missingRows: [] };
+    if (field.scope === 'page') {
+      const found = selectors ? await resolveFirst(page, selectors) : null;
+      state.pageValue = found ? { value: await readValue(field, found.locator.nth(0), pageUrl), found: true } : { value: null, found: false };
+    }
+    states.push(state);
+  }
+
+  const rows: Row[] = [];
+  for (const [index, container] of containers.slice(fromIndex).entries()) {
+    const row: Row = { _page: pageNumber, _index: index };
+    for (const state of states) {
+      let result = state.pageValue;
+      if (!result) {
+        const found = state.selectors ? await resolveFirst(container ?? page, state.selectors) : null;
+        result = found ? { value: await readValue(state.field, found.locator.nth(0), pageUrl), found: true } : { value: null, found: false };
+      }
+      if (!result.found) state.missingRows.push(index);
+      row[state.field.name] = result.value;
+    }
+    rows.push(row);
+  }
+
+  const missingRequired: string[] = [];
+  const warnings: string[] = [];
+  if (ITEM && rows.length === 0) missingRequired.push('item');
+  for (const { field, missingRows } of states) {
+    if (field.optional) continue;
+    const missing = rows.length === 0 || missingRows.length === rows.length;
+    if (missing && rows.length > 0) missingRequired.push(field.name);
+    if (!missing && missingRows.length > 0) {
+      warnings.push(
+        'required field "' + field.name + '" missing on page ' + pageNumber + ' row' + (missingRows.length > 1 ? 's ' : ' ') + missingRows.join(', '),
+      );
+    }
+  }
+  return { rows, missingRequired, warnings, resolved: { item: itemSelectors, fields: states.map((s) => s.selectors) } };
+}
+
+// ---------------------------------------------------------------------------
+// Dedup and stop rules (core pagination/dedup.ts)
+// ---------------------------------------------------------------------------
+
+/** A row's identity: the key field's value, or all field values in recipe order. */
+function keyOf(row: Row): string {
+  return JSON.stringify(KEY_FIELD !== null ? row[KEY_FIELD] : FIELDS.map((f) => row[f.name]));
+}
+
+/** Rows not seen on an earlier page (nor earlier on this one); page 1 keeps every row. */
+function dedupRows(rows: readonly Row[], page: number, seen: ReadonlySet<string>): { kept: Row[]; keys: string[] } {
+  const keys = rows.map(keyOf);
+  const kept: Row[] = [];
+  const fresh = new Set<string>();
+  rows.forEach((row, i) => {
+    const key = keys[i]!;
+    if (page === 1 || (!seen.has(key) && !fresh.has(key))) kept.push(row);
+    fresh.add(key);
+  });
+  return { kept, keys };
+}
+
+interface PageSummary {
+  page: number;
+  url: string;
+  firstKey: string | null;
+  raw: number;
+  kept: number;
+}
+
+type StopReason = 'limit' | 'cap' | 'target-missing' | 'no-new-items' | 'first-item-repeats' | 'loop' | 'no-growth' | 'none';
+
+/** Stop rules in order: empty page, loop guard, no-new-items, first-item-repeats, kind none, limit, cap. */
+function evaluateStop(
+  current: PageSummary,
+  previous: PageSummary | null,
+  limit: number | 'all',
+): { reason: StopReason | null; discard: boolean } {
+  const rules = PAGINATION.stopRules;
+  if (previous) {
+    if (current.raw === 0) return { reason: 'no-new-items', discard: true };
+    const sameFirst = current.firstKey !== null && current.firstKey === previous.firstKey;
+    if (sameFirst && current.url === previous.url) return { reason: 'loop', discard: false };
+    if (rules.includes('no-new-items') && current.kept === 0) return { reason: 'no-new-items', discard: false };
+    if (rules.includes('first-item-repeats') && sameFirst) return { reason: 'first-item-repeats', discard: true };
+  }
+  if (PAGINATION.kind === 'none') return { reason: 'none', discard: false };
+  if (limit !== 'all' && current.page >= limit) return { reason: 'limit', discard: false };
+  if (limit === 'all' && current.page >= DEFAULT_PAGE_CAP) return { reason: 'cap', discard: false };
+  return { reason: null, discard: false };
+}
+
+// ---------------------------------------------------------------------------
+// Pagination strategies (core pagination/strategies.ts)
+// ---------------------------------------------------------------------------
+
+type Advance = { kind: 'page'; url: string } | { kind: 'grown'; from: number } | { kind: 'stop'; reason: StopReason };
+
+interface Pager {
+  session: Session;
+  values: Record<string, string>;
+  start: number;
+  /** Selectors the pagination target settled on the first time it was found. */
+  targetSelectors: Selector[] | null;
+  /** Item containers on the page now, with page 1's selectors. */
+  count(): Promise<number>;
+}
+
+/** Whether a next or load-more control is disabled: disabled, aria-disabled="true", or an anchor without href. */
+async function isDisabled(target: Locator): Promise<boolean> {
+  return target.evaluate(
+    (el) => el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || (el.tagName.toLowerCase() === 'a' && !el.hasAttribute('href')),
+  );
+}
+
+/** The pagination target, or null when it is missing or disabled. */
+async function usableTarget(pager: Pager): Promise<Locator | null> {
+  if (!PAGINATION.target) return null;
+  const page = pager.session.page;
+  let found: Found | null;
+  if (pager.targetSelectors) {
+    found = await resolveFirst(page, pager.targetSelectors);
+  } else {
+    found = await resolveFirst(page, PAGINATION.target);
+    if (found) pager.targetSelectors = PAGINATION.target.slice(found.index);
+  }
+  const target = found ? found.locator.nth(0) : null;
+  if (!target || (await isDisabled(target))) return null;
+  return target;
+}
+
+/** Poll the item count until it exceeds before or the timeout passes. */
+async function waitForGrowth(pager: Pager, before: number): Promise<boolean> {
+  const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+  for (;;) {
+    if ((await pager.count()) > before) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(GROWTH_POLL_MS);
+  }
+}
+
+async function nextPage(pager: Pager, page: number): Promise<Advance> {
+  const { session } = pager;
+  switch (PAGINATION.kind) {
+    case 'none':
+      return { kind: 'stop', reason: 'none' };
+    case 'url': {
+      const url = await session.goto(urlFor(pager.values, pager.start, page + 1));
+      log('page ' + (page + 1) + ': url');
+      return { kind: 'page', url };
+    }
+    case 'next': {
+      const target = await usableTarget(pager);
+      if (!target) return { kind: 'stop', reason: 'target-missing' };
+      log('page ' + (page + 1) + ': next');
+      const previousUrl = await session.click(target);
+      return { kind: 'page', url: await session.settle(previousUrl) };
+    }
+    case 'more': {
+      const target = await usableTarget(pager);
+      if (!target) return { kind: 'stop', reason: 'target-missing' };
+      const before = await pager.count();
+      log('page ' + (page + 1) + ': more');
+      await session.click(target);
+      return (await waitForGrowth(pager, before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
+    }
+    case 'scroll': {
+      const before = await pager.count();
+      log('page ' + (page + 1) + ': scroll');
+      await session.scrollToBottom();
+      return (await waitForGrowth(pager, before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+/** Where rows go: stdout or --out, a JSON array at the end or one JSON object per line as pages complete. */
+class RowSink {
+  private readonly rows: Row[] = [];
+  private opened = false;
+
+  constructor(
+    private readonly jsonl: boolean,
+    private readonly out: string | null,
+  ) {}
+
+  private write(chunk: string): void {
+    if (!this.out) {
+      process.stdout.write(chunk);
+      return;
+    }
+    if (!this.opened) {
+      mkdirSync(dirname(this.out), { recursive: true });
+      writeFileSync(this.out, '');
+      this.opened = true;
+    }
+    appendFileSync(this.out, chunk);
+  }
+
+  row(row: Row): void {
+    if (this.jsonl) this.write(JSON.stringify(row) + '\n');
+    else this.rows.push(row);
+  }
+
+  finish(): void {
+    if (!this.jsonl) this.write(JSON.stringify(this.rows, null, 2) + '\n');
+    else this.write('');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The run (core runner.ts)
+// ---------------------------------------------------------------------------
+
+async function scrape(opts: Options): Promise<number> {
+  const values = resolveVars(opts.vars);
+  const start = pageStart(opts.vars);
+  const firstUrl = urlFor(values, start, 1);
+  const limit = opts.pages ?? PAGINATION.limit;
+
+  const profileDir = opts.profile ?? mkdtempSync(join(tmpdir(), 'webscoop-export-'));
+  if (opts.profile) mkdirSync(profileDir, { recursive: true });
+  const executablePath = process.env.WEBSCOOP_CHROMIUM?.trim() || undefined;
+  const context = await chromium.launchPersistentContext(profileDir, {
+    headless: opts.headless,
+    // Headless runs use Chromium's new headless mode in the full browser, not the separate headless shell.
+    ...(opts.headless ? { channel: 'chromium' } : {}),
+    viewport: null,
+    ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
+    args: STEALTH_ARGS,
+    ...(executablePath ? { executablePath } : {}),
+  });
+  try {
+    context.setDefaultTimeout(ACTION_TIMEOUT_MS);
+    context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+    const session = new Session(context.pages()[0] ?? (await context.newPage()));
+    const page = session.page;
+    const sink = new RowSink(opts.jsonl, opts.out);
+    const stepCache: StepCache = new Map();
+    const seen = new Set<string>();
+    let resolved: Resolved | null = null;
+    const pager: Pager = {
+      session,
+      values,
+      start,
+      targetSelectors: null,
+      async count() {
+        if (!ITEM || !resolved?.item) return 0;
+        const found = await resolveFirst(page, resolved.item);
+        return found ? (await keptContainers(page, found)).length : 0;
+      },
+    };
+
+    log('running ' + RECIPE_NAME + ': ' + firstUrl);
+    let url = await session.goto(firstUrl);
+    let pageNumber = 1;
+    let navigated = true;
+    let fromIndex = 0;
+    let previous: PageSummary | null = null;
+    let rowCount = 0;
+    /** Pages whose rows were emitted; a discarded last page does not count. */
+    let pageCount = 0;
+    let reason: StopReason;
+    for (;;) {
+      if (navigated) {
+        await replaySteps(session, pageNumber, values, stepCache);
+        url = page.url();
+      }
+      const extraction = await extractPage(page, pageNumber, url, resolved, fromIndex);
+      const names = resolved ? extraction.missingRequired.filter((name) => name !== 'item') : extraction.missingRequired;
+      if (names.length > 0) {
+        const message = names.includes('item')
+          ? 'the item container matched no element'
+          : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element' + (resolved ? ' on page ' + pageNumber : '');
+        throw new Failure(message, EXIT_UNRESOLVED);
+      }
+      resolved ??= extraction.resolved;
+      for (const warning of extraction.warnings) log('warning: ' + warning);
+
+      const { kept, keys } = dedupRows(extraction.rows, pageNumber, seen);
+      const summary: PageSummary = { page: pageNumber, url, firstKey: keys[0] ?? null, raw: extraction.rows.length, kept: kept.length };
+      const verdict = evaluateStop(summary, previous, limit);
+      if (!verdict.discard) {
+        for (const key of keys) seen.add(key);
+        kept.forEach((row, index) => {
+          row._index = index;
+          sink.row(row);
+        });
+        rowCount += kept.length;
+        pageCount = pageNumber;
+      }
+      if (verdict.reason) {
+        reason = verdict.reason;
+        break;
+      }
+
+      if (PAGINATION.delayMs > 0) await sleep(PAGINATION.delayMs);
+      const advance = await nextPage(pager, pageNumber);
+      if (advance.kind === 'stop') {
+        reason = advance.reason;
+        break;
+      }
+      previous = summary;
+      pageNumber++;
+      if (advance.kind === 'page') {
+        url = advance.url;
+        fromIndex = 0;
+        navigated = true;
+      } else {
+        fromIndex = advance.from;
+        navigated = false;
+      }
+    }
+
+    if (reason === 'cap') log('warning: stopped at the page cap of ' + DEFAULT_PAGE_CAP + ' pages');
+    else if (reason !== 'limit' && reason !== 'none') log('pagination stopped after page ' + pageCount + ': ' + reason);
+    sink.finish();
+    log(rowCount + ' row' + (rowCount === 1 ? '' : 's') + ' from ' + pageCount + ' page' + (pageCount === 1 ? '' : 's'));
+    return EXIT_OK;
+  } finally {
+    await context.close().catch(() => {});
+    if (!opts.profile) rmSync(profileDir, { recursive: true, force: true });
+  }
+}
+
+async function main(argv: readonly string[]): Promise<number> {
+  try {
+    return await scrape(parseArgs(argv));
+  } catch (error) {
+    if (error instanceof HelpRequested) {
+      process.stdout.write(USAGE + '\n');
+      return EXIT_OK;
+    }
+    if (error instanceof Failure) {
+      log(error.message);
+      return error.code;
+    }
+    log('error: ' + (error instanceof Error ? error.message : String(error)));
+    return EXIT_ERROR;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Recipe
+// ---------------------------------------------------------------------------
+
+const RECIPE_NAME = "playground-steps";
+/** Run without a window unless --headed is given. */
+const DEFAULT_HEADLESS = false;
+
+/** Navigation, settle, wait step, and growth timeout. */
+const NAVIGATION_TIMEOUT_MS = 30000;
+/** Default timeout of element actions. */
+const ACTION_TIMEOUT_MS = 5000;
+/** How long settling waits for an action to start a navigation. */
+const SETTLE_GRACE_MS = 500;
+/** How long settling waits for network idle when nothing navigated. */
+const SETTLE_IDLE_MS = 2000;
+/** Interval between looks for a wait step target. */
+const WAIT_POLL_MS = 200;
+/** Interval between item counts while a page grows. */
+const GROWTH_POLL_MS = 200;
+/** Most pages --pages all walks. */
+const DEFAULT_PAGE_CAP = 500;
+
+/** Page URL; {name} marks a variable. */
+const URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?tier={tier}&gate=cookie";
+const VARS: Var[] = [
+  { "name": "port", "default": "4777", "required": true },
+  { "name": "tier", "default": "0", "required": true }
+];
+const STEPS: Step[] = [
+  {
+    "index": 0,
+    "kind": "click",
+    "name": "accept cookies",
+    "when": "first-page",
+    "optional": false,
+    "target": [
+      { "strategy": "role", "value": "button|Accept all" },
+      { "strategy": "id", "value": "consent-accept" },
+      { "strategy": "css", "value": "button.consent-button" }
+    ],
+    "action": { "kind": "click" }
+  },
+  {
+    "index": 1,
+    "kind": "wait",
+    "name": "step:1",
+    "when": "first-page",
+    "optional": false,
+    "target": [{ "strategy": "testid", "value": "product-card" }],
+    "action": { "kind": "wait-for" }
+  },
+  {
+    "index": 2,
+    "kind": "wait",
+    "name": "step:2",
+    "when": "first-page",
+    "optional": true,
+    "target": null,
+    "action": { "kind": "sleep", "ms": 100 }
+  }
+];
+const ITEM: Item | null = {
+  "selectors": [
+    { "strategy": "testid", "value": "product-card" },
+    { "strategy": "css", "value": "article.product-card" }
+  ],
+  "exclude": []
+};
+const FIELDS: Field[] = [
+  {
+    "name": "title",
+    "type": "text",
+    "scope": "item",
+    "optional": false,
+    "selectors": [
+      { "strategy": "role", "value": "heading" },
+      { "strategy": "css", "value": "h2.product-title" },
+      { "strategy": "xpath", "value": ".//h2" }
+    ],
+    "read": "text",
+    "attr": null
+  },
+  {
+    "name": "price",
+    "type": "number",
+    "scope": "item",
+    "optional": false,
+    "selectors": [
+      { "strategy": "testid", "value": "price" },
+      { "strategy": "css", "value": ".product-price" }
+    ],
+    "read": "text",
+    "attr": null
+  },
+  {
+    "name": "url",
+    "type": "url",
+    "scope": "item",
+    "optional": false,
+    "selectors": [
+      { "strategy": "css", "value": "a.product-link" },
+      { "strategy": "role", "value": "link|View details" }
+    ],
+    "read": "attr",
+    "attr": "href"
+  },
+  {
+    "name": "image",
+    "type": "image",
+    "scope": "item",
+    "optional": false,
+    "selectors": [{ "strategy": "css", "value": "img.product-image" }],
+    "read": "attr",
+    "attr": "src"
+  },
+  {
+    "name": "rating",
+    "type": "number",
+    "scope": "item",
+    "optional": false,
+    "selectors": [
+      { "strategy": "testid", "value": "rating" },
+      { "strategy": "css", "value": ".product-rating" }
+    ],
+    "read": "text",
+    "attr": null
+  },
+  {
+    "name": "category",
+    "type": "text",
+    "scope": "page",
+    "optional": false,
+    "selectors": [
+      { "strategy": "testid", "value": "category" },
+      { "strategy": "css", "value": "h1.category-heading" }
+    ],
+    "read": "text",
+    "attr": null
+  }
+];
+/** Field that identifies a row across pages, or null to compare all field values. */
+const KEY_FIELD: string | null = "url";
+const PAGINATION: Pagination = {
+  "kind": "none",
+  "param": null,
+  "paramInTemplate": false,
+  "target": null,
+  "limit": 1,
+  "stopRules": [],
+  "delayMs": 0
+};
+
+main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});

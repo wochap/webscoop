@@ -1,0 +1,971 @@
+/**
+ * Runtime of an exported Python script, section by section the same as
+ * `TS_PRELUDE`, on the Playwright sync API. The renderer emits the recipe
+ * constants after it.
+ *
+ * URL resolution and query parameters run in the page (`new URL`), so they
+ * follow the same WHATWG rules as the runner; the other conversions are
+ * plain Python.
+ *
+ * Kept free of backticks and template placeholders so it can live in a raw
+ * string literal.
+ */
+export const PY_PRELUDE = String.raw`import argparse
+import json
+import math
+import os
+import re
+import shutil
+import sys
+import tempfile
+import time
+from datetime import date, datetime, timedelta, timezone
+from urllib.parse import quote
+
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+# ---------------------------------------------------------------------------
+# Exit codes and failures (cli exit.ts)
+# ---------------------------------------------------------------------------
+
+EXIT_OK = 0
+# Bad arguments, a missing variable, a timeout, or any other error.
+EXIT_ERROR = 1
+# A required field, the item container, or a required step matched nothing.
+EXIT_UNRESOLVED = 3
+
+
+class Failure(Exception):
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code
+
+
+def log(message):
+    print(RECIPE_NAME + ": " + message, file=sys.stderr, flush=True)
+
+
+def now_ms():
+    return time.monotonic() * 1000
+
+
+def sleep_ms(ms):
+    time.sleep(ms / 1000)
+
+
+# ---------------------------------------------------------------------------
+# Command line
+# ---------------------------------------------------------------------------
+
+
+class ArgumentParser(argparse.ArgumentParser):
+    """Exit 1 on bad arguments, like the CLI, instead of argparse's 2."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        log(message)
+        sys.exit(EXIT_ERROR)
+
+
+def parse_pages(value):
+    if value == "all":
+        return "all"
+    if not re.fullmatch(r"[0-9]+", value) or int(value) < 1:
+        raise argparse.ArgumentTypeError('invalid --pages "' + value + '", expected "all" or a positive integer')
+    return int(value)
+
+
+def parse_args(argv):
+    parser = ArgumentParser(
+        description="Run the exported webscoop recipe " + RECIPE_NAME + " and print its rows as JSON.",
+        epilog="exit codes: 0 success, 1 error, 3 a required field or step matched no element",
+    )
+    parser.add_argument("--var", action="append", default=[], metavar="NAME=VALUE",
+                        help="set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too")
+    parser.add_argument("--jsonl", action="store_true", help="print one JSON object per line instead of a JSON array")
+    parser.add_argument("--out", metavar="PATH", help="write the rows to a file instead of stdout")
+    parser.add_argument("--pages", type=parse_pages, metavar="1|N|all", help="pages to walk, replacing the recipe limit")
+    parser.add_argument("--headless", dest="headless", action="store_true", default=DEFAULT_HEADLESS,
+                        help="run the browser without a window")
+    parser.add_argument("--headed", dest="headless", action="store_false", help="show the browser window")
+    parser.add_argument("--profile", metavar="DIR", help="browser profile directory to keep (default: a temporary one)")
+    opts = parser.parse_args(argv)
+    given = {}
+    for pair in opts.var:
+        at = pair.find("=")
+        if at <= 0:
+            raise Failure('invalid --var "' + pair + '", expected name=value', EXIT_ERROR)
+        given[pair[:at]] = pair[at + 1:]
+    opts.vars = given
+    return opts
+
+
+# ---------------------------------------------------------------------------
+# Variables and templates (core template.ts)
+# ---------------------------------------------------------------------------
+
+VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def env_name(name):
+    return "WEBSCOOP_VAR_" + name.upper()
+
+
+def given_value(given, name):
+    """A value the user gave: the --var argument first, then the environment."""
+    if name in given:
+        return given[name]
+    return os.environ.get(env_name(name))
+
+
+def resolve_vars(given):
+    """Every variable value for the run: given values first, recipe defaults second."""
+    values = dict(given)
+    missing = []
+    for var in VARS:
+        value = given_value(given, var["name"])
+        if value is None:
+            value = var["default"]
+        if value is not None:
+            values[var["name"]] = value
+        elif var["required"]:
+            missing.append(var["name"])
+    if missing:
+        first = missing[0]
+        raise Failure(
+            "missing value for variable" + ("s " if len(missing) > 1 else " ") + ", ".join(missing)
+            + "; pass --var " + first + "=<value> or set " + env_name(first),
+            EXIT_ERROR,
+        )
+    return values
+
+
+def encode_uri_component(value):
+    return quote(value, safe="!'()*-._~")
+
+
+def fill_template(template, values):
+    """Fill a URL template: every value URL-encoded."""
+    return VARIABLE.sub(lambda m: encode_uri_component(values.get(m.group(1), "")), template)
+
+
+def fill_text(template, values):
+    """Fill a typed value: inserted as it is."""
+    return VARIABLE.sub(lambda m: values.get(m.group(1), ""), template)
+
+
+def page_start(given):
+    """First value of the page variable: the user's value when given, else the recipe's start."""
+    param = PAGINATION["param"]
+    if not param:
+        return 0
+    value = given_value(given, param["name"])
+    if value is None:
+        return param["start"]
+    if not re.fullmatch(r"-?[0-9]+", value.strip()):
+        raise Failure("page variable " + param["name"] + ' must be an integer, got "' + value + '"', EXIT_ERROR)
+    return int(value)
+
+
+SET_QUERY_PARAM = "([href, name, value]) => { const url = new URL(href); url.searchParams.set(name, value); return url.href; }"
+
+
+def url_for(page, values, start, number):
+    """URL of a page: for kind url the page variable is filled in, or set as a query parameter when the template lacks it."""
+    param = PAGINATION["param"]
+    if PAGINATION["kind"] != "url":
+        return fill_template(URL_TEMPLATE, values)
+    if not param:
+        raise Failure("pagination kind url needs pagination.param", EXIT_ERROR)
+    value = str(start + param["step"] * (number - 1))
+    filled = fill_template(URL_TEMPLATE, {**values, param["name"]: value})
+    if PAGINATION["paramInTemplate"] or page is None:
+        return filled
+    return page.evaluate(SET_QUERY_PARAM, [filled, param["name"], value])
+
+
+# ---------------------------------------------------------------------------
+# Value conversion (core convert.ts)
+# ---------------------------------------------------------------------------
+
+# JavaScript's whitespace set, for \s and trim().
+WHITESPACE_CHARS = "".join(
+    chr(c) for c in (0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)
+)
+WHITESPACE = re.compile("[" + re.escape(WHITESPACE_CHARS) + "]+")
+
+
+def js_trim(raw):
+    return raw.strip(WHITESPACE_CHARS)
+
+
+def collapse_whitespace(raw):
+    return js_trim(WHITESPACE.sub(" ", raw))
+
+
+def js_number(value):
+    """A float as JavaScript prints it: integral values without a fraction."""
+    return int(value) if value.is_integer() and abs(value) < 1e21 else value
+
+
+NUMBER = re.compile(r"-?[0-9][0-9,]*(?:\.[0-9]+)?|-?\.[0-9]+")
+
+
+def parse_number(raw):
+    """First numeric token in the text, with thousands separators removed."""
+    match = NUMBER.search(raw)
+    if not match:
+        return None
+    value = float(match.group(0).replace(",", ""))
+    return js_number(value) if math.isfinite(value) else None
+
+
+RESOLVE_URL = "([raw, base]) => { try { return new URL(raw, base).href; } catch { return raw; } }"
+
+
+def resolve_url(page, raw, page_url):
+    trimmed = js_trim(raw)
+    if trimmed == "":
+        return None
+    return page.evaluate(RESOLVE_URL, [trimmed, page_url])
+
+
+MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def month_index(name):
+    short = name[:3].lower()
+    return MONTHS.index(short) + 1 if short in MONTHS else None
+
+
+def iso_date(year, month, day):
+    # Date.UTC maps years 0 to 99 to 1900 to 1999, so the runner rejects them.
+    if year < 100:
+        return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+ISO_DATE = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
+ISO_DATE_TIME = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?(Z|([+-])([0-9]{2}):?([0-9]{2}))?"
+)
+US_DATE = re.compile(r"([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})")
+DOTTED_DATE = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})")
+MONTH_FIRST = re.compile(r"([A-Za-z]{3,9})\.? ([0-9]{1,2}),? ([0-9]{4})")
+DAY_FIRST = re.compile(r"([0-9]{1,2}) ([A-Za-z]{3,9})\.? ([0-9]{4})")
+
+
+def iso_date_time(m):
+    """A date-time as JavaScript's Date parses it: no offset means local time, the fraction is cut to milliseconds."""
+    year, month, day, hour, minute = (int(m.group(i)) for i in range(1, 6))
+    second = int(m.group(6) or 0)
+    ms = int((m.group(7) or "").ljust(3, "0")[:3])
+    if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 24 and minute <= 59 and second <= 59):
+        return None
+    if hour == 24 and (minute or second or ms):
+        return None
+    try:
+        moment = datetime(year, month, 1) + timedelta(days=day - 1, hours=hour, minutes=minute, seconds=second, milliseconds=ms)
+        zone = m.group(8)
+        if zone is None:
+            moment = moment.astimezone(timezone.utc)
+        else:
+            offset = timedelta(0)
+            if zone != "Z":
+                offset = timedelta(hours=int(m.group(10)), minutes=int(m.group(11)))
+                if m.group(9) == "-":
+                    offset = -offset
+            moment = moment.replace(tzinfo=timezone(offset)).astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + "%03d" % (moment.microsecond // 1000) + "Z"
+
+
+def parse_date(raw):
+    """ISO 8601 for: ISO date or date-time, MM/DD/YYYY, DD.MM.YYYY, Month D, YYYY, D Month YYYY. Else None."""
+    text = collapse_whitespace(raw)
+    m = ISO_DATE.fullmatch(text)
+    if m:
+        return iso_date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = ISO_DATE_TIME.fullmatch(text)
+    if m:
+        return iso_date_time(m)
+    m = US_DATE.fullmatch(text)
+    if m:
+        return iso_date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+    m = DOTTED_DATE.fullmatch(text)
+    if m:
+        return iso_date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    m = MONTH_FIRST.fullmatch(text)
+    if m:
+        month = month_index(m.group(1))
+        return None if month is None else iso_date(int(m.group(3)), month, int(m.group(2)))
+    m = DAY_FIRST.fullmatch(text)
+    if m:
+        month = month_index(m.group(2))
+        return None if month is None else iso_date(int(m.group(3)), month, int(m.group(1)))
+    return None
+
+
+def convert_value(page, field_type, raw, page_url):
+    if field_type == "text":
+        return collapse_whitespace(raw)
+    if field_type == "number":
+        return parse_number(raw)
+    if field_type in ("url", "image"):
+        return resolve_url(page, raw, page_url)
+    if field_type == "date":
+        parsed = parse_date(raw)
+        return parsed if parsed is not None else collapse_whitespace(raw)
+    return js_trim(raw)
+
+
+# ---------------------------------------------------------------------------
+# Browser session (browser playwright-browser.ts)
+# ---------------------------------------------------------------------------
+
+# Launch flags that keep Chromium from advertising automation.
+STEALTH_ARGS = ["--disable-blink-features=AutomationControlled"]
+IGNORED_DEFAULT_ARGS = ["--enable-automation"]
+
+SELECT_OPTION = """(el, wanted) => {
+  const options = Array.from(el.options ?? []);
+  const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
+  return hit ? hit.value : null;
+}"""
+
+
+class Session:
+    def __init__(self, page):
+        self.page = page
+        # Main frame navigations so far, so settling can tell whether an action navigated.
+        self.navigations = 0
+        # Navigations counted when the last action started.
+        self.navigations_before = 0
+        page.on("framenavigated", self._on_navigated)
+
+    def _on_navigated(self, frame):
+        if frame == self.page.main_frame:
+            self.navigations += 1
+
+    def goto(self, url):
+        """Load the URL, then wait for network idle, within the navigation timeout."""
+        deadline = now_ms() + NAVIGATION_TIMEOUT_MS
+        try:
+            self.page.goto(url, wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
+            self.page.wait_for_load_state("networkidle", timeout=max(1, deadline - now_ms()))
+            return self.page.url
+        except PlaywrightTimeoutError:
+            raise Failure("navigation to " + url + " timed out after " + str(NAVIGATION_TIMEOUT_MS) + " ms", EXIT_ERROR)
+
+    def mark(self):
+        """Call right before an action, so settle can tell whether it navigated."""
+        self.navigations_before = self.navigations
+        return self.page.url
+
+    def settle(self, previous_url):
+        """
+        After an action: when it navigated (now or within a short grace period),
+        wait for load and network idle; otherwise wait briefly for network idle.
+        """
+        page = self.page
+        deadline = now_ms() + NAVIGATION_TIMEOUT_MS
+
+        def left():
+            return max(1, deadline - now_ms())
+
+        def navigated():
+            return self.navigations != self.navigations_before or page.url != previous_url
+
+        try:
+            if not navigated():
+                try:
+                    page.wait_for_event("framenavigated", predicate=lambda frame: frame == page.main_frame,
+                                        timeout=min(SETTLE_GRACE_MS, left()))
+                except PlaywrightError:
+                    pass
+            if navigated():
+                page.wait_for_load_state("load", timeout=left())
+                page.wait_for_load_state("networkidle", timeout=left())
+            else:
+                try:
+                    page.wait_for_load_state("networkidle", timeout=min(SETTLE_IDLE_MS, left()))
+                except PlaywrightError:
+                    pass
+            return page.url
+        except PlaywrightTimeoutError:
+            raise Failure("waiting for " + page.url + " to load timed out after " + str(NAVIGATION_TIMEOUT_MS) + " ms", EXIT_ERROR)
+
+    def click(self, target):
+        before = self.mark()
+        target.scroll_into_view_if_needed()
+        target.click()
+        return before
+
+    def fill(self, target, text):
+        before = self.mark()
+        target.fill(text)
+        return before
+
+    def press(self, key, target):
+        before = self.mark()
+        if target is not None:
+            target.press(key)
+        else:
+            self.page.keyboard.press(key)
+        return before
+
+    def select(self, target, value):
+        """Select an option by value first, then by visible label."""
+        before = self.mark()
+        option = target.evaluate(SELECT_OPTION, value)
+        if option is None:
+            raise ValueError("no option " + json.dumps(value, ensure_ascii=False))
+        target.select_option(value=option)
+        return before
+
+    def scroll_to_bottom(self):
+        self.mark()
+        self.page.evaluate("() => window.scrollTo(0, document.documentElement.scrollHeight)")
+
+
+# ---------------------------------------------------------------------------
+# Selectors (browser locate, core resolveFirst)
+# ---------------------------------------------------------------------------
+
+
+def locate(root, selector):
+    strategy, value = selector["strategy"], selector["value"]
+    if strategy == "role":
+        role, bar, name = value.partition("|")
+        return root.get_by_role(role, name=name, exact=True) if bar else root.get_by_role(role)
+    if strategy == "testid":
+        return root.get_by_test_id(value)
+    if strategy == "id":
+        return root.locator("css=[id=" + json.dumps(value, ensure_ascii=False) + "]")
+    if strategy == "text":
+        return root.get_by_text(value, exact=True)
+    if strategy == "css":
+        return root.locator("css=" + value)
+    return root.locator("xpath=" + value)
+
+
+class Found:
+    def __init__(self, index, locator, count):
+        # Position of the candidate that matched.
+        self.index = index
+        self.locator = locator
+        self.count = count
+
+
+def resolve_first(root, selectors):
+    """Try candidates in stored order; the first with at least one match wins."""
+    for index, selector in enumerate(selectors):
+        locator = locate(root, selector)
+        count = locator.count()
+        if count > 0:
+            return Found(index, locator, count)
+    return None
+
+
+def kept_containers(page, found):
+    """Item containers the candidates found, minus those an exclusion candidate matches anywhere in the document."""
+    containers = [found.locator.nth(i) for i in range(found.count)]
+    exclude = ITEM["exclude"] if ITEM else []
+    if not exclude:
+        return containers
+    excluded = []
+    for selector in exclude:
+        excluded.extend(locate(page, selector).element_handles())
+    if not excluded:
+        return containers
+    handles = found.locator.element_handles()
+    try:
+        drop = page.evaluate("([containers, others]) => containers.map((c) => others.includes(c))", [handles, excluded])
+        return [c for c, dropped in zip(containers, drop) if not dropped]
+    finally:
+        for handle in handles + excluded:
+            handle.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Steps (core steps/replay.ts)
+# ---------------------------------------------------------------------------
+
+
+def find_step_target(page, step, cache):
+    """A step's target: cached selectors first, polling until the timeout for wait steps, then the stored candidates."""
+    stored = step["target"]
+    cached = cache.get(step["index"]) if step["when"] == "every-page" else None
+    if cached:
+        hit = resolve_first(page, cached)
+        if hit:
+            return hit.locator.nth(0)
+    if step["action"]["kind"] == "wait-for":
+        deadline = now_ms() + NAVIGATION_TIMEOUT_MS
+        while True:
+            hit = resolve_first(page, cached or stored)
+            if hit:
+                return hit.locator.nth(0)
+            if now_ms() >= deadline:
+                break
+            sleep_ms(min(WAIT_POLL_MS, max(0, deadline - now_ms())))
+    found = resolve_first(page, stored)
+    if not found:
+        return None
+    if step["when"] == "every-page":
+        cache[step["index"]] = stored[found.index:]
+    return found.locator.nth(0)
+
+
+def act(session, step, target, values):
+    action = step["action"]
+    kind = action["kind"]
+    if kind == "click":
+        return session.click(target)
+    if kind == "type":
+        return session.fill(target, fill_text(action["text"], values))
+    if kind == "select":
+        return session.select(target, action["value"])
+    if kind == "press":
+        return session.press(action["key"], target)
+    return session.page.url
+
+
+def replay_steps(session, page_number, values, cache):
+    """
+    Replay the steps that apply to the page, in order. An optional step whose
+    target is missing is skipped; a required one fails the run with exit 3.
+    """
+    for step in STEPS:
+        if step["when"] != "every-page" and page_number != 1:
+            continue
+        named = "" if step["name"] == "step:" + str(step["index"]) else ' "' + step["name"] + '"'
+        label = "step " + str(step["index"]) + named + " (" + step["kind"] + ") on page " + str(page_number)
+
+        def fail(why):
+            if not step["optional"]:
+                raise Failure("required step " + str(step["index"]) + " (" + step["kind"] + ") " + why + " [" + step["name"] + "]", EXIT_UNRESOLVED)
+            log(label + ": skipped (" + why + ")")
+
+        action = step["action"]
+        if action["kind"] == "sleep":
+            sleep_ms(action["ms"])
+            log(label + ": ok")
+            continue
+        target = None
+        if step["target"]:
+            target = find_step_target(session.page, step, cache)
+            if target is None:
+                fail("found no element within " + str(NAVIGATION_TIMEOUT_MS) + " ms" if action["kind"] == "wait-for" else "found no element")
+                continue
+        try:
+            previous_url = act(session, step, target, values)
+        except Failure:
+            raise
+        except Exception as error:
+            fail("could not run: " + str(error))
+            continue
+        if action["kind"] != "wait-for":
+            session.settle(previous_url)
+        log(label + ": ok")
+
+
+# ---------------------------------------------------------------------------
+# Extraction and the missing field policy (core extract.ts)
+# ---------------------------------------------------------------------------
+
+
+def read_value(page, field, element, page_url):
+    if field["read"] == "attr":
+        raw = element.get_attribute(field["attr"]) or ""
+    elif field["read"] == "html":
+        raw = element.inner_html()
+    else:
+        raw = element.text_content() or ""
+    return convert_value(page, field["type"], raw, page_url)
+
+
+def settle_selectors(selectors, scopes):
+    """First candidate, in stored order, that matches in any of the scopes; its selectors from there on."""
+    for index, selector in enumerate(selectors):
+        for scope in scopes:
+            if locate(scope, selector).count() > 0:
+                return selectors[index:]
+    return None
+
+
+def extract_page(page, page_number, page_url, resolved, from_index):
+    """
+    Every row of the current page, from item container from_index on (a page
+    that grew). Returns (rows, missing_required, warnings, resolved selectors).
+    """
+    # Item container.
+    containers = [None]
+    item_selectors = None
+    if ITEM:
+        selectors = resolved["item"] if resolved else ITEM["selectors"]
+        found = resolve_first(page, selectors) if selectors else None
+        containers = kept_containers(page, found) if found else []
+        item_selectors = resolved["item"] if resolved else (ITEM["selectors"][found.index:] if found else None)
+    real = [c for c in containers if c is not None]
+
+    # Fields: settle each once, then read every row.
+    states = []
+    for index, field in enumerate(FIELDS):
+        if resolved:
+            selectors = resolved["fields"][index]
+        elif field["scope"] == "page":
+            selectors = settle_selectors(field["selectors"], [page])
+        elif ITEM and not real:
+            selectors = None
+        else:
+            selectors = settle_selectors(field["selectors"], real or [page])
+        state = {"field": field, "selectors": selectors, "page_value": None, "missing_rows": []}
+        if field["scope"] == "page":
+            found = resolve_first(page, selectors) if selectors else None
+            state["page_value"] = (read_value(page, field, found.locator.nth(0), page_url), True) if found else (None, False)
+        states.append(state)
+
+    rows = []
+    for index, container in enumerate(containers[from_index:]):
+        row = {"_page": page_number, "_index": index}
+        for state in states:
+            result = state["page_value"]
+            if result is None:
+                found = resolve_first(container if container is not None else page, state["selectors"]) if state["selectors"] else None
+                result = (read_value(page, state["field"], found.locator.nth(0), page_url), True) if found else (None, False)
+            if not result[1]:
+                state["missing_rows"].append(index)
+            row[state["field"]["name"]] = result[0]
+        rows.append(row)
+
+    missing_required = []
+    warnings = []
+    if ITEM and not rows:
+        missing_required.append("item")
+    for state in states:
+        field, missing_rows = state["field"], state["missing_rows"]
+        if field["optional"]:
+            continue
+        missing = not rows or len(missing_rows) == len(rows)
+        if missing and rows:
+            missing_required.append(field["name"])
+        if not missing and missing_rows:
+            warnings.append(
+                'required field "' + field["name"] + '" missing on page ' + str(page_number)
+                + " row" + ("s " if len(missing_rows) > 1 else " ") + ", ".join(str(i) for i in missing_rows)
+            )
+    return rows, missing_required, warnings, {"item": item_selectors, "fields": [s["selectors"] for s in states]}
+
+
+# ---------------------------------------------------------------------------
+# Dedup and stop rules (core pagination/dedup.ts)
+# ---------------------------------------------------------------------------
+
+
+def to_json(value):
+    """JSON as JavaScript's JSON.stringify writes it."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def key_of(row):
+    """A row's identity: the key field's value, or all field values in recipe order."""
+    return to_json(row[KEY_FIELD] if KEY_FIELD is not None else [row[f["name"]] for f in FIELDS])
+
+
+def dedup_rows(rows, page_number, seen):
+    """Rows not seen on an earlier page (nor earlier on this one); page 1 keeps every row."""
+    keys = [key_of(row) for row in rows]
+    kept = []
+    fresh = set()
+    for row, key in zip(rows, keys):
+        if page_number == 1 or (key not in seen and key not in fresh):
+            kept.append(row)
+        fresh.add(key)
+    return kept, keys
+
+
+def evaluate_stop(current, previous, limit):
+    """Stop rules in order: empty page, loop guard, no-new-items, first-item-repeats, kind none, limit, cap. Returns (reason, discard)."""
+    rules = PAGINATION["stopRules"]
+    if previous:
+        if current["raw"] == 0:
+            return "no-new-items", True
+        same_first = current["first_key"] is not None and current["first_key"] == previous["first_key"]
+        if same_first and current["url"] == previous["url"]:
+            return "loop", False
+        if "no-new-items" in rules and current["kept"] == 0:
+            return "no-new-items", False
+        if "first-item-repeats" in rules and same_first:
+            return "first-item-repeats", True
+    if PAGINATION["kind"] == "none":
+        return "none", False
+    if limit != "all" and current["page"] >= limit:
+        return "limit", False
+    if limit == "all" and current["page"] >= DEFAULT_PAGE_CAP:
+        return "cap", False
+    return None, False
+
+
+# ---------------------------------------------------------------------------
+# Pagination strategies (core pagination/strategies.ts)
+# ---------------------------------------------------------------------------
+
+IS_DISABLED = """(el) => el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true'
+  || (el.tagName.toLowerCase() === 'a' && !el.hasAttribute('href'))"""
+
+
+class Pager:
+    def __init__(self, session, values, start):
+        self.session = session
+        self.values = values
+        self.start = start
+        # Selectors the pagination target settled on the first time it was found.
+        self.target_selectors = None
+        # The selectors page 1 settled on, once known.
+        self.resolved = None
+
+    def count(self):
+        """Item containers on the page now, with page 1's selectors."""
+        if not ITEM or not self.resolved or not self.resolved["item"]:
+            return 0
+        page = self.session.page
+        found = resolve_first(page, self.resolved["item"])
+        return len(kept_containers(page, found)) if found else 0
+
+    def usable_target(self):
+        """The pagination target, or None when it is missing or disabled."""
+        if not PAGINATION["target"]:
+            return None
+        page = self.session.page
+        if self.target_selectors:
+            found = resolve_first(page, self.target_selectors)
+        else:
+            found = resolve_first(page, PAGINATION["target"])
+            if found:
+                self.target_selectors = PAGINATION["target"][found.index:]
+        if not found:
+            return None
+        target = found.locator.nth(0)
+        return None if target.evaluate(IS_DISABLED) else target
+
+    def wait_for_growth(self, before):
+        """Poll the item count until it exceeds before or the timeout passes."""
+        deadline = now_ms() + NAVIGATION_TIMEOUT_MS
+        while True:
+            if self.count() > before:
+                return True
+            if now_ms() >= deadline:
+                return False
+            sleep_ms(GROWTH_POLL_MS)
+
+    def next_page(self, page_number):
+        """Advance: ("page", url), ("grown", from_index), or ("stop", reason)."""
+        session = self.session
+        kind = PAGINATION["kind"]
+        if kind == "none":
+            return "stop", "none"
+        if kind == "url":
+            url = session.goto(url_for(session.page, self.values, self.start, page_number + 1))
+            log("page " + str(page_number + 1) + ": url")
+            return "page", url
+        if kind == "next":
+            target = self.usable_target()
+            if target is None:
+                return "stop", "target-missing"
+            log("page " + str(page_number + 1) + ": next")
+            previous_url = session.click(target)
+            return "page", session.settle(previous_url)
+        if kind == "more":
+            target = self.usable_target()
+            if target is None:
+                return "stop", "target-missing"
+            before = self.count()
+            log("page " + str(page_number + 1) + ": more")
+            session.click(target)
+            return ("grown", before) if self.wait_for_growth(before) else ("stop", "no-growth")
+        before = self.count()
+        log("page " + str(page_number + 1) + ": scroll")
+        session.scroll_to_bottom()
+        return ("grown", before) if self.wait_for_growth(before) else ("stop", "no-growth")
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+
+class RowSink:
+    """Where rows go: stdout or --out, a JSON array at the end or one JSON object per line as pages complete."""
+
+    def __init__(self, jsonl, out):
+        self.jsonl = jsonl
+        self.out = out
+        self.rows = []
+        self.opened = False
+
+    def write(self, chunk):
+        if not self.out:
+            sys.stdout.write(chunk)
+            sys.stdout.flush()
+            return
+        mode = "a" if self.opened else "w"
+        if not self.opened:
+            os.makedirs(os.path.dirname(self.out) or ".", exist_ok=True)
+            self.opened = True
+        with open(self.out, mode, encoding="utf-8") as file:
+            file.write(chunk)
+
+    def row(self, row):
+        if self.jsonl:
+            self.write(to_json(row) + "\n")
+        else:
+            self.rows.append(row)
+
+    def finish(self):
+        if not self.jsonl:
+            self.write(json.dumps(self.rows, ensure_ascii=False, indent=2) + "\n")
+        else:
+            self.write("")
+
+
+# ---------------------------------------------------------------------------
+# The run (core runner.ts)
+# ---------------------------------------------------------------------------
+
+
+def scrape(opts):
+    given = opts.vars
+    values = resolve_vars(given)
+    start = page_start(given)
+    # Build the first URL once without the browser, so a bad template fails before it opens.
+    url_for(None, values, start, 1)
+    for step in STEPS:
+        if step["action"]["kind"] == "type":
+            fill_text(step["action"]["text"], values)
+    limit = opts.pages if opts.pages is not None else PAGINATION["limit"]
+
+    profile_dir = os.path.abspath(opts.profile) if opts.profile else tempfile.mkdtemp(prefix="webscoop-export-")
+    os.makedirs(profile_dir, exist_ok=True)
+    executable_path = os.environ.get("WEBSCOOP_CHROMIUM", "").strip() or None
+    launch = {
+        "headless": opts.headless,
+        "no_viewport": True,
+        "ignore_default_args": IGNORED_DEFAULT_ARGS,
+        "args": STEALTH_ARGS,
+    }
+    if opts.headless:
+        # Headless runs use Chromium's new headless mode in the full browser, not the separate headless shell.
+        launch["channel"] = "chromium"
+    if executable_path:
+        launch["executable_path"] = executable_path
+    try:
+        with sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(profile_dir, **launch)
+            try:
+                context.set_default_timeout(ACTION_TIMEOUT_MS)
+                context.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
+                session = Session(context.pages[0] if context.pages else context.new_page())
+                return run_pages(session, opts, values, start, limit)
+            finally:
+                try:
+                    context.close()
+                except PlaywrightError:
+                    pass
+    finally:
+        if not opts.profile:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+
+
+def run_pages(session, opts, values, start, limit):
+    page = session.page
+    first_url = url_for(page, values, start, 1)
+    sink = RowSink(opts.jsonl, os.path.abspath(opts.out) if opts.out else None)
+    step_cache = {}
+    seen = set()
+    pager = Pager(session, values, start)
+
+    log("running " + RECIPE_NAME + ": " + first_url)
+    url = session.goto(first_url)
+    page_number = 1
+    navigated = True
+    from_index = 0
+    previous = None
+    row_count = 0
+    # Pages whose rows were emitted; a discarded last page does not count.
+    page_count = 0
+    while True:
+        if navigated:
+            replay_steps(session, page_number, values, step_cache)
+            url = page.url
+        rows, missing_required, warnings, resolved = extract_page(page, page_number, url, pager.resolved, from_index)
+        names = [n for n in missing_required if n != "item"] if pager.resolved else missing_required
+        if names:
+            if "item" in names:
+                message = "the item container matched no element"
+            else:
+                message = ("required field" + ("s " if len(names) > 1 else " ") + ", ".join(names) + " matched no element"
+                           + (" on page " + str(page_number) if pager.resolved else ""))
+            raise Failure(message, EXIT_UNRESOLVED)
+        if pager.resolved is None:
+            pager.resolved = resolved
+        for warning in warnings:
+            log("warning: " + warning)
+
+        kept, keys = dedup_rows(rows, page_number, seen)
+        summary = {"page": page_number, "url": url, "first_key": keys[0] if keys else None, "raw": len(rows), "kept": len(kept)}
+        reason, discard = evaluate_stop(summary, previous, limit)
+        if not discard:
+            seen.update(keys)
+            for index, row in enumerate(kept):
+                row["_index"] = index
+                sink.row(row)
+            row_count += len(kept)
+            page_count = page_number
+        if reason:
+            break
+
+        if PAGINATION["delayMs"] > 0:
+            sleep_ms(PAGINATION["delayMs"])
+        kind, value = pager.next_page(page_number)
+        if kind == "stop":
+            reason = value
+            break
+        previous = summary
+        page_number += 1
+        if kind == "page":
+            url = value
+            from_index = 0
+            navigated = True
+        else:
+            from_index = value
+            navigated = False
+
+    if reason == "cap":
+        log("warning: stopped at the page cap of " + str(DEFAULT_PAGE_CAP) + " pages")
+    elif reason not in ("limit", "none"):
+        log("pagination stopped after page " + str(page_count) + ": " + reason)
+    sink.finish()
+    log(str(row_count) + " row" + ("" if row_count == 1 else "s") + " from " + str(page_count) + " page" + ("" if page_count == 1 else "s"))
+    return EXIT_OK
+
+
+def main(argv):
+    try:
+        return scrape(parse_args(argv))
+    except Failure as failure:
+        log(str(failure))
+        return failure.code
+    except PlaywrightTimeoutError as error:
+        log("error: " + str(error))
+        return EXIT_ERROR
+    except Exception as error:
+        log("error: " + str(error))
+        return EXIT_ERROR
+`;
