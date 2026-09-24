@@ -43,6 +43,12 @@ export interface GotoOptions {
   timeoutMs: number;
 }
 
+export interface SettleOptions {
+  timeoutMs: number;
+  /** URL before the action; a different current URL means a navigation to wait for. */
+  previousUrl?: string;
+}
+
 export interface ReadOptions {
   /** Attribute to read instead of content. */
   attr?: string;
@@ -62,6 +68,18 @@ export interface Session {
   /** Whether two refs point at the same element. */
   same(a: ElementRef, b: ElementRef): Promise<boolean>;
   snapshot(within?: ElementRef): Promise<SerializedNode>;
+  /** Scroll the element into view and click it. */
+  click(ref: ElementRef): Promise<void>;
+  /** Scroll the document to its bottom. */
+  scrollToBottom(): Promise<void>;
+  /**
+   * Wait for the page to settle after an action: for the navigation when one
+   * started, else briefly for network idle. Rejects with `TimeoutError` when a
+   * navigation does not finish in time.
+   */
+  settle(opts: SettleOptions): Promise<PageInfo>;
+  /** Current URL of the page. */
+  url(): Promise<string>;
   close(): Promise<void>;
 }
 

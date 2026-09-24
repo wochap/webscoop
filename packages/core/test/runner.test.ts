@@ -17,7 +17,7 @@ describe('Runner', () => {
     const result = await runner.run();
     expect(result.ok).toBe(true);
     expect(runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'done']);
-    expect(log.sequence()).toEqual(['run.start', 'page.loaded', 'field.resolved', 'row.emitted', 'page.done', 'run.done']);
+    expect(log.sequence()).toEqual(['run.start', 'page.loaded', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'run.done']);
     expect(log.of('field.resolved')).toHaveLength(4);
     expect(log.of('row.emitted')).toHaveLength(24);
     expect(browser.visited).toEqual([PAGE]);
@@ -91,6 +91,10 @@ describe('Runner', () => {
           read: async () => '',
           same: async () => false,
           snapshot: async () => ({ type: 'text', text: '' }),
+          click: async () => {},
+          scrollToBottom: async () => {},
+          settle: async () => ({ url: '', title: '', status: null }),
+          url: async () => '',
           close: async () => {
             closed = true;
             releaseGoto();

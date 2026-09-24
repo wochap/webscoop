@@ -1,7 +1,18 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dataset, type Product } from './dataset';
-import { CHROME_MODES, escapeHtml, MAX_TIER, render, UnimplementedTierError, type ChromeMode } from './render';
+import {
+  CHROME_MODES,
+  escapeHtml,
+  MAX_TIER,
+  PAGINATE_KINDS,
+  render,
+  renderCards,
+  UnimplementedTierError,
+  type ChromeMode,
+  type PaginateKind,
+  type Pager,
+} from './render';
 
 export interface ControlState {
   tier: number;
@@ -13,9 +24,18 @@ export const INITIAL_CONTROL: Readonly<ControlState> = Object.freeze({ tier: 0, 
 
 /** Routes and query parameters reserved for later changes. */
 export const RESERVED_ROUTES = ['/login', '/challenge'] as const;
-export const RESERVED_PARAMS = ['wall', 'paginate', 'nextRel', 'lastPageRepeats', 'moreDisappears'] as const;
+export const RESERVED_PARAMS = ['wall'] as const;
 
 export const VISITOR_COOKIE = 'ws_visitor';
+/** Current page of the `next` pagination kind. */
+export const PAGE_COOKIE = 'ws_page';
+/** Set by `go=next` for the redirect that follows; without it a `next` catalog starts at page 1. */
+const ADVANCED_COOKIE = 'ws_go';
+
+/** Products per page of a paginated catalog. */
+export const PAGE_SIZE = 8;
+/** Pages of a paginated catalog before `lastPageRepeats` takes over. */
+const LAST_PAGE = 3;
 
 export interface RequestRecord {
   method: string;
@@ -83,6 +103,67 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+function cookies(req: IncomingMessage): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0) out.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+function flag(url: URL, name: string): boolean {
+  const value = url.searchParams.get(name);
+  if (value === null) return false;
+  if (value !== '0' && value !== '1') throw new HttpError(400, `invalid ${name} ${JSON.stringify(value)}, expected 0 or 1`);
+  return value === '1';
+}
+
+/** A catalog URL with some query parameters replaced or removed. */
+function withParams(url: URL, changes: Record<string, string | null>): string {
+  const params = new URLSearchParams(url.searchParams);
+  for (const [name, value] of Object.entries(changes)) {
+    if (value === null) params.delete(name);
+    else params.set(name, value);
+  }
+  return `${url.pathname}?${params.toString()}`;
+}
+
+interface PagedView {
+  products: readonly Product[];
+  pager: Pager;
+}
+
+/** Which products and controls page `page` of a paginated catalog shows. */
+function pagedView(
+  products: readonly Product[],
+  url: URL,
+  kind: PaginateKind,
+  page: number,
+  opts: { tier: number; seed: number; nextRel: boolean; lastPageRepeats: boolean; moreDisappears: boolean },
+): PagedView {
+  const slice = (n: number) => products.slice((n - 1) * PAGE_SIZE, n * PAGE_SIZE);
+  if (kind === 'more' || kind === 'scroll') {
+    return {
+      products: slice(1),
+      pager: { kind, more: { after: PAGE_SIZE, total: products.length, tier: opts.tier, seed: opts.seed, disappear: opts.moreDisappears } },
+    };
+  }
+  const shown = page > LAST_PAGE && opts.lastPageRepeats ? LAST_PAGE : page;
+  const hasNext = page < LAST_PAGE || opts.lastPageRepeats;
+  if (kind === 'url') {
+    const links = Array.from({ length: LAST_PAGE }, (_, i) => ({ page: i + 1, href: withParams(url, { page: String(i + 1) }), current: i + 1 === page }));
+    return {
+      products: slice(shown),
+      pager: { kind, links, ...(hasNext ? { next: withParams(url, { page: String(page + 1) }) } : {}), rel: opts.nextRel },
+    };
+  }
+  return {
+    products: slice(shown),
+    pager: { kind, next: hasNext ? withParams(url, { go: 'next' }) : null, rel: opts.nextRel },
+  };
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function imageSvg(id: string): string {
@@ -143,20 +224,70 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
         throw new HttpError(400, `invalid chrome ${JSON.stringify(chromeParam)}, expected one of ${CHROME_MODES.join(', ')}`);
       }
       const chrome = chromeParam as ChromeMode | null;
+      const headers: Record<string, string | string[]> = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
+      const setCookies: string[] = [];
+      if (!req.headers.cookie?.includes(`${VISITOR_COOKIE}=`)) {
+        setCookies.push(`${VISITOR_COOKIE}=v${++visitors}; Path=/; Max-Age=31536000; SameSite=Lax`);
+      }
+
+      let shown: readonly Product[] = products;
+      let pager: Pager | null = null;
+      const paginate = url.searchParams.get('paginate');
+      if (paginate !== null) {
+        if (!(PAGINATE_KINDS as readonly string[]).includes(paginate)) {
+          throw new HttpError(400, `invalid paginate ${JSON.stringify(paginate)}, expected one of ${PAGINATE_KINDS.join(', ')}`);
+        }
+        const kind = paginate as PaginateKind;
+        const opts = {
+          tier,
+          seed,
+          nextRel: url.searchParams.get('nextRel') === null ? true : flag(url, 'nextRel'),
+          lastPageRepeats: flag(url, 'lastPageRepeats'),
+          moreDisappears: flag(url, 'moreDisappears'),
+        };
+        let page = 1;
+        if (kind === 'url') page = intParam(url.searchParams.get('page'), 'page', 1) ?? 1;
+        if (kind === 'next') {
+          const jar = cookies(req);
+          const current = Number(jar.get(PAGE_COOKIE)) || 1;
+          if (url.searchParams.get('go') === 'next') {
+            // Advance, then redirect back to the catalog URL without `go`.
+            res.writeHead(302, {
+              location: withParams(url, { go: null }),
+              'set-cookie': [...setCookies, `${PAGE_COOKIE}=${current + 1}; Path=/; SameSite=Lax`, `${ADVANCED_COOKIE}=1; Path=/; SameSite=Lax`],
+              'cache-control': 'no-store',
+            });
+            return void res.end();
+          }
+          // Only the redirect after `go=next` keeps the page; any other visit starts over at page 1.
+          page = jar.get(ADVANCED_COOKIE) === '1' ? current : 1;
+          setCookies.push(`${PAGE_COOKIE}=${page}; Path=/; SameSite=Lax`, `${ADVANCED_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`);
+        }
+        ({ products: shown, pager } = pagedView(products, url, kind, page, opts));
+      }
+
       let html: string;
       try {
-        html = render(products, { tier, seed, chrome, sponsored });
+        html = render(shown, { tier, seed, chrome, sponsored, pager });
       } catch (error) {
         if (error instanceof UnimplementedTierError) throw new HttpError(501, error.message);
         throw error;
       }
       if (delayMs > 0) await sleep(delayMs);
-      const headers: Record<string, string> = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
-      if (!req.headers.cookie?.includes(`${VISITOR_COOKIE}=`)) {
-        headers['set-cookie'] = `${VISITOR_COOKIE}=v${++visitors}; Path=/; Max-Age=31536000; SameSite=Lax`;
-      }
+      if (setCookies.length > 0) headers['set-cookie'] = setCookies;
       res.writeHead(200, headers);
       return void res.end(method === 'HEAD' ? undefined : html);
+    }
+    if (url.pathname === '/catalog/more') {
+      const after = intParam(url.searchParams.get('after'), 'after', 0) ?? 0;
+      const tier = intParam(url.searchParams.get('tier'), 'tier', 0, MAX_TIER) ?? control.tier;
+      const seed = intParam(url.searchParams.get('seed'), 'seed', 0) ?? control.seed;
+      try {
+        return send(res, 200, renderCards(products.slice(after, after + PAGE_SIZE), { tier, seed }), 'text/html; charset=utf-8');
+      } catch (error) {
+        if (error instanceof UnimplementedTierError) throw new HttpError(501, error.message);
+        throw error;
+      }
     }
     const imageMatch = /^\/img\/(p\d+)\.svg$/.exec(url.pathname);
     if (imageMatch) return send(res, 200, imageSvg(imageMatch[1]!), 'image/svg+xml');

@@ -1,5 +1,6 @@
 import type { HealOutcome } from './healing/types';
-import type { Fingerprint, FieldType, SelectorCandidate } from './recipe/schema';
+import type { StopReason } from './pagination/types';
+import type { Fingerprint, FieldType, PaginationKind, SelectorCandidate } from './recipe/schema';
 
 export type FieldStatus = 'ok' | 'healed' | 'partial' | 'missing';
 
@@ -40,11 +41,29 @@ export interface RunReport {
     notes?: string[];
   } | null;
   fields: FieldReport[];
+  /** How the pagination target resolved, when the run needed it. */
+  pagination: {
+    candidate: SelectorCandidate | null;
+    outcome: HealOutcome;
+    notes?: string[];
+  } | null;
+  /** Rows dropped because an earlier page already had them. */
+  duplicateCount: number;
+  /** Why the page loop ended, or null when the run failed before it did. */
+  stopReason: StopReason | null;
+  /** Every extracted page: its URL and the rows it contributed after dedup. */
+  pages: PageReport[];
   warnings: string[];
-  /** Targets (item container and fields) resolved by a rung other than their first candidate. */
+  /** Targets (item container, fields, pagination target) resolved by a rung other than their first candidate. */
   healed: number;
   /** Path the promoted recipe was written to, or null when it was not written. */
   savedTo: string | null;
+}
+
+export interface PageReport {
+  page: number;
+  url: string;
+  rows: number;
 }
 
 /** What a re-pick asks the user about. */
@@ -72,6 +91,10 @@ export interface RunEvents {
   'repick.resolved': { page: number; target: string; result: 'picked' | 'skip' | 'abort' };
   'row.emitted': { page: number; row: Row };
   'page.done': { page: number; rows: number };
+  /** Emitted right before the action that loads page `page`. */
+  'page.advanced': { page: number; kind: PaginationKind };
+  /** Emitted once, when the page loop ends; `page` is the last page extracted. */
+  'pagination.stopped': { page: number; reason: StopReason };
   'recipe.saved': { path: string };
   'run.done': { report: RunReport };
   'run.failed': { reason: FailureReason; message: string; fields?: string[]; report: RunReport };
@@ -88,6 +111,8 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'repick.resolved',
   'row.emitted',
   'page.done',
+  'page.advanced',
+  'pagination.stopped',
   'recipe.saved',
   'run.done',
   'run.failed',

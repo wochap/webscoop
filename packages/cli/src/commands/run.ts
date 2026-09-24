@@ -2,8 +2,10 @@ import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import {
-  fillTemplate,
+  firstPageUrl,
   MissingVariableError,
+  PaginationInputError,
+  type PaginationOverrides,
   modelResolver,
   RunEmitter,
   type HealOutcome,
@@ -41,6 +43,21 @@ export interface RunCommandOptions {
   interactive?: boolean;
   /** False with `--no-llm`. */
   llm?: boolean;
+  /** `--pages`: replaces the recipe's page limit. */
+  pages?: number | 'all';
+  /** `--max-pages`: cap on `all`. */
+  maxPages?: number;
+  /** `--delay`: milliseconds between pages. */
+  delay?: number;
+}
+
+/** Pagination overrides for the runner from `--pages`, `--max-pages`, and `--delay`. */
+export function paginationFromFlags(opts: Pick<RunCommandOptions, 'pages' | 'maxPages' | 'delay'>): PaginationOverrides {
+  return {
+    ...(opts.pages !== undefined ? { limit: opts.pages } : {}),
+    ...(opts.maxPages !== undefined ? { cap: opts.maxPages } : {}),
+    ...(opts.delay !== undefined ? { delayMs: opts.delay } : {}),
+  };
 }
 
 /** Healing options for the runner from the `run` flags. */
@@ -65,7 +82,8 @@ export function summary(report: RunReport): string {
   const seconds = (report.durationMs / 1000).toFixed(2);
   const pages = `${report.pageCount} page${report.pageCount === 1 ? '' : 's'}`;
   const healed = report.healed > 0 ? `, ${report.healed} healed` : '';
-  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed} in ${seconds}s (${report.recipe})`;
+  const duplicates = report.duplicateCount > 0 ? `, ${report.duplicateCount} duplicate${report.duplicateCount === 1 ? '' : 's'} dropped` : '';
+  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${duplicates} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -142,11 +160,12 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
   const recipe = await storage.load(recipeRef);
   const vars = parseVars(opts.var);
   try {
-    fillTemplate(recipe.url, recipe.vars, vars);
+    firstPageUrl(recipe, vars);
   } catch (error) {
     if (error instanceof MissingVariableError) {
       throw new CliError(`${error.message}; pass --var ${error.names[0]}=<value>`);
     }
+    if (error instanceof PaginationInputError) throw new CliError(error.message);
     throw error;
   }
 
@@ -171,6 +190,10 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
     if ((field.status === 'ok' || field.status === 'healed') && field.missingRows.length === 0) return;
     const notes = field.notes && field.notes.length > 0 ? ` (${field.notes.join('; ')})` : '';
     log(io, `field ${field.name}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
+  });
+  emitter.on('page.advanced', (e) => log(io, `page ${e.page}: ${e.kind}`));
+  emitter.on('pagination.stopped', (e) => {
+    if (e.reason !== 'limit' && e.reason !== 'none') log(io, `pagination stopped after page ${e.page}: ${e.reason}`);
   });
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${e.target} (was ${selectorText(e.oldSelector)})`));
   emitter.on('recipe.saved', (e) => log(io, `recipe written to ${e.path}`));
@@ -224,6 +247,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       emitter,
       signal: controller.signal,
       healing,
+      pagination: paginationFromFlags(opts),
       saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
       ...(openOptions ? { openOptions } : {}),
       ...(repick ? { repick } : {}),
@@ -253,6 +277,15 @@ export interface TestCommandOptions {
   json?: boolean;
   /** False with `--no-llm`. */
   llm?: boolean;
+  /** `--pages`: walk more than the first page. */
+  pages?: number | 'all';
+  maxPages?: number;
+  delay?: number;
+}
+
+/** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
+export function testPagination(opts: Pick<TestCommandOptions, 'pages' | 'maxPages' | 'delay'>): PaginationOverrides {
+  return { ...paginationFromFlags(opts), limit: opts.pages ?? 1 };
 }
 
 export interface TestRow {
@@ -327,10 +360,9 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile);
     const browser = await io.createBrowser(config, io.env);
-    // Only the first page: a later pagination change must not make `test` walk every page.
-    const firstPage: Recipe = { ...recipe, pagination: { ...recipe.pagination, limit: 1 } };
     const runner = new Runner({
-      recipe: firstPage,
+      recipe,
+      pagination: testPagination(opts),
       browser,
       profileDir,
       vars,

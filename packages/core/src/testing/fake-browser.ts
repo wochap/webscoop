@@ -10,6 +10,7 @@ import type {
   SerializedElement,
   SerializedNode,
   Session,
+  SettleOptions,
 } from '../ports';
 import { TimeoutError } from '../ports';
 import type { SelectorCandidate } from '../recipe/schema';
@@ -22,8 +23,19 @@ export interface FakePage {
   dom: SerializedElement;
   title?: string;
   status?: number;
-  /** Simulated load time; a `goto` whose timeout is shorter fails with `TimeoutError`. */
+  /** Simulated load time; a `goto` or `settle` whose timeout is shorter fails with `TimeoutError`. */
   delayMs?: number;
+  /**
+   * Renders the page with a given item count, for pages that grow. Each click
+   * on an element without `href` takes the next `more` step, each
+   * `scrollToBottom` the next `scroll` step; the page is re-rendered with that
+   * step's count. Past the last step nothing changes.
+   */
+  render?: (count: number) => SerializedElement;
+  /** Item counts after each load-more click. */
+  more?: number[];
+  /** Item counts after each scroll to the bottom. */
+  scroll?: number[];
 }
 
 class FakeRef implements ElementRef {
@@ -36,9 +48,31 @@ class FakeRef implements ElementRef {
 export class FakeSession implements Session {
   protected tree: { root: DomNode; document: DomNode } | null = null;
   protected closed = false;
-  url = 'about:blank';
+  currentUrl = 'about:blank';
+  /** Growth steps taken on the current page. */
+  private steps = { more: 0, scroll: 0 };
+  /** Page a click navigated to, loaded for real by the next `settle`. */
+  private pendingUrl: string | null = null;
 
   constructor(protected readonly browser: FakeBrowser) {}
+
+  private load(url: string, dom: SerializedElement): void {
+    const { root } = indexTree(dom);
+    const document: DomNode = { el: { type: 'element', tag: '#document', attrs: {}, children: [dom] }, parent: null, children: [root], order: -1 };
+    root.parent = document;
+    this.tree = { root, document };
+    this.currentUrl = url;
+  }
+
+  private page(url: string): FakePage {
+    const page = this.browser.pages.get(url);
+    if (!page) throw new Error(`net::ERR_NAME_NOT_RESOLVED at ${url}`);
+    return page;
+  }
+
+  private info(url: string, page: FakePage): PageInfo {
+    return { url, title: page.title ?? '', status: page.status ?? 200 };
+  }
 
   private assertOpen(): { root: DomNode; document: DomNode } {
     if (this.closed) throw new Error('session is closed');
@@ -49,17 +83,58 @@ export class FakeSession implements Session {
   async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
     if (this.closed) throw new Error('session is closed');
     this.browser.visited.push(url);
-    const page = this.browser.pages.get(url);
-    if (!page) throw new Error(`net::ERR_NAME_NOT_RESOLVED at ${url}`);
+    const page = this.page(url);
     if ((page.delayMs ?? 0) > opts.timeoutMs) {
       throw new TimeoutError(`navigation to ${url} timed out after ${opts.timeoutMs} ms`);
     }
-    const { root } = indexTree(page.dom);
-    const document: DomNode = { el: { type: 'element', tag: '#document', attrs: {}, children: [page.dom] }, parent: null, children: [root], order: -1 };
-    root.parent = document;
-    this.tree = { root, document };
-    this.url = url;
-    return { url, title: page.title ?? '', status: page.status ?? 200 };
+    this.pendingUrl = null;
+    this.steps = { more: 0, scroll: 0 };
+    this.load(url, page.dom);
+    return this.info(url, page);
+  }
+
+  /** Follow a link's `href`, or take the page's next `more` step for any other element. */
+  async click(ref: ElementRef): Promise<void> {
+    this.assertOpen();
+    this.browser.clicks.push(ref.description);
+    const href = (ref as FakeRef).node.el.attrs.href;
+    if (href !== undefined) {
+      this.pendingUrl = new URL(href, this.currentUrl).href;
+      return;
+    }
+    this.grow('more');
+  }
+
+  async scrollToBottom(): Promise<void> {
+    this.assertOpen();
+    this.grow('scroll');
+  }
+
+  private grow(kind: 'more' | 'scroll'): void {
+    const page = this.browser.pages.get(this.currentUrl);
+    const counts = page?.[kind];
+    if (!page?.render || !counts || this.steps[kind] >= counts.length) return;
+    const count = counts[this.steps[kind]++]!;
+    this.load(this.currentUrl, page.render(count));
+  }
+
+  async settle(opts: SettleOptions): Promise<PageInfo> {
+    this.assertOpen();
+    const url = this.pendingUrl;
+    if (url === null) return this.info(this.currentUrl, this.browser.pages.get(this.currentUrl) ?? { dom: this.tree!.root.el });
+    this.pendingUrl = null;
+    this.browser.visited.push(url);
+    const page = this.page(url);
+    if ((page.delayMs ?? 0) > opts.timeoutMs) {
+      throw new TimeoutError(`waiting for ${url} to load timed out after ${opts.timeoutMs} ms`);
+    }
+    this.steps = { more: 0, scroll: 0 };
+    this.load(url, page.dom);
+    return this.info(url, page);
+  }
+
+  async url(): Promise<string> {
+    return this.currentUrl;
   }
 
   async resolve(candidate: SelectorCandidate, within?: ElementRef): Promise<ElementRef[]> {
@@ -205,6 +280,8 @@ export class FakeInteractiveSession extends FakeSession implements InteractiveSe
 export class FakeBrowser implements BrowserPort {
   readonly pages = new Map<string, FakePage>();
   readonly visited: string[] = [];
+  /** Descriptions of every clicked element, in order. */
+  readonly clicks: string[] = [];
   readonly openedProfiles: string[] = [];
   openSessions = 0;
 

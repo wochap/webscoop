@@ -1,22 +1,26 @@
 import { RunEmitter, type FailureReason, type Row, type RunReport } from './events';
-import { extractPage } from './extract';
+import { countItems, extractPage, resolveFirst, resolvePaginationTarget, type ResolvedSelectors } from './extract';
 import { applyPromotions } from './healing/apply';
 import { defaultLadder } from './healing/ladder';
 import type { Promotion } from './healing/promote';
 import { isHealed, targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import { TimeoutError, type BrowserPort, type ElementRef, type OpenOptions, type Session } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
-import { fillTemplate, MissingVariableError } from './template';
+import { Dedup, evaluateStop, type PageSummary } from './pagination/dedup';
+import { createStrategy } from './pagination/strategies';
+import { DEFAULT_PAGE_CAP, PaginationInputError, type PagerContext, type PageStrategy, type StopReason } from './pagination/types';
+import { MissingVariableError } from './template';
 
-export type RunState = 'idle' | 'opening' | 'navigating' | 'extracting' | 'repicking' | 'done' | 'failed';
+export type RunState = 'idle' | 'opening' | 'navigating' | 'extracting' | 'repicking' | 'paginating' | 'done' | 'failed';
 
-/** Allowed transitions. Later changes insert states such as `guarded` and `paginating`. */
+/** Allowed transitions. Later changes insert states such as `guarded`. */
 const TRANSITIONS: Record<RunState, readonly RunState[]> = {
   idle: ['opening', 'failed'],
   opening: ['navigating', 'failed'],
   navigating: ['extracting', 'failed'],
-  extracting: ['repicking', 'done', 'failed'],
+  extracting: ['repicking', 'paginating', 'done', 'failed'],
   repicking: ['extracting', 'failed'],
+  paginating: ['navigating', 'extracting', 'done', 'failed'],
   done: [],
   failed: [],
 };
@@ -71,6 +75,17 @@ export interface RunOptions {
   saveRecipe?: (recipe: Recipe) => Promise<string>;
   /** Last rung of the ladder for required fields, when a human is available. */
   repick?: RepickHandler;
+  /** Per-run overrides of the recipe's pagination settings. */
+  pagination?: PaginationOverrides;
+}
+
+export interface PaginationOverrides {
+  /** Replaces `pagination.limit`. */
+  limit?: number | 'all';
+  /** Most pages a `limit: all` run walks. Default 500. */
+  cap?: number;
+  /** Replaces `pagination.delayMs`. */
+  delayMs?: number;
 }
 
 export type RunResult =
@@ -173,6 +188,10 @@ export class Runner {
       rowCount: 0,
       item: null,
       fields: [],
+      pagination: null,
+      duplicateCount: 0,
+      stopReason: null,
+      pages: [],
       warnings: [],
       healed: 0,
       savedTo: null,
@@ -194,69 +213,179 @@ export class Runner {
 
     try {
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
-      let url: string;
+      let strategy: PageStrategy;
       try {
-        url = fillTemplate(recipe.url, recipe.vars, this.opts.vars);
+        strategy = createStrategy(recipe, this.opts.vars);
       } catch (error) {
-        if (error instanceof MissingVariableError) {
+        if (error instanceof MissingVariableError || error instanceof PaginationInputError) {
           throw new RunFailure('invalid-input', error.message, error.names);
         }
         throw error;
       }
-      this.emitter.emit('run.start', { recipe: recipe.name, url, profileDir, at: report.startedAt });
+      this.emitter.emit('run.start', { recipe: recipe.name, url: strategy.url, profileDir, at: report.startedAt });
 
       this.transition('opening');
       session = await browser.open(profileDir, this.opts.openOptions);
+      const live = session;
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
 
-      this.transition('navigating');
-      const page = 1;
-      const info = await session.goto(url, { timeoutMs: this.opts.timeoutMs ?? 30_000 });
-      report.finalUrl = info.url;
-      this.emitter.emit('page.loaded', { page, url: info.url, title: info.title, status: info.status });
-
-      this.transition('extracting');
+      const timeoutMs = this.opts.timeoutMs ?? 30_000;
+      const limit = this.opts.pagination?.limit ?? recipe.pagination.limit;
+      const cap = this.opts.pagination?.cap ?? DEFAULT_PAGE_CAP;
+      const delayMs = this.opts.pagination?.delayMs ?? recipe.pagination.delayMs;
       const healing = this.opts.healing ?? { enabled: true, writeBack: true };
       const promotions: Promotion[] = [];
       const current = () => applyPromotions(recipe, promotions);
       // Rungs such as the model rung run only when the recipe allows them.
       const resolvers = (healing.resolvers ?? []).filter((r) => !r.recipeGated || recipe.healing.llm);
-      const extra = [...resolvers, ...(this.opts.repick ? [this.repickResolver(this.opts.repick, page, current)] : [])];
-      const extraction = await extractPage(session, recipe, {
-        pageUrl: info.url,
-        page,
-        ladder: defaultLadder({ enabled: healing.enabled, extra }),
-        promote: healing.enabled,
-        onHealed: (promotion) => {
-          promotions.push(promotion);
-          this.emitter.emit('field.healed', {
-            page,
-            target: targetName(promotion.target),
-            outcome: promotion.outcome,
-            oldPrimary: promotion.oldPrimary,
-            newPrimary: promotion.newPrimary,
+      const onHealed = (page: number) => (promotion: Promotion) => {
+        promotions.push(promotion);
+        this.emitter.emit('field.healed', {
+          page,
+          target: targetName(promotion.target),
+          outcome: promotion.outcome,
+          oldPrimary: promotion.oldPrimary,
+          newPrimary: promotion.newPrimary,
+        });
+      };
+
+      let page = 1;
+      let resolved: ResolvedSelectors | undefined;
+      let targetSelectors: SelectorCandidate[] | null = null;
+      const pager: PagerContext = {
+        session: live,
+        recipe,
+        timeoutMs,
+        target: async () => {
+          if (!recipe.pagination.target) return null;
+          if (targetSelectors) return (await resolveFirst(live, targetSelectors))?.refs[0] ?? null;
+          // First use: the healing ladder, like a field; later pages reuse what it settled on.
+          const result = await resolvePaginationTarget(live, recipe, {
+            ladder: defaultLadder({ enabled: healing.enabled, extra: resolvers }),
+            promote: healing.enabled,
           });
+          report.pagination = {
+            candidate: result.ref ? (result.selectors[0] ?? null) : null,
+            outcome: result.outcome,
+            ...(result.notes.length > 0 ? { notes: result.notes } : {}),
+          };
+          if (isHealed(result.outcome)) report.healed++;
+          if (result.promotion) onHealed(page)(result.promotion);
+          if (result.ref) targetSelectors = result.selectors;
+          return result.ref;
         },
-      });
-      report.item = extraction.item;
-      report.fields = extraction.fields;
-      report.healed = extraction.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(extraction.item?.outcome) ? 1 : 0);
-      report.warnings.push(...extraction.warnings);
-      for (const field of extraction.fields) this.emitter.emit('field.resolved', { page, field });
-      if (extraction.missingRequired.length > 0) {
-        const names = extraction.missingRequired;
-        throw new RunFailure(
-          'missing-required',
-          names.includes('item')
-            ? 'the item container matched no element'
-            : `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element`,
-          names,
-        );
+        count: () => (resolved ? countItems(live, recipe, resolved) : Promise.resolve(0)),
+        advancing: () => this.emitter.emit('page.advanced', { page: page + 1, kind: strategy.kind }),
+        sleep: (ms) => delay(ms, signal),
+      };
+
+      const dedup = new Dedup(recipe);
+      const rows: Row[] = [];
+      let previous: PageSummary | null = null;
+      let fromIndex: number | undefined;
+      let reason: StopReason;
+      this.transition('navigating');
+      let info = await strategy.first(pager);
+      for (;;) {
+        if (this.currentState === 'navigating') {
+          report.finalUrl = info.url;
+          this.emitter.emit('page.loaded', { page, url: info.url, title: info.title, status: info.status });
+        }
+        this.transition('extracting');
+        const extraction = await extractPage(live, recipe, {
+          pageUrl: info.url,
+          page,
+          ...(resolved
+            ? { resolved }
+            : {
+                ladder: defaultLadder({
+                  enabled: healing.enabled,
+                  extra: [...resolvers, ...(this.opts.repick ? [this.repickResolver(this.opts.repick, page, current)] : [])],
+                }),
+                promote: healing.enabled,
+                onHealed: onHealed(page),
+              }),
+          ...(fromIndex !== undefined ? { fromIndex } : {}),
+        });
+        if (!resolved) {
+          report.item = extraction.item;
+          report.fields = extraction.fields;
+          report.healed += extraction.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(extraction.item?.outcome) ? 1 : 0);
+          for (const field of extraction.fields) this.emitter.emit('field.resolved', { page, field });
+          if (extraction.missingRequired.length > 0) {
+            const names = extraction.missingRequired;
+            throw new RunFailure(
+              'missing-required',
+              names.includes('item')
+                ? 'the item container matched no element'
+                : `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element`,
+              names,
+            );
+          }
+          resolved = extraction.resolved;
+        } else {
+          // A later page with no items is the end of the list, not a failure; a field gone from every item is.
+          const names = extraction.missingRequired.filter((name) => name !== 'item');
+          if (names.length > 0) {
+            throw new RunFailure(
+              'missing-required',
+              `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element on page ${page}`,
+              names,
+            );
+          }
+        }
+        report.warnings.push(...extraction.warnings);
+
+        const fresh = dedup.preview(extraction.rows, page);
+        const summary: PageSummary = {
+          page,
+          url: info.url,
+          firstKey: extraction.rows[0] ? dedup.keyOf(extraction.rows[0]) : null,
+          raw: extraction.rows.length,
+          kept: fresh.kept.length,
+        };
+        const verdict = evaluateStop({ current: summary, previous, kind: strategy.kind, stopRules: recipe.pagination.stopRules, limit, cap });
+        if (!verdict.discard) {
+          fresh.commit();
+          fresh.kept.forEach((row, index) => {
+            row._index = index;
+            rows.push(row);
+            this.emitter.emit('row.emitted', { page, row });
+          });
+          report.pageCount = page;
+          report.rowCount = rows.length;
+          report.duplicateCount = dedup.duplicates;
+          report.pages.push({ page, url: info.url, rows: fresh.kept.length });
+          this.emitter.emit('page.done', { page, rows: fresh.kept.length });
+        }
+        if (verdict.reason) {
+          reason = verdict.reason;
+          break;
+        }
+
+        if (delayMs > 0) await delay(delayMs, signal);
+        this.transition('paginating');
+        const advance = await strategy.next(pager, page);
+        if (advance.kind === 'stop') {
+          reason = advance.reason;
+          break;
+        }
+        previous = summary;
+        page++;
+        if (advance.kind === 'page') {
+          info = advance.info;
+          fromIndex = undefined;
+          this.transition('navigating');
+        } else {
+          fromIndex = advance.from;
+        }
       }
-      for (const row of extraction.rows) this.emitter.emit('row.emitted', { page, row });
-      report.pageCount = page;
-      report.rowCount = extraction.rows.length;
-      this.emitter.emit('page.done', { page, rows: extraction.rows.length });
+
+      report.stopReason = reason;
+      if (reason === 'cap') {
+        report.warnings.push(`stopped at the page cap of ${cap} pages; raise it (--max-pages) to go further`);
+      }
+      this.emitter.emit('pagination.stopped', { page: report.pageCount, reason });
 
       if (promotions.length > 0 && healing.enabled && healing.writeBack && this.opts.saveRecipe) {
         const path = await this.opts.saveRecipe(applyPromotions(recipe, promotions));
@@ -268,7 +397,7 @@ export class Runner {
       finish();
       this.transition('done');
       this.emitter.emit('run.done', { report });
-      return { ok: true, rows: extraction.rows, report };
+      return { ok: true, rows, report };
     } catch (error) {
       await closeSession();
       finish();
@@ -292,6 +421,22 @@ export class Runner {
       signal?.removeEventListener('abort', onAbort);
     }
   }
+}
+
+/** Wait between pages; an abort ends the wait early and fails the run. */
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new RunFailure('aborted', 'run was interrupted'));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new RunFailure('aborted', 'run was interrupted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function toFailure(error: unknown, signal: AbortSignal | undefined): RunFailure {

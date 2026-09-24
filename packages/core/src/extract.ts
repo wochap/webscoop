@@ -40,6 +40,16 @@ export interface PageExtraction {
   warnings: string[];
   /** Targets that healed, with their new selectors, in the order they were resolved. */
   promotions: Promotion[];
+  /** Selectors each target resolved with, for later pages to reuse without the ladder. */
+  resolved: ResolvedSelectors;
+}
+
+/** The selectors page 1 settled on, so later pages skip the healing ladder. */
+export interface ResolvedSelectors {
+  /** Item container selectors, or null when the recipe has no item block or nothing matched. */
+  item: SelectorCandidate[] | null;
+  /** Per recipe field, in recipe order: the selectors that resolved it, or null when nothing did. */
+  fields: (SelectorCandidate[] | null)[];
 }
 
 export interface ExtractOptions {
@@ -55,6 +65,10 @@ export interface ExtractOptions {
   /** Called once per healed target, before its field report exists. */
   onHealed?: (promotion: Promotion) => void;
   viewport?: Viewport;
+  /** Selectors from an earlier page: used as they are, with no healing ladder. */
+  resolved?: ResolvedSelectors;
+  /** Extract only item containers from this index on (a page that grew); `_index` restarts at 0. */
+  fromIndex?: number;
 }
 
 /** Drop containers that also match one of the exclusion candidates. */
@@ -95,6 +109,75 @@ interface Settled {
 }
 
 const UNRESOLVED: HealOutcome = { kind: 'unresolved' };
+
+/** Promote when the target healed; item scoped fuzzy matches must hold in at least half the containers. */
+const settleWith =
+  (target: HealTarget, ctx: HealContext, promoteStored: boolean) =>
+  async (resolution: Resolution): Promise<Settled | null> => {
+    const { outcome } = resolution;
+    if (!isHealed(outcome)) return { resolution, selectors: target.selectors, promotion: null };
+    const snapshotRung = outcome.kind !== 'candidate';
+    if (!snapshotRung && !promoteStored) {
+      return { resolution, selectors: target.selectors.slice(outcome.index), promotion: null };
+    }
+    const promotion = await promote(target, resolution, ctx);
+    const containers = ctx.containers?.length ?? 0;
+    const heldBy = promotion.coverage ?? containers;
+    if (target.kind === 'field' && target.scope === 'item' && snapshotRung && outcome.kind !== 'user' && heldBy * 2 < containers) {
+      return null;
+    }
+    return { resolution, selectors: promotion.selectors, promotion };
+  };
+
+/** Item containers the selectors find, minus the exclusions. */
+async function containersFor(session: Session, selectors: readonly SelectorCandidate[], exclude: readonly SelectorCandidate[]): Promise<ElementRef[]> {
+  const found = await resolveFirst(session, selectors);
+  return found ? excludeContainers(session, found.refs, exclude) : [];
+}
+
+/** How many item containers the page holds now, with the selectors an earlier page resolved. */
+export async function countItems(session: Session, recipe: Recipe, resolved: ResolvedSelectors): Promise<number> {
+  if (!recipe.item || !resolved.item) return 0;
+  return (await containersFor(session, resolved.item, recipe.item.exclude ?? [])).length;
+}
+
+export interface PaginationTargetResult {
+  /** The element to click, or null when no rung found it. */
+  ref: ElementRef | null;
+  /** Selectors to reuse on later pages. */
+  selectors: SelectorCandidate[];
+  outcome: HealOutcome;
+  promotion: Promotion | null;
+  notes: string[];
+}
+
+/** Resolve `pagination.target` through the healing ladder, like a page scoped field. */
+export async function resolvePaginationTarget(
+  session: Session,
+  recipe: Recipe,
+  opts: { ladder?: readonly Resolver[]; promote?: boolean; viewport?: Viewport },
+): Promise<PaginationTargetResult> {
+  const stored = recipe.pagination.target;
+  if (!stored) return { ref: null, selectors: [], outcome: UNRESOLVED, promotion: null, notes: [] };
+  const target: HealTarget = { kind: 'pagination', selectors: stored.selectors, ...(stored.fingerprint ? { fingerprint: stored.fingerprint } : {}) };
+  const notes: string[] = [];
+  const ctx = healContext({
+    session,
+    cache: new SnapshotCache(session),
+    threshold: recipe.healing.fuzzyThreshold,
+    note: (_, text) => notes.push(text),
+    ...(opts.viewport ? { viewport: opts.viewport } : {}),
+  });
+  const settled = await resolveTarget(opts.ladder ?? [candidatesResolver], target, ctx, settleWith(target, ctx, opts.promote ?? false));
+  if (!settled) return { ref: null, selectors: stored.selectors, outcome: UNRESOLVED, promotion: null, notes };
+  return {
+    ref: settled.resolution.refs[0] ?? null,
+    selectors: settled.selectors,
+    outcome: settled.resolution.outcome,
+    promotion: settled.promotion,
+    notes,
+  };
+}
 
 function fieldTarget(field: RecipeField, index: number): HealTarget {
   return {
@@ -182,21 +265,18 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   ): HealContext =>
     healContext({ session, cache, threshold, note, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
 
-  /** Promote when the target healed; item scoped fuzzy matches must hold in at least half the containers. */
-  const settle = (target: HealTarget, ctx: HealContext) => async (resolution: Resolution): Promise<Settled | null> => {
-    const { outcome } = resolution;
-    if (!isHealed(outcome)) return { resolution, selectors: target.selectors, promotion: null };
-    const snapshotRung = outcome.kind !== 'candidate';
-    if (!snapshotRung && !opts.promote) {
-      return { resolution, selectors: target.selectors.slice(outcome.index), promotion: null };
-    }
-    const promotion = await promote(target, resolution, ctx);
-    const containers = ctx.containers?.length ?? 0;
-    const heldBy = promotion.coverage ?? containers;
-    if (target.kind === 'field' && target.scope === 'item' && snapshotRung && outcome.kind !== 'user' && heldBy * 2 < containers) {
-      return null;
-    }
-    return { resolution, selectors: promotion.selectors, promotion };
+  const settle = (target: HealTarget, ctx: HealContext) => settleWith(target, ctx, opts.promote ?? false);
+  const reused = opts.resolved;
+  /** A target settled on page 1, replayed with its selectors and no ladder. */
+  const replay = async (selectors: SelectorCandidate[] | null, within?: ElementRef): Promise<Settled | null> => {
+    if (!selectors) return null;
+    const found = await resolveFirst(session, selectors, within);
+    const selector = found?.candidate ?? selectors[0]!;
+    return {
+      resolution: { refs: found?.refs ?? [], outcome: found ? { kind: 'candidate', index: found.index } : UNRESOLVED, selector },
+      selectors,
+      promotion: null,
+    };
   };
   const record = (settled: Settled | null) => {
     if (!settled?.promotion) return;
@@ -209,7 +289,19 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   let item: RunReport['item'] = null;
   let itemAncestors: readonly string[] = [];
   let itemFingerprint: Fingerprint | undefined;
-  if (recipe.item) {
+  let itemSelectors: SelectorCandidate[] | null = null;
+  if (recipe.item && reused) {
+    const selectors = reused.item;
+    itemSelectors = selectors;
+    const kept = selectors ? await containersFor(session, selectors, recipe.item.exclude ?? []) : [];
+    containers = kept;
+    item = {
+      candidateIndex: kept.length > 0 ? 0 : null,
+      candidate: selectors?.[0] ?? null,
+      count: kept.length,
+      outcome: kept.length > 0 ? { kind: 'candidate', index: 0 } : UNRESOLVED,
+    };
+  } else if (recipe.item) {
     const target: HealTarget = {
       kind: 'item',
       selectors: recipe.item.selectors,
@@ -236,6 +328,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       outcome,
       ...(notes.has('item') ? { notes: notes.get('item')! } : {}),
     };
+    itemSelectors = settled?.selectors ?? null;
     itemFingerprint = settled?.promotion?.fingerprint ?? recipe.item.fingerprint;
     itemAncestors = itemFingerprint?.ancestors ?? [];
   }
@@ -254,6 +347,23 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   const probe = () => (probed ??= probeContainer(session, cache, realContainers, recipe.item?.fingerprint, itemFingerprint, threshold));
   for (const [index, field] of recipe.fields.entries()) {
     const target = fieldTarget(field, index);
+    if (reused) {
+      const selectors = reused.fields[index] ?? null;
+      if (field.scope === 'page') {
+        const settled = await replay(selectors);
+        const ref = settled?.resolution.refs[0];
+        const pageValue = ref ? { value: await readValue(session, field, ref, opts.pageUrl), found: true } : { value: null, found: false };
+        states.push({ field, settled, pageValue, missingRows: [] });
+      } else {
+        const outcome: HealOutcome = selectors ? { kind: 'candidate', index: 0 } : UNRESOLVED;
+        states.push({
+          field,
+          settled: selectors ? { resolution: { refs: [], outcome, selector: selectors[0]! }, selectors, promotion: null } : null,
+          missingRows: [],
+        });
+      }
+      continue;
+    }
     if (field.scope === 'page') {
       const ctx = context();
       const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
@@ -278,7 +388,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   }
 
   const rows: Row[] = [];
-  for (const [index, container] of containers.entries()) {
+  for (const [index, container] of containers.slice(opts.fromIndex ?? 0).entries()) {
     const row: Row = { _page: opts.page, _index: index };
     for (const state of states) {
       let result = state.pageValue;
@@ -330,5 +440,6 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     }
   }
 
-  return { rows, item, fields, missingRequired, warnings, promotions };
+  const resolved: ResolvedSelectors = { item: itemSelectors, fields: states.map((s) => s.settled?.selectors ?? null) };
+  return { rows, item, fields, missingRequired, warnings, promotions, resolved };
 }

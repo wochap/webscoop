@@ -20,6 +20,21 @@ function positiveInt(value: string): number {
   return n;
 }
 
+/** `--pages`: `all` or a positive integer. */
+export function pagesArg(value: string): number | 'all' {
+  if (value === 'all') return 'all';
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isInteger(n) || n < 1) throw new InvalidArgumentError('expected "all" or a positive integer');
+  return n;
+}
+
+/** `--max-pages`: a positive integer. */
+export function maxPagesArg(value: string): number {
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 1) throw new InvalidArgumentError('expected a positive integer');
+  return n;
+}
+
 function seedInt(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) throw new InvalidArgumentError('expected a non-negative integer');
@@ -73,9 +88,17 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
     .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')
     .option('--no-llm', 'never ask the language model to locate a field, whatever the config and recipe say')
+    .addOption(new Option('--pages <1|N|all>', 'pages to walk, replacing the recipe limit').argParser(pagesArg))
+    .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
+    .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addHelpText(
       'after',
       `
+Pagination: the recipe says how to reach the next page (a page number in the
+URL, a next link, a load-more button, or infinite scroll) and how many pages
+to walk. Rows repeated from an earlier page are dropped. With --jsonl, rows
+are printed as each page completes.
+
 Healing: when stored selectors stop matching, the run tries the other stored
 selectors, then the element that best matches the field's fingerprint, then
 (when an LLM endpoint is configured and the recipe allows it) asks the model
@@ -95,6 +118,9 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--json', 'print the field table as a JSON array')
     .option('--no-llm', 'never ask the language model to locate a field')
+    .addOption(new Option('--pages <1|N|all>', 'pages to walk (default: the first page only)').argParser(pagesArg))
+    .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
+    .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 

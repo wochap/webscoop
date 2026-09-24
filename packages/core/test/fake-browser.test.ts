@@ -79,3 +79,61 @@ describe('FakeBrowser strategies', () => {
     await expect(session.goto(PAGE, { timeoutMs: 100 })).rejects.toThrow(/timed out/);
   });
 });
+
+describe('FakeBrowser actions', () => {
+  const pager = (n: number, next?: string) =>
+    h('html', {}, h('body', {}, h('p', { class: 'page' }, `page ${n}`), next ? h('a', { class: 'next', href: next }, 'Next') : h('span', {}, 'end')));
+
+  it('follows a link on click and loads the page on settle', async () => {
+    const browser = new FakeBrowser({
+      'https://shop.test/list?page=1': pager(1, '/list?page=2'),
+      'https://shop.test/list?page=2': { dom: pager(2), title: 'Two' },
+    });
+    const session = await browser.open('/p');
+    await session.goto('https://shop.test/list?page=1', { timeoutMs: 1000 });
+    const [next] = await session.resolve(c('css', 'a.next'));
+    const before = await session.url();
+    await session.click(next!);
+    const info = await session.settle({ timeoutMs: 1000, previousUrl: before });
+    expect(info).toEqual({ url: 'https://shop.test/list?page=2', title: 'Two', status: 200 });
+    expect(await session.url()).toBe('https://shop.test/list?page=2');
+    expect(await texts(session, c('css', 'p.page'))).toEqual(['page 2']);
+    expect(browser.visited).toEqual(['https://shop.test/list?page=1', 'https://shop.test/list?page=2']);
+    expect(browser.clicks).toEqual(['css=a.next >> nth=0']);
+  });
+
+  it('times out settling on a slow page', async () => {
+    const browser = new FakeBrowser({
+      'https://shop.test/a': pager(1, '/b'),
+      'https://shop.test/b': { dom: pager(2), delayMs: 5000 },
+    });
+    const session = await browser.open('/p');
+    await session.goto('https://shop.test/a', { timeoutMs: 1000 });
+    await session.click((await session.resolve(c('css', 'a.next')))[0]!);
+    await expect(session.settle({ timeoutMs: 100 })).rejects.toThrow('timed out');
+  });
+
+  it('grows the item count on load-more clicks and scrolls, step by step', async () => {
+    const render = (count: number) => catalog(cards(count));
+    const browser = new FakeBrowser({ [PAGE]: { dom: render(8), render, more: [16, 24], scroll: [16] } });
+    const session = await browser.open('/p');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    const count = async () => (await session.resolve(c('testid', 'product-card'))).length;
+    expect(await count()).toBe(8);
+    const button = (await session.resolve(c('css', 'h1')))[0]!;
+    await session.click(button);
+    expect(await count()).toBe(16);
+    await session.click(button);
+    expect(await count()).toBe(24);
+    await session.click(button);
+    expect(await count()).toBe(24);
+    expect(await session.settle({ timeoutMs: 1000 })).toMatchObject({ url: PAGE });
+
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    expect(await count()).toBe(8);
+    await session.scrollToBottom();
+    expect(await count()).toBe(16);
+    await session.scrollToBottom();
+    expect(await count()).toBe(16);
+  });
+});

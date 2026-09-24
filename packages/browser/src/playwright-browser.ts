@@ -10,6 +10,7 @@ import {
   type PageInfo,
   type ReadOptions,
   type SelectorCandidate,
+  type SettleOptions,
   type SerializedNode,
 } from '@webscoop/core';
 import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
@@ -24,6 +25,11 @@ export interface PlaywrightBrowserOptions {
   /** Timeout for element operations after navigation, in ms. Default 5000. */
   actionTimeoutMs?: number;
 }
+
+/** How long `settle` waits for a navigation to start after an action. */
+const SETTLE_GRACE_MS = 500;
+/** How long `settle` waits for network idle when the action did not navigate. */
+const SETTLE_IDLE_MS = 2000;
 
 class PwRef implements ElementRef {
   constructor(
@@ -79,10 +85,24 @@ class PlaywrightSession implements InteractiveSession {
   /** Current handler per exposed name; a binding can be registered only once per context. */
   private readonly bindings = new Map<string, (msg: unknown) => Promise<unknown>>();
 
+  /** Main frame navigations so far, so `settle` can tell whether a click navigated. */
+  private navigations = 0;
+  /** Navigations counted when the last action started. */
+  private navigationsBefore = 0;
+  /** HTTP status of the last main frame document response. */
+  private lastStatus: number | null = null;
+
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
-  ) {}
+  ) {
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) this.navigations++;
+    });
+    page.on('response', (response) => {
+      if (response.request().isNavigationRequest() && response.frame() === page.mainFrame()) this.lastStatus = response.status();
+    });
+  }
 
   async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
     const deadline = Date.now() + opts.timeoutMs;
@@ -126,6 +146,49 @@ class PlaywrightSession implements InteractiveSession {
   async snapshot(within?: ElementRef): Promise<SerializedNode> {
     if (within) return (within as PwRef).locator.evaluate(serializeInPage);
     return this.page.evaluate(serializeInPage, null);
+  }
+
+  async click(ref: ElementRef): Promise<void> {
+    const { locator } = ref as PwRef;
+    this.navigationsBefore = this.navigations;
+    await locator.scrollIntoViewIfNeeded();
+    await locator.click();
+  }
+
+  async scrollToBottom(): Promise<void> {
+    this.navigationsBefore = this.navigations;
+    await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  }
+
+  async settle(opts: SettleOptions): Promise<PageInfo> {
+    const deadline = Date.now() + opts.timeoutMs;
+    const left = () => Math.max(1, deadline - Date.now());
+    const navigated = () => this.navigations !== this.navigationsBefore || (opts.previousUrl !== undefined && this.page.url() !== opts.previousUrl);
+    try {
+      if (!navigated()) {
+        // A click may start its navigation a moment later; give it a short grace period.
+        await this.page
+          .waitForEvent('framenavigated', { predicate: (frame) => frame === this.page.mainFrame(), timeout: Math.min(SETTLE_GRACE_MS, left()) })
+          .catch(() => {});
+      }
+      if (navigated()) {
+        await this.page.waitForLoadState('load', { timeout: left() });
+        await this.page.waitForLoadState('networkidle', { timeout: left() });
+      } else {
+        // Same document: wait for requests the action started, but never long.
+        await this.page.waitForLoadState('networkidle', { timeout: Math.min(SETTLE_IDLE_MS, left()) }).catch(() => {});
+      }
+      return { url: this.page.url(), title: await this.page.title(), status: this.lastStatus };
+    } catch (error) {
+      if (error instanceof errors.TimeoutError) {
+        throw new TimeoutError(`waiting for ${this.page.url()} to load timed out after ${opts.timeoutMs} ms`);
+      }
+      throw error;
+    }
+  }
+
+  async url(): Promise<string> {
+    return this.page.url();
   }
 
   async close(): Promise<void> {

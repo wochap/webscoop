@@ -323,7 +323,6 @@ describe('server', () => {
     const pg = await start();
     expect((await fetch(`${pg.url}/login`)).status).toBe(501);
     expect((await fetch(`${pg.url}/challenge`)).status).toBe(501);
-    expect((await fetch(`${pg.url}/catalog?paginate=next`)).status).toBe(501);
     expect((await fetch(`${pg.url}/catalog?wall=login`)).status).toBe(501);
   });
 

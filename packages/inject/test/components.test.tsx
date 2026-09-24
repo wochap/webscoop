@@ -210,6 +210,24 @@ describe('pagination', () => {
     fireEvent.click(p.q('kind-more')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updatePagination', patch: { kind: 'more' } });
   });
+
+  it('edits delayMs with the stepper and the input', () => {
+    const draft = {
+      ...newDraft(),
+      fields: [field('title')],
+      pagination: { kind: 'next' as const, limit: 'all' as const, stopRules: [], delayMs: 200 },
+    };
+    const p = renderPanel(baseState(draft));
+    const delay = p.q('pagination-delay')!;
+    expect(delay.querySelector('input')!.value).toBe('200');
+    fireEvent.click(delay.querySelector('[aria-label^="Increase"]')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updatePagination', patch: { delayMs: 300 } });
+    fireEvent.click(delay.querySelector('[aria-label^="Decrease"]')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updatePagination', patch: { delayMs: 100 } });
+    fireEvent.change(delay.querySelector('input')!, { target: { value: '1500' } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updatePagination', patch: { delayMs: 1500 } });
+    expect(p.q('pagination')!.textContent).not.toContain('later version');
+  });
 });
 
 describe('results drawer', () => {

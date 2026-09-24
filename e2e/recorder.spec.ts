@@ -156,7 +156,7 @@ test('sponsored=2: excluding .sponsored leaves 22 items in the recipe and the ru
   expect(rows.map((row) => row.title)).toEqual(dataset.slice(2).map((p) => p.title));
 });
 
-test('marking a ?page=2 link proposes url pagination, saved but not run', async ({ scoop }) => {
+test('marking a ?page=2 link proposes url pagination, saved and run', async ({ scoop }) => {
   const port = scoop.playground.port;
   const r = await scoop.record([template(port), '--var', 'tier=0', '--name', 'paged']);
   await pickTitlesAsItems(r);
@@ -179,10 +179,13 @@ test('marking a ?page=2 link proposes url pagination, saved but not run', async 
   const recipe = loadRecipe(await readFile(path, 'utf8'));
   expect(recipe.pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 });
   expect(recipe.pagination.target!.selectors.length).toBeGreaterThan(0);
+  // The unpaginated catalog ignores `page`: every page repeats the first, so dedup keeps 24 rows.
   const run = await scoop.run(['run', 'paged']);
   expect(run.code, run.stderr).toBe(0);
   expect(JSON.parse(run.stdout)).toHaveLength(24);
-  expect(run.stderr).toMatch(/24 rows from 1 page in/);
+  expect(run.stderr).toContain('page 2 loaded: http://127.0.0.1:');
+  expect(run.stderr).toMatch(/[?&]page=3 \(HTTP 200\)/);
+  expect(run.stderr).toMatch(/24 rows from 3 pages, 48 duplicates dropped in/);
 });
 
 test('--edit shows six fields with counts, test runs 24 rows, and Ctrl+S saves it unchanged', async ({ scoop }) => {

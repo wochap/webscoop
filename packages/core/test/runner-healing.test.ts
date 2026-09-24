@@ -38,7 +38,7 @@ describe('runner healing', () => {
     const result = await t.runner.run();
     expect(result.ok).toBe(true);
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'done']);
-    expect(t.log.sequence()).toEqual(['run.start', 'page.loaded', 'field.healed', 'field.resolved', 'row.emitted', 'page.done', 'recipe.saved', 'run.done']);
+    expect(t.log.sequence()).toEqual(['run.start', 'page.loaded', 'field.healed', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'recipe.saved', 'run.done']);
     const names = t.log.names();
     for (const healed of t.log.of('field.healed')) {
       if (healed.target === 'item') continue;
@@ -105,7 +105,7 @@ describe('runner healing', () => {
   });
 
   it('lists the new events in RUN_EVENT_NAMES', () => {
-    expect(RUN_EVENT_NAMES).toEqual(['run.start', 'page.loaded', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'recipe.saved', 'run.done', 'run.failed']);
+    expect(RUN_EVENT_NAMES).toEqual(['run.start', 'page.loaded', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'run.done', 'run.failed']);
   });
 });
 

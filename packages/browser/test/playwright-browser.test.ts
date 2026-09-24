@@ -134,4 +134,41 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     expect(xpathFor(title)).toBe('./h2[1]');
     expect((await session.read((await refForNode(session, title, card))!, { mode: 'text' })).trim()).toBe(dataset[0]!.title);
   });
+
+  it('clicks the playground Next link and settles on page 2', async () => {
+    const first = `${playground.url}/catalog?paginate=url&tier=0`;
+    await session.goto(first, { timeoutMs: 10_000 });
+    const [next] = await session.resolve(c('role', 'link|Next'));
+    await session.click(next!);
+    const info = await session.settle({ timeoutMs: 10_000, previousUrl: first });
+    expect(info.url).toBe(`${playground.url}/catalog?paginate=url&tier=0&page=2`);
+    expect(info.status).toBe(200);
+    expect(await session.url()).toBe(info.url);
+    expect(await texts(c('testid', 'product-card'))).toHaveLength(8);
+    expect((await texts(c('role', 'heading')))[1]).toBe(dataset[8]!.title);
+  });
+
+  it('settles after a click that redirects back to the same URL', async () => {
+    const url = `${playground.url}/catalog?paginate=next&tier=0`;
+    await session.goto(url, { timeoutMs: 10_000 });
+    await session.click((await session.resolve(c('role', 'link|Next')))[0]!);
+    const info = await session.settle({ timeoutMs: 10_000, previousUrl: url });
+    expect(info.url).toBe(url);
+    expect((await texts(c('role', 'heading')))[1]).toBe(dataset[8]!.title);
+  });
+
+  it('grows the list on a load-more click and on scrolling to the bottom', async () => {
+    await session.goto(`${playground.url}/catalog?paginate=more&tier=1`, { timeoutMs: 10_000 });
+    const cards = () => session.resolve(c('role', 'article'));
+    expect(await cards()).toHaveLength(8);
+    await session.click((await session.resolve(c('role', 'button|Load more')))[0]!);
+    await expect.poll(async () => (await cards()).length).toBe(16);
+
+    await session.goto(`${playground.url}/catalog?paginate=scroll&tier=0`, { timeoutMs: 10_000 });
+    expect(await cards()).toHaveLength(8);
+    await session.scrollToBottom();
+    await expect.poll(async () => (await cards()).length).toBe(16);
+    const settled = await session.settle({ timeoutMs: 10_000 });
+    expect(settled.url).toBe(`${playground.url}/catalog?paginate=scroll&tier=0`);
+  });
 });

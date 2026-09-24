@@ -4,10 +4,9 @@ Record a scraper by clicking elements on a live page, then run it unattended
 from the command line. The browser is a real, visible Chromium with a
 persistent profile, so a site you log into once stays logged in.
 
-This release has the recipe format, the `webscoop` CLI, a runner for static
-selectors, the recorder (`webscoop record`), and a local playground site for
-tests. Selector healing, running pagination, and login/captcha guards arrive in
-later changes.
+This release has the recipe format, the `webscoop` CLI, a runner that heals
+selectors and walks pages, the recorder (`webscoop record`), and a local
+playground site for tests. Login and captcha guards arrive in a later change.
 
 ## Setup
 
@@ -88,7 +87,9 @@ webscoop record --edit <recipe> [--repick field]
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
+                      [--pages 1|N|all] [--max-pages n] [--delay ms]
 webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json] [--no-llm]
+                       [--pages 1|N|all] [--max-pages n] [--delay ms]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop recipes [--json]
 webscoop doctor
@@ -110,11 +111,53 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   status per field, and where the recipe was written back) to stderr.
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
+- `--pages`, `--max-pages`, and `--delay` control pagination; see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
 webscoop run shop --jsonl > rows.jsonl
+webscoop run shop --pages all --jsonl > every-page.jsonl
 ```
+
+### Pagination
+
+A recipe's `pagination` block says how to reach the next page. The runner
+extracts a page, emits its rows, then advances:
+
+- `url`: the page number is a URL template variable (`pagination.param`: its
+  name, `start`, and `step`). The runner fills it in itself, or sets it as a
+  query parameter when the URL template has no such variable; `--var n=3`
+  starts at page 3 instead of `start`.
+- `next`: the runner clicks the next link or button (`pagination.target`) and
+  waits for the new page.
+- `more`: the runner clicks a load-more button and extracts only the items
+  that appeared.
+- `scroll`: the runner scrolls to the bottom and extracts the items that
+  loaded; it stops when nothing loads within `--timeout`.
+- `none`: one page, as before.
+
+`pagination.limit` is `1`, a number of pages, or `all`. `--pages 1|N|all`
+replaces it for one run, and `all` stops at `--max-pages` (default 500) with a
+warning. The run also stops when the next or load-more target is gone or
+disabled (`disabled`, `aria-disabled="true"`, or a link without `href`), when
+a page has no items, and when a page repeats the previous page's URL and first
+item (a loop). Stop rules in the recipe add `no-new-items` (a page adds nothing
+new) and `first-item-repeats` (a page starts with the previous page's first
+item; that page is dropped). `pagination.delayMs`, or `--delay`, waits between
+pages.
+
+Rows are deduplicated across pages by the field marked `key`, or by all field
+values when no field is the key; the first page is never deduplicated.
+`_page` counts pages in the order they were extracted, and `_index` restarts
+at 0 on each page after dedup. With `--jsonl`, each page's rows are printed
+before the next page loads, so a run that fails on page 7 has already printed
+pages 1 to 6. The field selectors and the pagination target are resolved (and
+healed) on the first page, then reused on later pages; a required field
+missing from every item of a later page exits 3 naming the page. The summary
+line counts pages and dropped duplicates, for example `24 rows from 3 pages,
+2 duplicates dropped in 4.10s (shop)`.
+
+`test` extracts only the first page unless `--pages` is given.
 
 ### Healing
 
@@ -235,7 +278,8 @@ panel.
    first item field.
 4. Pick more elements and **Add as field**; name, type, optional, and dedup
    key are editable in the field list. Mark a link or button as the
-   **Pagination target** to record pagination (it runs in a later change).
+   **Pagination target** to record pagination; the panel sets its kind, page
+   limit, stop rules, and the delay between pages.
 5. **Test run** extracts the current page with the draft and shows a results
    drawer (table and JSON) with per-field status.
 6. `Ctrl+S` saves to the recipes directory. Saving keeps the session open.
@@ -359,8 +403,13 @@ used by the end-to-end tests, is
   fingerprints skip that rung.
 - `healing`: `fuzzyThreshold` (0 to 1, default 0.7) and `llm` (default true;
   false keeps the model rung off for this recipe).
-- `pagination`, `guards`: fixed now, used by later changes, filled with
-  defaults when absent.
+- `pagination`: `kind` (`none`, `url`, `next`, `more`, `scroll`), `target`
+  (selectors and fingerprint of the next or load-more control), `param` (the
+  page variable for `url`), `limit` (`1`, N, or `all`), `stopRules`
+  (`no-new-items`, `first-item-repeats`, `target-missing`), and `delayMs`.
+  Filled with defaults (`none`, one page) when absent.
+- `guards`: fixed now, used by a later change, filled with defaults when
+  absent.
 
 ## Playground
 
@@ -389,6 +438,20 @@ with class `sponsored`; the recorder tests use both. `POST /__control` with `{"t
 defaults, `GET /__control` reads them, `POST /__control/reset` restores them.
 With the playground running, `webscoop run packages/cli/fixtures/playground-catalog.json`
 extracts all 24 products.
+
+`paginate=url|next|more|scroll` splits the catalog into 3 pages of 8, in
+dataset order. `url`: `page=N` selects the page, with numbered links and a
+`Next` link on pages 1 and 2. `next`: the page lives in the `ws_page` cookie;
+the `Next` link (`/catalog?paginate=next&go=next`) advances it and redirects
+back, and on page 3 it is disabled (`aria-disabled="true"`, no `href`).
+`more`: a `Load more` button appends the next 8 from `/catalog/more?after=N`
+and disappears after 24. `scroll`: reaching the bottom appends the next 8,
+until 24. Switches for the stop rules: `nextRel=0` drops `rel="next"` from
+the `Next` link, `lastPageRepeats=1` serves page 3 again (with a `Next` link)
+for every page beyond 3, and `moreDisappears=1` removes the `Load more` button
+after its first click.
+[`packages/cli/fixtures/playground-paged.json`](packages/cli/fixtures/playground-paged.json)
+walks the `url` kind with limit `all`.
 
 ## Layout
 

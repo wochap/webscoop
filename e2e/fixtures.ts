@@ -12,6 +12,7 @@ import { startRecording, type Recording } from './recorder-fixture';
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 export const CLI = join(root, 'packages/cli/dist/webscoop.js');
 export const REFERENCE_RECIPE = join(root, 'packages/cli/fixtures/playground-catalog.json');
+export const PAGED_RECIPE = join(root, 'packages/cli/fixtures/playground-paged.json');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 
@@ -47,8 +48,8 @@ export interface Scoop {
   interactiveRun(args: string[]): Promise<Recording>;
 }
 
-export function referenceRecipe(port: number): RecipeInput {
-  const recipe = JSON.parse(readFileSync(REFERENCE_RECIPE, 'utf8')) as RecipeInput;
+export function referenceRecipe(port: number, path = REFERENCE_RECIPE): RecipeInput {
+  const recipe = JSON.parse(readFileSync(path, 'utf8')) as RecipeInput;
   recipe.vars = recipe.vars!.map((v) => (v.name === 'port' ? { ...v, default: String(port) } : v));
   return recipe;
 }

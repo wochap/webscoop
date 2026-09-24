@@ -30,11 +30,25 @@ export function SegmentedControl<T extends string>({ options, value, onChange, l
   );
 }
 
-export function NumberStepper({ value, min = 0, onChange, label }: { value: number; min?: number; onChange: (value: number) => void; label: string }) {
+export function NumberStepper({
+  value,
+  min = 0,
+  step = 1,
+  onChange,
+  label,
+  testId,
+}: {
+  value: number;
+  min?: number;
+  step?: number;
+  onChange: (value: number) => void;
+  label: string;
+  testId?: string;
+}) {
   const set = (n: number) => onChange(Math.max(min, Math.round(n)));
   return (
-    <span className="ws-stepper">
-      <button type="button" className="ws-btn ws-btn-sm" aria-label={`Decrease ${label}`} onClick={() => set(value - 1)}>
+    <span className="ws-stepper" {...(testId ? { 'data-ws': testId } : {})}>
+      <button type="button" className="ws-btn ws-btn-sm" aria-label={`Decrease ${label}`} onClick={() => set(value - step)}>
         −
       </button>
       <input
@@ -47,7 +61,7 @@ export function NumberStepper({ value, min = 0, onChange, label }: { value: numb
           if (Number.isFinite(n)) set(n);
         }}
       />
-      <button type="button" className="ws-btn ws-btn-sm" aria-label={`Increase ${label}`} onClick={() => set(value + 1)}>
+      <button type="button" className="ws-btn ws-btn-sm" aria-label={`Increase ${label}`} onClick={() => set(value + step)}>
         +
       </button>
     </span>
@@ -146,7 +160,13 @@ export function PaginationEditor({ pagination }: { pagination: DraftPagination }
           );
         })}
       </div>
-      <span className="ws-meta">Recorded only: pagination runs arrive in a later version.</span>
+      <div className="ws-row">
+        <span className="ws-spacer">Delay between pages (ms)</span>
+        <NumberStepper label="Delay between pages in milliseconds" step={100} value={pagination.delayMs} onChange={(n) => update({ delayMs: n })} testId="pagination-delay" />
+      </div>
+      <span className="ws-meta">
+        Runs walk the pages this way, up to the limit, and stop early when a stop rule fires. Rows repeated from an earlier page are dropped.
+      </span>
     </section>
   );
 }

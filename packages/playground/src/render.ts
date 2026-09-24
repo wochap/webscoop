@@ -11,6 +11,24 @@ export interface RenderOptions {
   chrome?: ChromeMode | null;
   /** Mark the first N product cards as sponsored. Default 0. */
   sponsored?: number;
+  /** Pagination controls rendered after the product list. Default none. */
+  pager?: Pager | null;
+}
+
+export const PAGINATE_KINDS = ['url', 'next', 'more', 'scroll'] as const;
+export type PaginateKind = (typeof PAGINATE_KINDS)[number];
+
+/** Pagination controls after the product list. */
+export interface Pager {
+  kind: PaginateKind;
+  /** Numbered page links (`url` kind). */
+  links?: { page: number; href: string; current: boolean }[];
+  /** The `Next` link: its `href`, null for a disabled link, absent for none. */
+  next?: string | null;
+  /** Whether the `Next` link carries `rel="next"`. Default true. */
+  rel?: boolean;
+  /** What the `more` and `scroll` script fetches from `/catalog/more`. */
+  more?: { after: number; total: number; tier: number; seed: number; disappear: boolean };
 }
 
 export interface RenderContext {
@@ -22,6 +40,8 @@ export interface RenderContext {
   sponsored: number;
   /** Page chrome mode; applied by `render` around the tier output. */
   chrome: ChromeMode | null;
+  /** Pagination controls; `catalogPage` renders them after the list. */
+  pager: Pager | null;
 }
 
 /** Class and attribute markup for a sponsored card, empty for a regular one. */
@@ -142,9 +162,73 @@ ${content}
 <h1 class="category-heading" id="category" ${testid}="category">${escapeHtml(category)}</h1>
 <ul class="product-list" ${testid}="product-list">
 ${items}
-</ul>
+</ul>${ctx.pager ? `\n${pagerHtml(ctx.pager)}` : ''}
 </main>`,
   );
+}
+
+/**
+ * Runs in the page for `more` and `scroll`: appends the next cards from
+ * `/catalog/more`. It finds elements by attributes tier churn leaves alone.
+ */
+function pagerScript(kind: 'more' | 'scroll', more: NonNullable<Pager['more']>): string {
+  return `<script>
+(function () {
+  var cfg = ${JSON.stringify({ kind, ...more })};
+  var list = document.querySelector('main ul');
+  var busy = false;
+  function load(done) {
+    if (busy || cfg.after >= cfg.total) return;
+    busy = true;
+    fetch('/catalog/more?after=' + cfg.after + '&tier=' + cfg.tier + '&seed=' + cfg.seed)
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        list.insertAdjacentHTML('beforeend', html);
+        cfg.after = Math.min(cfg.total, cfg.after + 8);
+        busy = false;
+        if (done) done();
+      });
+  }
+  if (cfg.kind === 'more') {
+    var button = document.querySelector('button[data-more]');
+    button.addEventListener('click', function () {
+      load(function () {
+        if (cfg.disappear || cfg.after >= cfg.total) button.remove();
+      });
+    });
+  } else {
+    // Without scroll anchoring, appending cards never scrolls by itself, so one scroll loads one batch.
+    document.documentElement.style.overflowAnchor = 'none';
+    window.addEventListener('scroll', function () {
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40) load();
+    });
+  }
+})();
+</script>`;
+}
+
+export function pagerHtml(pager: Pager): string {
+  if (pager.kind === 'more' || pager.kind === 'scroll') {
+    const more = pager.more ?? { after: 8, total: 24, tier: 0, seed: 1, disappear: false };
+    const control =
+      pager.kind === 'more'
+        ? `<div class="pager">\n<button class="load-more" type="button" data-more="true">Load more</button>\n</div>`
+        : // Keeps the document taller than the window, so scrolling to the bottom always scrolls.
+          `<div class="scroll-spacer" style="height: 120vh" aria-hidden="true"></div>`;
+    return `${control}\n${pagerScript(pager.kind, more)}`;
+  }
+  const links = (pager.links ?? []).map(
+    (l) => `<a class="pager-link${l.current ? ' current' : ''}" href="${escapeHtml(l.href)}"${l.current ? ' aria-current="page"' : ''}>${l.page}</a>`,
+  );
+  if (pager.next !== undefined) {
+    const rel = pager.rel === false ? '' : ' rel="next"';
+    links.push(
+      pager.next === null
+        ? `<a class="pager-next" aria-disabled="true">Next</a>`
+        : `<a class="pager-next" href="${escapeHtml(pager.next)}"${rel}>Next</a>`,
+    );
+  }
+  return `<nav class="pager" aria-label="Pagination">\n${links.join('\n')}\n</nav>`;
 }
 
 /** Tier 0: stable markup with ids, `data-testid` attributes, semantic roles, readable classes. */
@@ -312,6 +396,19 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
     rng: createRng(opts.seed),
     sponsored: Math.max(0, opts.sponsored ?? 0),
     chrome: opts.chrome ?? null,
+    pager: opts.pager ?? null,
   };
   return applyChrome(renderer(ctx), ctx.chrome);
+}
+
+/**
+ * The product cards alone (the `<li>` elements of the list), rendered as
+ * `render` renders them with the same tier and seed, so class and id tokens
+ * match the page they are appended to.
+ */
+export function renderCards(products: readonly Product[], opts: Pick<RenderOptions, 'tier' | 'seed'>): string {
+  if (products.length === 0) return '';
+  const html = render(products, { tier: opts.tier, seed: opts.seed });
+  const open = html.indexOf('>', html.indexOf('<ul ')) + 1;
+  return `${html.slice(open, html.lastIndexOf('</ul>')).trim()}\n`;
 }
