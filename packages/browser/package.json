@@ -13,10 +13,10 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@webscoop/core": "workspace:*",
+    "@webscoop/core": "*",
     "playwright": "1.59.1"
   },
   "devDependencies": {
-    "@webscoop/playground": "workspace:*"
+    "@webscoop/playground": "*"
   }
 }

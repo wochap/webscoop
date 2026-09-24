@@ -41,6 +41,29 @@ describe('render', () => {
     expect(render(dataset, { tier: 0, seed: 7 })).toBe(render(dataset, { tier: 0, seed: 7 }));
   });
 
+  it('wraps the catalog in hostile chrome only when asked', () => {
+    const hostile = render(dataset, { tier: 0, seed: 1, chrome: 'hostile' });
+    for (const marker of ['id="hostile-header"', 'id="promo-bar"', 'id="cookie-backdrop"', 'role="dialog"', 'window.__hostClicks', 'z-index: 2147483000', 'z-index: 99;', '!important']) {
+      expect(hostile, marker).toContain(marker);
+    }
+    expect(hostile).toMatch(/#hostile-header \{ position: fixed; top: 0; left: 0; width: 100vw/);
+    expect(count(hostile, 'data-testid="product-card"')).toBe(24);
+    const plain = render(dataset, { tier: 0, seed: 1 });
+    for (const marker of ['hostile', 'promo-bar', 'cookie', '__hostClicks']) expect(plain).not.toContain(marker);
+  });
+
+  it('marks the first N cards sponsored and keeps dataset order', () => {
+    const html = render(dataset, { tier: 0, seed: 1, sponsored: 2 });
+    expect(count(html, 'class="product-card sponsored"')).toBe(2);
+    expect(count(html, 'data-sponsored="true"')).toBe(2);
+    expect(html).toContain('<article class="product-card sponsored" id="product-p01" data-testid="product-card" data-product-id="p01" data-sponsored="true">');
+    expect(html).toContain('<article class="product-card sponsored" id="product-p02" data-testid="product-card" data-product-id="p02" data-sponsored="true">');
+    expect(html).toContain('<article class="product-card" id="product-p03" data-testid="product-card" data-product-id="p03">');
+    const positions = dataset.map((p) => html.indexOf(`id="product-${p.id}"`));
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(render(dataset, { tier: 0, seed: 1, sponsored: 0 })).toBe(render(dataset, { tier: 0, seed: 1 }));
+  });
+
   it('throws for unimplemented tiers', () => {
     expect(() => render(dataset, { tier: 2, seed: 1 })).toThrow('tier 2');
   });
@@ -71,6 +94,21 @@ describe('server', () => {
       expect(res.status).toBe(501);
       expect(await res.text()).toContain(`tier ${tier}`);
     }
+  });
+
+  it('serves chrome and sponsored options, and still returns 501 for tiers 1 to 4 with them', async () => {
+    const pg = await start();
+    const hostile = await (await fetch(`${pg.url}/catalog?tier=0&chrome=hostile&sponsored=2`)).text();
+    expect(hostile).toContain('id="cookie-backdrop"');
+    expect(count(hostile, 'data-sponsored="true"')).toBe(2);
+    expect(await (await fetch(`${pg.url}/catalog?tier=0`)).text()).not.toContain('cookie-backdrop');
+    for (const tier of [1, 2, 3, 4]) {
+      const res = await fetch(`${pg.url}/catalog?tier=${tier}&chrome=hostile&sponsored=1`);
+      expect(res.status).toBe(501);
+      expect(await res.text()).toContain(`tier ${tier}`);
+    }
+    expect((await fetch(`${pg.url}/catalog?chrome=pretty`)).status).toBe(400);
+    expect((await fetch(`${pg.url}/catalog?sponsored=99`)).status).toBe(400);
   });
 
   it('returns 400 for a tier out of range', async () => {

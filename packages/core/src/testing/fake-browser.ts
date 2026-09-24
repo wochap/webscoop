@@ -1,7 +1,10 @@
 import type {
   BrowserPort,
   ElementRef,
+  Geometry,
   GotoOptions,
+  InteractiveSession,
+  OpenOptions,
   PageInfo,
   ReadOptions,
   SerializedElement,
@@ -30,12 +33,12 @@ class FakeRef implements ElementRef {
   ) {}
 }
 
-class FakeSession implements Session {
-  private tree: { root: DomNode; document: DomNode } | null = null;
-  private closed = false;
+export class FakeSession implements Session {
+  protected tree: { root: DomNode; document: DomNode } | null = null;
+  protected closed = false;
   url = 'about:blank';
 
-  constructor(private readonly browser: FakeBrowser) {}
+  constructor(protected readonly browser: FakeBrowser) {}
 
   private assertOpen(): { root: DomNode; document: DomNode } {
     if (this.closed) throw new Error('session is closed');
@@ -128,8 +131,73 @@ class FakeSession implements Session {
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
     this.closed = true;
     this.browser.openSessions--;
+  }
+}
+
+/**
+ * `InteractiveSession` over serialized DOM. Records injected scripts and
+ * dispatched messages; `callHost` plays the page calling an exposed binding.
+ */
+export class FakeInteractiveSession extends FakeSession implements InteractiveSession {
+  readonly injected: string[] = [];
+  readonly dispatched: unknown[] = [];
+  readonly exposed = new Map<string, (msg: unknown) => Promise<unknown>>();
+  private readonly navigated = new Set<(url: string) => void>();
+  private readonly closedListeners = new Set<() => void>();
+
+  override async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
+    const info = await super.goto(url, opts);
+    for (const cb of this.navigated) cb(info.url);
+    return info;
+  }
+
+  async inject(source: string): Promise<void> {
+    this.injected.push(source);
+  }
+
+  async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
+    this.exposed.set(name, fn);
+  }
+
+  async dispatch(msg: unknown): Promise<void> {
+    if (this.closed) throw new Error('session is closed');
+    this.dispatched.push(msg);
+  }
+
+  onNavigated(cb: (url: string) => void): () => void {
+    this.navigated.add(cb);
+    return () => this.navigated.delete(cb);
+  }
+
+  onClosed(cb: () => void): () => void {
+    this.closedListeners.add(cb);
+    return () => this.closedListeners.delete(cb);
+  }
+
+  async geometry(ref: ElementRef): Promise<Geometry> {
+    const el = (ref as FakeRef).node.el as SerializedElement & { bbox?: Geometry };
+    return el.bbox ? { ...el.bbox } : { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  /** Play the page calling `window[name](msg)`. */
+  async callHost(msg: unknown, name = '__webscoopHost'): Promise<unknown> {
+    const fn = this.exposed.get(name);
+    if (!fn) throw new Error(`no binding named ${name}`);
+    return fn(msg);
+  }
+
+  /** Play the user closing the browser window. */
+  async userClose(): Promise<void> {
+    await this.close();
+    for (const cb of this.closedListeners) cb();
+  }
+
+  /** Messages dispatched so far with the given kind. */
+  dispatchedOf(kind: string): unknown[] {
+    return this.dispatched.filter((m) => (m as { kind?: string }).kind === kind);
   }
 }
 
@@ -149,9 +217,16 @@ export class FakeBrowser implements BrowserPort {
     return this;
   }
 
-  async open(profileDir: string): Promise<Session> {
+  readonly openOptions: (OpenOptions | undefined)[] = [];
+  /** Every session opened, most recent last. */
+  readonly sessions: FakeInteractiveSession[] = [];
+
+  async open(profileDir: string, opts?: OpenOptions): Promise<FakeInteractiveSession> {
     this.openedProfiles.push(profileDir);
+    this.openOptions.push(opts);
     this.openSessions++;
-    return new FakeSession(this);
+    const session = new FakeInteractiveSession(this);
+    this.sessions.push(session);
+    return session;
   }
 }

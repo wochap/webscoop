@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dataset, type Product } from './dataset';
-import { escapeHtml, MAX_TIER, render, UnimplementedTierError } from './render';
+import { CHROME_MODES, escapeHtml, MAX_TIER, render, UnimplementedTierError, type ChromeMode } from './render';
 
 export interface ControlState {
   tier: number;
@@ -137,9 +137,15 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       const tier = intParam(url.searchParams.get('tier'), 'tier', 0, MAX_TIER) ?? control.tier;
       const seed = intParam(url.searchParams.get('seed'), 'seed', 0) ?? control.seed;
       const delayMs = intParam(url.searchParams.get('delayMs'), 'delayMs', 0) ?? control.delayMs;
+      const sponsored = intParam(url.searchParams.get('sponsored'), 'sponsored', 0, products.length) ?? 0;
+      const chromeParam = url.searchParams.get('chrome');
+      if (chromeParam !== null && !(CHROME_MODES as readonly string[]).includes(chromeParam)) {
+        throw new HttpError(400, `invalid chrome ${JSON.stringify(chromeParam)}, expected one of ${CHROME_MODES.join(', ')}`);
+      }
+      const chrome = chromeParam as ChromeMode | null;
       let html: string;
       try {
-        html = render(products, { tier, seed });
+        html = render(products, { tier, seed, chrome, sponsored });
       } catch (error) {
         if (error instanceof UnimplementedTierError) throw new HttpError(501, error.message);
         throw error;

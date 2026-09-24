@@ -21,6 +21,7 @@ export interface TestIo extends CliIo {
   err: () => string;
   browserCreated: () => number;
   interrupt: () => void;
+  prompts: () => string[];
 }
 
 export function testIo(opts: {
@@ -29,7 +30,11 @@ export function testIo(opts: {
   homedir?: string;
   browser?: BrowserPort;
   chromium?: Partial<ChromiumInfo>;
+  /** Answers for terminal prompts, in order; null plays closed input. */
+  answers?: (string | null)[];
 }): TestIo {
+  const answers = [...(opts.answers ?? [])];
+  const prompts: string[] = [];
   let out = '';
   let err = '';
   let created = 0;
@@ -52,6 +57,14 @@ export function testIo(opts: {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    async prompt(question) {
+      prompts.push(question);
+      return answers.length > 0 ? answers.shift()! : null;
+    },
+    async recorderBundle(variant) {
+      return `/* recorder ${variant} */`;
+    },
+    prompts: () => prompts,
     out: () => out,
     err: () => err,
     browserCreated: () => created,

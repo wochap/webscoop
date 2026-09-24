@@ -7,3 +7,5 @@ export * from './events';
 export * from './convert';
 export * from './extract';
 export * from './runner';
+export * from './selectors';
+export * from './recorder';

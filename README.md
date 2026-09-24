@@ -4,9 +4,10 @@ Record a scraper by clicking elements on a live page, then run it unattended
 from the command line. The browser is a real, visible Chromium with a
 persistent profile, so a site you log into once stays logged in.
 
-This is the foundation release: the recipe format, the `webscoop` CLI, a runner
-for static selectors, and a local playground site for tests. Recording,
-selector healing, pagination, and login/captcha guards arrive in later changes.
+This release has the recipe format, the `webscoop` CLI, a runner for static
+selectors, the recorder (`webscoop record`), and a local playground site for
+tests. Selector healing, running pagination, and login/captcha guards arrive in
+later changes.
 
 ## Setup
 
@@ -16,9 +17,9 @@ headless; tests open visible Chromium windows.
 ### With Nix (recommended on NixOS)
 
 ```sh
-nix develop            # node 22, pnpm 11, Chromium from nixpkgs
-pnpm install
-pnpm build
+nix develop            # node 22 with npm, Chromium from nixpkgs
+npm install
+npm run build
 ```
 
 The dev shell sets `PLAYWRIGHT_BROWSERS_PATH` to nixpkgs' Playwright
@@ -28,12 +29,12 @@ version must equal the `playwright` version pinned in `package.json`
 
 ### Without Nix
 
-Node 22 or newer and pnpm 11:
+Node 22 or newer (npm ships with it):
 
 ```sh
-pnpm install
-pnpm exec playwright install chromium
-pnpm build
+npm install
+npx playwright install chromium
+npm run build
 ```
 
 ### Tests
@@ -41,9 +42,9 @@ pnpm build
 Tests run locally, from a desktop session:
 
 ```sh
-pnpm lint
-pnpm test        # unit tests plus browser integration tests
-pnpm test:e2e    # builds the CLI and runs it against the playground
+npm run lint
+npm test             # unit tests plus browser integration tests
+npm run test:e2e     # builds the CLI and runs it against the playground
 ```
 
 Browser integration tests are skipped when neither `WAYLAND_DISPLAY` nor
@@ -68,19 +69,21 @@ environment.systemPackages = [ inputs.webscoop.packages.x86_64-linux.default ];
 ```
 
 Try it without installing: `nix run . -- doctor`. After changing
-dependencies, update the `pnpmDeps` hash in `flake.nix` (build once, copy the
+dependencies, update the `npmDeps` hash in `flake.nix` (build once, copy the
 `got:` hash from the error).
 
 ## Usage
 
 ```sh
+webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms]
+webscoop record --edit <recipe>
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
 webscoop recipes [--json]
 webscoop doctor
 ```
 
-After `pnpm build` the CLI is a single file: `node packages/cli/dist/webscoop.js`.
+After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop.js`.
 
 - `<recipe>` is a name in the recipes directory or a path to a recipe file.
 - Extracted rows go to stdout only; logs, progress, and errors go to stderr.
@@ -99,6 +102,55 @@ After `pnpm build` the CLI is a single file: `node packages/cli/dist/webscoop.js
 webscoop run shop --var category="running shoes" | jq length
 webscoop run shop --jsonl > rows.jsonl
 ```
+
+### Recording a recipe
+
+```sh
+webscoop record "https://shop.test/c/{category}" --var category=shoes
+webscoop record --edit shop      # reopen a saved recipe with its fields loaded
+```
+
+`record` opens the page in the same visible, persistent Chromium profile that
+`run` uses and docks a 400 px recorder panel on the right; the page is pushed
+left, not covered. Variables without a value or default are asked for on the
+terminal before the browser opens. Without `--name`, the recipe name is
+proposed from the URL host and first path segment and can be changed in the
+panel.
+
+1. Press `p` (or **Pick element**), hover, and click an element. Host page
+   click handlers do not fire while picking; `Alt`+click picks through cookie
+   banners and other overlays.
+2. The panel shows the element's tag, role, accessible name, attributes
+   (flagged stable or hashed), its ancestors, and ranked selector candidates
+   with the number of matches the browser counts on the page.
+3. If the element sits in a repeating structure, the panel proposes the item
+   container with its match count and highlights every match. Choose a broader
+   or narrower level, exclude subsets with a CSS selector (for example
+   `.sponsored`), and press `Enter` to confirm. The picked element becomes the
+   first item field.
+4. Pick more elements and **Add as field**; name, type, optional, and dedup
+   key are editable in the field list. Mark a link or button as the
+   **Pagination target** to record pagination (it runs in a later change).
+5. **Test run** extracts the current page with the draft and shows a results
+   drawer (table and JSON) with per-field status.
+6. `Ctrl+S` saves to the recipes directory. Saving keeps the session open.
+
+Close the browser window or press `Ctrl+C` to end the session. The exit code
+is 0 when the session ends, with a warning on stderr naming the recipe when
+the draft has unsaved changes, and 1 on errors (invalid template, invalid
+recipe under `--edit`, no display, browser failure).
+
+| Key | In the panel |
+| --- | ------------ |
+| `p` | start picking |
+| `Esc` | cancel picking, close a menu |
+| `Alt`+click | pick through overlays while picking |
+| `Enter` | confirm the proposed item container |
+| `Left` / `Right` | walk the selection up and back down its ancestors |
+| `Alt`+`Up` / `Alt`+`Down` | move the focused field |
+| `Ctrl+S` | save |
+
+Shortcuts do not fire while typing in an input.
 
 ### Exit codes
 
@@ -157,12 +209,15 @@ used by the end-to-end tests, is
 ## Playground
 
 ```sh
-pnpm playground   # serves http://127.0.0.1:4777 (PLAYGROUND_PORT to change)
+npm run playground   # serves http://127.0.0.1:4777 (PLAYGROUND_PORT to change)
 ```
 
 `/catalog?tier=0&seed=1&delayMs=0` renders 24 products from
 `packages/playground/src/dataset.ts`. Tiers 1 to 4 return 501 until later
-changes add them. `POST /__control` with `{"tier","seed","delayMs"}` sets
+changes add them. `chrome=hostile` wraps the catalog in adversarial page
+chrome (fixed header, promo bar, cookie modal, aggressive global CSS, a click
+recorder in `window.__hostClicks`), and `sponsored=N` marks the first N cards
+with class `sponsored`; the recorder tests use both. `POST /__control` with `{"tier","seed","delayMs"}` sets
 defaults, `GET /__control` reads them, `POST /__control/reset` restores them.
 With the playground running, `webscoop run packages/cli/fixtures/playground-catalog.json`
 extracts all 24 products.
@@ -172,16 +227,18 @@ extracts all 24 products.
 ```
 packages/
   core        recipe schema, URL template, value conversion, runner, events, ports (pure TypeScript)
+    src/selectors   selector candidates, stability, item inference, fingerprints
+    src/recorder    recorder protocol, draft state, host-side session controller
   browser     BrowserPort adapter over Playwright
   cli         webscoop command, paths, config, profile lock, output
   llm         placeholder for the LLM adapter
-  inject      placeholder for the recorder bundle
+  inject      recorder UI injected into the page (React in a closed shadow root, esbuild IIFE)
   playground  fixture site, dataset, tier renderer
 e2e/          Playwright tests that run the built CLI against the playground
 ```
 
 `packages/core` must not import Playwright, Node APIs, or other workspace
-packages; `pnpm lint` enforces it.
+packages; `npm run lint` enforces it.
 
 ## License
 

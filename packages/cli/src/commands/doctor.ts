@@ -34,7 +34,7 @@ export async function doctorCommand(io: CliIo): Promise<Code> {
       'chromium',
       chromium.installed
         ? `${chromium.path} (${where}${chromium.version ? `, ${chromium.version}` : ''})`
-        : `missing: ${chromium.path} (${where}${chromium.error ? `: ${chromium.error}` : ''}); run: pnpm exec playwright install chromium`,
+        : `missing: ${chromium.path} (${where}${chromium.error ? `: ${chromium.error}` : ''}); run: npx playwright install chromium`,
     ]);
     const llm = config.llm;
     lines.push(['llm', llm.endpoint ? `${llm.endpoint}${llm.model ? ` (model ${llm.model})` : ''}` : 'not configured']);

@@ -1,0 +1,436 @@
+import { parseNumber } from '../convert';
+import { templateVariables } from '../template';
+import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate } from '../recipe/schema';
+import { validateRecipe } from '../recipe/validate';
+import type {
+  Draft,
+  DraftField,
+  DraftItem,
+  DraftPagination,
+  FieldPatch,
+  PaginationPatch,
+  ProtocolCandidate,
+  VarValue,
+} from './protocol';
+
+/** Strip host-only data (match counts) from a candidate. */
+export function bare(candidate: ProtocolCandidate): SelectorCandidate {
+  return { strategy: candidate.strategy, value: candidate.value, stability: candidate.stability };
+}
+
+/** A field name from free text: lowercase identifier, at most 32 characters. */
+export function slugName(text: string): string {
+  const slug = text
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32)
+    .replace(/_+$/, '');
+  if (!slug) return 'field';
+  return /^[0-9]/.test(slug) ? `f_${slug}` : slug;
+}
+
+export function uniqueName(base: string, taken: readonly string[]): string {
+  if (!taken.includes(base)) return base;
+  for (let i = 2; ; i++) if (!taken.includes(`${base}_${i}`)) return `${base}_${i}`;
+}
+
+/** Text that is a number, possibly with a currency sign or unit, such as `$24.99` or `4.5`. */
+export function isNumericText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!/^[^\dA-Za-z]{0,3}\s?-?\d[\d,]*(?:\.\d+)?\s?[^\dA-Za-z]{0,3}$/.test(trimmed)) return false;
+  return parseNumber(trimmed) !== null;
+}
+
+export interface PickedElement {
+  tag: string;
+  attrs: Record<string, string>;
+  role?: string;
+  name?: string;
+  text: string;
+}
+
+export interface FieldDefaults {
+  name: string;
+  type: FieldType;
+  attr?: string;
+}
+
+/**
+ * Defaults for a new field: a unique name from the accessible name or text,
+ * type `url` for links, `image` for images, `number` for numeric text, else
+ * `text`, with the matching attribute.
+ */
+export function fieldDefaults(el: PickedElement, taken: readonly string[]): FieldDefaults {
+  const name = uniqueName(slugName(el.name || el.text || el.attrs.alt || el.tag), taken);
+  if (el.tag === 'a' && 'href' in el.attrs) return { name, type: 'url', attr: 'href' };
+  if (el.tag === 'img') return { name, type: 'image', attr: 'src' };
+  if (isNumericText(el.text)) return { name, type: 'number' };
+  return { name, type: 'text' };
+}
+
+export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }): Draft {
+  return validateDraft({
+    name: opts.name,
+    url: opts.url,
+    vars: opts.vars,
+    item: null,
+    fields: [],
+    pagination: null,
+    dirty: false,
+    errors: [],
+  });
+}
+
+export const DEFAULT_PAGINATION: DraftPagination = {
+  kind: 'none',
+  limit: 1,
+  stopRules: [],
+  delayMs: 0,
+};
+
+/** Build the recipe document the draft describes, before validation. */
+export function draftToRecipe(draft: Draft): RecipeInput {
+  const declared = templateVariables(draft.url);
+  const recipe: RecipeInput = {
+    schemaVersion: 1,
+    name: draft.name,
+    url: draft.url,
+    vars: draft.vars
+      .filter((v) => declared.includes(v.name))
+      .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}) })),
+    fields: draft.fields.map((f) => ({
+      name: f.name,
+      type: f.type,
+      scope: f.scope,
+      selectors: f.selectors.map(bare),
+      ...(f.attr ? { attr: f.attr } : {}),
+      optional: f.optional,
+      ...(f.key ? { key: true } : {}),
+      ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
+    })),
+  };
+  if (draft.item) {
+    recipe.item = {
+      selectors: draft.item.selectors.map(bare),
+      exclude: draft.item.exclude.map(bare),
+      ...(draft.item.fingerprint ? { fingerprint: draft.item.fingerprint } : {}),
+    };
+  }
+  const p = draft.pagination ?? DEFAULT_PAGINATION;
+  recipe.pagination = {
+    kind: p.kind,
+    ...(p.target ? { target: { selectors: p.target.selectors.map(bare), ...(p.target.fingerprint ? { fingerprint: p.target.fingerprint } : {}) } } : {}),
+    ...(p.param ? { param: p.param } : {}),
+    limit: p.limit,
+    stopRules: p.stopRules,
+    delayMs: p.delayMs,
+  };
+  if (draft.guards) recipe.guards = draft.guards;
+  if (draft.healing) recipe.healing = draft.healing;
+  return recipe;
+}
+
+/** Recompute per-field, name, and global validation errors. */
+export function validateDraft(draft: Draft): Draft {
+  const result = validateRecipe(draftToRecipe(draft));
+  const fieldErrors = new Map<number, string>();
+  let nameError: string | undefined;
+  const errors: Draft['errors'] = [];
+  for (const error of result.errors) {
+    const field = /^\$\.fields\[(\d+)\]/.exec(error.path);
+    if (field) {
+      const index = Number(field[1]);
+      if (!fieldErrors.has(index)) fieldErrors.set(index, error.message);
+    } else if (error.path === '$.name') nameError ??= error.message;
+    else errors.push(error);
+  }
+  const fields = draft.fields.map((f, i) => {
+    const { error: _old, ...rest } = f;
+    const error = fieldErrors.get(i);
+    return error ? { ...rest, error } : rest;
+  });
+  const { nameError: _oldName, ...rest } = draft;
+  return { ...rest, ...(nameError ? { nameError } : {}), fields, errors };
+}
+
+/** A draft for editing an existing recipe; counts are unknown until the page is counted. */
+export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
+  const vars = templateVariables(recipe.url).map((name) => ({
+    name,
+    value: values[name] ?? recipe.vars.find((v) => v.name === name)?.default ?? '',
+  }));
+  const fields: DraftField[] = recipe.fields.map((f) => ({
+    name: f.name,
+    type: f.type,
+    scope: f.scope,
+    selectors: f.selectors.map(bare),
+    ...(f.attr ? { attr: f.attr } : {}),
+    optional: f.optional,
+    key: f.key ?? false,
+    ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
+    count: null,
+    sample: null,
+  }));
+  const item: DraftItem | null = recipe.item
+    ? {
+        selectors: recipe.item.selectors.map(bare),
+        exclude: (recipe.item.exclude ?? []).map(bare),
+        ...(recipe.item.fingerprint ? { fingerprint: recipe.item.fingerprint } : {}),
+        count: null,
+        total: null,
+      }
+    : null;
+  const p = recipe.pagination;
+  const pagination: DraftPagination | null =
+    p.kind === 'none' && !p.target && !p.param && p.limit === 1 && p.stopRules.length === 0 && p.delayMs === 0
+      ? null
+      : {
+          kind: p.kind,
+          ...(p.target ? { target: { selectors: p.target.selectors.map(bare), ...(p.target.fingerprint ? { fingerprint: p.target.fingerprint } : {}) } } : {}),
+          ...(p.param ? { param: p.param } : {}),
+          limit: p.limit,
+          stopRules: p.stopRules,
+          delayMs: p.delayMs,
+        };
+  return validateDraft({
+    name: recipe.name,
+    url: recipe.url,
+    vars,
+    item,
+    fields,
+    pagination,
+    guards: recipe.guards,
+    healing: recipe.healing,
+    dirty: false,
+    errors: [],
+  });
+}
+
+export interface NewField {
+  name: string;
+  type: FieldType;
+  scope: FieldScope;
+  selectors: ProtocolCandidate[];
+  attr?: string;
+  optional?: boolean;
+  key?: boolean;
+  fingerprint?: DraftField['fingerprint'];
+  count?: number | null;
+  sample?: string | null;
+}
+
+export type DraftAction =
+  | { type: 'addField'; field: NewField }
+  | { type: 'updateField'; index: number; patch: FieldPatch }
+  | { type: 'replaceSelectors'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; count: number | null; sample: string | null }
+  | { type: 'removeField'; index: number }
+  | { type: 'moveField'; from: number; to: number }
+  | { type: 'setItem'; item: DraftItem | null }
+  | { type: 'addExclusion'; candidate: ProtocolCandidate }
+  | { type: 'removeExclusion'; index: number }
+  | { type: 'setItemCounts'; count: number | null; total: number | null }
+  | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[] }
+  | { type: 'setPagination'; pagination: DraftPagination | null }
+  | { type: 'updatePagination'; patch: PaginationPatch }
+  | { type: 'setName'; name: string }
+  | { type: 'setVar'; name: string; value: string }
+  | { type: 'markSaved' };
+
+/** Actions that only refresh live data and do not make the draft dirty. */
+const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'markSaved']);
+
+function move<T>(list: readonly T[], from: number, to: number): T[] {
+  const out = [...list];
+  if (from < 0 || from >= out.length) return out;
+  const [entry] = out.splice(from, 1);
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, entry!);
+  return out;
+}
+
+function applyFieldPatch(field: DraftField, patch: FieldPatch): DraftField {
+  const next: DraftField = { ...field };
+  if (patch.name !== undefined) next.name = patch.name;
+  if (patch.type !== undefined) next.type = patch.type;
+  if (patch.scope !== undefined) next.scope = patch.scope;
+  if (patch.optional !== undefined) next.optional = patch.optional;
+  if (patch.key !== undefined) next.key = patch.key;
+  if (patch.attr === null || patch.attr === '') delete next.attr;
+  else if (patch.attr !== undefined) next.attr = patch.attr;
+  return next;
+}
+
+/** The pure draft state machine. Every result is re-validated. */
+export function reduceDraft(draft: Draft, action: DraftAction): Draft {
+  let next: Draft = draft;
+  switch (action.type) {
+    case 'addField': {
+      const f = action.field;
+      const field: DraftField = {
+        name: f.name,
+        type: f.type,
+        scope: f.scope,
+        selectors: f.selectors,
+        ...(f.attr ? { attr: f.attr } : {}),
+        optional: f.optional ?? false,
+        key: f.key ?? false,
+        ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
+        count: f.count ?? null,
+        sample: f.sample ?? null,
+      };
+      let fields = [...draft.fields, field];
+      if (field.key) fields = fields.map((other, i) => (i === fields.length - 1 ? other : { ...other, key: false }));
+      next = { ...draft, fields };
+      break;
+    }
+    case 'updateField': {
+      let fields = draft.fields.map((f, i) => (i === action.index ? applyFieldPatch(f, action.patch) : f));
+      if (action.patch.key) fields = fields.map((f, i) => (i === action.index ? f : { ...f, key: false }));
+      next = { ...draft, fields };
+      break;
+    }
+    case 'replaceSelectors':
+      next = {
+        ...draft,
+        fields: draft.fields.map((f, i) => {
+          if (i !== action.index) return f;
+          const { fingerprint: _fp, ...rest } = f;
+          return {
+            ...rest,
+            selectors: action.selectors,
+            ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}),
+            count: action.count,
+            sample: action.sample,
+          };
+        }),
+      };
+      break;
+    case 'removeField':
+      next = { ...draft, fields: draft.fields.filter((_, i) => i !== action.index) };
+      break;
+    case 'moveField':
+      next = { ...draft, fields: move(draft.fields, action.from, action.to) };
+      break;
+    case 'setItem':
+      next = {
+        ...draft,
+        item: action.item,
+        fields: action.item ? draft.fields : draft.fields.map((f) => (f.scope === 'item' ? { ...f, scope: 'page' as const } : f)),
+      };
+      break;
+    case 'addExclusion':
+      if (!draft.item) return draft;
+      next = { ...draft, item: { ...draft.item, exclude: [...draft.item.exclude, action.candidate] } };
+      break;
+    case 'removeExclusion':
+      if (!draft.item) return draft;
+      next = { ...draft, item: { ...draft.item, exclude: draft.item.exclude.filter((_, i) => i !== action.index) } };
+      break;
+    case 'setItemCounts':
+      if (!draft.item) return draft;
+      next = { ...draft, item: { ...draft.item, count: action.count, total: action.total } };
+      break;
+    case 'setFieldCounts':
+      next = {
+        ...draft,
+        fields: draft.fields.map((f, i) => (action.counts[i] ? { ...f, ...action.counts[i] } : f)),
+      };
+      break;
+    case 'setPagination':
+      next = { ...draft, pagination: action.pagination };
+      break;
+    case 'updatePagination':
+      next = { ...draft, pagination: { ...(draft.pagination ?? DEFAULT_PAGINATION), ...action.patch } };
+      break;
+    case 'setName':
+      next = { ...draft, name: action.name };
+      break;
+    case 'setVar':
+      next = { ...draft, vars: draft.vars.map((v) => (v.name === action.name ? { ...v, value: action.value } : v)) };
+      break;
+    case 'markSaved':
+      next = { ...draft, dirty: false };
+      break;
+  }
+  if (!CLEAN_ACTIONS.has(action.type)) next = { ...next, dirty: true };
+  return validateDraft(next);
+}
+
+/** Whether the draft can be saved: it validates with the recipe schema. */
+export function draftErrors(draft: Draft): { path: string; message: string }[] {
+  const result = validateRecipe(draftToRecipe(draft));
+  return result.errors;
+}
+
+export interface PaginationTarget {
+  tag: string;
+  attrs: Record<string, string>;
+  role?: string;
+}
+
+export type DetectedPagination = Pick<DraftPagination, 'kind' | 'param'>;
+
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function numericParamChange(current: URL, target: URL): DraftPagination['param'] | null {
+  const keys = new Set([...current.searchParams.keys(), ...target.searchParams.keys()]);
+  let found: DraftPagination['param'] | null = null;
+  for (const key of keys) {
+    const a = current.searchParams.get(key);
+    const b = target.searchParams.get(key);
+    if (a === b) continue;
+    if (found || b === null || !/^\d+$/.test(b) || (a !== null && !/^\d+$/.test(a)) || !IDENT.test(key)) return null;
+    const start = a === null ? 1 : Number(a);
+    const step = Number(b) - start;
+    if (step === 0) return null;
+    found = { name: key, start, step };
+  }
+  return found;
+}
+
+function numericSegmentChange(current: URL, target: URL): DraftPagination['param'] | null {
+  const a = current.pathname.split('/');
+  const b = target.pathname.split('/');
+  if (current.search !== target.search) return null;
+  let found: DraftPagination['param'] | null = null;
+  if (a.length === b.length) {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === b[i]) continue;
+      if (found || !/^\d+$/.test(a[i]!) || !/^\d+$/.test(b[i]!)) return null;
+      const previous = b[i - 1] ?? '';
+      const start = Number(a[i]);
+      found = { name: IDENT.test(previous) ? previous : 'page', start, step: Number(b[i]) - start };
+    }
+  }
+  return found && found.step !== 0 ? found : null;
+}
+
+/**
+ * Guess the pagination kind from the element marked as the target: `url` for
+ * a link that differs from the current URL only by a numeric query parameter
+ * or path segment, `next` for any other link, `more` for a button.
+ */
+export function detectPagination(target: PaginationTarget, currentUrl: string): DetectedPagination {
+  const isButton =
+    target.tag === 'button' ||
+    target.role === 'button' ||
+    (target.tag === 'input' && ['button', 'submit'].includes(target.attrs.type ?? ''));
+  if (isButton) return { kind: 'more' };
+  const href = target.attrs.href;
+  if (target.tag === 'a' && href !== undefined) {
+    try {
+      const current = new URL(currentUrl);
+      const next = new URL(href, currentUrl);
+      if (current.origin === next.origin) {
+        const param =
+          current.pathname === next.pathname ? numericParamChange(current, next) : numericSegmentChange(current, next);
+        if (param) return { kind: 'url', param };
+      }
+    } catch {
+      // Not a URL we can compare; fall through to `next`.
+    }
+    return { kind: 'next' };
+  }
+  return { kind: 'more' };
+}

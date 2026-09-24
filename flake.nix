@@ -13,8 +13,6 @@
       lib = nixpkgs.lib;
 
       nodejs = pkgs.nodejs_22;
-      # Must match `packageManager` in package.json.
-      pnpm = pkgs.pnpm_11;
       # nixpkgs' playwright-driver must match the `playwright` version pinned in
       # package.json, so Playwright finds its Chromium build in the Nix store.
       playwrightBrowsers = pkgs.playwright-driver.browsers-chromium;
@@ -30,8 +28,7 @@
         root = ./.;
         fileset = lib.fileset.unions [
           ./package.json
-          ./pnpm-lock.yaml
-          ./pnpm-workspace.yaml
+          ./package-lock.json
           ./tsconfig.base.json
           ./vitest.config.ts
           ./packages
@@ -39,35 +36,30 @@
       };
     in
     {
-      packages.${system}.default = pkgs.stdenv.mkDerivation (finalAttrs: {
+      packages.${system}.default = pkgs.stdenv.mkDerivation {
         pname = "webscoop";
         inherit version src;
 
-        pnpmDeps = pkgs.fetchPnpmDeps {
-          inherit (finalAttrs) pname version src;
-          inherit pnpm;
-          fetcherVersion = 3;
-          hash = "sha256-HEe5pSYvXGWFFubBC9azbdqKWTqN3U054qmfmZesd44=";
+        npmDeps = pkgs.fetchNpmDeps {
+          inherit src;
+          fetcherVersion = 2;
+          hash = "sha256-Gi4ZQmBYoGRZmfA3prTHBFtagOsnRVJZDkb6vo7vEgo=";
         };
 
         nativeBuildInputs = [
           nodejs
-          pnpm
-          pkgs.pnpmConfigHook
+          pkgs.npmHooks.npmConfigHook
           pkgs.makeWrapper
         ];
 
-        env = playwrightEnv;
-
-        preBuild = ''
-          # pnpm 11 verifies node_modules before every `pnpm run`, which the
-          # offline install from pnpmConfigHook does not satisfy.
-          echo 'verifyDepsBeforeRun: false' >> pnpm-workspace.yaml
-        '';
+        env = playwrightEnv // {
+          NIX_NPM_FETCHER_VERSION = "2";
+        };
 
         buildPhase = ''
           runHook preBuild
-          pnpm --filter @webscoop/cli build
+          # Workspaces build in dependency order; the CLI embeds the recorder bundle.
+          npm run build
           runHook postBuild
         '';
 
@@ -75,7 +67,7 @@
         doCheck = true;
         checkPhase = ''
           runHook preCheck
-          pnpm test
+          npm test
           runHook postCheck
         '';
 
@@ -87,9 +79,8 @@
           cp -r packages/cli/dist $lib/dist
 
           # The bundle keeps Playwright external; ship it next to the bundle.
-          playwright=$(realpath packages/cli/node_modules/playwright)
-          cp -rL "$playwright" $lib/node_modules/playwright
-          cp -rL "$(dirname "$playwright")/playwright-core" $lib/node_modules/playwright-core
+          cp -rL node_modules/playwright $lib/node_modules/playwright
+          cp -rL node_modules/playwright-core $lib/node_modules/playwright-core
 
           makeWrapper ${lib.getExe nodejs} $out/bin/webscoop \
             --add-flags $lib/dist/webscoop.js \
@@ -106,7 +97,7 @@
           mainProgram = "webscoop";
           platforms = [ system ];
         };
-      });
+      };
 
       apps.${system}.default = {
         type = "app";
@@ -116,12 +107,9 @@
       devShells.${system}.default = pkgs.mkShell (
         playwrightEnv
         // {
-          packages = [
-            nodejs
-            pnpm
-          ];
+          packages = [ nodejs ];
           shellHook = ''
-            echo "webscoop dev shell: node $(node --version), pnpm $(pnpm --version), Chromium from $PLAYWRIGHT_BROWSERS_PATH"
+            echo "webscoop dev shell: node $(node --version), npm $(npm --version), Chromium from $PLAYWRIGHT_BROWSERS_PATH"
           '';
         }
       );

@@ -1,0 +1,315 @@
+import { dataset } from '@webscoop/playground';
+import { describe, expect, it } from 'vitest';
+import {
+  annotate,
+  classifyToken,
+  compoundOf,
+  descendantsOf,
+  elementChildren,
+  fingerprint,
+  generate,
+  inferItems,
+  loadRecipe,
+  pathOf,
+  rank,
+  relativize,
+  SIMILARITY_THRESHOLD,
+  type AnnotatedNode,
+  type Candidate,
+  type SerializedElement,
+  type Session,
+} from '../src';
+import { FakeBrowser, h } from '../src/testing';
+import { readFileSync } from 'node:fs';
+import { tier0Snapshot } from './snapshot';
+
+const find = (root: AnnotatedNode, test: (n: AnnotatedNode) => boolean): AnnotatedNode => {
+  const hit = descendantsOf(root).find(test);
+  if (!hit) throw new Error('fixture node not found');
+  return hit;
+};
+const byClass = (root: AnnotatedNode, cls: string, nth = 0) =>
+  descendantsOf(root).filter((n) => (n.attrs.class ?? '').split(' ').includes(cls))[nth]!;
+const strategies = (candidates: Candidate[]) => candidates.map((c) => c.strategy);
+const pick = (candidates: Candidate[], strategy: Candidate['strategy']) => candidates.find((c) => c.strategy === strategy);
+
+async function fakeSession(dom: SerializedElement): Promise<Session> {
+  const session = await new FakeBrowser({ 'https://t.test/': dom }).open('/p');
+  await session.goto('https://t.test/', { timeoutMs: 1000 });
+  return session;
+}
+
+describe('annotate', () => {
+  it('keeps h() fixtures valid and adds parent links, roles, and names', () => {
+    const el: SerializedElement = h('main', {}, h('h1', {}, 'Hi'));
+    const root = annotate(el);
+    const heading = elementChildren(root)[0]!;
+    expect(heading.parent).toBe(root);
+    expect(heading.role).toBe('heading');
+    expect(heading.name).toBe('Hi');
+    expect(root.role).toBe('main');
+    expect(root.name).toBeUndefined();
+  });
+
+  it('annotates the tier 0 snapshot', () => {
+    const root = annotate(tier0Snapshot());
+    expect(root.tag).toBe('html');
+    const cards = descendantsOf(root).filter((n) => n.attrs['data-testid'] === 'product-card');
+    expect(cards).toHaveLength(24);
+    const title = byClass(root, 'product-title');
+    expect(title.role).toBe('heading');
+    expect(title.name).toBe(dataset[0]!.title);
+    expect(title.parent?.tag).toBe('article');
+    expect(pathOf(title)).toEqual(pathOf(title.parent!).concat(1));
+  });
+
+  it('keeps annotations sent with the snapshot', () => {
+    const el = { ...h('h2', {}, 'x'), role: 'heading', name: 'Other', bbox: { x: 1, y: 2, w: 3, h: 4 } };
+    const node = annotate(el);
+    expect(node.name).toBe('Other');
+    expect(node.bbox).toEqual({ x: 1, y: 2, w: 3, h: 4 });
+  });
+});
+
+describe('classifyToken', () => {
+  it.each([
+    ['sc-bdfBwQ', 'hashed'],
+    ['css-1x2y3z', 'hashed'],
+    ['jsx-123', 'hashed'],
+    ['item-48213', 'hashed'],
+    ['kXeqYt', 'hashed'],
+    ['emotion-0', 'hashed'],
+    ['card', 'stable'],
+    ['product-card', 'stable'],
+    ['pc__price', 'stable'],
+    ['product-p02', 'stable'],
+  ])('%s is %s', (token, expected) => {
+    expect(classifyToken(token)).toBe(expected);
+  });
+});
+
+describe('generate', () => {
+  it('produces role, testid, text, css, and xpath for a heading with a testid, and no id', () => {
+    const root = annotate(h('html', {}, h('body', {}, h('h3', { 'data-testid': 'product-title' }, 'Wireless Mouse'))));
+    const node = find(root, (n) => n.tag === 'h3');
+    const candidates = generate(node);
+    expect(strategies(candidates)).toEqual(['role', 'testid', 'text', 'css', 'xpath']);
+    expect(pick(candidates, 'role')).toEqual({ strategy: 'role', value: 'heading|Wireless Mouse', stability: 'stable' });
+    expect(pick(candidates, 'testid')).toEqual({ strategy: 'testid', value: 'product-title', stability: 'stable' });
+    expect(pick(candidates, 'text')).toEqual({ strategy: 'text', value: 'Wireless Mouse', stability: 'fragile' });
+    expect(pick(candidates, 'id')).toBeUndefined();
+  });
+
+  it('rates ids by how generated they look', () => {
+    const root = annotate(h('div', {}, h('span', { id: 'item-48213' }), h('span', { id: 'main-nav' })));
+    const [a, b] = elementChildren(root);
+    expect(pick(generate(a!), 'id')?.stability).toBe('fragile');
+    expect(pick(generate(b!), 'id')?.stability).toBe('stable');
+  });
+
+  it('builds css from stable classes only', () => {
+    const root = annotate(h('div', {}, h('div', { class: 'card sc-bdfBwQ kXeqYt' }, 'x')));
+    expect(pick(generate(elementChildren(root)[0]!), 'css')?.value).toBe('div.card');
+  });
+
+  it('walks up to the nearest ancestor with a stable class and adds :nth-child for ambiguous siblings', () => {
+    const root = annotate(
+      h('body', {}, h('div', { class: 'grid' }, h('article', {}, h('a', {}, h('h3', {}, 'A'))), h('article', {}, h('a', {}, h('h3', {}, 'B'))))),
+    );
+    const second = find(root, (n) => n.tag === 'h3' && n.children[0]?.type === 'text' && n.children[0].text === 'B');
+    const css = pick(generate(second), 'css')!;
+    expect(css).toEqual({ strategy: 'css', value: 'div.grid > article:nth-child(2) > a > h3', stability: 'fragile' });
+  });
+
+  it('builds xpath from the nearest ancestor with an id', () => {
+    const root = annotate(tier0Snapshot());
+    const title = byClass(root, 'product-title', 2);
+    expect(pick(generate(title), 'xpath')?.value).toBe("//article[@id='product-p03']/h2[1]");
+    expect(pick(generate(title), 'css')).toEqual({ strategy: 'css', value: 'h2.product-title', stability: 'medium' });
+  });
+
+  it('omits text for elements with more than one child node', () => {
+    const root = annotate(h('p', {}, 'a', h('b', {}, 'b')));
+    expect(pick(generate(root), 'text')).toBeUndefined();
+  });
+
+  it('resolves every generated candidate back to the element on the fake browser', async () => {
+    const snapshot = tier0Snapshot();
+    const root = annotate(snapshot);
+    const session = await fakeSession(snapshot);
+    const title = byClass(root, 'product-title', 4);
+    for (const candidate of generate(title)) {
+      const refs = await session.resolve(candidate);
+      const texts = await Promise.all(refs.map((r) => session.read(r, { mode: 'text' })));
+      expect(texts, `${candidate.strategy}=${candidate.value}`).toContain(dataset[4]!.title);
+    }
+  });
+});
+
+describe('rank', () => {
+  it('puts testid before css at equal counts, and unique before non-unique', () => {
+    const css24: Candidate = { strategy: 'css', value: 'h2.t', stability: 'medium', count: 24 };
+    const testid24: Candidate = { strategy: 'testid', value: 't', stability: 'stable', count: 24 };
+    expect(rank([css24, testid24])[0]).toBe(testid24);
+    const unique: Candidate = { strategy: 'css', value: '#x h2', stability: 'medium', count: 1 };
+    const many: Candidate = { strategy: 'css', value: 'h2', stability: 'medium', count: 5 };
+    expect(rank([many, unique])).toEqual([unique, many]);
+  });
+
+  it('prefers the item count for item scoped candidates and sinks zero matches', () => {
+    const role1: Candidate = { strategy: 'role', value: 'heading|A', stability: 'stable', count: 1 };
+    const css24: Candidate = { strategy: 'css', value: 'h2', stability: 'medium', count: 24 };
+    const none: Candidate = { strategy: 'testid', value: 'gone', stability: 'stable', count: 0 };
+    expect(rank([none, role1, css24], { itemCount: 24 })).toEqual([css24, role1, none]);
+    expect(rank([none, role1, css24])).toEqual([role1, css24, none]);
+  });
+});
+
+describe('relativize', () => {
+  it('drops the container and its position', () => {
+    const candidate: Candidate = { strategy: 'css', value: 'article:nth-child(2) > a > h3', stability: 'fragile' };
+    expect(relativize(candidate, 'article')).toEqual({ strategy: 'css', value: 'a > h3', stability: 'medium' });
+  });
+
+  it('turns item-specific candidates into item-relative ones', () => {
+    expect(relativize({ strategy: 'role', value: 'heading|Mouse', stability: 'stable' }, 'article')?.value).toBe('heading');
+    expect(relativize({ strategy: 'text', value: 'Mouse', stability: 'fragile' }, 'article')).toBeNull();
+    expect(relativize({ strategy: 'id', value: 'x', stability: 'stable' }, 'article')).toBeNull();
+    expect(relativize({ strategy: 'xpath', value: "//article[@id='p3']/h2[1]", stability: 'fragile' }, 'article.card')?.value).toBe('./h2[1]');
+  });
+
+  it('matches once per card on the tier 0 snapshot', async () => {
+    const snapshot = tier0Snapshot();
+    const root = annotate(snapshot);
+    const session = await fakeSession(snapshot);
+    const cards = await session.resolve({ strategy: 'css', value: 'article.product-card', stability: 'medium' });
+    expect(cards).toHaveLength(24);
+    const title = byClass(root, 'product-title', 1);
+    const card = title.parent!;
+    const positional: Candidate = {
+      strategy: 'css',
+      value: `li.product-item:nth-child(2) > ${compoundOf(card)} > h2.product-title`,
+      stability: 'fragile',
+    };
+    const generalized = [positional, ...generate(title)].map((c) => relativize(c, compoundOf(card))).filter((c) => c !== null);
+    expect(generalized[0]!.value).toBe('h2.product-title');
+    for (const candidate of generalized) {
+      for (const container of cards) {
+        expect(await session.resolve(candidate, container), `${candidate.strategy}=${candidate.value}`).toHaveLength(1);
+      }
+    }
+  });
+});
+
+describe('inferItems', () => {
+  it('proposes the 24 tier 0 cards from one title', () => {
+    const root = annotate(tier0Snapshot());
+    const proposal = inferItems(byClass(root, 'product-title', 3))!;
+    expect(proposal.container.tag).toBe('article');
+    expect(proposal.siblings).toHaveLength(24);
+    expect(proposal.siblings.every((s) => s.attrs['data-testid'] === 'product-card')).toBe(true);
+    expect(proposal.broader?.node.tag).toBe('li');
+    expect(proposal.broader?.items).toHaveLength(24);
+    expect(proposal.narrower).toBeNull();
+  });
+
+  it('offers the link inside each card as the narrower level', () => {
+    const cards = Array.from({ length: 5 }, (_, i) => h('article', {}, h('a', { href: `/p/${i}` }, h('h3', {}, `T${i}`), h('span', {}, '$1'))));
+    const root = annotate(h('html', {}, h('body', {}, h('div', { class: 'grid' }, cards))));
+    const proposal = inferItems(find(root, (n) => n.tag === 'h3'))!;
+    expect(proposal.container.tag).toBe('article');
+    expect(proposal.siblings).toHaveLength(5);
+    expect(proposal.narrower?.node.tag).toBe('a');
+    expect(proposal.narrower?.items).toHaveLength(5);
+  });
+
+  it('reports no container for a single hero heading', () => {
+    const root = annotate(h('html', {}, h('body', {}, h('header', {}, h('h1', {}, 'Hero')), h('main', {}, h('p', {}, 'text')))));
+    expect(inferItems(find(root, (n) => n.tag === 'h1'))).toBeNull();
+  });
+
+  it('never proposes body', () => {
+    const root = annotate(h('html', {}, h('head', {}), h('body', {}, h('h1', {}, 'x'))));
+    expect(inferItems(find(root, (n) => n.tag === 'body'))).toBeNull();
+  });
+
+  it('keeps only structurally similar items in an irregular list', () => {
+    const li = (...children: SerializedElement[]) => h('li', {}, children);
+    const root = annotate(
+      h(
+        'html',
+        {},
+        h(
+          'body',
+          {},
+          h(
+            'ul',
+            {},
+            li(h('a', {}, 'a'), h('span', {}, 's')),
+            li(h('a', {}, 'b'), h('span', {}, 's'), h('em', {}, 'e')),
+            li(h('a', {}, 'c'), h('span', {}, 's')),
+            li(h('div', {}, h('p', {}, 'ad'), h('p', {}, 'ad'), h('p', {}, 'ad'))),
+            li(h('a', {}, 'd')),
+          ),
+        ),
+      ),
+    );
+    expect(SIMILARITY_THRESHOLD).toBe(0.6);
+    const proposal = inferItems(find(root, (n) => n.tag === 'span'))!;
+    expect(proposal.container.tag).toBe('li');
+    // a+span, a+span+em (2/3), a+span, a alone (1/2 < 0.6) and the ad block are out.
+    expect(proposal.siblings.map((s) => elementChildren(s).map((c) => c.tag).join('+'))).toEqual(['a+span', 'a+span+em', 'a+span']);
+  });
+});
+
+describe('fingerprint', () => {
+  it('captures the price scenario', () => {
+    const root = annotate(
+      h('article', {}, h('a', {}, h('span', { 'data-testid': 'price', class: 'pc__price' }, '$999.00'))),
+    );
+    const span = find(root, (n) => n.tag === 'span');
+    span.bbox = { x: 10, y: 20, w: 60, h: 16 };
+    const fp = fingerprint(span);
+    expect(fp.tag).toBe('span');
+    expect(fp.textSample).toBe('$999.00');
+    expect(fp.attrs).toEqual({ 'data-testid': 'price' });
+    expect(fp.ancestors.slice(0, 2)).toEqual(['a', 'article']);
+    expect(fp.bbox).toEqual({ x: 10, y: 20, w: 60, h: 16 });
+  });
+
+  it('masks digits in href and matches the reference title fingerprint shape', () => {
+    const root = annotate(tier0Snapshot());
+    const link = byClass(root, 'product-link', 0);
+    expect(fingerprint(link).attrs).toEqual({ href: '/p/p##' });
+
+    const reference = JSON.parse(readFileSync(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url), 'utf8'));
+    const expected = loadRecipe(reference).fields[0]!.fingerprint!;
+    const fp = fingerprint(byClass(root, 'product-title', 0));
+    expect(Object.keys(fp)).toEqual(Object.keys(expected));
+    expect(fp.tag).toBe(expected.tag);
+    expect(fp.role).toBe(expected.role);
+    expect(fp.name).toBe(expected.name);
+    expect(fp.textSample).toBe(expected.textSample);
+    expect(fp.ancestors).toHaveLength(6);
+    expect([fp.ancestors[0], ...fp.ancestors.slice(2)]).toEqual([expected.ancestors[0], ...expected.ancestors.slice(2)]);
+  });
+});
+
+describe('determinism', () => {
+  it('yields deep-equal output for the same snapshot and path', () => {
+    const run = () => {
+      const root = annotate(tier0Snapshot());
+      const title = byClass(root, 'product-title', 7);
+      const proposal = inferItems(title)!;
+      return {
+        path: pathOf(title),
+        candidates: generate(title),
+        fingerprint: fingerprint(title),
+        container: pathOf(proposal.container),
+        siblings: proposal.siblings.map(pathOf),
+        broader: proposal.broader?.items.map(pathOf),
+      };
+    };
+    expect(run()).toEqual(run());
+  });
+});

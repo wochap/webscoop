@@ -2,7 +2,7 @@ import type { DomNode } from './dom';
 
 /**
  * A small CSS selector engine for serialized DOM: type, universal, `#id`,
- * `.class`, attribute selectors (`=`, `~=`, `^=`, `$=`, `*=`), `:nth-of-type(n)`,
+ * `.class`, attribute selectors (`=`, `~=`, `^=`, `$=`, `*=`), `:nth-of-type(n)`, `:nth-child(n)`,
  * `:first-child`, `:last-child`, descendant and child combinators, selector lists.
  */
 
@@ -18,6 +18,7 @@ interface Compound {
   classes: string[];
   attrs: AttrTest[];
   nthOfType: number | null;
+  nthChild: number | null;
   firstChild: boolean;
   lastChild: boolean;
 }
@@ -66,7 +67,7 @@ class Parser {
   }
 
   compound(): Compound {
-    const c: Compound = { tag: null, ids: [], classes: [], attrs: [], nthOfType: null, firstChild: false, lastChild: false };
+    const c: Compound = { tag: null, ids: [], classes: [], attrs: [], nthOfType: null, nthChild: null, firstChild: false, lastChild: false };
     let any = false;
     if (this.peek() === '*') {
       this.pos++;
@@ -105,11 +106,12 @@ class Parser {
         const pseudo = this.ident();
         if (pseudo === 'first-child') c.firstChild = true;
         else if (pseudo === 'last-child') c.lastChild = true;
-        else if (pseudo === 'nth-of-type' && this.peek() === '(') {
+        else if ((pseudo === 'nth-of-type' || pseudo === 'nth-child') && this.peek() === '(') {
           const end = this.src.indexOf(')', this.pos);
           const n = Number(this.src.slice(this.pos + 1, end).trim());
           if (!Number.isInteger(n) || n < 1) this.fail();
-          c.nthOfType = n;
+          if (pseudo === 'nth-child') c.nthChild = n;
+          else c.nthOfType = n;
           this.pos = end + 1;
         } else this.fail();
       } else break;
@@ -180,6 +182,7 @@ function matchesCompound(node: DomNode, c: Compound): boolean {
   const siblings = node.parent?.children ?? [node];
   if (c.firstChild && siblings[0] !== node) return false;
   if (c.lastChild && siblings[siblings.length - 1] !== node) return false;
+  if (c.nthChild !== null && siblings.indexOf(node) + 1 !== c.nthChild) return false;
   if (c.nthOfType !== null) {
     const sameType = siblings.filter((s) => s.el.tag === tag);
     if (sameType.indexOf(node) + 1 !== c.nthOfType) return false;

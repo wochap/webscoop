@@ -53,30 +53,30 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'run.failed',
 ];
 
-type Listener<K extends RunEventName> = (payload: RunEvents[K]) => void;
-type AnyListener = <K extends RunEventName>(name: K, payload: RunEvents[K]) => void;
+type Listener<P> = (payload: P) => void;
+type AnyListener<E> = <K extends keyof E>(name: K, payload: E[K]) => void;
 
-/** Synchronous, typed, in-process event emitter. Listener errors do not affect the run. */
-export class RunEmitter {
-  private readonly listeners = new Map<RunEventName, Set<Listener<never>>>();
-  private readonly anyListeners = new Set<AnyListener>();
+/** Synchronous, typed, in-process event emitter. Listener errors do not affect the emitter's owner. */
+export class Emitter<E extends object> {
+  private readonly listeners = new Map<keyof E, Set<Listener<never>>>();
+  private readonly anyListeners = new Set<AnyListener<E>>();
 
-  on<K extends RunEventName>(name: K, listener: Listener<K>): () => void {
+  on<K extends keyof E>(name: K, listener: Listener<E[K]>): () => void {
     let set = this.listeners.get(name);
     if (!set) this.listeners.set(name, (set = new Set()));
     set.add(listener as Listener<never>);
     return () => set.delete(listener as Listener<never>);
   }
 
-  onAny(listener: AnyListener): () => void {
+  onAny(listener: AnyListener<E>): () => void {
     this.anyListeners.add(listener);
     return () => this.anyListeners.delete(listener);
   }
 
-  emit<K extends RunEventName>(name: K, payload: RunEvents[K]): void {
+  emit<K extends keyof E>(name: K, payload: E[K]): void {
     for (const listener of this.listeners.get(name) ?? []) {
       try {
-        (listener as Listener<K>)(payload);
+        (listener as Listener<E[K]>)(payload);
       } catch {
         // A faulty subscriber must not change runner behavior.
       }
@@ -90,6 +90,8 @@ export class RunEmitter {
     }
   }
 }
+
+export class RunEmitter extends Emitter<RunEvents> {}
 
 export interface RecordedEvent<K extends RunEventName = RunEventName> {
   name: K;

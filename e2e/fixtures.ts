@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test as base } from '@playwright/test';
 import type { RecipeInput } from '@webscoop/core';
 import { startPlayground, type Playground } from '@webscoop/playground';
+import { startRecording, type Recording } from './recorder-fixture';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 export const CLI = join(root, 'packages/cli/dist/webscoop.js');
@@ -40,6 +41,8 @@ export interface Scoop {
   spawn(args: string[], env?: Record<string, string | undefined>): CliRun;
   /** Run the built CLI to completion. */
   run(args: string[], env?: Record<string, string | undefined>): Promise<CliResult>;
+  /** Start `webscoop record` and attach Playwright to its browser over CDP. */
+  record(args: string[]): Promise<Recording>;
 }
 
 export function referenceRecipe(port: number): RecipeInput {
@@ -83,7 +86,8 @@ export const test = base.extend<{ scoop: Scoop }>({
       return { child, done };
     };
 
-    await use({
+    const cleanups: (() => Promise<void>)[] = [];
+    const scoop: Scoop = {
       playground,
       home,
       recipePath: join(recipesDir, `${recipe.name}.json`),
@@ -91,8 +95,16 @@ export const test = base.extend<{ scoop: Scoop }>({
       writeRecipe,
       spawn: spawnCli,
       run: (args, env) => spawnCli(args, env).done,
-    });
+      record: (args) => startRecording(scoop, args, cleanups),
+    };
+    await use(scoop);
 
+    for (const cleanup of cleanups.splice(0)) await cleanup();
+    for (const child of children) child.kill('SIGINT');
+    await Promise.race([
+      Promise.all([...children].map((c) => new Promise((r) => c.once('close', r)))),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]);
     for (const child of children) child.kill('SIGKILL');
     await playground.stop();
     await rm(home, { recursive: true, force: true });
@@ -100,3 +112,4 @@ export const test = base.extend<{ scoop: Scoop }>({
 });
 
 export { expect } from '@playwright/test';
+export type { Recording } from './recorder-fixture';

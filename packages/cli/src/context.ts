@@ -19,6 +19,10 @@ export interface CliIo {
   chromium(config: Config, env: Env): Promise<ChromiumInfo>;
   /** Register a SIGINT handler; returns an unsubscribe function. */
   onInterrupt(handler: () => void): () => void;
+  /** Ask a question on the terminal; resolves null when input is closed. */
+  prompt(question: string): Promise<string | null>;
+  /** The injected recorder bundle; the e2e variant carries the test hook. */
+  recorderBundle(variant: 'default' | 'e2e'): Promise<string>;
 }
 
 export interface ChromiumInfo {

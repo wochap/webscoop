@@ -1,14 +1,16 @@
 import { z } from 'zod';
+import {
+  FIELD_SCOPES,
+  FIELD_TYPES,
+  GUARD_KINDS,
+  PAGINATION_KINDS,
+  SCHEMA_VERSION,
+  STABILITIES,
+  STOP_RULES,
+  STRATEGIES,
+} from './constants';
 
-export const SCHEMA_VERSION = 1 as const;
-
-export const STRATEGIES = ['role', 'testid', 'id', 'text', 'css', 'xpath'] as const;
-export const STABILITIES = ['stable', 'medium', 'fragile'] as const;
-export const FIELD_TYPES = ['text', 'number', 'url', 'image', 'date', 'html'] as const;
-export const FIELD_SCOPES = ['item', 'page'] as const;
-export const PAGINATION_KINDS = ['none', 'url', 'next', 'more', 'scroll'] as const;
-export const STOP_RULES = ['no-new-items', 'first-item-repeats', 'target-missing'] as const;
-export const GUARD_KINDS = ['login', 'captcha', 'zero-fields'] as const;
+export { FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STOP_RULES, STRATEGIES };
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -109,12 +111,15 @@ export const RecipeSchema = z.object({
 
 export type SelectorCandidate = z.infer<typeof SelectorCandidateSchema>;
 export type Strategy = SelectorCandidate['strategy'];
+export type Stability = SelectorCandidate['stability'];
 export type Fingerprint = z.infer<typeof FingerprintSchema>;
 export type RecipeVar = z.infer<typeof VarSchema>;
 export type RecipeItem = z.infer<typeof ItemSchema>;
 export type RecipeField = z.infer<typeof FieldSchema>;
 export type FieldType = RecipeField['type'];
+export type FieldScope = RecipeField['scope'];
 export type Pagination = z.infer<typeof PaginationSchema>;
+export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;
 export type Healing = z.infer<typeof HealingSchema>;
 export type Recipe = z.infer<typeof RecipeSchema>;

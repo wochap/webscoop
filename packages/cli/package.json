@@ -13,14 +13,15 @@
     "build": "tsc -p tsconfig.json && node build.mjs"
   },
   "dependencies": {
-    "@webscoop/browser": "workspace:*",
-    "@webscoop/core": "workspace:*",
+    "@webscoop/browser": "*",
+    "@webscoop/core": "*",
     "commander": "15.0.0",
     "playwright": "1.59.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@webscoop/playground": "workspace:*"
+    "@webscoop/playground": "*",
+    "@webscoop/inject": "*"
   },
   "bin": {
     "webscoop": "./dist/webscoop.js"

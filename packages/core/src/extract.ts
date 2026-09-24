@@ -55,7 +55,8 @@ async function readField(
   return { value: convertValue(field.type, raw, pageUrl), found: true };
 }
 
-async function excludeContainers(
+/** Drop containers that also match one of the exclusion candidates. */
+export async function excludeContainers(
   session: Session,
   containers: ElementRef[],
   exclude: readonly SelectorCandidate[],

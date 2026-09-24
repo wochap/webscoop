@@ -5,7 +5,9 @@ import { promisify } from 'node:util';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { doctorCommand } from './commands/doctor';
 import { recipesCommand } from './commands/recipes';
+import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, type RunCommandOptions } from './commands/run';
+import { loadRecorderBundle } from './bundle';
 import { chromiumOverride, type ChromiumInfo, type CliIo } from './context';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
 
@@ -53,6 +55,25 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--report', 'print the full run report to stderr')
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
+
+  program
+    .command('record')
+    .description('record a recipe by clicking in a browser window')
+    .argument('[url-template]', 'page to record; {name} marks a variable, e.g. "https://shop.test/c/{category}"')
+    .option('--name <recipe>', 'recipe name (default: proposed from the URL host and path)')
+    .option('--var <name=value>', 'set a URL template variable (repeatable); missing ones are asked for', collect, [])
+    .option('--profile <name>', 'browser profile name (default: the recipe name)')
+    .option('--edit <recipe>', 'edit an existing recipe, by name or path, instead of starting from a URL')
+    .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .addHelpText(
+      'after',
+      `
+In the browser: p picks an element, Esc cancels, Enter confirms the found items,
+Left and Right walk the element's ancestors, Alt+Up and Alt+Down reorder fields,
+Ctrl+S saves. Close the window or press Ctrl+C here to end the session.`,
+    )
+    .action(async (template: string | undefined, opts: RecordCommandOptions) => setCode(await recordCommand(io, template, opts)));
 
   program
     .command('recipes')
@@ -124,5 +145,17 @@ export function defaultIo(): CliIo {
       process.on('SIGINT', handler);
       return () => process.off('SIGINT', handler);
     },
+    async prompt(question) {
+      if (!process.stdin.readable) return null;
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: process.stdin.isTTY });
+      const closed = new Promise<null>((resolve) => rl.once('close', () => resolve(null)));
+      try {
+        return await Promise.race([rl.question(question), closed]);
+      } finally {
+        rl.close();
+      }
+    },
+    recorderBundle: loadRecorderBundle,
   };
 }

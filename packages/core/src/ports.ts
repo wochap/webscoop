@@ -31,6 +31,10 @@ export interface PageInfo {
 export interface OpenOptions {
   /** Extra Chromium arguments, appended to the adapter defaults. */
   args?: string[];
+  /** Ignore the page's Content-Security-Policy, so injected scripts and styles run. Recorder only. */
+  bypassCSP?: boolean;
+  /** Open a DevTools protocol port, so tests can attach with `connectOverCDP`. */
+  remoteDebuggingPort?: number;
 }
 
 export interface GotoOptions {
@@ -57,6 +61,37 @@ export interface Session {
   same(a: ElementRef, b: ElementRef): Promise<boolean>;
   snapshot(within?: ElementRef): Promise<SerializedNode>;
   close(): Promise<void>;
+}
+
+export interface Geometry {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A session the recorder can talk to: it injects a script into every page,
+ * receives calls from the page, and sends messages back. Healing reuses it later.
+ */
+export interface InteractiveSession extends Session {
+  /** Run the script in the current page now and in every page loaded afterwards. */
+  inject(source: string): Promise<void>;
+  /** Expose `window[name](msg)` to the page; the page receives the handler's result. */
+  expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void>;
+  /** Deliver a message to the injected page (`window.__webscoopPage.dispatch`). */
+  dispatch(msg: unknown): Promise<void>;
+  /** Called with the new URL after each main frame navigation. Returns an unsubscribe function. */
+  onNavigated(cb: (url: string) => void): () => void;
+  /** Called once when the page or browser is closed by the user. Returns an unsubscribe function. */
+  onClosed(cb: () => void): () => void;
+  /** Bounding box of an element in CSS pixels. */
+  geometry(ref: ElementRef): Promise<Geometry>;
+}
+
+export function isInteractiveSession(session: Session): session is InteractiveSession {
+  const s = session as Partial<InteractiveSession>;
+  return typeof s.inject === 'function' && typeof s.expose === 'function' && typeof s.dispatch === 'function';
 }
 
 export class TimeoutError extends Error {

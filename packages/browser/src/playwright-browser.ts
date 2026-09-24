@@ -1,16 +1,18 @@
 import {
+  PAGE_GLOBAL,
   TimeoutError,
   type BrowserPort,
   type ElementRef,
+  type Geometry,
   type GotoOptions,
+  type InteractiveSession,
   type OpenOptions,
   type PageInfo,
   type ReadOptions,
   type SelectorCandidate,
   type SerializedNode,
-  type Session,
 } from '@webscoop/core';
-import { chromium, errors, type BrowserContext, type Locator, type Page } from 'playwright';
+import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
@@ -71,7 +73,7 @@ function serializeInPage(element: Element | null): SerializedNode {
   return walk(element ?? document.documentElement) ?? { type: 'text', text: '' };
 }
 
-class PlaywrightSession implements Session {
+class PlaywrightSession implements InteractiveSession {
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
@@ -124,13 +126,65 @@ class PlaywrightSession implements Session {
   async close(): Promise<void> {
     await this.context.close();
   }
+
+  async inject(source: string): Promise<void> {
+    await this.context.addInitScript({ content: source });
+    try {
+      await this.page.evaluate(source);
+    } catch {
+      // The current document may be mid-navigation; the init script covers the next one.
+    }
+  }
+
+  async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
+    await this.context.exposeBinding(name, (_source, msg: unknown) => fn(msg));
+  }
+
+  async dispatch(msg: unknown): Promise<void> {
+    await this.page.evaluate(
+      ([global, message]) => {
+        const target = (window as unknown as Record<string, { dispatch(m: unknown): void } | undefined>)[global];
+        if (!target) throw new Error('the recorder is not loaded in this page');
+        target.dispatch(message);
+      },
+      [PAGE_GLOBAL, msg] as const,
+    );
+  }
+
+  onNavigated(cb: (url: string) => void): () => void {
+    const listener = (frame: Frame) => {
+      if (frame === this.page.mainFrame()) cb(frame.url());
+    };
+    this.page.on('framenavigated', listener);
+    return () => this.page.off('framenavigated', listener);
+  }
+
+  onClosed(cb: () => void): () => void {
+    let fired = false;
+    const listener = () => {
+      if (fired) return;
+      fired = true;
+      cb();
+    };
+    this.page.on('close', listener);
+    this.context.on('close', listener);
+    return () => {
+      this.page.off('close', listener);
+      this.context.off('close', listener);
+    };
+  }
+
+  async geometry(ref: ElementRef): Promise<Geometry> {
+    const box = await (ref as PwRef).locator.boundingBox();
+    return box ? { x: box.x, y: box.y, w: box.width, h: box.height } : { x: 0, y: 0, w: 0, h: 0 };
+  }
 }
 
 /** `BrowserPort` over a headed, persistent Playwright Chromium context. */
 export class PlaywrightBrowser implements BrowserPort {
   constructor(private readonly options: PlaywrightBrowserOptions = {}) {}
 
-  async open(profileDir: string, opts: OpenOptions = {}): Promise<Session> {
+  async open(profileDir: string, opts: OpenOptions = {}): Promise<InteractiveSession> {
     const context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
       viewport: null,
@@ -138,7 +192,12 @@ export class PlaywrightBrowser implements BrowserPort {
       handleSIGINT: false,
       ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
       ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
-      args: [...STEALTH_ARGS, ...(opts.args ?? [])],
+      ...(opts.bypassCSP ? { bypassCSP: true } : {}),
+      args: [
+        ...STEALTH_ARGS,
+        ...(opts.remoteDebuggingPort !== undefined ? [`--remote-debugging-port=${opts.remoteDebuggingPort}`] : []),
+        ...(opts.args ?? []),
+      ],
     });
     try {
       context.setDefaultTimeout(this.options.actionTimeoutMs ?? 5000);

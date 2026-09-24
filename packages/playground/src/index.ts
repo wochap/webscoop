@@ -1,6 +1,18 @@
 export { dataset, type Product } from './dataset';
 export { createRng } from './prng';
-export { formatPrice, MAX_TIER, render, tiers, UnimplementedTierError, type RenderContext, type TierRenderer } from './render';
+export {
+  CHROME_MODES,
+  formatPrice,
+  MAX_TIER,
+  render,
+  sponsoredAttrs,
+  tiers,
+  UnimplementedTierError,
+  type ChromeMode,
+  type RenderContext,
+  type RenderOptions,
+  type TierRenderer,
+} from './render';
 export {
   INITIAL_CONTROL,
   RESERVED_PARAMS,
