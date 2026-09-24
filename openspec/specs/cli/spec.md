@@ -244,3 +244,18 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: Force hide
 - **WHEN** `window.provider` is `none` and `--hide` is passed on Hyprland
 - **THEN** the window is hidden
+
+### Requirement: `export` command
+`webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. The command SHALL NOT open a browser and SHALL NOT require a display.
+
+#### Scenario: Export to stdout
+- **WHEN** `webscoop export playground-catalog` is executed
+- **THEN** stdout holds a TypeScript script whose header names `playground-catalog` and the exit code is 0
+
+#### Scenario: Export Python to a file
+- **WHEN** `webscoop export playground-catalog --format py --out scrape.py` is executed
+- **THEN** `scrape.py` exists, starts with the header comment, and stdout is empty
+
+#### Scenario: No display needed
+- **WHEN** `webscoop export playground-catalog` runs without `WAYLAND_DISPLAY` or `DISPLAY`
+- **THEN** it succeeds
