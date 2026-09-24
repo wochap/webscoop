@@ -2,6 +2,7 @@ export { dataset, type Product } from './dataset';
 export { createRng } from './prng';
 export {
   CHROME_MODES,
+  DEFAULT_MARKUP,
   formatPrice,
   MAX_TIER,
   render,
@@ -9,6 +10,7 @@ export {
   tiers,
   UnimplementedTierError,
   type ChromeMode,
+  type Markup,
   type RenderContext,
   type RenderOptions,
   type TierRenderer,

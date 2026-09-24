@@ -4,11 +4,13 @@ import { dirname, join, resolve } from 'node:path';
 import {
   fillTemplate,
   MissingVariableError,
+  modelResolver,
   RunEmitter,
   type HealOutcome,
   type OpenOptions,
   type Recipe,
   type RepickHandler,
+  type Resolver,
   type Row,
   Runner,
   type RunReport,
@@ -20,6 +22,7 @@ import { requireDisplay } from '../display';
 import { CliError, ExitCode, exitCodeFor, type ExitCode as Code } from '../exit';
 import { acquireProfileLock, type ProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
+import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { FsStorage } from '../storage';
 
@@ -36,6 +39,8 @@ export interface RunCommandOptions {
   /** False with `--no-save`. */
   save?: boolean;
   interactive?: boolean;
+  /** False with `--no-llm`. */
+  llm?: boolean;
 }
 
 /** Healing options for the runner from the `run` flags. */
@@ -73,7 +78,7 @@ export function describeOutcome(outcome: HealOutcome, selector: SelectorCandidat
     case 'fuzzy':
       return `fuzzy ${outcome.score.toFixed(2)}: ${selectorText(selector)}`;
     case 'model':
-      return `model: ${selectorText(selector)}`;
+      return `model: ${selectorText(selector)}${outcome.rationale ? ` (${outcome.rationale})` : ''}`;
     case 'user':
       return `re-picked: ${selectorText(selector)}`;
     case 'unresolved':
@@ -164,10 +169,16 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
   );
   emitter.on('field.resolved', ({ field }) => {
     if ((field.status === 'ok' || field.status === 'healed') && field.missingRows.length === 0) return;
-    log(io, `field ${field.name}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}`);
+    const notes = field.notes && field.notes.length > 0 ? ` (${field.notes.join('; ')})` : '';
+    log(io, `field ${field.name}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
   });
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${e.target} (was ${selectorText(e.oldSelector)})`));
   emitter.on('recipe.saved', (e) => log(io, `recipe written to ${e.path}`));
+}
+
+/** The model rung for `run`, `test`, and `bench`: unavailable without an endpoint, off with `--no-llm`. */
+export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean }): Resolver {
+  return modelResolver(createLlm(config, io.env, io.cwd), { enabled: opts.llm !== false, log: (message) => log(io, message) });
 }
 
 async function e2ePort(io: CliIo): Promise<number | undefined> {
@@ -192,7 +203,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
     logRunEvents(io, emitter, profile);
     emitter.on('row.emitted', (e) => sink.row(e.row));
 
-    const healing = healingFromFlags(opts);
+    const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
     let openOptions: OpenOptions | undefined;
     let repick: RepickHandler | undefined;
     if (opts.interactive) {
@@ -240,6 +251,8 @@ export interface TestCommandOptions {
   timeout: number;
   lockTimeout: number;
   json?: boolean;
+  /** False with `--no-llm`. */
+  llm?: boolean;
 }
 
 export interface TestRow {
@@ -252,6 +265,8 @@ export interface TestRow {
   outcome: HealOutcome;
   /** The selector or rung that resolved the target. */
   resolvedBy: string;
+  /** Why healing rungs declined the target. */
+  notes?: string[];
 }
 
 /** Per-target rows for `webscoop test`: the item container first, then every field. */
@@ -269,6 +284,7 @@ export function testRows(report: RunReport): TestRow[] {
       optional: false,
       outcome: report.item.outcome,
       resolvedBy: describeOutcome(report.item.outcome, report.item.candidate),
+      ...(report.item.notes ? { notes: report.item.notes } : {}),
     });
   }
   for (const field of report.fields) {
@@ -280,6 +296,7 @@ export function testRows(report: RunReport): TestRow[] {
       optional: field.optional,
       outcome: field.outcome,
       resolvedBy: describeOutcome(field.outcome, field.candidate),
+      ...(field.notes ? { notes: field.notes } : {}),
     });
   }
   return out;
@@ -320,7 +337,7 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       timeoutMs: opts.timeout,
       emitter,
       signal: controller.signal,
-      healing: { enabled: true, writeBack: false },
+      healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
     });
     const result = await runner.run();
     const rows = testRows(result.report);

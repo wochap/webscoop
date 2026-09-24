@@ -5,6 +5,7 @@ import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
 import { tempDir, testIo } from './helpers';
+import { doctorCommand } from '../src/commands/doctor';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
 const PAGE = 'https://shop.test/c/shoes';
@@ -256,7 +257,8 @@ describe('webscoop doctor', () => {
     const dir = await tempDir();
     await writeFile(join(dir, 'config.json'), JSON.stringify({ llm: { endpoint: 'http://127.0.0.1:11434/v1', model: 'qwen3.5:9b' } }));
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
-    expect(await main(['doctor'], io)).toBe(ExitCode.Ok);
+    const probe = async () => ({ reachable: true, modelFound: true, models: ['qwen3.5:9b'], latencyMs: 42 });
+    expect(await doctorCommand(io, { probe })).toBe(ExitCode.Ok);
     expect(io.out()).toContain('http://127.0.0.1:11434/v1 (model qwen3.5:9b)');
   });
 });

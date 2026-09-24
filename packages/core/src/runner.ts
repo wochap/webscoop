@@ -219,7 +219,9 @@ export class Runner {
       const healing = this.opts.healing ?? { enabled: true, writeBack: true };
       const promotions: Promotion[] = [];
       const current = () => applyPromotions(recipe, promotions);
-      const extra = [...(healing.resolvers ?? []), ...(this.opts.repick ? [this.repickResolver(this.opts.repick, page, current)] : [])];
+      // Rungs such as the model rung run only when the recipe allows them.
+      const resolvers = (healing.resolvers ?? []).filter((r) => !r.recipeGated || recipe.healing.llm);
+      const extra = [...resolvers, ...(this.opts.repick ? [this.repickResolver(this.opts.repick, page, current)] : [])];
       const extraction = await extractPage(session, recipe, {
         pageUrl: info.url,
         page,

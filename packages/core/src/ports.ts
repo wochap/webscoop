@@ -108,10 +108,51 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface CompleteOptions {
+  maxTokens?: number;
+  signal?: AbortSignal;
+  /** Ask the endpoint for a JSON object (`response_format: json_object`). */
+  json?: boolean;
+  /** Ask a reasoning model to skip its thinking block, where the endpoint supports it. */
+  noThinking?: boolean;
+  /** Sampling temperature; the adapter's configured value when absent. */
+  temperature?: number;
+}
+
+/** Context window assumed when the config does not set one. */
+export const DEFAULT_CONTEXT_TOKENS = 32_768;
+
+/** Token estimate without a tokenizer: characters divided by 3.5, rounded up. */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5);
+}
+
+export type LlmErrorKind = 'unavailable' | 'network' | 'timeout' | 'http' | 'invalid-response' | 'invalid-output';
+
+/**
+ * A failed completion. `invalid-output` means the endpoint answered but the
+ * answer did not fit the requested shape; every other kind means the endpoint
+ * itself failed.
+ */
+export class LlmError extends Error {
+  constructor(
+    readonly kind: LlmErrorKind,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'LlmError';
+  }
+}
+
 export interface LlmPort {
   /** Whether an endpoint is configured and usable. */
   readonly available: boolean;
-  complete(messages: ChatMessage[], opts?: { maxTokens?: number; signal?: AbortSignal }): Promise<string>;
+  /** Configured context window in tokens, for prompt budgets. */
+  readonly contextTokens: number;
+  /** The first choice's message content. Failures reject with an `LlmError`. */
+  complete(messages: ChatMessage[], opts?: CompleteOptions): Promise<string>;
+  estimateTokens(text: string): number;
 }
 
 export interface Notification {
@@ -154,7 +195,11 @@ export class NoopNotify implements NotifyPort {
 
 export class NoopLlm implements LlmPort {
   readonly available = false;
+  readonly contextTokens = DEFAULT_CONTEXT_TOKENS;
   async complete(): Promise<string> {
-    throw new Error('no LLM endpoint is configured');
+    throw new LlmError('unavailable', 'no LLM endpoint is configured');
+  }
+  estimateTokens(text: string): number {
+    return estimateTokens(text);
   }
 }

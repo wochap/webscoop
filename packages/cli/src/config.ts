@@ -6,11 +6,17 @@ import type { Paths } from './paths';
 export const ConfigSchema = z.object({
   llm: z
     .object({
-      /** OpenAI-compatible base URL, e.g. `http://127.0.0.1:11434/v1`. Used by a later change. */
+      /** OpenAI-compatible base URL ending before `/chat/completions`, e.g. `http://127.0.0.1:11434/v1`. */
       endpoint: z.url().optional(),
       model: z.string().min(1).optional(),
+      /** Sent as a bearer token when set. */
       apiKey: z.string().optional(),
+      /** Context window of the model; prompts are budgeted to 40 percent of it. Default 32768. */
       contextTokens: z.number().int().positive().optional(),
+      /** Per-request timeout. Default 60000. */
+      timeoutMs: z.number().int().positive().optional(),
+      /** Sampling temperature. Default 0. */
+      temperature: z.number().min(0).max(2).optional(),
     })
     .default({}),
   browser: z

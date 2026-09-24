@@ -89,6 +89,32 @@ describe('classifyToken', () => {
 });
 
 describe('generate', () => {
+  it('anchors CSS on a readable test hook attribute other than data-testid', () => {
+    const root = annotate(
+      h(
+        'html',
+        {},
+        h(
+          'body',
+          {},
+          h('section', { class: 'x1a2b3c', 'data-qa': 'product-card' }, h('div', {}, h('span', {}, 'Cost:'), h('span', { class: 'x9z8y7w', 'data-qa': 'price' }, '$1.00'))),
+          h('div', { 'data-cy': 'a9f3k2m7' }, h('span', {}, 'x')),
+        ),
+      ),
+    );
+    const price = find(root, (n) => n.attrs['data-qa'] === 'price');
+    expect(compoundOf(price)).toBe('span[data-qa="price"]');
+    expect(pick(generate(price), 'css')).toEqual({ strategy: 'css', value: 'span[data-qa="price"]', stability: 'medium' });
+    const label = find(root, (n) => n.tag === 'span' && !n.attrs['data-qa'] && n.parent?.tag === 'div' && n.parent.parent?.tag === 'section');
+    expect(pick(generate(label), 'css')!.value).toBe('section[data-qa="product-card"] > div > span');
+    // Hashed values are not hooks.
+    const hashed = find(root, (n) => n.attrs['data-cy'] === 'a9f3k2m7');
+    expect(compoundOf(hashed)).toBe('div');
+    const card = find(root, (n) => n.tag === 'section');
+    const relative = relativize(pick(generate(price), 'css')!, compoundOf(card));
+    expect(relative?.value).toBe('span[data-qa="price"]');
+  });
+
   it('produces role, testid, text, css, and xpath for a heading with a testid, and no id', () => {
     const root = annotate(h('html', {}, h('body', {}, h('h3', { 'data-testid': 'product-title' }, 'Wireless Mouse'))));
     const node = find(root, (n) => n.tag === 'h3');

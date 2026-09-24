@@ -1,0 +1,11 @@
+{
+  "responses": [
+    { "match": "Field: item\n", "pick": "data-qa=\"product-card\"", "reason": "product card", "repeat": true },
+    { "match": "Field: title\n", "pick": "role=\"heading\"", "reason": "product heading", "repeat": true },
+    { "match": "Field: price\n", "pick": "data-qa=\"price\"", "reason": "price with currency", "repeat": true },
+    { "match": "Field: url\n", "pick": "^<a ", "reason": "link to the product page", "repeat": true },
+    { "match": "Field: image\n", "pick": "^<img ", "reason": "product image", "repeat": true },
+    { "match": "Field: rating\n", "pick": "data-qa=\"rating\"", "reason": "rating out of 5", "repeat": true },
+    { "match": "Field: category\n", "pick": "data-qa=\"category\"", "reason": "category heading", "repeat": true }
+  ]
+}

@@ -1,3 +1,5 @@
-// Placeholder: the OpenAI-compatible adapter arrives with the llm-healing change.
-export type { ChatMessage, LlmPort } from '@webscoop/core';
-export { NoopLlm } from '@webscoop/core';
+export type { ChatMessage, CompleteOptions, LlmPort } from '@webscoop/core';
+export { LlmError, NoopLlm } from '@webscoop/core';
+export { OpenAiCompatibleLlm, type FetchLike, type LlmResult, type OpenAiCompatibleOptions, type ProbeResult } from './openai';
+export { MockLlm, type MockRequest, type MockResponse } from './mock';
+export { mockFromScript, MockScriptSchema, pickCandidate, type MockScript } from './script';

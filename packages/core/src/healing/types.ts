@@ -1,5 +1,5 @@
 import type { ElementRef, Session } from '../ports';
-import type { FieldScope, Fingerprint, SelectorCandidate } from '../recipe/schema';
+import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
 import type { AnnotatedNode } from '../selectors/annotated';
 import type { Viewport } from './score';
 
@@ -11,7 +11,17 @@ interface TargetBase {
 /** Something the runner resolves on a page, with the place in the recipe a promotion writes to. */
 export type HealTarget =
   | (TargetBase & { kind: 'item' })
-  | (TargetBase & { kind: 'field'; index: number; name: string; scope: FieldScope; optional: boolean })
+  | (TargetBase & {
+      kind: 'field';
+      index: number;
+      name: string;
+      scope: FieldScope;
+      optional: boolean;
+      /** The field's value type, for rungs that check what they found. */
+      type?: FieldType;
+      /** Attribute the value is read from, when not the content. */
+      attr?: string;
+    })
   | (TargetBase & { kind: 'pagination' });
 
 /** Name used in reports and events: the field name, `item`, or `pagination`. */
@@ -71,10 +81,14 @@ export interface HealContext {
   /** The recipe's `healing.fuzzyThreshold`. */
   threshold: number;
   viewport?: Viewport;
+  /** Record why a rung declined the target, for the field's report. */
+  note?(target: HealTarget, text: string): void;
 }
 
 /** One rung of the healing ladder. */
 export interface Resolver {
   readonly name: string;
+  /** Skipped by the runner when the recipe turns `healing.llm` off. */
+  readonly recipeGated?: boolean;
   resolve(target: HealTarget, ctx: HealContext): Promise<Resolution | null>;
 }

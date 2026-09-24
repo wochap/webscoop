@@ -19,6 +19,8 @@ export interface FieldReport {
   status: FieldStatus;
   /** Rows (0-based `_index`) where the field resolved nothing. */
   missingRows: number[];
+  /** Why healing rungs declined the field, such as the model's reason for picking nothing. */
+  notes?: string[];
 }
 
 export interface RunReport {
@@ -29,7 +31,14 @@ export interface RunReport {
   finalUrl: string | null;
   pageCount: number;
   rowCount: number;
-  item: { candidateIndex: number | null; candidate: SelectorCandidate | null; count: number; outcome: HealOutcome } | null;
+  item: {
+    candidateIndex: number | null;
+    candidate: SelectorCandidate | null;
+    count: number;
+    outcome: HealOutcome;
+    /** Why healing rungs declined the item container. */
+    notes?: string[];
+  } | null;
   fields: FieldReport[];
   warnings: string[];
   /** Targets (item container and fields) resolved by a rung other than their first candidate. */

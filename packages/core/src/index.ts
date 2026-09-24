@@ -7,6 +7,7 @@ export * from './events';
 export * from './convert';
 export * from './extract';
 export * from './healing';
+export * from './llm';
 export * from './runner';
 export * from './selectors';
 export * from './recorder';

@@ -1,7 +1,7 @@
 import type { ElementRef, SerializedElement, Session } from '../ports';
 import { annotate, type AnnotatedNode } from '../selectors/annotated';
 import type { Viewport } from './score';
-import type { HealContext } from './types';
+import type { HealContext, HealTarget } from './types';
 
 /** Snapshots of scopes, taken once per scope for the lifetime of the cache. */
 export class SnapshotCache {
@@ -32,6 +32,7 @@ export function healContext(opts: {
   probe?: () => Promise<ElementRef | undefined>;
   outerAncestors?: readonly string[];
   viewport?: Viewport;
+  note?: (target: HealTarget, text: string) => void;
 }): HealContext {
   return {
     session: opts.session,
@@ -42,5 +43,6 @@ export function healContext(opts: {
     outerAncestors: opts.outerAncestors ?? [],
     threshold: opts.threshold,
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
+    ...(opts.note ? { note: opts.note } : {}),
   };
 }

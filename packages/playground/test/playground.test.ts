@@ -65,8 +65,8 @@ describe('render', () => {
     expect(render(dataset, { tier: 0, seed: 1, sponsored: 0 })).toBe(render(dataset, { tier: 0, seed: 1 }));
   });
 
-  it('throws for unimplemented tiers', () => {
-    expect(() => render(dataset, { tier: 3, seed: 1 })).toThrow('tier 3');
+  it('throws for tiers past the last one', () => {
+    expect(() => render(dataset, { tier: 5, seed: 1 })).toThrow('tier 5');
   });
 });
 
@@ -180,6 +180,89 @@ describe('tier 2', () => {
   });
 });
 
+/** Product values read from a tier 3 or 4 page by meaning, not by the markup tiers 0 to 2 use. */
+function semanticProducts(d: Document) {
+  return Array.from(d.querySelectorAll('[data-qa="product-card"]')).map((card) => ({
+    id: card.getAttribute('data-product-id'),
+    title: card.querySelector('h3, [role="heading"]')!.textContent,
+    price: card.querySelector('[data-qa="price"]')!.textContent,
+    rating: card.querySelector('[data-qa="rating"]')?.textContent ?? null,
+    url: card.querySelector('a')!.getAttribute('href'),
+    image: card.querySelector('img')!.getAttribute('src'),
+  }));
+}
+
+const byId = <T extends { id: string | null }>(rows: T[]) => [...rows].sort((a, b) => a.id!.localeCompare(b.id!));
+
+describe('tier 3', () => {
+  it('keeps every price string and title in the page', () => {
+    for (const seed of [1, 5, 8]) {
+      const html = render(dataset, { tier: 3, seed });
+      const text = doc(html).body.textContent!;
+      for (const p of dataset) {
+        expect(text).toContain(formatPrice(p.price));
+        expect(text).toContain(p.title);
+      }
+      expect(byId(semanticProducts(doc(html)))).toEqual(expected);
+    }
+  });
+
+  it('swaps tags, labels, attributes, and link text', () => {
+    const d = doc(render(dataset, { tier: 3, seed: 5 }));
+    expect(d.querySelectorAll('article')).toHaveLength(0);
+    expect(d.querySelectorAll('h2')).toHaveLength(0);
+    expect(d.querySelectorAll('[data-testid]')).toHaveLength(0);
+    expect(d.querySelectorAll('[data-qa]').length).toBeGreaterThan(24 * 3);
+    expect(d.querySelectorAll('[aria-label]')).toHaveLength(0);
+    const cards = Array.from(d.querySelectorAll('[data-qa="product-card"]'));
+    expect(cards).toHaveLength(24);
+    expect(new Set(cards.map((c) => c.tagName))).toSatisfy((tags: Set<string>) => tags.size === 1 && (tags.has('DIV') || tags.has('SECTION')));
+    for (const card of cards) {
+      const price = card.querySelector('[data-qa="price"]')!;
+      expect(price.tagName).toBe('SPAN');
+      expect(price.textContent).toMatch(/^\$[\d,]+\.\d\d$/);
+      expect(['Cost:', 'Now:']).toContain(price.previousElementSibling!.textContent);
+      expect(card.querySelector('[data-qa="rating"]')!.getAttribute('title')).toMatch(/^Rated [\d.]+ out of 5$/);
+      expect(card.querySelector('a')!.textContent).toBe('See product');
+    }
+    const tags = new Set<string>();
+    for (let seed = 0; seed < 20; seed++) {
+      const card = doc(render(dataset, { tier: 3, seed })).querySelector('[data-qa="product-card"]')!;
+      tags.add(card.tagName);
+      tags.add(card.querySelector('h3') ? 'h3' : 'div-heading');
+    }
+    expect(tags).toEqual(new Set(['DIV', 'SECTION', 'h3', 'div-heading']));
+  });
+
+  it('renders identically for the same seed and differently for another', () => {
+    expect(render(dataset, { tier: 3, seed: 5 })).toBe(render(dataset, { tier: 3, seed: 5 }));
+    expect(render(dataset, { tier: 3, seed: 5 })).not.toBe(render(dataset, { tier: 3, seed: 6 }));
+  });
+});
+
+describe('tier 4', () => {
+  it('removes the rating element and keeps the other five fields', () => {
+    const html = render(dataset, { tier: 4, seed: 5 });
+    const d = doc(html);
+    expect(html).not.toContain('out of 5');
+    expect(d.querySelectorAll('[data-qa="rating"]')).toHaveLength(0);
+    const ratings = new Set(dataset.map((p) => String(p.rating)));
+    for (const el of Array.from(d.body.querySelectorAll('*'))) {
+      const own = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent!.trim()).join('');
+      expect(ratings.has(own), `${el.tagName} carries a rating`).toBe(false);
+    }
+    const rows = byId(semanticProducts(d));
+    expect(rows).toEqual(expected.map((p) => ({ ...p, rating: null })));
+    expect(d.querySelector('h1')!.textContent).toBe('Electronics');
+  });
+
+  it('shares tier 3 choices for the same seed', () => {
+    const three = render(dataset, { tier: 3, seed: 5 });
+    const four = render(dataset, { tier: 4, seed: 5 });
+    expect(four).toBe(three.replace(/\n<p class="x\w+" data-qa="rating" title="Rated [\d.]+ out of 5">[\d.]+<\/p>/g, ''));
+  });
+});
+
 describe('server', () => {
   it('starts parallel instances on distinct random ports', async () => {
     const [a, b] = await Promise.all([start(), start()]);
@@ -207,25 +290,25 @@ describe('server', () => {
     }
   });
 
-  it('returns 501 naming the tier for tiers 3 and 4', async () => {
+  it('serves tiers 3 and 4', async () => {
     const pg = await start();
     for (const tier of [3, 4]) {
-      const res = await fetch(`${pg.url}/catalog?tier=${tier}`);
-      expect(res.status).toBe(501);
-      expect(await res.text()).toContain(`tier ${tier}`);
+      const res = await fetch(`${pg.url}/catalog?tier=${tier}&seed=5`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(render(dataset, { tier, seed: 5 }));
     }
   });
 
-  it('serves chrome and sponsored options, and still returns 501 for tiers 3 and 4 with them', async () => {
+  it('serves chrome and sponsored options on every tier', async () => {
     const pg = await start();
     const hostile = await (await fetch(`${pg.url}/catalog?tier=0&chrome=hostile&sponsored=2`)).text();
     expect(hostile).toContain('id="cookie-backdrop"');
     expect(count(hostile, 'data-sponsored="true"')).toBe(2);
     expect(await (await fetch(`${pg.url}/catalog?tier=0`)).text()).not.toContain('cookie-backdrop');
     for (const tier of [3, 4]) {
-      const res = await fetch(`${pg.url}/catalog?tier=${tier}&chrome=hostile&sponsored=1`);
-      expect(res.status).toBe(501);
-      expect(await res.text()).toContain(`tier ${tier}`);
+      const html = await (await fetch(`${pg.url}/catalog?tier=${tier}&chrome=hostile&sponsored=1`)).text();
+      expect(html).toContain('id="cookie-backdrop"');
+      expect(count(html, 'data-sponsored="true"')).toBe(1);
     }
     expect((await fetch(`${pg.url}/catalog?chrome=pretty`)).status).toBe(400);
     expect((await fetch(`${pg.url}/catalog?sponsored=99`)).status).toBe(400);
@@ -258,10 +341,10 @@ describe('server', () => {
       fetch(`${pg.url}/__control`, { method: 'POST', body: JSON.stringify(body) }).then((r) => r.json());
     expect(await post({ tier: 3, delayMs: 50 })).toEqual({ tier: 3, seed: 1, delayMs: 50 });
     expect(await (await fetch(`${pg.url}/__control`)).json()).toEqual({ tier: 3, seed: 1, delayMs: 50 });
-    expect((await fetch(`${pg.url}/catalog`)).status).toBe(501);
-    expect((await fetch(`${pg.url}/catalog?tier=0`)).status).toBe(200);
+    expect(await (await fetch(`${pg.url}/catalog`)).text()).toBe(render(dataset, { tier: 3, seed: 1 }));
+    expect(await (await fetch(`${pg.url}/catalog?tier=0`)).text()).toBe(render(dataset, { tier: 0, seed: 1 }));
     await post({ tier: 0 });
-    expect((await fetch(`${pg.url}/catalog`)).status).toBe(200);
+    expect(await (await fetch(`${pg.url}/catalog`)).text()).toBe(render(dataset, { tier: 0, seed: 1 }));
     const reset = await (await fetch(`${pg.url}/__control/reset`, { method: 'POST' })).json();
     expect(reset).toEqual({ tier: 0, seed: 1, delayMs: 0 });
     expect(pg.control).toEqual({ tier: 0, seed: 1, delayMs: 0 });

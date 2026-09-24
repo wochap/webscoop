@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
+import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { doctorCommand } from './commands/doctor';
 import { recipesCommand } from './commands/recipes';
 import { recordCommand, type RecordCommandOptions } from './commands/record';
@@ -19,6 +20,12 @@ function positiveInt(value: string): number {
   return n;
 }
 
+function seedInt(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) throw new InvalidArgumentError('expected a non-negative integer');
+  return n;
+}
+
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -27,7 +34,8 @@ const EXIT_HELP = `
 Healing:
   run heals selectors that stopped matching and rewrites the recipe after a
   successful run. --no-save keeps the file, --no-heal tries only the first
-  selector, --interactive asks you to re-pick a field nothing else could find.
+  selector, --no-llm skips the language model rung, --interactive asks you to
+  re-pick a field nothing else could find.
   test <recipe> checks a recipe without saving; record --edit <recipe>
   --repick <field> picks one field again.
 
@@ -64,13 +72,16 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
     .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
     .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')
+    .option('--no-llm', 'never ask the language model to locate a field, whatever the config and recipe say')
     .addHelpText(
       'after',
       `
 Healing: when stored selectors stop matching, the run tries the other stored
-selectors, then the element that best matches the field's fingerprint. Fields
-resolved that way are reported as "healed", and after a successful run the
-recipe file is rewritten with the working selector first (unless --no-save).`,
+selectors, then the element that best matches the field's fingerprint, then
+(when an LLM endpoint is configured and the recipe allows it) asks the model
+to pick the element from a short list. Fields resolved that way are reported
+as "healed", and after a successful run the recipe file is rewritten with the
+working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
@@ -83,6 +94,7 @@ recipe file is rewritten with the working selector first (unless --no-save).`,
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--json', 'print the field table as a JSON array')
+    .option('--no-llm', 'never ask the language model to locate a field')
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
@@ -112,6 +124,27 @@ With --repick: click the field's new location, then "Use and save"; S skips, Esc
     .description('list saved recipes')
     .option('--json', 'print a JSON array')
     .action(async (opts: { json?: boolean }) => setCode(await recipesCommand(io, opts)));
+
+  program
+    .command('bench')
+    .description('run a playground recipe on every playground tier and report which rung resolved each field')
+    .argument('<recipe>', 'recipe with a {port} variable, e.g. the playground-catalog fixture')
+    .option('--tiers <range>', 'tiers to run, e.g. 0-4, 3, or 0,3-4', '0-4')
+    .addOption(new Option('--seed <n>', 'playground seed').argParser(seedInt).default(1))
+    .option('--json', 'print the results as JSON')
+    .option('--profile <name>', 'browser profile name (default: the recipe name)')
+    .option('--no-llm', 'never ask the language model to locate a field')
+    .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .addHelpText(
+      'after',
+      `
+Starts the playground on a free port, fills the recipe's {port} (and {tier}
+and {seed}, when the recipe has them) and runs it once per tier without
+writing anything back. Rungs: candidate, fuzzy, model, user, unresolved.
+Exits 0 whatever healed, 1 when a run broke. Needs a development checkout.`,
+    )
+    .action(async (recipe: string, opts: BenchCommandOptions) => setCode(await benchCommand(io, recipe, opts)));
 
   program
     .command('doctor')

@@ -20,9 +20,21 @@ export interface GenerateContext {
 
 const NO_ROLE = new Set(['presentation', 'none', 'generic']);
 
-/** `tag.stable-class...` for one element. */
+/** Test hook attributes other than `data-testid`, which has its own strategy. */
+export const TEST_ATTRS = ['data-qa', 'data-test', 'data-test-id', 'data-cy'] as const;
+
+/** `[data-qa="price"]` for the element's first readable test hook attribute, else empty. */
+export function testAttrOf(node: AnnotatedNode): string {
+  for (const name of TEST_ATTRS) {
+    const value = node.attrs[name];
+    if (value && /^[\w-]+$/.test(value) && classifyToken(value) === 'stable') return `[${name}="${value}"]`;
+  }
+  return '';
+}
+
+/** `tag.stable-class...[test-attr]` for one element. */
 export function compoundOf(node: AnnotatedNode): string {
-  return node.tag + stableClasses(node).map((c) => `.${c}`).join('');
+  return node.tag + stableClasses(node).map((c) => `.${c}`).join('') + testAttrOf(node);
 }
 
 /** The element's compound, plus `:nth-child` when a sibling shares the same compound. */
@@ -38,17 +50,18 @@ function segmentOf(node: AnnotatedNode, positional = true): { text: string; posi
 const TOP = new Set(['html', 'body']);
 
 /**
- * Shortest path of tags and stable classes: the element's own compound when it
- * has a stable class, else walking up to the nearest ancestor that has one
- * (or to the child of `body`).
+ * Shortest path of tags, stable classes, and test hook attributes: the
+ * element's own compound when it has a stable class or test hook, else
+ * walking up to the nearest ancestor that has one (or to the child of `body`).
  */
 function cssCandidate(node: AnnotatedNode, positional: boolean): Candidate {
   const first = segmentOf(node, positional);
   const segments = [first];
-  if (stableClasses(node).length === 0 && !TOP.has(node.tag)) {
+  const anchored = (n: AnnotatedNode) => stableClasses(n).length > 0 || testAttrOf(n) !== '';
+  if (!anchored(node) && !TOP.has(node.tag)) {
     for (let cur = node.parent; cur && !TOP.has(cur.tag); cur = cur.parent) {
       segments.unshift(segmentOf(cur, positional));
-      if (stableClasses(cur).length > 0) break;
+      if (anchored(cur)) break;
     }
   }
   const usesPosition = segments.some((s) => s.positional);

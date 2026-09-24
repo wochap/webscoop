@@ -81,33 +81,66 @@ const TIER0_LAYOUT = (count: number): Layout => ({
 
 const WRAPPER_CLASSES = ['card-body', 'card-inner'];
 
-function catalogPage(ctx: RenderContext, layout: Layout): string {
+/** How a catalog page's elements are spelled. Tiers 0 to 2 use `DEFAULT_MARKUP`. */
+export interface Markup {
+  cardTag: 'article' | 'div' | 'section';
+  /** `div-heading` is a `div` with `role="heading"`. */
+  titleTag: 'h2' | 'h3' | 'div-heading';
+  priceTag: 'p' | 'span';
+  /** Label rendered in a sibling `span` before the price, so the price element's own text stays the price. */
+  priceLabel: '' | 'Cost:' | 'Now:';
+  testidAttr: 'data-testid' | 'data-qa';
+  /** Attribute carrying the rating's description. */
+  ratingAttr: 'aria-label' | 'title';
+  linkText: string;
+  /** Whether cards have a rating element at all. */
+  rating: boolean;
+}
+
+export const DEFAULT_MARKUP: Readonly<Markup> = Object.freeze({
+  cardTag: 'article',
+  titleTag: 'h2',
+  priceTag: 'p',
+  priceLabel: '',
+  testidAttr: 'data-testid',
+  ratingAttr: 'aria-label',
+  linkText: 'View details',
+  rating: true,
+});
+
+function catalogPage(ctx: RenderContext, layout: Layout, markup: Markup = DEFAULT_MARKUP): string {
   const { products } = ctx;
   const category = products[0]?.category ?? 'Catalog';
+  const testid = markup.testidAttr;
   const items = layout.order
     .map((productIndex, position) => ({ p: products[productIndex]!, position, s: sponsoredAttrs(ctx, position) }))
     .map(({ p, position, s }) => {
-      const title = `<h2 class="product-title">${escapeHtml(p.title)}</h2>`;
-      const price = `<p class="product-price" data-testid="price">${formatPrice(p.price)}</p>`;
+      const [titleOpen, titleClose] =
+        markup.titleTag === 'div-heading' ? ['div role="heading" aria-level="2"', 'div'] : [markup.titleTag, markup.titleTag];
+      const title = `<${titleOpen.replace(/^(\w+)/, '$1 class="product-title"')}>${escapeHtml(p.title)}</${titleClose}>`;
+      const label = markup.priceLabel ? `<span class="price-label">${markup.priceLabel}</span>\n` : '';
+      const price = `${label}<${markup.priceTag} class="product-price" ${testid}="price">${formatPrice(p.price)}</${markup.priceTag}>`;
+      const rating = markup.rating
+        ? `\n<p class="product-rating" ${testid}="rating" ${markup.ratingAttr}="Rated ${p.rating} out of 5">${p.rating}</p>`
+        : '';
       let content = `<img class="product-image" src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}" width="220" height="140">
-${layout.priceFirst(position) ? `${price}\n${title}` : `${title}\n${price}`}
-<p class="product-rating" data-testid="rating" aria-label="Rated ${p.rating} out of 5">${p.rating}</p>
-<a class="product-link" href="${escapeHtml(p.url)}">View details</a>`;
+${layout.priceFirst(position) ? `${price}\n${title}` : `${title}\n${price}`}${rating}
+<a class="product-link" href="${escapeHtml(p.url)}">${escapeHtml(markup.linkText)}</a>`;
       for (let depth = layout.wrappers(position) - 1; depth >= 0; depth--) {
         content = `<div class="${WRAPPER_CLASSES[depth % WRAPPER_CLASSES.length]}">\n${content}\n</div>`;
       }
       return `<li class="product-item">
-<article class="product-card${s.cls}" id="product-${p.id}" data-testid="product-card" data-product-id="${p.id}"${s.attrs}>
+<${markup.cardTag} class="product-card${s.cls}" id="product-${p.id}" ${testid}="product-card" data-product-id="${p.id}"${s.attrs}>
 ${content}
-</article>
+</${markup.cardTag}>
 </li>`;
     })
     .join('\n');
   return page(
     `${category} | Playground`,
     `<main id="catalog" class="catalog">
-<h1 class="category-heading" id="category" data-testid="category">${escapeHtml(category)}</h1>
-<ul class="product-list" data-testid="product-list">
+<h1 class="category-heading" id="category" ${testid}="category">${escapeHtml(category)}</h1>
+<ul class="product-list" ${testid}="product-list">
 ${items}
 </ul>
 </main>`,
@@ -168,25 +201,63 @@ function shuffled(n: number, rng: () => number): number[] {
   return out;
 }
 
+/** Tier 2's structural churn, drawn from the rng: wrappers, price position, card order. */
+function churnedLayout(ctx: RenderContext): Layout {
+  const count = ctx.products.length;
+  const wrappers = Array.from({ length: count }, () => 1 + Math.floor(ctx.rng() * 2));
+  const priceFirst = Array.from({ length: count }, () => ctx.rng() < 0.5);
+  const order = shuffled(count, ctx.rng);
+  return { wrappers: (i) => wrappers[i]!, priceFirst: (i) => priceFirst[i]!, order };
+}
+
 /**
  * Tier 2: tier 1 plus structural churn. Each card's content sits in one or
  * two extra `div` wrappers, the price moves above or below the title, and the
  * cards are shuffled, all by seed. Every card keeps its own content.
  */
-const tier2: TierRenderer = (ctx) => {
-  const count = ctx.products.length;
-  const wrappers = Array.from({ length: count }, () => 1 + Math.floor(ctx.rng() * 2));
-  const priceFirst = Array.from({ length: count }, () => ctx.rng() < 0.5);
-  const order = shuffled(count, ctx.rng);
-  const layout: Layout = { wrappers: (i) => wrappers[i]!, priceFirst: (i) => priceFirst[i]!, order };
-  return churnTokens(catalogPage(ctx, layout), ctx);
+const tier2: TierRenderer = (ctx) => churnTokens(catalogPage(ctx, churnedLayout(ctx)), ctx);
+
+const choose = <T>(rng: () => number, options: readonly T[]): T => options[Math.floor(rng() * options.length)]!;
+
+/** Tier 3's semantic churn, one choice per page drawn from the rng. */
+function semanticMarkup(ctx: RenderContext): Markup {
+  return {
+    cardTag: choose(ctx.rng, ['div', 'section'] as const),
+    titleTag: choose(ctx.rng, ['h3', 'div-heading'] as const),
+    priceTag: 'span',
+    priceLabel: choose(ctx.rng, ['Cost:', 'Now:'] as const),
+    testidAttr: 'data-qa',
+    ratingAttr: 'title',
+    linkText: 'See product',
+    rating: true,
+  };
+}
+
+/**
+ * Tier 3: tier 2 plus semantic churn. Cards become `div` or `section`, the
+ * title an `h3` or a `div` with `role="heading"`, the price a `span` after a
+ * `Cost:` or `Now:` label, `data-testid` becomes `data-qa`, the rating is
+ * described by `title` instead of `aria-label`, and the link reads "See
+ * product". Every value stays extractable.
+ */
+const tier3: TierRenderer = (ctx) => {
+  const layout = churnedLayout(ctx);
+  return churnTokens(catalogPage(ctx, layout, semanticMarkup(ctx)), ctx);
 };
 
-/** Tier registry. Tiers 3 and 4 arrive with later changes. */
+/** Tier 4: tier 3 with the rating element removed from every card. */
+const tier4: TierRenderer = (ctx) => {
+  const layout = churnedLayout(ctx);
+  return churnTokens(catalogPage(ctx, layout, { ...semanticMarkup(ctx), rating: false }), ctx);
+};
+
+/** Tier registry. */
 export const tiers: Partial<Record<number, TierRenderer>> = {
   0: tier0,
   1: tier1,
   2: tier2,
+  3: tier3,
+  4: tier4,
 };
 
 export const MAX_TIER = 4;

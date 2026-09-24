@@ -5,9 +5,11 @@ import { rankMatches } from './healing/fuzzy';
 import { candidatesResolver, resolveTarget } from './healing/ladder';
 import { promote, type Promotion } from './healing/promote';
 import type { Viewport } from './healing/score';
-import { isHealed, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
+import { isHealed, targetName, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import type { ElementRef, Session } from './ports';
 import type { Fingerprint, Recipe, RecipeField, SelectorCandidate } from './recipe/schema';
+import type { AnnotatedNode } from './selectors/annotated';
+import { normalize, textContent } from './selectors/aria';
 import { refForNode } from './selectors/xpath';
 
 export interface Resolved {
@@ -101,9 +103,22 @@ function fieldTarget(field: RecipeField, index: number): HealTarget {
     name: field.name,
     scope: field.scope,
     optional: field.optional,
+    type: field.type,
+    ...(field.attr ? { attr: field.attr } : {}),
     selectors: field.selectors,
     ...(field.fingerprint ? { fingerprint: field.fingerprint } : {}),
   };
+}
+
+/** Share of words two texts have in common (Jaccard over lower-cased whitespace tokens). */
+function wordOverlap(a: string, b: string): number {
+  const words = (t: string) => new Set(t.toLowerCase().split(/\s+/).filter(Boolean));
+  const x = words(a);
+  const y = words(b);
+  let shared = 0;
+  for (const w of x) if (y.has(w)) shared++;
+  const all = x.size + y.size - shared;
+  return all === 0 ? 0 : shared / all;
 }
 
 /**
@@ -111,20 +126,36 @@ function fieldTarget(field: RecipeField, index: number): HealTarget {
  * fingerprints were recorded in that item, so snapshot rungs compare like
  * with like even when the page reordered its items. The first container when
  * the item has no fingerprint or no container stands out.
+ *
+ * When the item container healed (`shape` differs from `recorded`), the
+ * containers no longer look like the recorded one; the one sharing the most
+ * words with the recorded item's text is taken instead, since the words
+ * (title, price) identify the item whatever its markup.
  */
 async function probeContainer(
   session: Session,
   cache: SnapshotCache,
   containers: readonly ElementRef[],
-  fp: Fingerprint | undefined,
+  recorded: Fingerprint | undefined,
+  shape: Fingerprint | undefined,
   threshold: number,
 ): Promise<ElementRef | undefined> {
   const first = containers[0];
+  const fp = shape ?? recorded;
   if (!fp || containers.length < 2) return first;
   const root = await cache.get();
-  const [best] = rankMatches({ kind: 'item', selectors: [], fingerprint: fp }, root, { outerAncestors: [] }, true);
-  if (!best || best.score < threshold) return first;
-  const ref = await refForNode(session, best.node);
+  const matches = rankMatches({ kind: 'item', selectors: [], fingerprint: fp }, root, { outerAncestors: [] }, true);
+  let best: AnnotatedNode | undefined;
+  if (recorded && shape && shape !== recorded && recorded.textSample) {
+    const sample = recorded.textSample;
+    best = matches
+      .map((m, order) => ({ node: m.node, order, overlap: wordOverlap(sample, normalize(textContent(m.node))) }))
+      .sort((a, b) => b.overlap - a.overlap || a.order - b.order)[0]?.node;
+  } else if (matches[0] && matches[0].score >= threshold) {
+    best = matches[0].node;
+  }
+  if (!best) return first;
+  const ref = await refForNode(session, best);
   if (!ref) return first;
   for (const container of containers) if (await session.same(container, ref)) return container;
   return first;
@@ -141,10 +172,15 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   const cache = new SnapshotCache(session);
   const threshold = recipe.healing.fuzzyThreshold;
   const promotions: Promotion[] = [];
+  const notes = new Map<string, string[]>();
+  const note = (target: HealTarget, text: string) => {
+    const name = targetName(target);
+    notes.set(name, [...(notes.get(name) ?? []), text]);
+  };
   const context = (
     extra: { within?: ElementRef; containers?: readonly ElementRef[]; probe?: () => Promise<ElementRef | undefined>; outerAncestors?: readonly string[] } = {},
   ): HealContext =>
-    healContext({ session, cache, threshold, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
+    healContext({ session, cache, threshold, note, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
 
   /** Promote when the target healed; item scoped fuzzy matches must hold in at least half the containers. */
   const settle = (target: HealTarget, ctx: HealContext) => async (resolution: Resolution): Promise<Settled | null> => {
@@ -198,6 +234,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       candidate: settled?.selectors[0] ?? null,
       count: kept.length,
       outcome,
+      ...(notes.has('item') ? { notes: notes.get('item')! } : {}),
     };
     itemFingerprint = settled?.promotion?.fingerprint ?? recipe.item.fingerprint;
     itemAncestors = itemFingerprint?.ancestors ?? [];
@@ -214,7 +251,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   const firstContainer = containers[0];
   const realContainers = containers.filter((c): c is ElementRef => c !== undefined);
   let probed: Promise<ElementRef | undefined> | undefined;
-  const probe = () => (probed ??= probeContainer(session, cache, realContainers, itemFingerprint, threshold));
+  const probe = () => (probed ??= probeContainer(session, cache, realContainers, recipe.item?.fingerprint, itemFingerprint, threshold));
   for (const [index, field] of recipe.fields.entries()) {
     const target = fieldTarget(field, index);
     if (field.scope === 'page') {
@@ -276,6 +313,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       outcome,
       status,
       missingRows,
+      ...(notes.has(field.name) ? { notes: notes.get(field.name)! } : {}),
     };
   });
 

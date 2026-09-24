@@ -48,7 +48,15 @@ npm run test:e2e     # builds the CLI and runs it against the playground
 ```
 
 Browser integration tests are skipped when neither `WAYLAND_DISPLAY` nor
-`DISPLAY` is set.
+`DISPLAY` is set. Tests never need a language model: the model rung runs
+against scripted answers (`WEBSCOOP_LLM_MOCK`, below). `e2e/llm.real.spec.ts`
+runs `bench` on tiers 0 to 4 against a real model, only when
+`WEBSCOOP_LLM_ENDPOINT` is set:
+
+```sh
+WEBSCOOP_LLM_ENDPOINT=http://127.0.0.1:11434/v1 WEBSCOOP_LLM_MODEL=qwen3.5:9b \
+  npm run test:e2e -- llm.real
+```
 
 ### Chromium override
 
@@ -79,8 +87,9 @@ webscoop record <url-template> [--name recipe] [--var name=value]... [--profile 
 webscoop record --edit <recipe> [--repick field]
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
-                      [--no-heal] [--no-save] [--interactive]
-webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json]
+                      [--no-heal] [--no-save] [--no-llm] [--interactive]
+webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json] [--no-llm]
+webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop recipes [--json]
 webscoop doctor
 ```
@@ -99,7 +108,8 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--timeout` bounds navigation and network settling (default 30000 ms).
 - `--report` prints the full run report (candidate used, healing outcome, and
   status per field, and where the recipe was written back) to stderr.
-- `--no-heal`, `--no-save`, and `--interactive` control healing; see below.
+- `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
+  see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
@@ -117,7 +127,17 @@ order:
    accessible name, text, stable attributes, ancestors, position), accepted
    at or above the recipe's `healing.fuzzyThreshold` (default 0.7) and only
    when it beats the runner-up by 0.05;
-3. with `--interactive`, you: for a required field nothing else found, the
+3. a language model, when an endpoint is configured (see [Language
+   model](#language-model)) and the recipe's `healing.llm` is true: the
+   runner lists the plausible elements of the scope (by field type, visible
+   ones only, best fingerprint match first, at most 60 and at most 40 percent
+   of the model's context window), and asks the model for the number of the
+   element that is the field, or none. A pick counts only with confidence 0.5
+   or more, a fingerprint score of 0.4 or more (fields), a value that
+   converts for `number` and `date` fields, and, for item fields, a selector
+   that holds in at least half of the item containers. Otherwise the field
+   stays unresolved rather than take a wrong element;
+4. with `--interactive`, you: for a required field nothing else found, the
    browser shows the recorder's re-pick panel and the run waits (no timeout)
    until you click the field's new location, skip it, or abort.
 
@@ -131,8 +151,18 @@ fingerprint; nothing else in the file changes. A failed run never writes.
 - `--no-save` heals but leaves the recipe file alone.
 - `--no-heal` tries only the first candidate per target and never writes;
   anything else missing is missing (exit 3 when required).
+- `--no-llm` skips the model rung for this run, whatever the config and recipe
+  say.
 - `--interactive` opens the browser with the page's Content-Security-Policy
   bypassed so the panel can load; without it a run never injects anything.
+
+A field the model healed is logged with the model's reason, for example
+`healed price: model: css=span[data-qa="price"] (price with currency) (was
+testid=price)`; the reason is also in the `--report` output. When the model
+declines a field, the field's line on stderr, `test --json`, and the report
+(`notes`) carry its reason. The model is asked once per target per run. The
+first time the endpoint fails (refused, timeout, HTTP error) the run logs one
+line and skips the model for the rest of the run.
 
 ### Checking a recipe
 
@@ -146,6 +176,21 @@ one line per target (`item` and every field) with its status, how many rows it
 resolved in, and the selector or rung that found it, and prints no rows. It
 exits 0 when every required field resolved on at least one row, 3 when one did
 not, 1 on errors. Use it from cron before trusting a recipe.
+
+### Measuring heal rates
+
+```sh
+webscoop bench playground-catalog --tiers 0-4          # table on stdout
+webscoop bench playground-catalog --tiers 3 --json     # the same as JSON
+```
+
+`bench` starts the playground on a free port, fills the recipe's `{port}`
+variable (and `{tier}` and `{seed}` when the recipe has them), and runs the
+recipe once per tier with write-back off. It prints one row per tier and
+target with the rung that resolved it (`candidate`, `fuzzy`, `model`, `user`,
+`unresolved`), its status, and the tier's elapsed time. It exits 0 whatever
+healed and 1 when a run broke. The playground is only in a development
+checkout, so `bench` fails with a message elsewhere.
 
 ### Re-picking a field
 
@@ -239,12 +284,56 @@ Config file, all keys optional:
 ```json
 {
   "browser": { "executablePath": "/path/to/chrome" },
-  "llm": { "endpoint": "http://127.0.0.1:11434/v1", "model": "qwen3.5:9b", "contextTokens": 32768 }
+  "llm": {
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "model": "qwen3.5:9b",
+    "apiKey": "optional bearer token",
+    "contextTokens": 32768,
+    "timeoutMs": 60000,
+    "temperature": 0
+  }
 }
 ```
 
-The `llm` block is read and reported by `doctor`; a later change adds a
-model-assisted healing rung that uses it.
+### Language model
+
+The model rung talks to any OpenAI-compatible chat completions endpoint
+(Ollama, llama.cpp, vLLM, and so on). `endpoint` is the base URL before
+`/chat/completions`. `apiKey` is sent as `Authorization: Bearer` only when set.
+`contextTokens` (default 32768) sizes the prompt budget: 40 percent of it,
+estimated at 3.5 characters per token. `timeoutMs` (default 60000) bounds each
+request, and `temperature` defaults to 0. Without both an endpoint and a model
+the rung is off and runs behave as before.
+
+These environment variables override the file:
+
+| Variable | Overrides |
+| -------- | --------- |
+| `WEBSCOOP_LLM_ENDPOINT` | `llm.endpoint` |
+| `WEBSCOOP_LLM_MODEL` | `llm.model` |
+| `WEBSCOOP_LLM_API_KEY` | `llm.apiKey` |
+| `WEBSCOOP_LLM_MOCK` | replaces the endpoint with scripted answers from a JSON file, for tests |
+
+Requests ask for a JSON object (`response_format`), no streaming, and no
+reasoning: `chat_template_kwargs.enable_thinking: false` and
+`reasoning_effort: "none"`, which a server rejecting either gets once more
+without both. A leading `<think>` block and code fences are stripped from the
+answer, and an answer that is not the expected JSON is asked for again once.
+
+`webscoop doctor` probes a configured endpoint: whether it answers, whether
+`/models` lists the model, the round trip of a one-token completion, and a
+warning when `contextTokens` is below 8192. Probe problems are warnings and do
+not change the exit code.
+
+A `WEBSCOOP_LLM_MOCK` script is an array of responses, or
+`{ "contextTokens"?, "responses": [...] }`. Each response has an optional
+`match` (answer only prompts containing this text, such as `"Field: price\n"`),
+an optional `repeat` (keep it for later prompts), and one of `reply` (a string
+or an object sent as JSON), `error` (fail like an unreachable endpoint), or
+`pick` (a regular expression over the numbered candidate lines; the answer is
+the number of the first line it matches, or null), with optional `confidence`
+(default 0.9) and `reason`. The fixtures in `packages/cli/fixtures/llm/` script
+tiers 3 and 4.
 
 ## Recipe format
 
@@ -268,8 +357,8 @@ used by the end-to-end tests, is
 - `fingerprint` (on the item and on fields): what the element looked like when
   it was recorded; fuzzy healing matches against it. Recipes without
   fingerprints skip that rung.
-- `healing`: `fuzzyThreshold` (0 to 1, default 0.7) and `llm` (used by a later
-  change).
+- `healing`: `fuzzyThreshold` (0 to 1, default 0.7) and `llm` (default true;
+  false keeps the model rung off for this recipe).
 - `pagination`, `guards`: fixed now, used by later changes, filled with
   defaults when absent.
 
@@ -286,7 +375,14 @@ ids, roles, and readable classes. Tier 1 replaces every class name, `id`, and
 only roles, text, and structure survive. Tier 2 adds tier 1's churn, wraps each
 card's content in one or two extra `div` elements, moves the price above or
 below the title, and shuffles the cards, all by `seed`; only the fingerprint
-survives. Tiers 3 and 4 return 501 until later changes add them. `chrome=hostile` wraps the catalog in adversarial page
+survives. Tier 3 adds semantic churn on top of tier 2, one choice per page by
+`seed`: cards become `div` or `section`, titles an `h3` or a `div` with
+`role="heading"`, the price a `span` after a sibling `Cost:` or `Now:` label,
+`data-testid` becomes `data-qa`, the rating is described by `title` instead of
+`aria-label`, and the link reads "See product". Fuzzy matching alone does not
+survive it; the model rung does. Tier 4 is tier 3 with the rating element
+removed from every card, so healing must end with `rating` unresolved rather
+than take another element. `chrome=hostile` wraps the catalog in adversarial page
 chrome (fixed header, promo bar, cookie modal, aggressive global CSS, a click
 recorder in `window.__hostClicks`), and `sponsored=N` marks the first N cards
 with class `sponsored`; the recorder tests use both. `POST /__control` with `{"tier","seed","delayMs"}` sets
@@ -300,11 +396,12 @@ extracts all 24 products.
 packages/
   core        recipe schema, URL template, value conversion, runner, events, ports (pure TypeScript)
     src/selectors   selector candidates, stability, item inference, fingerprints
-    src/healing     healing ladder, fingerprint score, fuzzy match, promotion
+    src/healing     healing ladder, fingerprint score, fuzzy match, model rung, promotion
+    src/llm         JSON answers from a language model: stripping, validation, one retry
     src/recorder    recorder protocol, draft state, host-side session controller
   browser     BrowserPort adapter over Playwright
   cli         webscoop command, paths, config, profile lock, output
-  llm         placeholder for the LLM adapter
+  llm         OpenAI-compatible chat client, endpoint probe, scripted mock
   inject      recorder UI injected into the page (React in a closed shadow root, esbuild IIFE)
   playground  fixture site, dataset, tier renderers
 e2e/          Playwright tests that run the built CLI against the playground
