@@ -68,7 +68,7 @@ export function createStrategy(recipe: Recipe, vars: Readonly<Record<string, str
       async next(ctx, page) {
         const next = urlFor(page + 1);
         ctx.advancing();
-        return { kind: 'page', info: await goto(ctx, next) };
+        return { kind: 'page', info: await goto(ctx, next), url: next };
       },
     };
   }

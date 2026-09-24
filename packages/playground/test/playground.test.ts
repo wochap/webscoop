@@ -319,13 +319,6 @@ describe('server', () => {
     expect((await fetch(`${pg.url}/catalog?tier=9`)).status).toBe(400);
   });
 
-  it('returns 501 for reserved routes and parameters', async () => {
-    const pg = await start();
-    expect((await fetch(`${pg.url}/login`)).status).toBe(501);
-    expect((await fetch(`${pg.url}/challenge`)).status).toBe(501);
-    expect((await fetch(`${pg.url}/catalog?wall=login`)).status).toBe(501);
-  });
-
   it('delays the response by at least delayMs', async () => {
     const pg = await start();
     const started = performance.now();

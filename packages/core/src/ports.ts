@@ -80,8 +80,15 @@ export interface Session {
   settle(opts: SettleOptions): Promise<PageInfo>;
   /** Current URL of the page. */
   url(): Promise<string>;
+  /** Bring the browser window to the front, where the compositor allows it. */
+  focus(): Promise<void>;
+  /** Visible text of the document body, capped at `PAGE_TEXT_LIMIT` characters. */
+  pageText(): Promise<string>;
   close(): Promise<void>;
 }
+
+/** Most characters `Session.pageText` returns. */
+export const PAGE_TEXT_LIMIT = 4000;
 
 export interface Geometry {
   x: number;

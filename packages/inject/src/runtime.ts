@@ -208,7 +208,7 @@ export class Runtime implements Actions {
     const overlay = this.opts.overlay;
     const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
     overlay.setSelected(selected);
-    if (!host || !ui.highlight) return overlay.setItems([], 'sibling');
+    if (!host || !ui.highlight || host.guardContext) return overlay.setItems([], 'sibling');
     if (host.proposal) {
       const level = host.proposal[ui.level] ?? host.proposal.proposed;
       const items = level.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);

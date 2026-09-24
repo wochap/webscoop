@@ -137,3 +137,18 @@ describe('FakeBrowser actions', () => {
     expect(await count()).toBe(16);
   });
 });
+
+describe('FakeBrowser page text and focus', () => {
+  it('reads the body text without scripts and hidden elements, whitespace collapsed', async () => {
+    const dom = h('html', {}, h('head', {}, h('title', {}, 'Ignored')), h('body', {}, h('h1', {}, 'Verify  you'), h('script', {}, 'var x = 1;'), h('p', { hidden: '' }, 'secret'), h('p', {}, 'are human')));
+    const session = await open(dom);
+    expect(await session.pageText()).toBe('Verify you are human');
+  });
+
+  it('caps the text and counts focus calls', async () => {
+    const session = await open(h('html', {}, h('body', {}, 'x'.repeat(5000))));
+    expect((await session.pageText()).length).toBe(4000);
+    await session.focus();
+    expect((session as unknown as { focused: number }).focused).toBe(1);
+  });
+});

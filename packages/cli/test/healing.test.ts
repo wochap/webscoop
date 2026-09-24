@@ -111,7 +111,11 @@ describe('run healing flags', () => {
     expect(await main(['run', 'shop', '--interactive'], t)).toBe(ExitCode.Ok);
     expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[1]).toBeUndefined();
+    // The DevTools port is honored for every run, the recorder bundle only for interactive ones.
+    expect(browser.openOptions[1]).toEqual({ remoteDebuggingPort: 9333 });
+    const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
+    expect(browser.openOptions[2]).toBeUndefined();
   });
 });
 

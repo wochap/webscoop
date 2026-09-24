@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { recordEvents, RunEmitter, type Row, type RunEvents } from '../src';
+import { recordEvents, RUN_EVENT_NAMES, RunEmitter, type FailureReason, type GuardEntry, type Row, type RunEvents, type RunReport } from '../src';
 
 describe('RunEmitter', () => {
   it('delivers typed payloads to named and catch-all listeners', () => {
@@ -37,5 +37,20 @@ describe('RunEmitter', () => {
     off();
     emitter.emit('page.done', { page: 1, rows: 0 });
     expect(calls).toBe(1);
+  });
+
+  it('types guard events, the paused failure, and the report guard list', () => {
+    expect(RUN_EVENT_NAMES).toEqual(expect.arrayContaining(['guard.raised', 'guard.cleared', 'guard.timeout']));
+    expect(RUN_EVENT_NAMES.indexOf('guard.raised')).toBeGreaterThan(RUN_EVENT_NAMES.indexOf('page.loaded'));
+    expectTypeOf<RunEvents['guard.raised']>().toEqualTypeOf<{ kind: 'login' | 'captcha' | 'zero-fields'; page: number; url: string; reason: string }>();
+    expectTypeOf<RunEvents['guard.cleared']>().toEqualTypeOf<{ kind: 'login' | 'captcha' | 'zero-fields'; page: number; url: string; waitedMs: number }>();
+    expectTypeOf<RunEvents['guard.timeout']>().toEqualTypeOf<RunEvents['guard.cleared']>();
+    expectTypeOf<'paused'>().toExtend<FailureReason>();
+    expectTypeOf<RunReport['guards']>().toEqualTypeOf<GuardEntry[]>();
+    const emitter = new RunEmitter();
+    const log = recordEvents(emitter);
+    emitter.emit('guard.raised', { kind: 'login', page: 1, url: 'http://x/login', reason: 'redirected to a login page' });
+    emitter.emit('guard.cleared', { kind: 'login', page: 1, url: 'http://x/login', waitedMs: 1200 });
+    expect(log.of('guard.cleared')[0]!.waitedMs).toBe(1200);
   });
 });

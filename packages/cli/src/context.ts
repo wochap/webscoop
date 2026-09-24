@@ -1,4 +1,4 @@
-import type { BrowserPort } from '@webscoop/core';
+import type { BrowserPort, NotifyPort } from '@webscoop/core';
 import type { Config } from './config';
 import type { Env } from './paths';
 
@@ -23,6 +23,8 @@ export interface CliIo {
   prompt(question: string): Promise<string | null>;
   /** The injected recorder bundle; the e2e variant carries the test hook. */
   recorderBundle(variant: 'default' | 'e2e'): Promise<string>;
+  /** Desktop notifications, for guards. */
+  createNotify(env: Env): NotifyPort;
 }
 
 export interface ChromiumInfo {

@@ -105,7 +105,7 @@ describe('runner healing', () => {
   });
 
   it('lists the new events in RUN_EVENT_NAMES', () => {
-    expect(RUN_EVENT_NAMES).toEqual(['run.start', 'page.loaded', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'run.done', 'run.failed']);
+    expect(RUN_EVENT_NAMES).toEqual(['run.start', 'page.loaded', 'guard.raised', 'guard.cleared', 'guard.timeout', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'run.done', 'run.failed']);
   });
 });
 

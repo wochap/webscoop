@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test as base } from '@playwright/test';
 import type { RecipeInput } from '@webscoop/core';
 import { startPlayground, type Playground } from '@webscoop/playground';
+import { startGuardedRun, type GuardedRun } from './guard-fixture';
 import { startRecording, type Recording } from './recorder-fixture';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
@@ -26,6 +27,10 @@ export interface CliResult {
 export interface CliRun {
   child: ChildProcess;
   done: Promise<CliResult>;
+  /** Stdout so far. */
+  out(): string;
+  /** Stderr so far. */
+  err(): string;
 }
 
 export interface Scoop {
@@ -46,6 +51,8 @@ export interface Scoop {
   record(args: string[]): Promise<Recording>;
   /** Start `webscoop run --interactive` and attach once its re-pick panel shows up. */
   interactiveRun(args: string[]): Promise<Recording>;
+  /** Start `webscoop run` with a DevTools port and attach to its browser, to clear guards as the user would. */
+  guardedRun(args: string[], env?: Record<string, string | undefined>): Promise<GuardedRun>;
 }
 
 export function referenceRecipe(port: number, path = REFERENCE_RECIPE): RecipeInput {
@@ -86,7 +93,7 @@ export const test = base.extend<{ scoop: Scoop }>({
           resolveDone({ code, signal, stdout, stderr });
         });
       });
-      return { child, done };
+      return { child, done, out: () => stdout, err: () => stderr };
     };
 
     const cleanups: (() => Promise<void>)[] = [];
@@ -100,6 +107,7 @@ export const test = base.extend<{ scoop: Scoop }>({
       run: (args, env) => spawnCli(args, env).done,
       record: (args) => startRecording(scoop, args, cleanups),
       interactiveRun: (args) => startRecording(scoop, args, cleanups, 'run'),
+      guardedRun: (args, env) => startGuardedRun(scoop, args, cleanups, env),
     };
     await use(scoop);
 
@@ -117,3 +125,4 @@ export const test = base.extend<{ scoop: Scoop }>({
 
 export { expect } from '@playwright/test';
 export type { Recording } from './recorder-fixture';
+export type { GuardedRun } from './guard-fixture';

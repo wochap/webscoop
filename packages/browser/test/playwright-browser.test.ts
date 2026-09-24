@@ -48,6 +48,15 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     expect(await page.evaluate(() => navigator.webdriver)).toBe(false);
   });
 
+  it('reads the visible page text and brings the window to the front', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const text = await session.pageText();
+    expect(text).toContain(dataset[0]!.title);
+    expect(text).not.toMatch(/\s{2}/);
+    expect(text.length).toBeLessThanOrEqual(4000);
+    await session.focus();
+  });
+
   it('waits for a slow page within the timeout', async () => {
     const info = await session.goto(`${playground.url}/catalog?tier=0&delayMs=1500`, { timeoutMs: 10_000 });
     expect(info.status).toBe(200);

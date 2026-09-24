@@ -43,15 +43,26 @@ import {
   type ParsedSelection,
   type ProposalView,
   type ProtocolCandidate,
+  type GuardContextView,
   type RecorderState,
   type RepickContext,
   type TestResults,
 } from './protocol';
 
-/** `full` records a whole recipe; `repick` focuses on replacing one field's selectors. */
+/**
+ * `full` records a whole recipe; `repick` focuses on replacing one field's
+ * selectors; `guard` only shows the guard banner while a run waits for a human.
+ */
 export type RecorderMode =
   | { kind: 'full' }
-  | { kind: 'repick'; fieldIndex: number; reason: 'run' | 'cli'; sample?: string | null };
+  | { kind: 'repick'; fieldIndex: number; reason: 'run' | 'cli'; sample?: string | null }
+  | { kind: 'guard' };
+
+/** Hooks for the guard banner's buttons. */
+export interface GuardHooks {
+  onContinue(cb: () => void): void;
+  onAbort(cb: () => void): void;
+}
 
 /** How a focused re-pick ended. */
 export type RepickOutcome =
@@ -123,6 +134,9 @@ export class RecorderController {
   private readonly closedPromise: Promise<'closed' | 'ended'>;
   private repickResolve!: (outcome: RepickOutcome) => void;
   private readonly repickPromise: Promise<RepickOutcome>;
+  private readonly guardListeners = { continue: new Set<() => void>(), abort: new Set<() => void>() };
+  /** Set by `detach`: pages that load afterwards are told to remove the recorder. */
+  private detached = false;
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
@@ -149,6 +163,7 @@ export class RecorderController {
       proposal: null,
       repick: repickContext ? repickContext.index : null,
       repickContext,
+      guardContext: null,
       test: null,
       saved: null,
       busy: null,
@@ -212,6 +227,7 @@ export class RecorderController {
       }),
       this.session.onClosed(() => {
         this.repickResolve({ kind: 'abort' });
+        if (this.current.guardContext) this.fireGuard('abort');
         this.closedResolve('closed');
       }),
     );
@@ -225,7 +241,32 @@ export class RecorderController {
     } catch {
       // The page is gone or navigating; nothing is left to remove.
     }
+    this.detached = true;
     this.dispose();
+  }
+
+  /** Show the guard banner and return hooks for its buttons. */
+  async showGuard(ctx: GuardContextView): Promise<GuardHooks> {
+    this.current = { ...this.current, guardContext: ctx };
+    this.guardListeners.continue.clear();
+    this.guardListeners.abort.clear();
+    await this.push();
+    return {
+      onContinue: (cb) => void this.guardListeners.continue.add(cb),
+      onAbort: (cb) => void this.guardListeners.abort.add(cb),
+    };
+  }
+
+  /** Remove the guard banner; the buttons stop firing. */
+  async hideGuard(): Promise<void> {
+    this.current = { ...this.current, guardContext: null };
+    this.guardListeners.continue.clear();
+    this.guardListeners.abort.clear();
+    await this.push();
+  }
+
+  private fireGuard(which: 'continue' | 'abort'): void {
+    for (const cb of this.guardListeners[which]) cb();
   }
 
   dispose(): void {
@@ -273,6 +314,8 @@ export class RecorderController {
   private async route(msg: ParsedPageMessage): Promise<HostMessage | void> {
     switch (msg.kind) {
       case 'session.ready':
+        // A page loaded after the host detached still runs the injected bundle; tell it to go away.
+        if (this.detached) return { kind: 'session.detach' };
         this.current = { ...this.current, url: msg.url };
         this.emitter.emit('recorder.ready', { url: msg.url });
         // Counts refresh after the reply, so the panel renders at once.
@@ -377,6 +420,11 @@ export class RecorderController {
       case 'repick.abort':
         if (!this.current.repickContext) throw new Error('no re-pick is in progress');
         this.repickResolve({ kind: 'abort' });
+        return;
+      case 'guard.continue':
+      case 'guard.abort':
+        if (!this.current.guardContext) throw new Error('the run is not waiting on a guard');
+        this.fireGuard(msg.kind === 'guard.continue' ? 'continue' : 'abort');
         return;
     }
   }

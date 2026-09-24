@@ -181,7 +181,7 @@ function pagerScript(kind: 'more' | 'scroll', more: NonNullable<Pager['more']>):
     if (busy || cfg.after >= cfg.total) return;
     busy = true;
     fetch('/catalog/more?after=' + cfg.after + '&tier=' + cfg.tier + '&seed=' + cfg.seed)
-      .then(function (r) { return r.text(); })
+      .then(function (r) { return r.ok ? r.text() : ''; })
       .then(function (html) {
         list.insertAdjacentHTML('beforeend', html);
         cfg.after = Math.min(cfg.total, cfg.after + 8);

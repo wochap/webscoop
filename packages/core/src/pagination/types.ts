@@ -10,7 +10,8 @@ export const DEFAULT_PAGE_CAP = 500;
 
 /** What advancing produced: a new page, more items on the same page, or the end. */
 export type Advance =
-  | { kind: 'page'; info: PageInfo }
+  /** A new page; `url` is the URL requested for it, when the strategy navigated to one. */
+  | { kind: 'page'; info: PageInfo; url?: string }
   /** The page grew; items from index `from` on are the next page. */
   | { kind: 'grown'; from: number }
   | { kind: 'stop'; reason: StopReason };

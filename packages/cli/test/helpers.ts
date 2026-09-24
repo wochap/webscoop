@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowserPort } from '@webscoop/core';
+import type { BrowserPort, Notification } from '@webscoop/core';
 import { afterEach } from 'vitest';
 import type { ChromiumInfo, CliIo } from '../src';
 
@@ -22,6 +22,8 @@ export interface TestIo extends CliIo {
   browserCreated: () => number;
   interrupt: () => void;
   prompts: () => string[];
+  /** Notifications sent through `createNotify`. */
+  notifications: Notification[];
 }
 
 export function testIo(opts: {
@@ -39,6 +41,7 @@ export function testIo(opts: {
   let err = '';
   let created = 0;
   const handlers = new Set<() => void>();
+  const notifications: Notification[] = [];
   return {
     stdout: { write: (s: string) => (out += s) },
     stderr: { write: (s: string) => (err += s) },
@@ -64,6 +67,8 @@ export function testIo(opts: {
     async recorderBundle(variant) {
       return `/* recorder ${variant} */`;
     },
+    createNotify: () => ({ notify: async (n) => void notifications.push(n) }),
+    notifications,
     prompts: () => prompts,
     out: () => out,
     err: () => err,

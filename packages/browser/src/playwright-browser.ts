@@ -7,6 +7,7 @@ import {
   type GotoOptions,
   type InteractiveSession,
   type OpenOptions,
+  PAGE_TEXT_LIMIT,
   type PageInfo,
   type ReadOptions,
   type SelectorCandidate,
@@ -189,6 +190,15 @@ class PlaywrightSession implements InteractiveSession {
 
   async url(): Promise<string> {
     return this.page.url();
+  }
+
+  async focus(): Promise<void> {
+    await this.page.bringToFront();
+  }
+
+  async pageText(): Promise<string> {
+    const text = await this.page.evaluate(() => document.body?.innerText ?? '');
+    return text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT);
   }
 
   async close(): Promise<void> {

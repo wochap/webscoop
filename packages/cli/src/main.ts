@@ -10,6 +10,7 @@ import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
 import { loadRecorderBundle } from './bundle';
 import { chromiumOverride, type ChromiumInfo, type CliIo } from './context';
+import { NotifySend } from './notify';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
 
 export const VERSION = '0.1.0';
@@ -57,7 +58,8 @@ Healing:
 Exit codes:
   0  success
   1  error to fix or unexpected failure (bad arguments, invalid recipe, no display, browser crash)
-  2  run paused for user input and the wait timed out (retry later)
+  2  run paused on a login wall, bot check, or interstitial and nobody cleared it
+     within --guard-timeout (retry later; rows of completed pages are kept)
   3  a required field could not be resolved (alert a human)
 `;
 
@@ -91,9 +93,18 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--pages <1|N|all>', 'pages to walk, replacing the recipe limit').argParser(pagesArg))
     .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
+    .addOption(new Option('--guard-timeout <ms>', 'longest total wait for you to clear login walls and bot checks before exiting 2 (default: 600000)').argParser(positiveInt))
+    .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
+    .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
     .addHelpText(
       'after',
       `
+Guards: when a page asks for a human (a login redirect, a bot check, or a
+short or errored page where nothing resolves), the run brings the browser
+window to the front, sends a desktop notification, and waits for you to clear
+it, then resumes on the same page. With --interactive a banner over the page
+shows a countdown with Continue and Abort. Nobody within --guard-timeout: exit 2.
+
 Pagination: the recipe says how to reach the next page (a page number in the
 URL, a next link, a load-more button, or infinite scroll) and how many pages
 to walk. Rows repeated from an earlier page are dropped. With --jsonl, rows
@@ -121,7 +132,10 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--pages <1|N|all>', 'pages to walk (default: the first page only)').argParser(pagesArg))
     .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
-    .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 1 on error.')
+    .addOption(new Option('--guard-timeout <ms>', 'how long to wait for you to clear a login wall or bot check (default: 0, exit 2 at once)').argParser(positiveInt))
+    .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
+    .option('--no-notify', 'do not send a desktop notification when a guard is raised')
+    .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
   program
@@ -248,5 +262,6 @@ export function defaultIo(): CliIo {
       }
     },
     recorderBundle: loadRecorderBundle,
+    createNotify: (env) => new NotifySend({ stderr: process.stderr, env }),
   };
 }

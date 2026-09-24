@@ -95,6 +95,8 @@ describe('Runner', () => {
           scrollToBottom: async () => {},
           settle: async () => ({ url: '', title: '', status: null }),
           url: async () => '',
+          focus: async () => {},
+          pageText: async () => '',
           close: async () => {
             closed = true;
             releaseGoto();

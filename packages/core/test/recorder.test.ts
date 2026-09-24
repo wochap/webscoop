@@ -39,6 +39,7 @@ const sampleState: RecorderState = {
   proposal: null,
   repick: null,
   repickContext: null,
+  guardContext: null,
   test: null,
   saved: null,
   busy: null,
@@ -90,6 +91,8 @@ describe('protocol', () => {
     { kind: 'repick.confirm' },
     { kind: 'repick.skip' },
     { kind: 'repick.abort' },
+    { kind: 'guard.continue' },
+    { kind: 'guard.abort' },
   ];
   const host: HostMessage[] = [
     { kind: 'draft.state', state: sampleState },
@@ -109,6 +112,10 @@ describe('protocol', () => {
         repick: 0,
         repickContext: { field: 'price', index: 0, oldSelector: candidate, fingerprint: fp, sample: '$1', threshold: 0.7, reason: 'run', picked: { score: 0.91, sample: '$2', selector: candidate } },
       },
+    },
+    {
+      kind: 'draft.state',
+      state: { ...sampleState, guardContext: { kind: 'login', reason: 'redirected to a login page', page: 1, url: CATALOG, deadline: 1_700_000_000_000 } },
     },
   ];
 

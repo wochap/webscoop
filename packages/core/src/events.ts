@@ -1,12 +1,25 @@
 import type { HealOutcome } from './healing/types';
 import type { StopReason } from './pagination/types';
-import type { Fingerprint, FieldType, PaginationKind, SelectorCandidate } from './recipe/schema';
+import type { Fingerprint, FieldType, GuardKind, PaginationKind, SelectorCandidate } from './recipe/schema';
 
 export type FieldStatus = 'ok' | 'healed' | 'partial' | 'missing';
 
 export type Row = Record<string, unknown> & { _page: number; _index: number };
 
-export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'error';
+/** `paused`: a guard was not cleared within the run's guard timeout. */
+export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'paused' | 'error';
+
+/** One guard occurrence: a page that asked for a human. */
+export interface GuardEntry {
+  kind: GuardKind;
+  page: number;
+  /** URL where the guard was detected. */
+  url: string;
+  /** How long the run waited for the guard to clear. */
+  waitedMs: number;
+  /** False when the guard timeout elapsed first. */
+  cleared: boolean;
+}
 
 export interface FieldReport {
   name: string;
@@ -58,6 +71,8 @@ export interface RunReport {
   healed: number;
   /** Path the promoted recipe was written to, or null when it was not written. */
   savedTo: string | null;
+  /** Every guard raised during the run, in order. */
+  guards: GuardEntry[];
 }
 
 export interface PageReport {
@@ -78,6 +93,9 @@ export interface RepickInfo {
 export interface RunEvents {
   'run.start': { recipe: string; url: string; profileDir: string; at: string };
   'page.loaded': { page: number; url: string; title: string; status: number | null };
+  'guard.raised': { kind: GuardKind; page: number; url: string; reason: string };
+  'guard.cleared': { kind: GuardKind; page: number; url: string; waitedMs: number };
+  'guard.timeout': { kind: GuardKind; page: number; url: string; waitedMs: number };
   'field.resolved': { page: number; field: FieldReport };
   'field.healed': {
     page: number;
@@ -105,6 +123,9 @@ export type RunEventName = keyof RunEvents;
 export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'run.start',
   'page.loaded',
+  'guard.raised',
+  'guard.cleared',
+  'guard.timeout',
   'field.resolved',
   'field.healed',
   'repick.requested',

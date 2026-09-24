@@ -4,6 +4,7 @@ import { modeOf, type Actions, type Snapshot } from '../store';
 import { PickActionGrid, SelectorCandidateList } from './candidates';
 import { useActions, useSnapshot } from './context';
 import { FieldList } from './fields';
+import { GuardBanner, GuardPanel } from './guard';
 import { ItemDetectCard, ItemSummary } from './items';
 import { PaginationEditor } from './pagination';
 import { ElementInspector, PickModeStrip } from './picking';
@@ -62,6 +63,8 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
 
 /** Resolve and run the shortcut for a key event; returns whether one ran. */
 export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot, actions: Actions): boolean {
+  // While a run waits on a guard, every key belongs to the page (the user is logging in).
+  if (snap.host?.guardContext) return false;
   const shortcut = shortcutFor(e, {
     typing: isTypingTarget(target),
     picking: snap.ui.picking,
@@ -96,6 +99,20 @@ export function ScoopRoot() {
         <PanelShell header={<PanelHeader mode={mode} onEnd={() => void actions.send({ kind: 'session.end' })} />} footer={null}>
           <span className="ws-meta">Connecting to webscoop…</span>
         </PanelShell>
+      </div>
+    );
+  }
+
+  if (host.guardContext) {
+    const ctx = host.guardContext;
+    const abort = () => void actions.send({ kind: 'guard.abort' });
+    return (
+      <div style={{ display: 'contents' }} data-ws="panel">
+        <PanelShell header={<PanelHeader mode={mode} onEnd={abort} />} footer={null}>
+          <GuardPanel context={ctx} />
+        </PanelShell>
+        <GuardBanner context={ctx} onContinue={() => void actions.send({ kind: 'guard.continue' })} onAbort={abort} />
+        <ToastStack toasts={ui.toasts} />
       </div>
     );
   }

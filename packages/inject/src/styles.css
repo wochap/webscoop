@@ -59,6 +59,9 @@
 #ws-root *,
 #ws-root *::before,
 #ws-root *::after,
+#ws-guard *,
+#ws-guard *::before,
+#ws-guard *::after,
 #ws-drawer *,
 #ws-drawer *::before,
 #ws-drawer *::after {
@@ -69,7 +72,8 @@
 #ws-root button,
 #ws-root input,
 #ws-root select,
-#ws-drawer button {
+#ws-drawer button,
+#ws-guard button {
   font: inherit;
   color: inherit;
   margin: 0;
@@ -415,3 +419,41 @@
 .ws-scorebar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--ws-accent); }
 .ws-scorebar-likely { background: var(--ws-ok); }
 .ws-scorebar-threshold { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ws-warn); }
+
+/* Guard banner: lives in the drawer host, fixed across the top of the page area, outside the sidebar. */
+#ws-guard {
+  --ws-bg: #161826;
+  --ws-surface-2: #292b31;
+  --ws-border: rgba(233, 233, 237, 0.16);
+  --ws-text: #e9e9ed;
+  --ws-text-muted: #b2b6ca;
+  --ws-text-faint: #9397ab;
+  --ws-accent: #9184d9;
+  --ws-accent-300: #b5abfc;
+  --ws-warn: #e6c98f;
+  --ws-warn-tint: #3b3222;
+  --ws-r-sm: 4px;
+  --ws-shadow-sm: 0 0 0 1px #3f424d;
+  --ws-s2: 5.6px;
+  --ws-sans: 'Webscoop Inter', Inter, system-ui, sans-serif;
+  --ws-mono: 'Webscoop Mono', 'JetBrains Mono', ui-monospace, monospace;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 400px;
+  min-height: 52px;
+  z-index: 2147483647;
+  isolation: isolate;
+  color-scheme: dark;
+  font: 400 12px/1.45 var(--ws-sans);
+  color: var(--ws-text);
+  background: var(--ws-bg);
+  box-shadow: 0 1px 0 var(--ws-warn), 0 12px 30px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  text-align: left;
+}
+#ws-guard .ws-guard-text { min-width: 0; }
+.ws-countdown { font-family: var(--ws-mono); font-variant-numeric: tabular-nums; flex: none; }

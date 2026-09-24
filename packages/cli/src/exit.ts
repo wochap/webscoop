@@ -25,5 +25,7 @@ export class CliError extends Error {
 }
 
 export function exitCodeFor(reason: FailureReason): ExitCode {
-  return reason === 'missing-required' ? ExitCode.Unresolved : ExitCode.Error;
+  if (reason === 'missing-required') return ExitCode.Unresolved;
+  if (reason === 'paused') return ExitCode.Paused;
+  return ExitCode.Error;
 }

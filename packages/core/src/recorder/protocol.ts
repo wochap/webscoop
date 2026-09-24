@@ -186,6 +186,16 @@ export const RepickContextSchema = z.object({
   picked: z.nullable(z.object({ score: z.nullable(z.number()), sample: z.nullable(z.string()), selector: SelectorSchema })),
 });
 
+/** What the guard banner shows while an interactive run waits for a human. */
+export const GuardContextSchema = z.object({
+  kind: z.enum(GUARD_KINDS),
+  reason: z.string(),
+  page: z.int().check(z.positive()),
+  url: z.string(),
+  /** When the guard timeout runs out, in epoch milliseconds. */
+  deadline: z.number(),
+});
+
 export const RecorderStateSchema = z.object({
   url: z.string(),
   draft: DraftSchema,
@@ -195,6 +205,8 @@ export const RecorderStateSchema = z.object({
   repick: z.nullable(index()),
   /** Set in the focused re-pick mode. */
   repickContext: z._default(z.nullable(RepickContextSchema), null),
+  /** Set while an interactive run is paused on a guard. */
+  guardContext: z._default(z.nullable(GuardContextSchema), null),
   test: z.nullable(TestResultsSchema),
   saved: z.nullable(z.object({ name: z.string(), path: z.optional(z.string()), at: z.string() })),
   busy: z.nullable(z.string()),
@@ -251,6 +263,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('repick.confirm', {}),
   msg('repick.skip', {}),
   msg('repick.abort', {}),
+  msg('guard.continue', {}),
+  msg('guard.abort', {}),
 ]);
 
 export const HostMessageSchema = z.discriminatedUnion('kind', [
@@ -287,6 +301,7 @@ export type SelectedView = z.infer<typeof SelectedSchema>;
 export type TestResults = z.infer<typeof TestResultsSchema>;
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
 export type RepickContext = z.infer<typeof RepickContextSchema>;
+export type GuardContextView = z.infer<typeof GuardContextSchema>;
 export type FieldPatch = z.infer<typeof FieldPatchSchema>;
 export type PaginationPatch = z.infer<typeof PaginationPatchSchema>;
 export type PageMessage = z.input<typeof PageMessageSchema>;

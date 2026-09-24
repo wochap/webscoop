@@ -2,8 +2,12 @@ import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import {
+  DEFAULT_GUARD_TIMEOUT_MS,
   firstPageUrl,
+  type GuardBannerHandler,
+  type GuardOptions,
   MissingVariableError,
+  NoopNotify,
   PaginationInputError,
   type PaginationOverrides,
   modelResolver,
@@ -24,6 +28,7 @@ import { requireDisplay } from '../display';
 import { CliError, ExitCode, exitCodeFor, type ExitCode as Code } from '../exit';
 import { acquireProfileLock, type ProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
+import { interactiveGuardBanner } from '../guard';
 import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { FsStorage } from '../storage';
@@ -49,6 +54,27 @@ export interface RunCommandOptions {
   maxPages?: number;
   /** `--delay`: milliseconds between pages. */
   delay?: number;
+  /** `--guard-timeout`: longest total wait for guards. */
+  guardTimeout?: number;
+  /** False with `--no-guards`. */
+  guards?: boolean;
+  /** False with `--no-notify`. */
+  notify?: boolean;
+}
+
+/** Guard options for the runner from `--guard-timeout`, `--no-guards`, and `--no-notify`. */
+export function guardsFromFlags(
+  io: CliIo,
+  opts: Pick<RunCommandOptions, 'guardTimeout' | 'guards' | 'notify'>,
+  defaultTimeoutMs: number,
+  banner?: GuardBannerHandler,
+): GuardOptions {
+  return {
+    enabled: opts.guards !== false,
+    timeoutMs: opts.guardTimeout ?? defaultTimeoutMs,
+    notify: opts.notify === false ? new NoopNotify() : io.createNotify(io.env),
+    ...(banner ? { banner } : {}),
+  };
 }
 
 /** Pagination overrides for the runner from `--pages`, `--max-pages`, and `--delay`. */
@@ -82,8 +108,10 @@ export function summary(report: RunReport): string {
   const seconds = (report.durationMs / 1000).toFixed(2);
   const pages = `${report.pageCount} page${report.pageCount === 1 ? '' : 's'}`;
   const healed = report.healed > 0 ? `, ${report.healed} healed` : '';
+  const cleared = report.guards.filter((g) => g.cleared).length;
+  const guards = cleared > 0 ? `, ${cleared} guard${cleared === 1 ? '' : 's'} cleared` : '';
   const duplicates = report.duplicateCount > 0 ? `, ${report.duplicateCount} duplicate${report.duplicateCount === 1 ? '' : 's'} dropped` : '';
-  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${duplicates} in ${seconds}s (${report.recipe})`;
+  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -133,6 +161,7 @@ class RowSink {
     this.pending = this.pending.then(async () => (await this.target()).write(`${JSON.stringify(row)}\n`));
   }
 
+  /** Write what was collected: every row on success, the rows of completed pages when a guard timed out. */
   async finish(success: boolean): Promise<void> {
     await this.pending;
     if (success && !this.opts.jsonl) (await this.target()).write(`${JSON.stringify(this.buffered, null, 2)}\n`);
@@ -183,6 +212,10 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
 function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
   emitter.on('run.start', (e) => log(io, `running ${e.recipe} on profile "${profile}": ${e.url}`));
   emitter.on('page.loaded', (e) => log(io, `page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
+  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+  emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
+  emitter.on('guard.cleared', (e) => log(io, `guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
+  emitter.on('guard.timeout', (e) => log(io, `guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
   emitter.on('field.healed', (e) =>
     log(io, `healed ${e.target}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
   );
@@ -204,7 +237,8 @@ export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean }): R
   return modelResolver(createLlm(config, io.env, io.cwd), { enabled: opts.llm !== false, log: (message) => log(io, message) });
 }
 
-async function e2ePort(io: CliIo): Promise<number | undefined> {
+/** `WEBSCOOP_E2E_CDP_PORT`: a DevTools port so end-to-end tests can drive the run's own browser. */
+export async function e2ePort(io: CliIo): Promise<number | undefined> {
   const cdpPort = io.env.WEBSCOOP_E2E_CDP_PORT?.trim();
   if (!cdpPort) return undefined;
   if (!/^\d+$/.test(cdpPort)) throw new CliError(`invalid WEBSCOOP_E2E_CDP_PORT "${cdpPort}"`);
@@ -227,14 +261,16 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
     emitter.on('row.emitted', (e) => sink.row(e.row));
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
-    let openOptions: OpenOptions | undefined;
+    const port = await e2ePort(io);
+    let openOptions: OpenOptions | undefined = port !== undefined ? { remoteDebuggingPort: port } : undefined;
     let repick: RepickHandler | undefined;
+    let banner: GuardBannerHandler | undefined;
     if (opts.interactive) {
-      // Re-pick injects the recorder, which needs the page's CSP out of the way.
-      const port = await e2ePort(io);
+      // Re-pick and the guard banner inject the recorder, which needs the page's CSP out of the way.
       const bundle = await io.recorderBundle(port !== undefined ? 'e2e' : 'default');
-      openOptions = { bypassCSP: true, ...(port !== undefined ? { remoteDebuggingPort: port } : {}) };
+      openOptions = { bypassCSP: true, ...openOptions };
       repick = interactiveRepick(io, { storage, bundle, vars, timeoutMs: opts.timeout });
+      banner = interactiveGuardBanner(io, { storage, bundle, recipe, vars, timeoutMs: opts.timeout });
     }
 
     const browser = await io.createBrowser(config, io.env);
@@ -248,16 +284,21 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       signal: controller.signal,
       healing,
       pagination: paginationFromFlags(opts),
+      guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
       saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
       ...(openOptions ? { openOptions } : {}),
       ...(repick ? { repick } : {}),
     });
     const result = await runner.run();
-    await sink.finish(result.ok);
+    await sink.finish(result.ok || result.reason === 'paused');
 
     for (const warning of result.report.warnings) log(io, `warning: ${warning}`);
     if (opts.report) io.stderr.write(`${JSON.stringify(result.report, null, 2)}\n`);
     if (!result.ok) {
+      if (result.reason === 'paused') {
+        log(io, `run paused and gave up waiting: ${result.message} (${result.rows.length} rows from completed pages kept; retry later)`);
+        return ExitCode.Paused;
+      }
       log(io, `run failed (${result.reason}): ${result.message}`);
       return result.reason === 'aborted' ? ExitCode.Error : exitCodeFor(result.reason);
     }
@@ -281,6 +322,12 @@ export interface TestCommandOptions {
   pages?: number | 'all';
   maxPages?: number;
   delay?: number;
+  /** `--guard-timeout`: default 0 for `test`, so a wall exits 2 at once. */
+  guardTimeout?: number;
+  /** False with `--no-guards`. */
+  guards?: boolean;
+  /** False with `--no-notify`. */
+  notify?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -359,6 +406,7 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
   try {
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile);
+    const port = await e2ePort(io);
     const browser = await io.createBrowser(config, io.env);
     const runner = new Runner({
       recipe,
@@ -370,6 +418,8 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       emitter,
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
+      guards: guardsFromFlags(io, opts, 0),
+      ...(port !== undefined ? { openOptions: { remoteDebuggingPort: port } } : {}),
     });
     const result = await runner.run();
     const rows = testRows(result.report);
@@ -379,8 +429,8 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       return ExitCode.Ok;
     }
     log(io, `test failed (${result.reason}): ${result.message}`);
-    if (result.reason === 'missing-required') return ExitCode.Unresolved;
-    return ExitCode.Error;
+    if (result.reason === 'aborted') return ExitCode.Error;
+    return exitCodeFor(result.reason);
   } finally {
     offInterrupt();
     lock.release();

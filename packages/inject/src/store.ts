@@ -1,6 +1,6 @@
 import type { Crumb, PageMessage, Path, RecorderState } from '@webscoop/core/page';
 
-export type Mode = 'idle' | 'picking' | 'repick' | 'selected' | 'items' | 'editing' | 'test';
+export type Mode = 'idle' | 'picking' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
 
 export interface Toast {
   id: number;
@@ -77,6 +77,7 @@ export class Store {
 
 /** The panel mode shown in the header pill. */
 export function modeOf({ host, ui }: Snapshot): Mode {
+  if (host?.guardContext) return 'guard';
   if (ui.picking) return 'picking';
   if (host?.repickContext) return 'repick';
   if (ui.drawerOpen && host?.test) return 'test';

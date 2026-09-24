@@ -121,6 +121,7 @@ export type FieldScope = RecipeField['scope'];
 export type Pagination = z.infer<typeof PaginationSchema>;
 export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;
+export type GuardKind = Guard['kind'];
 export type Healing = z.infer<typeof HealingSchema>;
 export type Recipe = z.infer<typeof RecipeSchema>;
 /** Recipe as written on disk, before defaults are filled in. */

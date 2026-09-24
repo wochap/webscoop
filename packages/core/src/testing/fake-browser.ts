@@ -12,7 +12,7 @@ import type {
   Session,
   SettleOptions,
 } from '../ports';
-import { TimeoutError } from '../ports';
+import { PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
 import type { SelectorCandidate } from '../recipe/schema';
 import { compileCss } from './css';
 import { accessibleName, indexTree, innerHtml, normalize, roleOf, textContent, type DomNode } from './dom';
@@ -36,6 +36,15 @@ export interface FakePage {
   more?: number[];
   /** Item counts after each scroll to the bottom. */
   scroll?: number[];
+  /** Serve this URL's page instead, as an HTTP redirect would; `dom` is ignored. */
+  redirect?: string;
+}
+
+const HIDDEN_TAGS = new Set(['script', 'style', 'template', 'noscript', 'head']);
+
+function visibleText(el: SerializedElement): string {
+  if (HIDDEN_TAGS.has(el.tag) || 'hidden' in el.attrs) return '';
+  return el.children.map((c) => (c.type === 'text' ? c.text : ` ${visibleText(c)} `)).join('');
 }
 
 class FakeRef implements ElementRef {
@@ -70,6 +79,17 @@ export class FakeSession implements Session {
     return page;
   }
 
+  /** Follow redirects: the final URL and its page. */
+  private follow(url: string): { url: string; page: FakePage } {
+    let page = this.page(url);
+    for (let hops = 0; page.redirect !== undefined; hops++) {
+      if (hops > 10) throw new Error(`net::ERR_TOO_MANY_REDIRECTS at ${url}`);
+      url = new URL(page.redirect, url).href;
+      page = this.page(url);
+    }
+    return { url, page };
+  }
+
   private info(url: string, page: FakePage): PageInfo {
     return { url, title: page.title ?? '', status: page.status ?? 200 };
   }
@@ -83,10 +103,11 @@ export class FakeSession implements Session {
   async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
     if (this.closed) throw new Error('session is closed');
     this.browser.visited.push(url);
-    const page = this.page(url);
+    const { url: final, page } = this.follow(url);
     if ((page.delayMs ?? 0) > opts.timeoutMs) {
       throw new TimeoutError(`navigation to ${url} timed out after ${opts.timeoutMs} ms`);
     }
+    url = final;
     this.pendingUrl = null;
     this.steps = { more: 0, scroll: 0 };
     this.load(url, page.dom);
@@ -120,14 +141,15 @@ export class FakeSession implements Session {
 
   async settle(opts: SettleOptions): Promise<PageInfo> {
     this.assertOpen();
-    const url = this.pendingUrl;
+    let url = this.pendingUrl;
     if (url === null) return this.info(this.currentUrl, this.browser.pages.get(this.currentUrl) ?? { dom: this.tree!.root.el });
     this.pendingUrl = null;
     this.browser.visited.push(url);
-    const page = this.page(url);
+    const { url: final, page } = this.follow(url);
     if ((page.delayMs ?? 0) > opts.timeoutMs) {
       throw new TimeoutError(`waiting for ${url} to load timed out after ${opts.timeoutMs} ms`);
     }
+    url = final;
     this.steps = { more: 0, scroll: 0 };
     this.load(url, page.dom);
     return this.info(url, page);
@@ -135,6 +157,21 @@ export class FakeSession implements Session {
 
   async url(): Promise<string> {
     return this.currentUrl;
+  }
+
+  /** Times `focus` was called. */
+  focused = 0;
+
+  async focus(): Promise<void> {
+    this.assertOpen();
+    this.focused++;
+  }
+
+  /** Text of `<body>` (or the root), without scripts and styles, whitespace collapsed. */
+  async pageText(): Promise<string> {
+    const { root } = this.assertOpen();
+    const body = root.el.tag === 'body' ? root : (root.children.find((c) => c.el.tag === 'body') ?? root);
+    return normalize(visibleText(body.el)).slice(0, PAGE_TEXT_LIMIT);
   }
 
   async resolve(candidate: SelectorCandidate, within?: ElementRef): Promise<ElementRef[]> {

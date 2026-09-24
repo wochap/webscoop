@@ -88,8 +88,10 @@ webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
+                      [--guard-timeout ms] [--no-guards] [--no-notify]
 webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
+                       [--guard-timeout ms] [--no-guards] [--no-notify]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop recipes [--json]
 webscoop doctor
@@ -112,6 +114,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
+- `--guard-timeout`, `--no-guards`, and `--no-notify` control guards; see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
@@ -207,6 +210,52 @@ declines a field, the field's line on stderr, `test --json`, and the report
 first time the endpoint fails (refused, timeout, HTTP error) the run logs one
 line and skips the model for the rest of the run.
 
+### Guards
+
+A guard is a page that asks for a human instead of showing the list: a login
+wall, a bot check, or an interstitial. Without guards such a page looks like a
+broken recipe (exit 3); with them the run pauses and waits for you.
+
+- `login`: the page landed on a login-like path (`/login`, `/signin`,
+  `/sign-in`, `/account/login`, `/auth`, `/sso`) that the recipe's URL is not,
+  or it shows a visible password field and no item container.
+- `captcha`: a frame or element whose `src`, `id`, or class contains
+  `turnstile`, `recaptcha`, `hcaptcha`, `challenge`, `cf-chl`, or `arkose`, or
+  an HTTP 403 or 429 page whose text says `verify`, `robot`, `human`, or
+  `challenge`.
+- `zero-fields`: after healing, neither the item container nor any required
+  field resolved, and the page was served with HTTP 400 or higher or has under
+  500 characters of visible text. A long page where nothing resolves is a
+  redesign, not a guard, and still exits 3. On later pages only an errored page
+  counts; an empty short page is the end of the list.
+
+`login` and `captcha` are checked after each page loads, `zero-fields` after
+extraction; when several match, the first of `captcha`, `login`, `zero-fields`
+is reported. When one fires, the run brings the browser window to the front,
+sends one desktop notification (`notify-send`, critical urgency, naming the
+recipe, the guard, and the page; without `notify-send` the same text goes to
+stderr), and checks the page again every second. Once the guard is gone the run
+goes back to the page it meant to load if you ended up elsewhere (for example
+the home page after logging in), checks once more, and continues on the same
+page number; rows already emitted stay emitted. Nothing is injected into the
+page unless the run is `--interactive`, where a banner across the top of the
+page shows the guard, a countdown, **Continue** (check again now), and
+**Abort** (stop the run, exit 1).
+
+All guards of a run share one wait budget, `--guard-timeout` (default 600000
+ms for `run`, 0 for `test`, so `test` exits 2 at once on a wall). When it runs
+out the run stops with exit 2, stderr names the guard, the page, and the URL,
+the recipe is not written back, and stdout keeps the rows of completed pages
+(in JSON array mode the array holds just those). `--no-guards` turns every
+guard off for the run; a recipe turns single guards off in its `guards` list.
+`--no-notify` skips the notification. Guards are logged on stderr
+(`guard login on page 1: ...`), listed in the `--report` output (`guards`:
+kind, page, URL, wait, cleared), and counted in the summary line.
+
+```sh
+webscoop run shop --guard-timeout 300000 >> rows.json   # cron: give up after five minutes, exit 2
+```
+
 ### Checking a recipe
 
 ```sh
@@ -218,7 +267,9 @@ webscoop test shop --json     # the same as a JSON array
 one line per target (`item` and every field) with its status, how many rows it
 resolved in, and the selector or rung that found it, and prints no rows. It
 exits 0 when every required field resolved on at least one row, 3 when one did
-not, 1 on errors. Use it from cron before trusting a recipe.
+not, 2 when a guard (login wall, bot check) was not cleared (it does not wait
+unless given `--guard-timeout`), 1 on errors. Use it from cron before trusting
+a recipe.
 
 ### Measuring heal rates
 
@@ -309,7 +360,7 @@ Shortcuts do not fire while typing in an input.
 | ---- | ------- | ----------- |
 | 0 | Success | carry on |
 | 1 | Error to fix or unexpected failure: bad arguments, invalid recipe, missing variable, no display, busy profile, navigation timeout, browser crash, interrupted | fix the setup |
-| 2 | A run paused for user input and the wait timed out | retry later |
+| 2 | A run paused on a guard (login wall, bot check, interstitial) and nobody cleared it within `--guard-timeout`; rows of completed pages are kept | retry later, or log in to the profile |
 | 3 | A required field matched no element and no healing rung could recover it (`test`: a required field is unresolved) | alert a human |
 
 ### Files
@@ -408,8 +459,9 @@ used by the end-to-end tests, is
   page variable for `url`), `limit` (`1`, N, or `all`), `stopRules`
   (`no-new-items`, `first-item-repeats`, `target-missing`), and `delayMs`.
   Filled with defaults (`none`, one page) when absent.
-- `guards`: fixed now, used by a later change, filled with defaults when
-  absent.
+- `guards`: `[{ "kind": "login" | "captcha" | "zero-fields", "enabled" }]`,
+  all enabled by default; `enabled: false` turns one guard off for this
+  recipe (see Guards).
 
 ## Playground
 
@@ -452,6 +504,19 @@ for every page beyond 3, and `moreDisappears=1` removes the `Load more` button
 after its first click.
 [`packages/cli/fixtures/playground-paged.json`](packages/cli/fixtures/playground-paged.json)
 walks the `url` kind with limit `all`.
+
+Walls for the guards: `wall=login` redirects `/catalog` (302) to
+`/login?next=<path and query>` until the `ws_sess` cookie is set; `/login`
+shows a username and password form that accepts anything, sets `ws_sess`, and
+redirects to `next` (a same-origin path, else `/`); `/logout` clears it.
+`wall=captcha` serves `/catalog` with HTTP 403 and a challenge page (a
+`turnstile` iframe, `#challenge-form`, "Verify you are human", and an
+`I am human` button that posts to `/challenge`, which sets `ws_human`, then
+reloads) until `ws_human` is set; `/challenge` shows the same page directly.
+`wall=interstitial` serves `/catalog` with HTTP 503 and a one-sentence page
+until `ws_human` is set. `wallAfterPage=N` raises the wall only on pages after
+N (the `page` parameter, or the `ws_page` cookie of the `next` kind), so
+`wall=captcha&wallAfterPage=2&paginate=url` walls page 3 only.
 
 ## Layout
 

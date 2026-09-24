@@ -122,3 +122,62 @@ describe('recorder re-pick mode', () => {
     ).toThrow('no field at index 42');
   });
 });
+
+describe('recorder guard mode', () => {
+  async function guardSetup() {
+    const browser = new FakeBrowser({ [CATALOG]: catalogSnapshot(0) });
+    const session = await browser.open('/profile');
+    await session.goto(CATALOG, { timeoutMs: 1000 });
+    const controller = new RecorderController({
+      session,
+      storage: new MemoryStorage(),
+      bundle: '/* recorder */',
+      draft: draftFromRecipe(fingerprintedRecipe()),
+      mode: { kind: 'guard' },
+    });
+    await controller.attach();
+    return { session, controller };
+  }
+  const ctx = { kind: 'login' as const, reason: 'redirected to a login page', page: 1, url: CATALOG, deadline: Date.now() + 60_000 };
+
+  it('shows the guard context and fires continue on guard.continue', async () => {
+    const t = await guardSetup();
+    const hooks = await t.controller.showGuard(ctx);
+    expect(t.controller.state.guardContext).toEqual(ctx);
+    expect(t.session.dispatchedOf('draft.state').at(-1)).toMatchObject({ state: { guardContext: ctx } });
+    let continued = 0;
+    let aborted = 0;
+    hooks.onContinue(() => continued++);
+    hooks.onAbort(() => aborted++);
+    await t.session.callHost({ kind: 'guard.continue' });
+    expect([continued, aborted]).toEqual([1, 0]);
+  });
+
+  it('fires abort on guard.abort and on the browser closing', async () => {
+    const t = await guardSetup();
+    let aborted = 0;
+    (await t.controller.showGuard(ctx)).onAbort(() => aborted++);
+    await t.session.callHost({ kind: 'guard.abort' });
+    expect(aborted).toBe(1);
+    await t.session.userClose();
+    expect(aborted).toBe(2);
+  });
+
+  it('hides the banner, stops firing, and refuses guard messages afterwards', async () => {
+    const t = await guardSetup();
+    let continued = 0;
+    (await t.controller.showGuard(ctx)).onContinue(() => continued++);
+    await t.controller.hideGuard();
+    expect(t.controller.state.guardContext).toBeNull();
+    expect(t.session.dispatchedOf('draft.state').at(-1)).toMatchObject({ state: { guardContext: null } });
+    const reply = await t.session.callHost({ kind: 'guard.continue' });
+    expect(continued).toBe(0);
+    expect(reply).toMatchObject({ kind: 'draft.state', state: { error: 'the run is not waiting on a guard' } });
+  });
+
+  it('tells pages loaded after detach to remove the recorder', async () => {
+    const t = await guardSetup();
+    await t.controller.detach();
+    expect(await t.session.callHost({ kind: 'session.ready', url: CATALOG })).toEqual({ kind: 'session.detach' });
+  });
+});

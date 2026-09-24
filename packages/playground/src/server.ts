@@ -13,6 +13,17 @@ import {
   type PaginateKind,
   type Pager,
 } from './render';
+import {
+  challengePage,
+  HUMAN_COOKIE,
+  interstitialPage,
+  loginPage,
+  safeNext,
+  SESSION_COOKIE,
+  turnstileFrame,
+  WALL_KINDS,
+  type WallKind,
+} from './walls';
 
 export interface ControlState {
   tier: number;
@@ -21,10 +32,6 @@ export interface ControlState {
 }
 
 export const INITIAL_CONTROL: Readonly<ControlState> = Object.freeze({ tier: 0, seed: 1, delayMs: 0 });
-
-/** Routes and query parameters reserved for later changes. */
-export const RESERVED_ROUTES = ['/login', '/challenge'] as const;
-export const RESERVED_PARAMS = ['wall'] as const;
 
 export const VISITOR_COOKIE = 'ws_visitor';
 /** Current page of the `next` pagination kind. */
@@ -164,6 +171,39 @@ function pagedView(
   };
 }
 
+interface Wall {
+  kind: WallKind;
+  /** Pages up to this one render normally. */
+  after: number;
+}
+
+function parseWall(url: URL): Wall | null {
+  const kind = url.searchParams.get('wall');
+  const after = intParam(url.searchParams.get('wallAfterPage'), 'wallAfterPage', 0) ?? 0;
+  if (kind === null) return null;
+  if (!(WALL_KINDS as readonly string[]).includes(kind)) {
+    throw new HttpError(400, `invalid wall ${JSON.stringify(kind)}, expected one of ${WALL_KINDS.join(', ')}`);
+  }
+  return { kind: kind as WallKind, after };
+}
+
+/** Whether the wall stands for this page and request: past `wallAfterPage` and without the cookie that clears it. */
+function walled(wall: Wall | null, page: number, jar: Map<string, string>): wall is Wall {
+  if (!wall || page <= wall.after) return false;
+  return !jar.has(wall.kind === 'login' ? SESSION_COOKIE : HUMAN_COOKIE);
+}
+
+/** Answer a walled catalog request: a redirect to the login form, a 403 challenge, or a 503 interstitial. */
+function sendWall(res: ServerResponse, wall: Wall, url: URL, method: string): void {
+  const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
+  if (wall.kind === 'login') {
+    res.writeHead(302, { location: `/login?next=${encodeURIComponent(url.pathname + url.search)}`, 'cache-control': 'no-store' });
+    return void res.end();
+  }
+  res.writeHead(wall.kind === 'captcha' ? 403 : 503, headers);
+  res.end(method === 'HEAD' ? undefined : wall.kind === 'captcha' ? challengePage() : interstitialPage());
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function imageSvg(id: string): string {
@@ -202,9 +242,29 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       }
       throw new HttpError(405, 'method not allowed');
     }
-    if ((RESERVED_ROUTES as readonly string[]).includes(url.pathname)) {
-      throw new HttpError(501, `${url.pathname} is reserved for a later change`);
+    if (url.pathname === '/login') {
+      if (method === 'POST') {
+        const form = new URLSearchParams(await readBody(req));
+        const next = safeNext(form.get('next') ?? url.searchParams.get('next'));
+        res.writeHead(302, { location: next, 'set-cookie': `${SESSION_COOKIE}=1; Path=/; SameSite=Lax`, 'cache-control': 'no-store' });
+        return void res.end();
+      }
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      return send(res, 200, loginPage(safeNext(url.searchParams.get('next'))), 'text/html; charset=utf-8');
     }
+    if (url.pathname === '/logout') {
+      res.writeHead(302, { location: '/', 'set-cookie': `${SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`, 'cache-control': 'no-store' });
+      return void res.end();
+    }
+    if (url.pathname === '/challenge') {
+      if (method === 'POST') {
+        res.writeHead(204, { 'set-cookie': `${HUMAN_COOKIE}=1; Path=/; SameSite=Lax`, 'cache-control': 'no-store' });
+        return void res.end();
+      }
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      return send(res, 200, challengePage(), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/challenge/turnstile') return send(res, 200, turnstileFrame(), 'text/html; charset=utf-8');
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
     if (url.pathname === '/' ) {
@@ -212,9 +272,8 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       return void res.end();
     }
     if (url.pathname === '/catalog') {
-      for (const param of RESERVED_PARAMS) {
-        if (url.searchParams.has(param)) throw new HttpError(501, `query parameter ${param} is reserved for a later change`);
-      }
+      const wall = parseWall(url);
+      const jar = cookies(req);
       const tier = intParam(url.searchParams.get('tier'), 'tier', 0, MAX_TIER) ?? control.tier;
       const seed = intParam(url.searchParams.get('seed'), 'seed', 0) ?? control.seed;
       const delayMs = intParam(url.searchParams.get('delayMs'), 'delayMs', 0) ?? control.delayMs;
@@ -233,6 +292,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       let shown: readonly Product[] = products;
       let pager: Pager | null = null;
       const paginate = url.searchParams.get('paginate');
+      if (paginate === null && walled(wall, 1, jar)) return sendWall(res, wall, url, method);
       if (paginate !== null) {
         if (!(PAGINATE_KINDS as readonly string[]).includes(paginate)) {
           throw new HttpError(400, `invalid paginate ${JSON.stringify(paginate)}, expected one of ${PAGINATE_KINDS.join(', ')}`);
@@ -248,7 +308,6 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
         let page = 1;
         if (kind === 'url') page = intParam(url.searchParams.get('page'), 'page', 1) ?? 1;
         if (kind === 'next') {
-          const jar = cookies(req);
           const current = Number(jar.get(PAGE_COOKIE)) || 1;
           if (url.searchParams.get('go') === 'next') {
             // Advance, then redirect back to the catalog URL without `go`.
@@ -261,8 +320,11 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
           }
           // Only the redirect after `go=next` keeps the page; any other visit starts over at page 1.
           page = jar.get(ADVANCED_COOKIE) === '1' ? current : 1;
+          // A walled page keeps its cookies, so clearing the wall comes back to the same page.
+          if (walled(wall, page, jar)) return sendWall(res, wall, url, method);
           setCookies.push(`${PAGE_COOKIE}=${page}; Path=/; SameSite=Lax`, `${ADVANCED_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`);
         }
+        if (kind !== 'next' && walled(wall, page, jar)) return sendWall(res, wall, url, method);
         ({ products: shown, pager } = pagedView(products, url, kind, page, opts));
       }
 
@@ -280,6 +342,10 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     }
     if (url.pathname === '/catalog/more') {
       const after = intParam(url.searchParams.get('after'), 'after', 0) ?? 0;
+      const wall = parseWall(url);
+      if (walled(wall, Math.floor(after / PAGE_SIZE) + 1, cookies(req))) {
+        return send(res, wall.kind === 'login' ? 401 : wall.kind === 'captcha' ? 403 : 503, '', 'text/html; charset=utf-8');
+      }
       const tier = intParam(url.searchParams.get('tier'), 'tier', 0, MAX_TIER) ?? control.tier;
       const seed = intParam(url.searchParams.get('seed'), 'seed', 0) ?? control.seed;
       try {

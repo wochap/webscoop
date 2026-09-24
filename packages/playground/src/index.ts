@@ -1,4 +1,5 @@
 export { dataset, type Product } from './dataset';
+export { challengePage, HUMAN_COOKIE, interstitialPage, loginPage, safeNext, SESSION_COOKIE, WALL_KINDS, type WallKind } from './walls';
 export { createRng } from './prng';
 export {
   CHROME_MODES,
@@ -24,8 +25,6 @@ export {
   INITIAL_CONTROL,
   PAGE_COOKIE,
   PAGE_SIZE,
-  RESERVED_PARAMS,
-  RESERVED_ROUTES,
   startPlayground,
   VISITOR_COOKIE,
   type ControlState,
