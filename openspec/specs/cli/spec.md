@@ -233,3 +233,14 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: Skip steps
 - **WHEN** `webscoop run shop --skip-steps` runs the same recipe
 - **THEN** no step is replayed and the run reports the fields as missing behind the gate
+
+### Requirement: Window flags and config
+`webscoop run` and `webscoop test` SHALL accept `--show` (never hide) and `--hide` (hide even when config disables it, if a provider detects). The config file MAY declare `window.provider` (`auto` default, `hyprland`, `none`, or a user provider name) and `window.providers`. `record` SHALL never hide.
+
+#### Scenario: Config disables hiding
+- **WHEN** `window.provider` is `none` and `webscoop run shop` starts on Hyprland
+- **THEN** the window stays visible
+
+#### Scenario: Force hide
+- **WHEN** `window.provider` is `none` and `--hide` is passed on Hyprland
+- **THEN** the window is hidden

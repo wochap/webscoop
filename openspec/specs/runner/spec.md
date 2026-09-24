@@ -115,3 +115,18 @@ On success, failure, guard timeout, or SIGINT the runner SHALL close the browser
 #### Scenario: Interrupted while paused
 - **WHEN** SIGINT is received while the run is paused on a guard
 - **THEN** the browser closes, the lock is released, and the exit code is 1
+
+### Requirement: Window hiding hooks
+When a window port is supplied, the runner SHALL call `hide` after the browser session opens and before the first navigation, `show` when a guard is raised, and `hide` again when a guard clears. Window port failures SHALL NOT fail the run. The runner SHALL set the initial page title to `webscoop` before the first navigation. Before opening the browser, the runner SHALL call the window port's optional `prepare` and append its optional `launchArgs` to the browser's launch arguments.
+
+#### Scenario: Hide after open
+- **WHEN** a run opens the browser with a window port
+- **THEN** `hide` is called before `page.loaded` is emitted for page 1
+
+#### Scenario: Prepare before launch
+- **WHEN** the window port declares `prepare` and `launchArgs`
+- **THEN** `prepare` is called before the browser opens and the browser is opened with the launch arguments appended
+
+#### Scenario: Show then hide around a guard
+- **WHEN** a guard is raised and later clears
+- **THEN** `show` is called on raise and `hide` on clear
