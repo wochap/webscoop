@@ -258,6 +258,14 @@ export class FakeSession implements Session {
     this.focused++;
   }
 
+  /** Titles set through `setTitle`, in order. */
+  readonly titles: string[] = [];
+
+  async setTitle(title: string): Promise<void> {
+    if (this.closed) throw new Error('session is closed');
+    this.titles.push(title);
+  }
+
   /** Text of `<body>` (or the root), without scripts and styles, whitespace collapsed. */
   async pageText(): Promise<string> {
     const { root } = this.assertOpen();

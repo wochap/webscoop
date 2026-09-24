@@ -35,6 +35,7 @@ import { interactiveGuardBanner } from '../guard';
 import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { FsStorage } from '../storage';
+import { windowMode } from '../window';
 
 export interface RunCommandOptions {
   var: string[];
@@ -65,6 +66,10 @@ export interface RunCommandOptions {
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
+  /** `--show`: never hide the browser window. */
+  show?: boolean;
+  /** `--hide`: hide the window even when config selects no provider. */
+  hide?: boolean;
 }
 
 /** Step options for the runner from `--skip-steps`. */
@@ -309,6 +314,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
       steps: stepsFromFlags(opts),
+      window: io.createWindow(config, io.env, { profileDir, mode: windowMode(opts) }),
       saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
       ...(openOptions ? { openOptions } : {}),
       ...(repick ? { repick } : {}),
@@ -354,6 +360,10 @@ export interface TestCommandOptions {
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
+  /** `--show`: never hide the browser window. */
+  show?: boolean;
+  /** `--hide`: hide the window even when config selects no provider. */
+  hide?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -446,6 +456,7 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       guards: guardsFromFlags(io, opts, 0),
       steps: stepsFromFlags(opts),
+      window: io.createWindow(config, io.env, { profileDir, mode: windowMode(opts) }),
       ...(port !== undefined ? { openOptions: { remoteDebuggingPort: port } } : {}),
     });
     const result = await runner.run();

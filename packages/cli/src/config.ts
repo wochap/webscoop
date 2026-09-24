@@ -3,6 +3,21 @@ import { z } from 'zod';
 import { CliError } from './exit';
 import type { Paths } from './paths';
 
+/** A window provider: shell command templates, `{pid}` and `{workspace}` filled at run time. */
+export const ProviderDefSchema = z.object({
+  /** The provider applies when this variable is set and this binary is on the PATH. */
+  detect: z.object({ env: z.string().min(1), binary: z.string().min(1) }),
+  hide: z.string().min(1),
+  show: z.string().min(1),
+  focus: z.string().min(1).optional(),
+  /** Run once before the browser launches, e.g. to install a compositor rule. */
+  prepare: z.string().min(1).optional(),
+  /** Chromium arguments for hiding runs, e.g. `--class=webscoop` for that rule to match. */
+  args: z.array(z.string().min(1)).optional(),
+  /** Prints the active workspace, run right before `show`; fills `{workspace}`. */
+  workspace: z.string().min(1).optional(),
+});
+
 export const ConfigSchema = z.object({
   llm: z
     .object({
@@ -25,6 +40,17 @@ export const ConfigSchema = z.object({
       executablePath: z.string().min(1).optional(),
     })
     .default({}),
+  window: z
+    .object({
+      /** `auto` (default), `hyprland`, `none`, or a name from `providers`. */
+      provider: z.string().min(1).default('auto'),
+      /** User providers by name, tried by `auto` after the built-in ones in declaration order. */
+      providers: z
+        .record(z.string(), ProviderDefSchema)
+        .refine((p) => !('auto' in p) && !('none' in p), { message: 'provider names auto and none are reserved' })
+        .default({}),
+    })
+    .default({ provider: 'auto', providers: {} }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

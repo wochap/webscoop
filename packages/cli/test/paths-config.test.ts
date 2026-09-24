@@ -50,7 +50,7 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: {} });
+    expect(config).toEqual({ llm: {}, browser: {}, window: { provider: 'auto', providers: {} } });
   });
 
   it('accepts the LLM fields', async () => {

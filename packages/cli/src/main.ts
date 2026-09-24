@@ -11,6 +11,7 @@ import { runCommand, testCommand, type RunCommandOptions, type TestCommandOption
 import { loadRecorderBundle } from './bundle';
 import { chromiumOverride, type ChromiumInfo, type CliIo } from './context';
 import { NotifySend } from './notify';
+import { createWindowPort } from './window';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
 
 export const VERSION = '0.1.0';
@@ -97,9 +98,16 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
     .option('--skip-steps', "replay none of the recipe's steps (clicks, typing) before extracting, for debugging")
+    .addOption(new Option('--show', 'keep the browser window visible for the whole run').conflicts('hide'))
+    .addOption(new Option('--hide', 'hide the browser window even when the config sets window.provider to none'))
     .addHelpText(
       'after',
       `
+Window: on a desktop with a window provider (Hyprland is detected, others can
+be configured), the browser window is moved out of sight while the run works
+and brought back when a guard needs you. --interactive and --show keep it
+visible; see webscoop doctor for the provider in use.
+
 Guards: when a page asks for a human (a login redirect, a bot check, or a
 short or errored page where nothing resolves), the run brings the browser
 window to the front, sends a desktop notification, and waits for you to clear
@@ -142,6 +150,8 @@ working selector first (unless --no-save).`,
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
     .option('--skip-steps', "replay none of the recipe's steps, which test replays like a run by default")
+    .addOption(new Option('--show', 'keep the browser window visible for the whole run').conflicts('hide'))
+    .addOption(new Option('--hide', 'hide the browser window even when the config sets window.provider to none'))
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
@@ -195,7 +205,7 @@ Exits 0 whatever healed, 1 when a run broke. Needs a development checkout.`,
 
   program
     .command('doctor')
-    .description('check paths, display, Chromium, and LLM configuration')
+    .description('check paths, display, Chromium, window provider, and LLM configuration')
     .action(async () => setCode(await doctorCommand(io)));
 
   return program;
@@ -270,5 +280,6 @@ export function defaultIo(): CliIo {
     },
     recorderBundle: loadRecorderBundle,
     createNotify: (env) => new NotifySend({ stderr: process.stderr, env }),
+    createWindow: (config, env, opts) => createWindowPort(config, env, { ...opts, stderr: process.stderr }),
   };
 }

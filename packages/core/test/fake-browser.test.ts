@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SelectorCandidate, Session } from '../src';
-import { FakeBrowser, h } from '../src/testing';
+import { FakeBrowser, h, type FakeSession } from '../src/testing';
 import { catalog, cards, PAGE } from './helpers';
 
 async function open(dom = catalog(cards(3))): Promise<Session> {
@@ -150,6 +150,14 @@ describe('FakeBrowser page text and focus', () => {
     expect((await session.pageText()).length).toBe(4000);
     await session.focus();
     expect((session as unknown as { focused: number }).focused).toBe(1);
+  });
+
+  it('records titles set before the first navigation', async () => {
+    const opened = (await new FakeBrowser({}).open('/p')) as FakeSession;
+    await opened.setTitle('webscoop');
+    expect(opened.titles).toEqual(['webscoop']);
+    await opened.close();
+    await expect(opened.setTitle('again')).rejects.toThrow('closed');
   });
 });
 

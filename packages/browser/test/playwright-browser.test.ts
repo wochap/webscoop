@@ -15,6 +15,22 @@ const c = (strategy: SelectorCandidate['strategy'], value: string): SelectorCand
   stability: 'medium',
 });
 
+describe.skipIf(!hasDisplay)('PlaywrightBrowser title (integration)', () => {
+  it('sets the document title before the first navigation', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const session = await new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }).open(profileDir);
+    try {
+      await session.setTitle('webscoop');
+      const page = (session as unknown as { page: import('playwright').Page }).page;
+      expect(page.url()).toBe('about:blank');
+      expect(await page.evaluate(() => document.title)).toBe('webscoop');
+    } finally {
+      await session.close();
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
   let playground: Playground;
   let profileDir: string;

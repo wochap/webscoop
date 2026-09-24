@@ -57,6 +57,13 @@ WEBSCOOP_LLM_ENDPOINT=http://127.0.0.1:11434/v1 WEBSCOOP_LLM_MODEL=qwen3.5:9b \
   npm run test:e2e -- llm.real
 ```
 
+`e2e/window.spec.ts` moves a real browser window around a Hyprland desktop and
+runs only when asked, from a Hyprland session:
+
+```sh
+WEBSCOOP_E2E_HYPRLAND=1 npm run test:e2e -- window
+```
+
 ### Chromium override
 
 To use a different Chromium binary, set `WEBSCOOP_CHROMIUM=/path/to/chrome`,
@@ -257,6 +264,88 @@ kind, page, URL, wait, cleared), and counted in the summary line.
 webscoop run shop --guard-timeout 300000 >> rows.json   # cron: give up after five minutes, exit 2
 ```
 
+### Window
+
+Unattended runs keep the browser window out of your way: right after the
+browser opens it is moved off screen, when a guard needs you it is brought to
+the workspace you are on and focused, and once the guard clears it is moved
+away again. `record`, `run --interactive`, and `--show` never hide the window.
+`--hide` hides it even when the config sets `window.provider` to `none`, as
+long as a provider is detected. Hiding is best effort: a provider command that
+fails or takes over 2 seconds is reported once on stderr and the run carries
+on with the window visible.
+
+The window is found by process id: the Chromium main process whose command
+line carries `--user-data-dir=<profile directory>`. Linux only; elsewhere the
+provider is always `none`.
+
+Providers:
+
+- `hyprland` (built in): detected when `HYPRLAND_INSTANCE_SIGNATURE` is set
+  and `hyprctl` is on the `PATH`. Hides on the `special:webscoop` workspace
+  silently, shows on the active workspace (read from
+  `hyprctl activeworkspace -j`) and focuses the window. Works with Lua and
+  classic Hyprland configs.
+- `none`: does nothing.
+- Your own, in the config file (below).
+
+`window.provider` picks one: `auto` (default) tries `hyprland`, then your
+providers in the order they are declared, else `none`. A named provider that
+is not detected is reported and the window stays visible. `webscoop doctor`
+prints the provider in use.
+
+The first frame: moving a window by pid can only happen once it has mapped,
+so it would flash on your workspace for a moment. Hiding runs therefore
+launch Chromium with `--class=webscoop` (its Wayland app id), and a window
+rule on that class sends it to `special:webscoop` as it maps. On a Lua
+Hyprland config webscoop adds the rule itself before the first launch, once
+per Hyprland session (a config reload drops it and the next run adds it
+again). On a classic config, paste the rule `doctor` prints:
+
+```
+windowrulev2 = workspace special:webscoop silent, class:^(webscoop)$
+```
+
+Visible runs (`record`, `--interactive`, `--show`) keep Chromium's usual
+class, so your own rules for it still apply.
+
+A provider is a set of shell command templates: `{pid}` is the browser's
+process id, `{workspace}` the output of the optional `workspace` command (a
+JSON object's `id`, else the trimmed text). Optional `prepare` runs once
+before the browser launches, and `args` are extra Chromium arguments for
+hiding runs; together they cover the first frame. For sway:
+
+```json
+{
+  "window": {
+    "provider": "auto",
+    "providers": {
+      "sway": {
+        "detect": { "env": "SWAYSOCK", "binary": "swaymsg" },
+        "hide": "swaymsg '[pid={pid}] move scratchpad'",
+        "show": "swaymsg '[pid={pid}] scratchpad show'",
+        "focus": "swaymsg '[pid={pid}] focus'",
+        "args": ["--class=webscoop"]
+      }
+    }
+  }
+}
+```
+
+With `args` set, `for_window [app_id="webscoop"] move scratchpad` in the sway
+config hides the window as it maps. A provider named `hyprland` in
+`providers` replaces the built-in one.
+
+Manual check on Hyprland: start the playground (`npm run playground`), write
+the paged fixture with `wall=login&wallAfterPage=2` added to its URL, and run
+it with `--delay 1500`. The window should never appear on your workspace while
+pages 1 and 2 load, come to your workspace with focus when the login wall
+shows on page 3, and leave again once you log in (any username and password work).
+
+```sh
+webscoop run shop --show        # watch the run
+```
+
 ### Steps
 
 Some pages need a few actions before the data shows: accept a cookie banner,
@@ -425,6 +514,7 @@ Config file, all keys optional:
 ```json
 {
   "browser": { "executablePath": "/path/to/chrome" },
+  "window": { "provider": "auto", "providers": {} },
   "llm": {
     "endpoint": "http://127.0.0.1:11434/v1",
     "model": "qwen3.5:9b",

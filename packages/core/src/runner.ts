@@ -97,6 +97,8 @@ export interface RunOptions {
   pagination?: PaginationOverrides;
   /** Guard detection and the pause while a human clears a wall. Default: no guards. */
   guards?: GuardOptions;
+  /** Hidden after the browser opens and while no guard needs a human, shown when one does. Default: never touched. */
+  window?: WindowPort;
   /** Replay of the recipe's steps. Default: enabled. */
   steps?: StepOptions;
 }
@@ -113,8 +115,6 @@ export interface GuardOptions {
   timeoutMs: number;
   /** Told once per guard occurrence. Default: nothing. */
   notify?: NotifyPort;
-  /** Shown when a guard is raised. */
-  window?: WindowPort;
   /** Banner over the page, for interactive runs only. */
   banner?: GuardBannerHandler;
   /** Interval between re-evaluations while paused. Default 1000. */
@@ -263,9 +263,17 @@ export class Runner {
       this.emitter.emit('run.start', { recipe: recipe.name, url: strategy.url, profileDir, at: report.startedAt });
 
       this.transition('opening');
-      session = await browser.open(profileDir, this.opts.openOptions);
+      const windowPort = this.opts.window;
+      if (windowPort?.prepare) await quietly(() => windowPort.prepare!());
+      const launchArgs = windowPort?.launchArgs ?? [];
+      const openOptions =
+        launchArgs.length > 0 ? { ...this.opts.openOptions, args: [...(this.opts.openOptions?.args ?? []), ...launchArgs] } : this.opts.openOptions;
+      session = await browser.open(profileDir, openOptions);
       const live = session;
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
+      // Compositor rules match the initial title; the first navigation replaces it.
+      await quietly(() => live.setTitle(WINDOW_TITLE));
+      if (windowPort) await quietly(() => windowPort.hide());
 
       const timeoutMs = this.opts.timeoutMs ?? 30_000;
       const limit = this.opts.pagination?.limit ?? recipe.pagination.limit;
@@ -332,7 +340,8 @@ export class Runner {
         const { kind, reason } = match;
         const url = at.url;
         this.emitter.emit('guard.raised', { kind, page, url, reason });
-        await quietly(() => guardOpts?.window?.show());
+        await quietly(() => windowPort?.show());
+        await quietly(() => windowPort?.focus?.());
         await quietly(() => live.focus());
         await quietly(() =>
           (guardOpts?.notify ?? new NoopNotify()).notify({
@@ -381,6 +390,7 @@ export class Runner {
           throw new RunFailure('paused', `${kind} guard on page ${page} was not cleared within the guard timeout (${reason}): ${url}`);
         }
         this.emitter.emit('guard.cleared', { kind, page, url, waitedMs: result.waitedMs });
+        await quietly(() => windowPort?.hide());
         let next = result.info;
         // The user may end up elsewhere, such as the home page after logging in; a login URL is never a page to go back to.
         if (!sameUrl(next.url, intended) && !LOGIN_URL_PATTERN.test(pathOf(intended))) {
@@ -594,6 +604,9 @@ export class Runner {
     }
   }
 }
+
+/** Title of the blank page the browser opens on, for compositor window rules. */
+export const WINDOW_TITLE = 'webscoop';
 
 /** Side effects such as notifications must never fail the run. */
 async function quietly(fn: () => Promise<void> | undefined): Promise<void> {

@@ -99,6 +99,7 @@ describe('Runner', () => {
           settle: async () => ({ url: '', title: '', status: null }),
           url: async () => '',
           focus: async () => {},
+          setTitle: async () => {},
           pageText: async () => '',
           close: async () => {
             closed = true;

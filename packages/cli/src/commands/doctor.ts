@@ -5,7 +5,8 @@ import type { CliIo } from '../context';
 import { detectDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { canProbe, createLlm, llmSettings, type Probeable } from '../llm';
-import { resolvePaths } from '../paths';
+import { resolvePaths, type Env } from '../paths';
+import { findOnPath, HYPRLAND_RULE, HYPRLAND_RULE_LUA, PRESETS, selectProvider, WINDOW_CLASS, type FindBinary } from '../window';
 
 /** Below this context window the model prompt budget gets too small to be useful. */
 export const MIN_CONTEXT_TOKENS = 8192;
@@ -13,6 +14,31 @@ export const MIN_CONTEXT_TOKENS = 8192;
 export interface DoctorOptions {
   /** Check the endpoint; the adapter's own probe by default. Injectable for tests. */
   probe?: (llm: Probeable) => Promise<ProbeResult>;
+  /** Binary lookup for window providers; `PATH` by default. */
+  findBinary?: FindBinary;
+  platform?: NodeJS.Platform;
+}
+
+/** Doctor lines for the window provider. Every problem is a warning. */
+export function windowLines(config: Config, env: Env, opts: { findBinary?: FindBinary; platform?: NodeJS.Platform } = {}): [string, string][] {
+  const findBinary = opts.findBinary ?? findOnPath;
+  const selection = selectProvider(config.window, env, { findBinary, ...(opts.platform ? { platform: opts.platform } : {}) });
+  if (!selection.def) {
+    if (selection.warning) return [['window', `none (warning: ${selection.warning})`]];
+    if (config.window.provider === 'none') return [['window', 'none (window.provider is none; the window stays visible)']];
+    // A desktop that was recognised but lacks its tool deserves a hint.
+    const defs = { ...PRESETS, ...config.window.providers };
+    const partial = Object.entries(defs).find(([, def]) => env[def.detect.env]?.trim() && !findBinary(def.detect.binary, env));
+    if (partial) return [['window', `none (warning: ${partial[1].detect.env} is set but ${partial[1].detect.binary} is not on the PATH; the window stays visible)`]];
+    return [['window', 'none (no provider detected; the window stays visible)']];
+  }
+  const lines: [string, string][] = [['window', `${selection.name} (${selection.def.detect.binary} at ${selection.binaryPath})`]];
+  if (selection.name === 'hyprland') {
+    lines.push(['window rule', HYPRLAND_RULE]);
+    lines.push(['window rule (lua)', `${HYPRLAND_RULE_LUA} (added at run time on a Lua config)`]);
+    lines.push(['window note', `hiding runs launch Chromium with --class=${WINDOW_CLASS}, so the rule sends the window away as it maps`]);
+  }
+  return lines;
 }
 
 /** Doctor lines for a probe result. Every problem is a warning; none changes the exit code. */
@@ -57,6 +83,12 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
         ? `${chromium.path} (${where}${chromium.version ? `, ${chromium.version}` : ''})`
         : `missing: ${chromium.path} (${where}${chromium.error ? `: ${chromium.error}` : ''}); run: npx playwright install chromium`,
     ]);
+    lines.push(
+      ...windowLines(config, io.env, {
+        ...(opts.findBinary ? { findBinary: opts.findBinary } : {}),
+        ...(opts.platform ? { platform: opts.platform } : {}),
+      }),
+    );
     const llm = llmSettings(config, io.env);
     lines.push(['llm', llm.endpoint ? `${llm.endpoint}${llm.model ? ` (model ${llm.model})` : ' (warning: no model configured, the model rung is off)'}` : 'not configured']);
     if (llm.endpoint && llm.model) {

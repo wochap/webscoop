@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowserPort, Notification } from '@webscoop/core';
+import { NoopWindow, type BrowserPort, type Notification, type WindowPort } from '@webscoop/core';
 import { afterEach } from 'vitest';
-import type { ChromiumInfo, CliIo } from '../src';
+import type { ChromiumInfo, CliIo, WindowMode } from '../src';
 
 const temps: string[] = [];
 afterEach(async () => {
@@ -24,6 +24,8 @@ export interface TestIo extends CliIo {
   prompts: () => string[];
   /** Notifications sent through `createNotify`. */
   notifications: Notification[];
+  /** Calls to `createWindow`, in order. */
+  windows: { profileDir: string; mode: WindowMode }[];
 }
 
 export function testIo(opts: {
@@ -34,6 +36,8 @@ export function testIo(opts: {
   chromium?: Partial<ChromiumInfo>;
   /** Answers for terminal prompts, in order; null plays closed input. */
   answers?: (string | null)[];
+  /** Port `createWindow` returns. Default: a `NoopWindow`. */
+  window?: WindowPort;
 }): TestIo {
   const answers = [...(opts.answers ?? [])];
   const prompts: string[] = [];
@@ -42,6 +46,7 @@ export function testIo(opts: {
   let created = 0;
   const handlers = new Set<() => void>();
   const notifications: Notification[] = [];
+  const windows: TestIo['windows'] = [];
   return {
     stdout: { write: (s: string) => (out += s) },
     stderr: { write: (s: string) => (err += s) },
@@ -68,7 +73,12 @@ export function testIo(opts: {
       return `/* recorder ${variant} */`;
     },
     createNotify: () => ({ notify: async (n) => void notifications.push(n) }),
+    createWindow(_config, _env, window) {
+      windows.push(window);
+      return opts.window ?? new NoopWindow();
+    },
     notifications,
+    windows,
     prompts: () => prompts,
     out: () => out,
     err: () => err,

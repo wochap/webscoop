@@ -23,6 +23,7 @@ import {
   type RunOptions,
   type SerializedElement,
   type Session,
+  type WindowPort,
 } from '../src';
 import { FakeBrowser, h, type FakePage } from '../src/testing';
 import { catalog, cards, PAGE, recipe } from './helpers';
@@ -238,7 +239,14 @@ function setupRun(pages: Record<string, FakePage | SerializedElement>, extra: Om
   const emitter = new RunEmitter();
   const log = recordEvents(emitter);
   const notifications: Notification[] = [];
-  const shown = vi.fn(async () => {});
+  /** Window port calls and the run events around them, in order. */
+  const calls: string[] = [];
+  const windowPort: WindowPort = {
+    show: async () => void calls.push('show'),
+    hide: async () => void calls.push('hide'),
+    focus: async () => void calls.push('focus'),
+  };
+  for (const name of ['page.loaded', 'guard.raised', 'guard.cleared'] as const) emitter.on(name, () => void calls.push(name));
   const saveRecipe = vi.fn(async () => '/recipes/shop.json');
   const { recipe: input, ...rest } = extra;
   const runner = new Runner({
@@ -252,14 +260,14 @@ function setupRun(pages: Record<string, FakePage | SerializedElement>, extra: Om
       timeoutMs: 5_000,
       pollMs: 1,
       notify: { notify: async (n) => void notifications.push(n) },
-      window: { show: shown, hide: async () => {} },
     },
+    window: windowPort,
     ...rest,
   });
   /** Play the user: once a guard is raised, run `act` against the run's own session. */
   const onRaised = (act: (session: Session) => Promise<unknown>) =>
     emitter.on('guard.raised', () => void Promise.resolve().then(() => act(browser.sessions.at(-1)!)));
-  return { browser, emitter, log, notifications, shown, runner, onRaised, saveRecipe };
+  return { browser, emitter, log, notifications, calls, runner, onRaised, saveRecipe };
 }
 
 describe('runner guards', () => {
@@ -277,7 +285,7 @@ describe('runner guards', () => {
     expect(t.log.of('guard.raised')).toEqual([{ kind: 'login', page: 1, url: LOGIN, reason: expect.stringContaining('login page') }]);
     expect(t.notifications).toHaveLength(1);
     expect(t.notifications[0]).toMatchObject({ urgency: 'critical', title: expect.stringContaining('shop'), body: expect.stringMatching(/login.*page 1/) });
-    expect(t.shown).toHaveBeenCalledTimes(1);
+    expect(t.calls.filter((c) => c === 'show')).toHaveLength(1);
     expect(t.browser.sessions[0]!.focused).toBe(1);
     const [entry] = result.report.guards;
     expect(entry).toMatchObject({ kind: 'login', page: 1, url: LOGIN, cleared: true });
@@ -444,5 +452,78 @@ describe('runner guards', () => {
     const result = await t.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'aborted' });
     expect(t.browser.openSessions).toBe(0);
+  });
+});
+
+describe('runner window', () => {
+  it('hides the window after the browser opens, before page 1 is loaded, and sets the title first', async () => {
+    const t = setupRun({ [PAGE]: catalog(cards(2)) });
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(t.calls).toEqual(['hide', 'page.loaded']);
+    expect(t.browser.sessions[0]!.titles).toEqual(['webscoop']);
+  });
+
+  it('shows and focuses the window on a guard and hides it again once cleared', async () => {
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() });
+    t.onRaised(async (session) => {
+      t.browser.setPage(PAGE, catalog(cards(3)));
+      await session.goto(PAGE, { timeoutMs: 1000 });
+    });
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(t.calls).toEqual(['hide', 'page.loaded', 'guard.raised', 'show', 'focus', 'guard.cleared', 'hide', 'page.loaded']);
+  });
+
+  it('keeps hiding with guards disabled', async () => {
+    const t = setupRun({ [PAGE]: catalog(cards(2)) }, { guards: { enabled: false, timeoutMs: 0 } });
+    expect((await t.runner.run()).ok).toBe(true);
+    expect(t.calls[0]).toBe('hide');
+  });
+
+  it('never fails the run when the window port throws', async () => {
+    const failing: WindowPort = {
+      show: async () => {
+        throw new Error('show failed');
+      },
+      hide: async () => {
+        throw new Error('hide failed');
+      },
+      focus: async () => {
+        throw new Error('focus failed');
+      },
+    };
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, { window: failing });
+    t.onRaised(async (session) => {
+      t.browser.setPage(PAGE, catalog(cards(3)));
+      await session.goto(PAGE, { timeoutMs: 1000 });
+    });
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(3);
+  });
+
+  it('prepares the window and adds its launch arguments before the browser opens', async () => {
+    const calls: string[] = [];
+    const windowPort: WindowPort = {
+      launchArgs: ['--class=webscoop'],
+      prepare: async () => void calls.push('prepare'),
+      show: async () => {},
+      hide: async () => void calls.push('hide'),
+    };
+    const t = setupRun({ [PAGE]: catalog(cards(2)) }, { window: windowPort, openOptions: { args: ['--lang=en'] } });
+    t.browser.open = ((open) => async (dir: string, opts?: Parameters<typeof open>[1]) => {
+      calls.push('open');
+      return open(dir, opts);
+    })(t.browser.open.bind(t.browser));
+    expect((await t.runner.run()).ok).toBe(true);
+    expect(calls).toEqual(['prepare', 'open', 'hide']);
+    expect(t.browser.openOptions[0]).toEqual({ args: ['--lang=en', '--class=webscoop'] });
+  });
+
+  it('touches no window without a window port', async () => {
+    const t = setupRun({ [PAGE]: catalog(cards(2)) }, { window: undefined });
+    expect((await t.runner.run()).ok).toBe(true);
+    expect(t.calls).toEqual(['page.loaded']);
   });
 });

@@ -1,6 +1,7 @@
-import type { BrowserPort, NotifyPort } from '@webscoop/core';
+import type { BrowserPort, NotifyPort, WindowPort } from '@webscoop/core';
 import type { Config } from './config';
 import type { Env } from './paths';
+import type { WindowMode } from './window';
 
 export interface Output {
   write(chunk: string): unknown;
@@ -25,6 +26,8 @@ export interface CliIo {
   recorderBundle(variant: 'default' | 'e2e'): Promise<string>;
   /** Desktop notifications, for guards. */
   createNotify(env: Env): NotifyPort;
+  /** Hides and shows the run's browser window; `show` yields a port that does nothing. */
+  createWindow(config: Config, env: Env, opts: { profileDir: string; mode: WindowMode }): WindowPort;
 }
 
 export interface ChromiumInfo {

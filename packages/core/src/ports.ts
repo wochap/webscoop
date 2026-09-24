@@ -88,6 +88,8 @@ export interface Session {
   url(): Promise<string>;
   /** Bring the browser window to the front, where the compositor allows it. */
   focus(): Promise<void>;
+  /** Set the current document's title, so compositor rules can match the window before the first navigation. */
+  setTitle(title: string): Promise<void>;
   /** Visible text of the document body, capped at `PAGE_TEXT_LIMIT` characters. */
   pageText(): Promise<string>;
   close(): Promise<void>;
@@ -210,14 +212,22 @@ export interface StoragePort {
   save(recipe: Recipe): Promise<void>;
 }
 
+/** Moves the run's browser window out of the way and back, through the desktop's compositor. */
 export interface WindowPort {
   show(): Promise<void>;
   hide(): Promise<void>;
+  /** Give the shown window input focus, where the compositor allows it. */
+  focus?(): Promise<void>;
+  /** Run before the browser launches, such as installing a compositor rule that hides the window as it maps. */
+  prepare?(): Promise<void>;
+  /** Extra Chromium arguments the compositor rule matches on, such as `--class`. */
+  readonly launchArgs?: readonly string[];
 }
 
 export class NoopWindow implements WindowPort {
   async show(): Promise<void> {}
   async hide(): Promise<void> {}
+  async focus(): Promise<void> {}
 }
 
 export class NoopNotify implements NotifyPort {
