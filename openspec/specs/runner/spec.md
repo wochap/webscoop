@@ -53,7 +53,7 @@ When the recipe has an `item` block, the runner SHALL resolve containers, drop t
 - **THEN** 24 rows are emitted and each carries the same `category` value
 
 ### Requirement: Missing fields
-A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing`. After the page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once.
+A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing`. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. On later pages a required field missing on every row SHALL fail the run with exit 3 after emitting the earlier pages. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once.
 
 #### Scenario: Required field absent everywhere
 - **WHEN** `price` is required and no rung of the ladder resolves it
@@ -63,8 +63,12 @@ A required field that resolves no element for a given row, after the healing lad
 - **WHEN** `price` is required and one of 24 containers lacks it
 - **THEN** 24 rows are emitted, one with `price: null`, and a warning names the row index
 
+#### Scenario: Required field vanishes on page 2
+- **WHEN** `price` resolves on page 1 and no container on page 2 has it
+- **THEN** page 1 rows were emitted, the run fails with exit 3, and stderr names page 2
+
 ### Requirement: Run report
-The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, and per field the candidate used, the healing outcome, and a status among `ok`, `healed`, `partial`, `missing`. The report SHALL state whether the recipe was written back and to which path. The CLI SHALL print a one-line summary to stderr including the number of healed fields, and the full report with `--report`.
+The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, duplicate count, stop reason, per page URL and row count, and per field the candidate used, the healing outcome, and a status among `ok`, `healed`, `partial`, `missing`. The report SHALL state whether the recipe was written back and to which path. The CLI SHALL print a one-line summary to stderr including the page count, the number of healed fields, and the number of dropped duplicates when non-zero, and the full report with `--report`.
 
 #### Scenario: Report after success
 - **WHEN** a run extracts 24 rows with all fields ok
@@ -74,16 +78,24 @@ The runner SHALL produce a run report available to the CLI with: start and end t
 - **WHEN** a run heals two fields and writes the recipe back
 - **THEN** the summary line reports 2 healed fields and the report names the written path
 
+#### Scenario: Report after pages
+- **WHEN** a run extracts 3 pages with 2 duplicates dropped
+- **THEN** the summary line contains the page count 3 and the duplicate count 2
+
 ### Requirement: Run events
-The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
+The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.
 
 #### Scenario: Event order
 - **WHEN** a run succeeds on one page
-- **THEN** events are observed in the order `run.start`, `page.loaded`, `field.resolved` (one or more), `row.emitted` (one or more), `page.done`, `run.done`
+- **THEN** events are observed in the order `run.start`, `page.loaded`, `field.resolved` (one or more), `row.emitted` (one or more), `page.done`, `pagination.stopped`, `run.done`
 
 #### Scenario: Healing events
 - **WHEN** a field heals and the recipe is written back
 - **THEN** `field.healed` is observed before that field's `field.resolved`, and `recipe.saved` is observed before `run.done`
+
+#### Scenario: Multi-page order
+- **WHEN** a run extracts two pages
+- **THEN** `page.done` for page 1 is observed before `page.advanced` for page 2, which precedes `page.loaded` for page 2
 
 ### Requirement: Clean shutdown
 On success, failure, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits.

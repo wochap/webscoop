@@ -60,7 +60,7 @@ When `delayMs` is set by query or control, the catalog SHALL wait that many mill
 - **THEN** the response arrives no sooner than 1.5 seconds after the request
 
 ### Requirement: Reserved routes
-The routes `/login`, `/challenge`, and the query parameters `wall`, `paginate`, `nextRel`, `lastPageRepeats`, and `moreDisappears` SHALL be reserved for later changes. Requesting a reserved route SHALL return HTTP 501.
+The routes `/login` and `/challenge` and the query parameter `wall` SHALL be reserved for the guards change. Requesting a reserved route or parameter SHALL return HTTP 501.
 
 #### Scenario: Reserved route
 - **WHEN** `/login` is requested before the guards change exists
@@ -119,3 +119,30 @@ The routes `/login`, `/challenge`, and the query parameters `wall`, `paginate`, 
 #### Scenario: Rating absent
 - **WHEN** `/catalog?tier=4&seed=5` is requested
 - **THEN** no element contains a rating value and the other five fields are present
+
+### Requirement: Paginated catalog
+`/catalog` SHALL accept `paginate` among `url`, `next`, `more`, `scroll`. When set, the catalog SHALL show the 24 products in 3 pages of 8, in dataset order, and expose the page as follows:
+- `url`: `?page=N` selects the page; the page shows numbered page links `1`, `2`, `3` and a `Next` link whose `href` carries `page=N+1` on pages 1 and 2. Page 3 has no `Next` link.
+- `next`: the server keeps the page in the `ws_page` cookie; a `Next` link with `href="/catalog?paginate=next&go=next"` advances the cookie and redirects back; page 3 renders the link with `aria-disabled="true"` and no `href`.
+- `more`: the page renders 8 products and a `Load more` button; clicking it fetches the next 8 from `/catalog/more?after=N` and appends them; after 24 the button is removed.
+- `scroll`: the page renders 8 products and a script that appends the next 8 when the viewport reaches the bottom, until 24.
+Without `paginate`, the catalog SHALL render all 24 products as before.
+
+#### Scenario: url pages
+- **WHEN** `/catalog?paginate=url&page=2` is requested
+- **THEN** products p09 to p16 are rendered and the `Next` link points at `page=3`
+
+#### Scenario: more appends
+- **WHEN** the `Load more` button is clicked twice on `/catalog?paginate=more`
+- **THEN** 24 products are present and the button is gone
+
+### Requirement: Pagination stop-rule switches
+`/catalog` SHALL accept `nextRel=0` to omit `rel="next"` from the next link (default present), `lastPageRepeats=1` to serve page 3 content for any page beyond 3 in `url` mode with a `Next` link present, and `moreDisappears=1` to remove the `Load more` button after the first click regardless of remaining items.
+
+#### Scenario: Last page repeats
+- **WHEN** `/catalog?paginate=url&page=4&lastPageRepeats=1` is requested
+- **THEN** products p17 to p24 are rendered and a `Next` link to `page=5` is present
+
+#### Scenario: More disappears
+- **WHEN** `moreDisappears=1` is set and the button is clicked once
+- **THEN** 16 products are present and no button remains

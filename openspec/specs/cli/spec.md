@@ -175,3 +175,25 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 #### Scenario: Bench across tiers
 - **WHEN** `webscoop bench playground-catalog --tiers 0-3` is executed with a working model
 - **THEN** the table shows `candidate` for every field on tier 0 and at least one `model` on tier 3
+
+### Requirement: Pagination flags
+`webscoop run` and `webscoop test` SHALL accept `--pages <1|N|all>` overriding the recipe limit, `--max-pages <N>` (default 500) capping `all`, and `--delay <ms>` overriding `pagination.delayMs`. `test` SHALL default to one page regardless of the recipe limit; `run` SHALL default to the recipe limit. Invalid values SHALL exit 1 naming the flag.
+
+#### Scenario: Override to all
+- **WHEN** the recipe limit is 1 and `--pages all` is passed
+- **THEN** the run walks pages until a stop rule fires or the cap is hit
+
+#### Scenario: Test stays on one page
+- **WHEN** `webscoop test shop` runs a recipe with limit `all`
+- **THEN** only the first page is extracted
+
+#### Scenario: Invalid pages value
+- **WHEN** `--pages many` is passed
+- **THEN** stderr names `--pages` and the exit code is 1
+
+### Requirement: Page variable from the command line
+For a `url` kind recipe, a `--var` for the page parameter SHALL set the starting page for that run.
+
+#### Scenario: Start at page 3
+- **WHEN** the page parameter is `n` and `--var n=3 --pages 2` are passed
+- **THEN** pages 3 and 4 are extracted
