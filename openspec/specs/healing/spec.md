@@ -7,7 +7,7 @@ Defines how a run recovers when stored selectors no longer match: the ordered ru
 ## Requirements
 
 ### Requirement: Healing ladder
-For each target (item container, each field, pagination target) the runner SHALL try, in order: (1) the stored candidates in listed order; (2) fuzzy fingerprint match against the live page when the target has a fingerprint; (3) any model-assisted rung registered by a later capability; (4) failure. The first rung that resolves at least one element SHALL win and later rungs SHALL NOT run for that target. Healing SHALL be attempted once per target per run, not per row.
+For each target (item container, each field, pagination target) the runner SHALL try, in order: (1) the stored candidates in listed order; (2) fuzzy fingerprint match against the live page when the target has a fingerprint; (3) the model rung when a language model is available and enabled for the recipe; (4) the human re-pick rung when a handler is available; (5) failure. The first rung that resolves at least one element SHALL win and later rungs SHALL NOT run for that target. Healing SHALL be attempted once per target per run, not per row.
 
 #### Scenario: Candidate rung wins
 - **WHEN** the second stored candidate resolves elements
@@ -16,6 +16,10 @@ For each target (item container, each field, pagination target) the runner SHALL
 #### Scenario: Fuzzy rung wins
 - **WHEN** no stored candidate resolves and fuzzy matching finds an element above the threshold
 - **THEN** the target resolves to that element and the outcome is `fuzzy` with its score
+
+#### Scenario: Model rung wins
+- **WHEN** candidates and fuzzy match fail and the model picks a candidate that verifies
+- **THEN** the target resolves to that element and the outcome is `model` with the model's reason
 
 #### Scenario: Ladder exhausted
 - **WHEN** no rung resolves a required field
@@ -86,3 +90,54 @@ When the ladder fails for a required target and an interactive re-pick handler i
 #### Scenario: User skips
 - **WHEN** the user skips the re-pick for a required field
 - **THEN** the run fails as missing for that field
+
+### Requirement: Model rung gating
+The model rung SHALL run only when all hold: an adapter is available, the recipe's `healing.llm` is true, and the run was not started with the model disabled. When the adapter reports an error, the rung SHALL fail for that target, log one line, and SHALL NOT be attempted again for the remaining targets of the run.
+
+#### Scenario: Recipe opts out
+- **WHEN** `healing.llm` is false and fuzzy match fails
+- **THEN** the model is not called and the ladder proceeds to re-pick or failure
+
+#### Scenario: Endpoint fails mid-run
+- **WHEN** the first model call errors
+- **THEN** later targets in the same run skip the model rung
+
+### Requirement: Candidate pruning for the model
+Before asking the model, the rung SHALL build a candidate list from the target's scope: elements whose tag is in the field type's plausible set (`text` and `number`: any element with own text; `url`: anchors; `image`: images and elements with a background image attribute; `date`: elements with own text or a `datetime` attribute; `html`: any element), excluding script, style, and hidden elements, ranked by fingerprint score, capped so that the serialized prompt fits within 40 percent of the configured context window and never exceeds 60 candidates. Each candidate SHALL be serialized as one line with its index, tag, role, key attributes, own text truncated to 80 characters, and its ancestor path truncated to 4 tokens.
+
+#### Scenario: Budget respected
+- **WHEN** the scope has 400 plausible elements and the context window is 32768 tokens
+- **THEN** the prompt contains at most 60 candidates and its estimated size is at most 13107 tokens
+
+#### Scenario: Type filter
+- **WHEN** the target is a `url` field
+- **THEN** only anchor elements appear in the candidate list
+
+### Requirement: Model prompt and answer contract
+The prompt SHALL contain the field's name and type, the stored fingerprint (tag, role, name, text sample, stable attributes, ancestors), the last known sample value when present, and the candidate list. The model SHALL answer with a JSON object `{ "index": <integer or null>, "confidence": <0 to 1>, "reason": <string> }`. Answers with an index outside the list, a missing field, or confidence below 0.5 SHALL count as no pick.
+
+#### Scenario: Low confidence ignored
+- **WHEN** the model answers index 4 with confidence 0.3
+- **THEN** the rung fails for that target
+
+#### Scenario: Null pick
+- **WHEN** the model answers index null
+- **THEN** the rung fails for that target and the report records the model's reason
+
+### Requirement: Model pick verification
+A model pick SHALL be verified before acceptance: the picked element SHALL resolve through its positional selector; for item scoped fields the promoted relative selector SHALL resolve in at least half of the containers; the picked element's fingerprint score SHALL be at least 0.4; and for `number` and `date` fields the picked element's text SHALL convert to a non-null value. A pick that fails verification SHALL count as no pick.
+
+#### Scenario: Pick fails type check
+- **WHEN** the model picks an element for a `number` field whose text has no digits
+- **THEN** the rung fails for that target
+
+#### Scenario: Pick verified across containers
+- **WHEN** the model picks the new price element in the first container and the relative selector resolves in 24 of 24 containers
+- **THEN** the target is healed with outcome `model`
+
+### Requirement: Removed field is not invented
+When a target's field no longer exists on the page, the ladder SHALL end in `unresolved` rather than accept a wrong element. This is enforced by the confidence floor, the score floor, and the type check together.
+
+#### Scenario: Tier 4 rating removed
+- **WHEN** the page no longer contains any rating element and `rating` is required
+- **THEN** the run reports `rating` as `missing` with outcome `unresolved` and exits 3, and no other field's value is placed into `rating`

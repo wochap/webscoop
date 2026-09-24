@@ -75,11 +75,19 @@ Each emitted row SHALL contain one key per recipe field, plus `_page` (1-based p
 - **THEN** the command prints nothing to stdout and exits 0
 
 ### Requirement: `doctor` command
-`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, and the configured LLM endpoint if any. It SHALL exit 1 when Chromium is missing or no display is available.
+`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, and the configured LLM endpoint if any. When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.
 
 #### Scenario: No display
 - **WHEN** neither `WAYLAND_DISPLAY` nor `DISPLAY` is set
 - **THEN** doctor reports the missing display and exits 1
+
+#### Scenario: Endpoint probe
+- **WHEN** an endpoint and model are configured and reachable
+- **THEN** doctor prints the model as found and the round-trip time, and exits 0
+
+#### Scenario: Endpoint down
+- **WHEN** an endpoint is configured but refuses connections
+- **THEN** doctor prints a warning naming the endpoint and still exits 0 when display and Chromium are fine
 
 ### Requirement: File locations
 The CLI SHALL use XDG paths: recipes under `$XDG_DATA_HOME/webscoop/recipes/`, browser profiles under `$XDG_DATA_HOME/webscoop/profiles/`, config at `$XDG_CONFIG_HOME/webscoop/config.json`. When the XDG variables are unset, `~/.local/share` and `~/.config` SHALL be used. `WEBSCOOP_HOME` SHALL override both roots when set, so tests can isolate state.
@@ -153,3 +161,17 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 #### Scenario: Re-pick a field
 - **WHEN** `webscoop record --edit shop --repick price` is executed and the user picks the new price element
 - **THEN** the recipe's `price` selectors and fingerprint are replaced and the exit code is 0
+
+### Requirement: `--no-llm` flag
+`webscoop run` and `webscoop test` SHALL accept `--no-llm`, which disables the model rung for that invocation regardless of config and recipe.
+
+#### Scenario: Flag disables model
+- **WHEN** `webscoop run shop --no-llm` reaches the model rung
+- **THEN** no request is sent to the endpoint
+
+### Requirement: `bench` command
+`webscoop bench <recipe> [--tiers <range>] [--seed <n>] [--json]` SHALL run the recipe once per playground tier in the range (default `0-4`) against a playground it starts itself, with write-back disabled, and print a table with one row per tier and field showing the rung that resolved the field (`candidate`, `fuzzy`, `model`, `unresolved`) and the elapsed time per tier. The recipe's `port` variable SHALL be filled with the started playground's port. The command SHALL exit 0 regardless of heal outcomes and 1 on error.
+
+#### Scenario: Bench across tiers
+- **WHEN** `webscoop bench playground-catalog --tiers 0-3` is executed with a working model
+- **THEN** the table shows `candidate` for every field on tier 0 and at least one `model` on tier 3

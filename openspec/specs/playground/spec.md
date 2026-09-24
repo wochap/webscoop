@@ -101,3 +101,21 @@ The routes `/login`, `/challenge`, and the query parameters `wall`, `paginate`, 
 #### Scenario: Ground truth independent of order
 - **WHEN** rows are extracted from tier 2
 - **THEN** sorting them by `url` yields the dataset
+
+### Requirement: Tier 3, semantic churn
+`/catalog?tier=3` SHALL apply tier 2 changes and additionally, chosen by seed per page: swap each card's `article` for a `div` or `section`, render the title as a `div` with `role="heading"` or as an `h3`, render the price inside a `span` with a `Cost:` or `Now:` prefix label in a separate sibling element, rename `data-testid` attributes to `data-qa`, replace the rating `aria-label` with a `title` attribute, and change the link text from `View details` to `See product`. Product values SHALL remain extractable: the price element's own text SHALL still contain the formatted price.
+
+#### Scenario: Tier 3 defeats fuzzy match on price
+- **WHEN** the reference recipe runs on `/catalog?tier=3&seed=5` with the model rung disabled
+- **THEN** at least one required field is reported `missing`
+
+#### Scenario: Tier 3 values intact
+- **WHEN** `/catalog?tier=3&seed=5` is requested
+- **THEN** every product's price string and title text appear in the page
+
+### Requirement: Tier 4, field removed
+`/catalog?tier=4` SHALL apply tier 3 changes and remove the rating element from every card entirely. No other element SHALL carry the rating value.
+
+#### Scenario: Rating absent
+- **WHEN** `/catalog?tier=4&seed=5` is requested
+- **THEN** no element contains a rating value and the other five fields are present
