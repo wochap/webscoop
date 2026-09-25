@@ -31,7 +31,11 @@ export const SelectorSchema = z.object({
   value: z.string().check(z.minLength(1)),
   stability: z.enum(STABILITIES),
 });
-export const CandidateSchema = z.extend(SelectorSchema, { count: z.optional(count()) });
+export const CandidateSchema = z.extend(SelectorSchema, {
+  count: z.optional(count()),
+  /** For an item scoped candidate: how many item containers hold at least one match. */
+  items: z.optional(count()),
+});
 export const PathSchema = z.array(index());
 export const BBoxSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() });
 
@@ -197,6 +201,27 @@ export const SelectedSchema = z.object({
   primary: index(),
 });
 
+/** The options of a field, as the selection panel's form shows them. */
+export const FieldOptionsSchema = z.object({
+  name: z.string(),
+  type: z.enum(FIELD_TYPES),
+  scope: z.enum(FIELD_SCOPES),
+  attr: z.optional(z.string()),
+  optional: z.boolean(),
+  key: z.boolean(),
+});
+
+/** A saved field opened in the selection panel for editing. */
+export const EditingSchema = z.object({
+  index: index(),
+  /** The field's options when the edit opened; the form starts from them. */
+  options: FieldOptionsSchema,
+  /** The field's saved candidates with current counts, used while no element is selected. */
+  candidates: z.array(CandidateSchema),
+  /** Index in `candidates` of the primary candidate. */
+  primary: z._default(index(), 0),
+});
+
 export const TestResultsSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())),
   rowCount: count(),
@@ -260,6 +285,12 @@ export const RecorderStateSchema = z.object({
   repickStep: z._default(z.nullable(index()), null),
   /** Set in the focused re-pick mode. */
   repickContext: z._default(z.nullable(RepickContextSchema), null),
+  /** Set while a saved field is open in the selection panel. */
+  editing: z._default(z.nullable(EditingSchema), null),
+  /** An element the page should select: the first match of a typed selector or of the edited field. */
+  pendingSelect: z._default(z.nullable(z.object({ path: PathSchema })), null),
+  /** Why the last typed selection selector was refused; the previous selection stays. */
+  selectorError: z._default(z.nullable(z.string()), null),
   /** Set while an interactive run is paused on a guard. */
   guardContext: z._default(z.nullable(GuardContextSchema), null),
   test: z.nullable(TestResultsSchema),
@@ -309,6 +340,13 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('picker.hover', { path: PathSchema, tag: z.string() }),
   msg('picker.select', { url: z.string(), selection: SelectionSchema, snapshot: SnapshotSchema }),
   msg('picker.cancel', {}),
+  /** Return to the empty state: no selection, proposal, or field edit. The draft does not change. */
+  msg('selection.clear', {}),
+  /**
+   * Select by typed selector text: inside each item container for scope
+   * `item`, else on the page. The snapshot maps the first match to a path.
+   */
+  msg('selection.setSelector', { selector: z.string(), scope: z.optional(z.enum(FIELD_SCOPES)), snapshot: z.optional(SnapshotSchema) }),
   msg('inspect.count', { candidate: SelectorSchema, scope: z.enum(FIELD_SCOPES) }),
   msg('inspect.primary', { index: index() }),
   msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
@@ -337,6 +375,11 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.addField', { patch: z.optional(FieldPatchSchema) }),
   msg('draft.updateField', { index: index(), patch: FieldPatchSchema }),
   msg('draft.removeField', { index: index() }),
+  /** Open a saved field in the selection panel; the snapshot maps its first match to a path. */
+  msg('draft.editField', { index: index(), snapshot: z.optional(SnapshotSchema) }),
+  /** Replace the edited field in place with the form's options and the selection's candidates. */
+  msg('draft.updateEditedField', { patch: FieldPatchSchema }),
+  msg('draft.cancelEdit', {}),
   msg('draft.moveField', { from: index(), to: index() }),
   msg('draft.repickTarget', { target: z.enum(['field', 'step']), index: z.nullable(index()) }),
   msg('draft.addStep', { step: NewStepSchema, selection: z.optional(z.nullable(SelectionSchema)) }),
@@ -399,6 +442,8 @@ export type StepPatch = z.infer<typeof StepPatchSchema>;
 export type NewStep = z.infer<typeof NewStepSchema>;
 export type Draft = z.infer<typeof DraftSchema>;
 export type SelectedView = z.infer<typeof SelectedSchema>;
+export type FieldOptions = z.infer<typeof FieldOptionsSchema>;
+export type EditingView = z.infer<typeof EditingSchema>;
 export type TestResults = z.infer<typeof TestResultsSchema>;
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
 export type RepickContext = z.infer<typeof RepickContextSchema>;

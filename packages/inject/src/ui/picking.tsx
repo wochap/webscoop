@@ -142,10 +142,13 @@ export function ElementInspector({
   trail,
   onSelectPath,
   chain = '',
+  onClear,
 }: {
   selection: ParsedSelection;
   trail: Crumb[];
   onSelectPath: (path: Path) => void;
+  /** Clear the selection, back to the empty state. */
+  onClear?: () => void;
   /** The composed selector chain, for an item scoped selection. */
   chain?: string;
 }) {
@@ -160,6 +163,11 @@ export function ElementInspector({
           <span className="ws-meta ws-ellipsis" title={selection.name} data-ws="inspector-name">
             “{selection.name}”
           </span>
+        )}
+        {onClear && (
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" style={{ marginLeft: 'auto' }} aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear} data-ws="clear-selection">
+            ×
+          </button>
         )}
       </div>
       {selection.text && (

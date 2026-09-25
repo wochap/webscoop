@@ -89,6 +89,7 @@ export function modeOf({ host, ui }: Snapshot): Mode {
   if (host?.repickContext) return 'repick';
   if (ui.drawerOpen && host?.test) return 'test';
   if (host?.proposal) return 'items';
+  if (host?.editing) return 'editing';
   if (host?.selected) return 'selected';
   if (ui.focusedField !== null || ui.focusedStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
   return 'idle';

@@ -79,10 +79,16 @@ export class Runtime implements Actions {
       return;
     }
     try {
-      this.apply(parseHostMessage(await fn(msg)));
+      this.apply(parseHostMessage(await fn(this.withSnapshot(msg))));
     } catch (error) {
       this.toast('danger', error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /** The host maps a typed selector's or an edited field's first match to a path in the page's own snapshot. */
+  private withSnapshot(msg: PageMessage): PageMessage {
+    if ((msg.kind !== 'selection.setSelector' && msg.kind !== 'draft.editField') || msg.snapshot) return msg;
+    return { ...msg, snapshot: snapshotOf(readDocument(null, this.doc).root) };
   }
 
   /** Entry point for `window.__webscoopPage.dispatch`. */
@@ -144,6 +150,12 @@ export class Runtime implements Actions {
     if (next.repickStep !== null && (prev?.repickStep ?? null) === null && !this.store.get().ui.picking) this.startPicking();
     // The focused re-pick mode opens ready to pick.
     if (next.repickContext && !next.repickContext.picked && !prev?.repickContext && !this.store.get().ui.picking) this.startPicking();
+    // The host asks for a typed selector's or an edited field's element: select it like a pick.
+    if (next.pendingSelect && next.pendingSelect.path.join() !== prev?.pendingSelect?.path.join()) {
+      const el = elementAt(next.pendingSelect.path, this.doc);
+      if (el) void this.select(el, true);
+      else this.toast('danger', 'The matched element is no longer on the page.');
+    }
     this.syncOverlay();
   }
 
@@ -307,8 +319,10 @@ export class Runtime implements Actions {
     overlay.setSelected(selected);
     if (!host || !ui.highlight || host.guardContext) {
       overlay.setList(null);
+      overlay.setMatches([]);
       return overlay.setItems([], 'sibling');
     }
+    overlay.setMatches(this.editedMatches());
     overlay.setList(this.listParent());
     if (host.proposal) {
       const level = host.proposal[ui.level] ?? host.proposal.proposed;
@@ -320,6 +334,20 @@ export class Runtime implements Actions {
       return overlay.setItems(all, 'container', this.excluded(all, host.draft.item.exclude));
     }
     overlay.setItems([], 'sibling');
+  }
+
+  /** Every match of the edited field's primary candidate: inside each item container for item scope, else on the page. */
+  private editedMatches(): Element[] {
+    const host = this.store.get().host;
+    const editing = host?.editing;
+    if (!host || !editing) return [];
+    const selected = host.selected;
+    const primary = selected ? selected.selection.candidates[selected.primary] : editing.candidates[editing.primary];
+    if (!primary) return [];
+    const scope = selected?.scope ?? editing.options.scope;
+    if (scope === 'page') return resolveLocal(primary, undefined, this.doc);
+    const containers = host.draft.item ? containersLocal(host.draft.item, this.doc) : [];
+    return containers.flatMap((c) => resolveLocal(primary, c, this.doc));
   }
 
   /** The list parent to outline: the proposal's, else the confirmed item's first match. */

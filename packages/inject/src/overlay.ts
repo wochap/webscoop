@@ -1,7 +1,7 @@
 import { roleOf } from './dom';
 import { SANS, MONO } from './fonts';
 
-export type BoxVariant = 'hover' | 'selected' | 'sibling' | 'container' | 'excluded' | 'list' | 'blocked';
+export type BoxVariant = 'hover' | 'selected' | 'sibling' | 'container' | 'excluded' | 'list' | 'blocked' | 'match';
 
 export const OVERLAY_CSS = `
 :host { all: initial; }
@@ -14,6 +14,7 @@ export const OVERLAY_CSS = `
 .ws-box-excluded { border: 1px dashed #f0a9a9; background: rgba(240, 169, 169, 0.10); border-radius: 5px; }
 .ws-box-list { outline: 2px dotted #e6c98f; outline-offset: 3px; border-radius: 6px; }
 .ws-box-blocked { border: 2px dashed #f0a9a9; background: rgba(240, 169, 169, 0.08); }
+.ws-box-match { border: 1px solid #9fdcbc; background: rgba(159, 220, 188, 0.12); }
 .ws-halo-dark.ws-box-hover, .ws-halo-dark.ws-box-sibling { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), inset 0 0 0 1px rgba(14, 15, 24, 0.6); }
 .ws-halo-light.ws-box-hover, .ws-halo-light.ws-box-sibling { box-shadow: 0 0 0 1px rgba(243, 245, 254, 0.95), inset 0 0 0 1px rgba(243, 245, 254, 0.7); }
 .ws-halo-dark.ws-box-selected { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), 0 0 0 4px rgba(181, 171, 252, 0.25); }
@@ -68,6 +69,7 @@ export class Overlay {
   private selected: Tracked | null = null;
   private list: Tracked | null = null;
   private groups: Tracked[] = [];
+  private matches: Tracked[] = [];
   private readonly tag: HTMLDivElement;
   private tagText = '';
   private frame = 0;
@@ -164,16 +166,25 @@ export class Overlay {
     this.schedule();
   }
 
+  /** Matches of the field being edited. */
+  setMatches(els: readonly Element[]): void {
+    if (els.length === this.matches.length && els.every((el, i) => this.matches[i]!.el === el)) return;
+    for (const t of this.matches) t.box.remove();
+    this.matches = els.map((el) => this.make(el, 'match'));
+    this.schedule();
+  }
+
   clear(): void {
     this.setHover(null);
     this.setSelected(null);
     this.setList(null);
     this.setItems([], 'sibling');
+    this.setMatches([]);
   }
 
   /** Current boxes, for tests and the e2e hook. */
   boxes(): { variant: BoxVariant; light: boolean; el: Element }[] {
-    return [this.hover, this.selected, this.list, ...this.groups]
+    return [this.hover, this.selected, this.list, ...this.groups, ...this.matches]
       .filter((t): t is Tracked => t !== null)
       .map(({ variant, light, el }) => ({ variant, light, el }));
   }
@@ -189,7 +200,7 @@ export class Overlay {
 
   /** Reposition every box now. */
   update(): void {
-    for (const t of [this.hover, this.selected, this.list, ...this.groups]) if (t) place(t);
+    for (const t of [this.hover, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
     this.placeTag();
   }
 

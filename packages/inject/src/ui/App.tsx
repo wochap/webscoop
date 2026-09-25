@@ -1,17 +1,16 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
-import { selectorChain } from '../chain';
 import { modeOf, type Actions, type Snapshot } from '../store';
-import { PickActionGrid, SelectorCandidateList } from './candidates';
 import { useActions, useSnapshot } from './context';
 import { FieldList } from './fields';
 import { GuardBanner, GuardPanel } from './guard';
 import { ItemDetectCard, ItemSummary } from './items';
 import { PaginationEditor } from './pagination';
-import { ElementInspector, PickModeStrip } from './picking';
+import { PickModeStrip } from './picking';
 import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
+import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
 
@@ -77,6 +76,12 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
     case 'abort':
       void actions.send({ kind: 'repick.abort' });
       return;
+    case 'cancelEdit':
+      void actions.send({ kind: 'draft.cancelEdit' });
+      return;
+    case 'clearSelection':
+      void actions.send({ kind: 'selection.clear' });
+      return;
   }
 }
 
@@ -94,18 +99,14 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     focusedStep: snap.ui.focusedStep,
     browsing: snap.ui.browsing,
     repicking: Boolean(snap.host?.repickContext),
+    editing: Boolean(snap.host?.editing),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions);
   return true;
 }
 
-/** The step "record as step" makes from a picked element: typing for text boxes, a click for anything else. */
-export function recordAsStep(tag: string, attrs: Record<string, string>): { kind: 'click' } | { kind: 'type'; value: string } {
-  const type = (attrs.type ?? '').toLowerCase();
-  const typed = tag === 'textarea' || (tag === 'input' && ['', 'text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(type));
-  return typed ? { kind: 'type', value: '' } : { kind: 'click' };
-}
+export { recordAsStep } from './selection';
 
 /** The whole panel. */
 export function ScoopRoot() {
@@ -168,7 +169,7 @@ export function ScoopRoot() {
     );
   }
 
-  const { draft, selected, proposal } = host;
+  const { draft, proposal } = host;
   return (
     <div onKeyDown={onKeyDown} style={{ display: 'contents' }} data-ws="panel">
       <PanelShell
@@ -190,37 +191,7 @@ export function ScoopRoot() {
       >
         <RecipeBar draft={draft} editingVar={ui.editingVar} setEditingVar={(editingVar) => actions.setUi({ editingVar })} />
         <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
-        {selected && (
-          <>
-            <ElementInspector
-              selection={selected.selection}
-              trail={ui.trail}
-              onSelectPath={actions.selectPath}
-              chain={
-                selected.scope === 'item' && draft.item
-                  ? selectorChain([draft.item.within?.[0], draft.item.selectors[0], selected.selection.candidates[selected.primary]])
-                  : ''
-              }
-            />
-            <SelectorCandidateList
-              candidates={selected.selection.candidates}
-              primary={selected.primary}
-              onPrimary={(index) => void actions.send({ kind: 'inspect.primary', index })}
-            />
-            {!proposal && (
-              <PickActionGrid
-                scope={selected.scope}
-                hasItem={draft.item !== null}
-                repicking={host.repick !== null}
-                onAddField={() => void actions.send({ kind: 'draft.addField' })}
-                onRecordStep={() => void actions.send({ kind: 'draft.addStep', step: recordAsStep(selected.selection.tag, selected.selection.attrs) })}
-                onUseAsItems={() => void actions.send({ kind: 'draft.setItem' })}
-                onPagination={() => void actions.send({ kind: 'draft.markPagination' })}
-                onDismiss={actions.startPicking}
-              />
-            )}
-          </>
-        )}
+        <SelectionPanel host={host} trail={ui.trail} />
         {proposal && (
           <ItemDetectCard
             proposal={proposal}
@@ -231,7 +202,17 @@ export function ScoopRoot() {
           />
         )}
         {draft.item && !proposal && <ItemSummary item={draft.item} />}
-        <FieldList fields={draft.fields} focused={ui.focusedField} repick={host.repick} onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })} />
+        <FieldList
+          fields={draft.fields}
+          focused={ui.focusedField}
+          repick={host.repick}
+          editing={host.editing?.index ?? null}
+          onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })}
+          onEdit={(index) => {
+            if (ui.picking) actions.cancelPicking();
+            void actions.send({ kind: 'draft.editField', index });
+          }}
+        />
         <StepList
           steps={draft.steps}
           vars={draft.vars}

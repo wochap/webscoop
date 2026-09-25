@@ -1,13 +1,13 @@
 import { useEffect, useState, type HTMLAttributes } from 'react';
-import { FIELD_TYPES, type DraftField, type FieldPatch } from '@webscoop/core/page';
+import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Toggle } from './items';
 
 type FieldType = DraftField['type'];
 
-export function TypeSelect({ value, onChange }: { value: FieldType; onChange: (type: FieldType) => void }) {
+export function TypeSelect({ value, onChange, testId = 'field-type' }: { value: FieldType; onChange: (type: FieldType) => void; testId?: string }) {
   return (
-    <select className="ws-select" value={value} aria-label="Field type" onChange={(e) => onChange(e.target.value as FieldType)} data-ws="field-type">
+    <select className="ws-select" value={value} aria-label="Field type" onChange={(e) => onChange(e.target.value as FieldType)} data-ws={testId}>
       {FIELD_TYPES.map((t) => (
         <option key={t} value={t}>
           {t}
@@ -25,11 +25,11 @@ export function ScopeBadge({ scope }: { scope: DraftField['scope'] }) {
   );
 }
 
-export function DedupKeyToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+export function DedupKeyToggle({ on, onChange, testId = 'field-key' }: { on: boolean; onChange: (on: boolean) => void; testId?: string }) {
   return (
     <span className="ws-row" title="Use this field to recognise the same row across pages">
       <span className="ws-meta">key</span>
-      <Toggle on={on} onChange={onChange} label="Dedup key" testId="field-key" />
+      <Toggle on={on} onChange={onChange} label="Dedup key" testId={testId} />
     </span>
   );
 }
@@ -47,6 +47,91 @@ export function ZeroMatchWarning({ onRepick, onOptional, optional }: { onRepick:
         </button>
       )}
     </div>
+  );
+}
+
+/** The form's values as a field patch: every option set, an empty attribute cleared. */
+export function formPatch(form: FieldOptions): FieldPatch {
+  return { name: form.name.trim(), type: form.type, scope: form.scope, attr: form.attr?.trim() || null, optional: form.optional, key: form.key };
+}
+
+/** Why the form's name cannot be saved, or null: empty, or taken by another field. */
+export function nameProblem(name: string, taken: readonly string[]): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return 'the field needs a name';
+  return taken.includes(trimmed) ? `another field is already named ${trimmed}` : null;
+}
+
+/** Name, type, attribute, scope, optional, and dedup key of the field the selection becomes. */
+export function FieldOptionsForm({
+  value,
+  onChange,
+  nameError,
+  hasItem,
+}: {
+  value: FieldOptions;
+  onChange: (next: FieldOptions) => void;
+  nameError: string | null;
+  hasItem: boolean;
+}) {
+  const set = (patch: Partial<FieldOptions>) => onChange({ ...value, ...patch });
+  return (
+    <section className="ws-col" data-ws="field-form">
+      <div className="ws-row">
+        <input
+          className={`ws-input ws-input-sm ws-mono-sm ws-spacer${nameError ? ' ws-invalid' : ''}`}
+          value={value.name}
+          aria-label="Field name"
+          aria-invalid={nameError ? true : undefined}
+          data-ws="form-name"
+          onChange={(e) => set({ name: e.target.value })}
+        />
+        <TypeSelect
+          value={value.type}
+          testId="form-type"
+          onChange={(type) => {
+            // The attribute follows the type unless the user typed one of their own.
+            const followed = value.attr === undefined || value.attr === '' || value.attr === defaultAttr(value.type);
+            const attr = defaultAttr(type);
+            set(followed ? { type, attr: attr ?? '' } : { type });
+          }}
+        />
+        <select
+          className="ws-select"
+          value={value.scope}
+          aria-label="Field scope"
+          data-ws="form-scope"
+          onChange={(e) => set({ scope: e.target.value as FieldOptions['scope'] })}
+        >
+          {FIELD_SCOPES.map((scope) => (
+            <option key={scope} value={scope} disabled={scope === 'item' && !hasItem}>
+              {scope}
+            </option>
+          ))}
+        </select>
+      </div>
+      {nameError && (
+        <span className="ws-error" data-ws="form-name-error">
+          {nameError}
+        </span>
+      )}
+      <div className="ws-row">
+        <span className="ws-meta">attr</span>
+        <input
+          className="ws-input ws-input-sm ws-mono-sm ws-spacer"
+          value={value.attr ?? ''}
+          placeholder="text content"
+          aria-label="Attribute to read"
+          data-ws="form-attr"
+          onChange={(e) => set({ attr: e.target.value })}
+        />
+        <span className="ws-row">
+          <span className="ws-meta">optional</span>
+          <Toggle on={value.optional} onChange={(optional) => set({ optional })} label="Optional" testId="form-optional" />
+        </span>
+        <DedupKeyToggle on={value.key} onChange={(key) => set({ key })} testId="form-key" />
+      </div>
+    </section>
   );
 }
 
@@ -76,7 +161,9 @@ export function FieldRow({
   index,
   focused,
   repicking,
+  editing,
   onFocus,
+  onEdit,
   dragging,
   dragProps,
 }: {
@@ -84,7 +171,10 @@ export function FieldRow({
   index: number;
   focused: boolean;
   repicking: boolean;
+  /** The field is open in the selection panel. */
+  editing: boolean;
   onFocus: () => void;
+  onEdit: () => void;
   dragging: boolean;
   dragProps: Omit<HTMLAttributes<HTMLDivElement>, 'className'>;
 }) {
@@ -94,9 +184,10 @@ export function FieldRow({
   return (
     <div
       {...dragProps}
-      className={`ws-field${focused ? ' ws-field-focused' : ''}${dragging ? ' ws-field-dragging' : ''}`}
+      className={`ws-field${focused || editing ? ' ws-field-focused' : ''}${dragging ? ' ws-field-dragging' : ''}`}
       data-ws="field"
       data-name={field.name}
+      data-editing={editing || undefined}
       tabIndex={-1}
       draggable
       onFocus={onFocus}
@@ -112,6 +203,20 @@ export function FieldRow({
         <span className={`ws-num${field.count === 0 ? ' ws-num-zero' : ''}`} data-ws="field-count" title="Matches of the primary selector on this page">
           {field.count ?? '…'}
         </span>
+        <button
+          type="button"
+          className="ws-btn ws-btn-ghost ws-btn-sm"
+          aria-label={`Edit field ${field.name}`}
+          aria-pressed={editing}
+          title="Open in the selection panel to change its selectors and options"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          data-ws="field-edit"
+        >
+          {editing ? 'Editing' : 'Edit'}
+        </button>
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Remove field ${field.name}`} onClick={() => void actions.send({ kind: 'draft.removeField', index })} data-ws="field-remove">
           ×
         </button>
@@ -121,7 +226,7 @@ export function FieldRow({
           {field.error}
         </span>
       )}
-      <div className="ws-row">
+      <div className="ws-row ws-clickable" data-ws="field-summary" title="Edit this field" onClick={onEdit}>
         <span className="ws-mono-sm ws-faint ws-ellipsis ws-spacer" title={`${primary.strategy}=${primary.value}`}>
           {primary.strategy}={primary.value}
         </span>
@@ -152,7 +257,22 @@ export function FieldRow({
 }
 
 /** Fields in recipe order; drag or Alt+Up and Alt+Down reorder. */
-export function FieldList({ fields, focused, repick, onFocus }: { fields: DraftField[]; focused: number | null; repick: number | null; onFocus: (index: number | null) => void }) {
+export function FieldList({
+  fields,
+  focused,
+  repick,
+  editing = null,
+  onFocus,
+  onEdit = () => {},
+}: {
+  fields: DraftField[];
+  focused: number | null;
+  repick: number | null;
+  /** Index of the field open in the selection panel. */
+  editing?: number | null;
+  onFocus: (index: number | null) => void;
+  onEdit?: (index: number) => void;
+}) {
   const actions = useActions();
   const [dragging, setDragging] = useState<number | null>(null);
   if (fields.length === 0) {
@@ -173,7 +293,9 @@ export function FieldList({ fields, focused, repick, onFocus }: { fields: DraftF
           index={index}
           focused={focused === index}
           repicking={repick === index}
+          editing={editing === index}
           onFocus={() => onFocus(index)}
+          onEdit={() => onEdit(index)}
           dragging={dragging === index}
           dragProps={{
             onDragStart: (e) => {

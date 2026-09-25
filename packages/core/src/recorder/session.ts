@@ -41,6 +41,7 @@ import {
   HOST_BINDING,
   parsePageMessage,
   type Draft,
+  type FieldPatch,
   type HostMessage,
   type LevelView,
   type NewStep,
@@ -130,6 +131,9 @@ function toFront<T>(list: readonly T[], index: number): T[] {
   return [chosen, ...list.filter((_, i) => i !== index)];
 }
 
+const samePath = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((v, i) => b[i] === v);
+const sameSelector = (a: Candidate, b: Candidate) => a.strategy === b.strategy && a.value === b.value;
+
 /** Primary candidate first, then the rest in ranked order, without candidates that match nothing. */
 function orderForSave(candidates: readonly ProtocolCandidate[], primary: number): ProtocolCandidate[] {
   const first = candidates[primary] ?? candidates[0];
@@ -157,6 +161,10 @@ export class RecorderController {
     withinCleared: false,
     includeAll: false,
   };
+  /** A typed selection selector waiting for the page to select its first match. */
+  private typed: { candidate: ProtocolCandidate; scope: FieldScope } | null = null;
+  /** The edited field's saved candidates, counted, waiting for the page to select the field's element. */
+  private editSeed: ProtocolCandidate[] | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly unsubscribe: (() => void)[] = [];
   private closedResolve!: (reason: 'closed' | 'ended') => void;
@@ -191,6 +199,9 @@ export class RecorderController {
       selected: null,
       proposal: null,
       levelPick: null,
+      editing: null,
+      pendingSelect: null,
+      selectorError: null,
       repick: repickContext ? repickContext.index : null,
       repickStep: null,
       repickContext,
@@ -367,13 +378,23 @@ export class RecorderController {
       case 'picker.select':
         this.current = { ...this.current, url: msg.url };
         return void (await this.select(msg.selection, msg.snapshot as AnnotatedNode));
+      case 'selection.clear':
+        this.clearSelection();
+        return;
+      case 'selection.setSelector':
+        return void (await this.setSelector(msg.selector, msg.scope, msg.snapshot));
       case 'inspect.count': {
         const containers = msg.scope === 'item' ? await this.containers() : [];
-        const count = msg.scope === 'item' ? await this.countIn(msg.candidate, containers) : await this.countPage(msg.candidate);
+        const count = msg.scope === 'item' ? (await this.countIn(msg.candidate, containers)).count : await this.countPage(msg.candidate);
         return { kind: 'inspect.countResult', count };
       }
       case 'inspect.primary': {
         const selected = this.current.selected;
+        const editing = this.current.editing;
+        if (!selected && editing && msg.index < editing.candidates.length) {
+          this.current = { ...this.current, editing: { ...editing, primary: msg.index } };
+          return;
+        }
         if (!selected || msg.index >= selected.selection.candidates.length) throw new Error('no candidate at that index');
         this.current = { ...this.current, selected: { ...selected, primary: msg.index } };
         return;
@@ -395,6 +416,7 @@ export class RecorderController {
       case 'draft.setPrimary':
         return void (await this.setPrimary(msg.level, msg.index, msg.rung ?? 'proposed'));
       case 'draft.setItem':
+        this.notEditing();
         return void (await this.setItemFromSelection());
       case 'draft.clearItem':
         this.apply({ type: 'setItem', item: null });
@@ -405,7 +427,16 @@ export class RecorderController {
       case 'draft.removeExclusion':
         return void (await this.removeExclusion(msg.index));
       case 'draft.addField':
+        this.notEditing();
         return void (await this.addField(msg.patch ?? {}));
+      case 'draft.editField':
+        return void (await this.editField(msg.index, msg.snapshot));
+      case 'draft.updateEditedField':
+        return void (await this.updateEditedField(msg.patch));
+      case 'draft.cancelEdit':
+        if (!this.current.editing) throw new Error('no field is being edited');
+        this.clearSelection();
+        return;
       case 'draft.updateField': {
         const before = this.draft.fields[msg.index];
         if (!before) throw new Error(`no field at index ${msg.index}`);
@@ -416,11 +447,14 @@ export class RecorderController {
       case 'draft.removeField': {
         const field = this.draft.fields[msg.index];
         if (!field) throw new Error(`no field at index ${msg.index}`);
+        // Indexes shift: an open edit ends without changes.
+        if (this.current.editing) this.clearSelection();
         this.apply({ type: 'removeField', index: msg.index });
         this.emitter.emit('recorder.fieldRemoved', { name: field.name });
         return;
       }
       case 'draft.moveField':
+        if (this.current.editing) this.clearSelection();
         this.apply({ type: 'moveField', from: msg.from, to: msg.to });
         return;
       case 'draft.repickTarget':
@@ -428,6 +462,7 @@ export class RecorderController {
           msg.target === 'field' ? { ...this.current, repick: msg.index, repickStep: null } : { ...this.current, repickStep: msg.index, repick: null };
         return;
       case 'draft.addStep':
+        if (msg.selection === undefined) this.notEditing();
         return void (await this.addStep(msg.step, msg.selection));
       case 'draft.updateStep':
         if (!this.draft.steps[msg.index]) throw new Error(`no step at index ${msg.index}`);
@@ -443,6 +478,7 @@ export class RecorderController {
       case 'draft.replayStep':
         return this.replayStep(msg.index);
       case 'draft.markPagination':
+        this.notEditing();
         return void this.markPagination();
       case 'draft.updatePagination':
         this.apply({ type: 'updatePagination', patch: msg.patch });
@@ -548,26 +584,35 @@ export class RecorderController {
     }
   }
 
-  private async countIn(candidate: ProtocolCandidate, containers: readonly ElementRef[]): Promise<number> {
-    let total = 0;
+  /** Matches inside the containers, and how many containers hold at least one; zero for an invalid selector. */
+  private async countIn(candidate: ProtocolCandidate, containers: readonly ElementRef[]): Promise<{ count: number; items: number }> {
+    let count = 0;
+    let items = 0;
     for (const container of containers) {
       try {
-        total += (await this.session.resolve(bare(candidate), container)).length;
+        const found = (await this.session.resolve(bare(candidate), container)).length;
+        count += found;
+        if (found > 0) items++;
       } catch {
-        return 0;
+        return { count: 0, items: 0 };
       }
     }
-    return total;
+    return { count, items };
   }
 
+  /** Candidates with host counts; `coverage` adds the item coverage to item scoped ones. */
   private async withCounts<T extends Candidate>(
     candidates: readonly T[],
     scope: FieldScope,
     containers: readonly ElementRef[],
+    coverage = false,
   ): Promise<T[]> {
     const out: T[] = [];
     for (const c of candidates) {
-      out.push({ ...c, count: scope === 'item' ? await this.countIn(c, containers) : await this.countPage(c) });
+      if (scope === 'item') {
+        const { count, items } = await this.countIn(c, containers);
+        out.push(coverage ? { ...c, count, items } : { ...c, count });
+      } else out.push({ ...c, count: await this.countPage(c) });
     }
     return out;
   }
@@ -614,7 +659,7 @@ export class RecorderController {
     const counts: { count: number | null; sample: string | null }[] = [];
     for (const field of this.draft.fields) {
       const primary = field.selectors[0]!;
-      const count = field.scope === 'item' ? await this.countIn(primary, containers) : await this.countPage(primary);
+      const count = field.scope === 'item' ? (await this.countIn(primary, containers)).count : await this.countPage(primary);
       counts.push({ count, sample: count > 0 ? await this.sample(field, containers) : null });
     }
     this.apply({ type: 'setFieldCounts', counts });
@@ -631,6 +676,14 @@ export class RecorderController {
     if (!node) throw new Error('the selected element is not in the page snapshot');
     this.node = node;
     this.root = root;
+    // A typed selector or an opened edit applies to the element the host asked the page to select.
+    const pending = this.current.pendingSelect;
+    const asked = pending !== null && samePath(pending.path, selection.path);
+    const typed = asked ? this.typed : null;
+    const seed = asked ? this.editSeed : null;
+    this.typed = null;
+    this.editSeed = null;
+    const editing = this.current.editing;
 
     const base = dedupe(selection.candidates.length > 0 ? selection.candidates : generate(node));
     const containerNode = this.draft.item && selection.containerPath ? nodeAt(root, selection.containerPath) : null;
@@ -640,13 +693,22 @@ export class RecorderController {
       scope = 'item';
       const containers = await this.containers();
       const relative = this.relativeTo(node, containerNode, base);
-      candidates = rank(await this.withCounts(relative, 'item', containers), { itemCount: containers.length });
+      candidates = rank(await this.withCounts(relative, 'item', containers, true), { itemCount: containers.length });
       if (candidates.length === 0) {
         scope = 'page';
         candidates = rank(await this.withCounts(base, 'page', []));
       }
     } else {
       candidates = rank(await this.withCounts(base, 'page', []));
+    }
+    if (typed) {
+      // The typed candidate comes first as primary; generated ones of another scope do not apply.
+      candidates = typed.scope === scope ? [typed.candidate, ...candidates.filter((c) => !sameSelector(c, typed.candidate))] : [typed.candidate];
+      scope = typed.scope;
+    } else if (seed && editing) {
+      // Opening an edit: the saved candidates first, the saved primary on top, then fresh ones.
+      candidates = editing.options.scope === scope ? dedupe([...seed, ...candidates]) : seed;
+      scope = editing.options.scope;
     }
 
     const taken = this.draft.fields.map((f) => f.name);
@@ -659,10 +721,14 @@ export class RecorderController {
       selected: { selection: { ...selection, candidates }, scope, defaults, primary: 0 },
       proposal: null,
       levelPick: null,
+      pendingSelect: null,
+      selectorError: null,
     };
     this.proposal = null;
     this.resetEdits();
     this.emitter.emit('recorder.selected', { tag: node.tag, path: selection.path, scope, candidates });
+    // An edited field takes the new selection when updated; no step, re-pick, or item inference.
+    if (editing) return;
 
     const repickStep = this.current.repickStep;
     if (repickStep !== null && this.draft.steps[repickStep]) {
@@ -691,7 +757,7 @@ export class RecorderController {
       return;
     }
 
-    if (!this.draft.item) {
+    if (!this.draft.item && !typed) {
       const proposal = inferItems(node);
       if (proposal) {
         this.proposal = proposal;
@@ -730,6 +796,152 @@ export class RecorderController {
     this.proposal = null;
     this.resetEdits();
     this.current = { ...this.current, proposal: null, levelPick: null };
+  }
+
+  /** Back to the empty state: no selection, proposal, typed selector, or field edit. The draft does not change. */
+  private clearSelection(): void {
+    this.node = null;
+    this.root = null;
+    this.typed = null;
+    this.editSeed = null;
+    this.dropProposal();
+    this.current = { ...this.current, selected: null, editing: null, pendingSelect: null, selectorError: null };
+  }
+
+  private notEditing(): void {
+    if (this.current.editing) throw new Error('finish editing the field first: update or cancel it');
+  }
+
+  /**
+   * Resolve a candidate by scope: inside each item container for `item`,
+   * else on the page. Throws for an invalid selector.
+   */
+  private async locate(candidate: Candidate, scope: FieldScope, containers: readonly ElementRef[]): Promise<{ count: number; items: number; first: ElementRef | null }> {
+    if (scope === 'page') {
+      const refs = await this.session.resolve(bare(candidate));
+      return { count: refs.length, items: 0, first: refs[0] ?? null };
+    }
+    let count = 0;
+    let items = 0;
+    let first: ElementRef | null = null;
+    for (const container of containers) {
+      const refs = await this.session.resolve(bare(candidate), container);
+      count += refs.length;
+      if (refs.length > 0) items++;
+      first ??= refs[0] ?? null;
+    }
+    return { count, items, first };
+  }
+
+  /** Path of a live element in a page snapshot (the page's when sent, else a fresh one), or null. */
+  private async pathFor(ref: ElementRef, snapshot: SerializedElement | undefined): Promise<number[] | null> {
+    const root = annotate(snapshot ?? ((await this.session.snapshot()) as SerializedElement));
+    const [node] = await this.nodesFor([ref], root);
+    return node ? pathOf(node) : null;
+  }
+
+  /**
+   * Select by typed selector text. On a match the host asks the page to
+   * select the first match, and `select` puts the typed candidate first. A
+   * refused text shows its reason and keeps the previous selection.
+   */
+  private async setSelector(selector: string, scopeHint: FieldScope | undefined, snapshot: SerializedElement | undefined): Promise<void> {
+    const refuse = (message: string) => {
+      this.current = { ...this.current, selectorError: message };
+    };
+    const text = selector.trim();
+    if (!text) return refuse('type a selector');
+    const scope: FieldScope = scopeHint ?? this.current.editing?.options.scope ?? this.current.selected?.scope ?? (this.draft.item ? 'item' : 'page');
+    const candidate = parseSelector(text);
+    const containers = scope === 'item' ? await this.containers() : [];
+    if (scope === 'item' && containers.length === 0) return refuse('no item container on this page to search in');
+    let found: Awaited<ReturnType<RecorderController['locate']>>;
+    try {
+      found = await this.locate(candidate, scope, containers);
+    } catch (error) {
+      return refuse(`invalid selector "${text}": ${(error as Error).message.split('\n')[0]}`);
+    }
+    if (!found.first) return refuse(`"${text}" matches nothing${scope === 'item' ? ' inside the item containers' : ' on this page'}`);
+    const path = await this.pathFor(found.first, snapshot);
+    if (!path) return refuse(`"${text}" matches an element that is not in the page snapshot`);
+    this.typed = { candidate: { ...candidate, count: found.count, ...(scope === 'item' ? { items: found.items } : {}) }, scope };
+    this.current = { ...this.current, pendingSelect: { path }, selectorError: null };
+  }
+
+  /**
+   * Open a saved field in the selection panel. Its saved candidates are
+   * counted, and the page is asked to select the primary's first match.
+   * With no match the panel shows the saved values and no selected element.
+   */
+  private async editField(index: number, snapshot: SerializedElement | undefined): Promise<void> {
+    const field = this.draft.fields[index];
+    if (!field) throw new Error(`no field at index ${index}`);
+    this.clearSelection();
+    const containers = field.scope === 'item' ? await this.containers() : [];
+    const candidates = await this.withCounts(field.selectors.map(bare), field.scope, containers, true);
+    let first: ElementRef | null = null;
+    try {
+      first = (await this.locate(field.selectors[0]!, field.scope, containers)).first;
+    } catch {
+      // An invalid saved selector matches nothing.
+    }
+    const path = first ? await this.pathFor(first, snapshot) : null;
+    this.editSeed = path ? candidates : null;
+    this.current = {
+      ...this.current,
+      repick: null,
+      repickStep: null,
+      editing: {
+        index,
+        options: {
+          name: field.name,
+          type: field.type,
+          scope: field.scope,
+          ...(field.attr ? { attr: field.attr } : {}),
+          optional: field.optional,
+          key: field.key,
+        },
+        candidates,
+        primary: 0,
+      },
+      pendingSelect: path ? { path } : null,
+    };
+  }
+
+  /** Replace the edited field in place with the form's options and the chosen candidates, then clear the selection. */
+  private async updateEditedField(patch: FieldPatch): Promise<void> {
+    const editing = this.current.editing;
+    if (!editing) throw new Error('no field is being edited');
+    const field = this.draft.fields[editing.index];
+    if (!field) throw new Error(`no field at index ${editing.index}`);
+    const selected = this.current.selected;
+    // Without a selected element the saved candidates all stay, the chosen one first.
+    const selectors = selected ? orderForSave(selected.selection.candidates, selected.primary) : toFront(editing.candidates, editing.primary);
+    if (selectors.length === 0) throw new Error('the selection has no selector candidates');
+    const type = patch.type ?? field.type;
+    const attr = patch.attr === null || patch.attr === '' ? undefined : (patch.attr ?? field.attr);
+    const scope = patch.scope ?? selected?.scope ?? field.scope;
+    const containers = scope === 'item' ? await this.containers() : [];
+    const count = selectors[0]!.count ?? null;
+    const sample = count ? await this.sample({ selectors, type, scope, ...(attr ? { attr } : {}) }, containers) : null;
+    const fp = selected?.selection.fingerprint ?? field.fingerprint;
+    this.apply({
+      type: 'replaceField',
+      index: editing.index,
+      field: {
+        name: patch.name?.trim() || field.name,
+        type,
+        scope,
+        selectors,
+        ...(attr ? { attr } : {}),
+        optional: patch.optional ?? field.optional,
+        key: patch.key ?? field.key,
+        ...(fp ? { fingerprint: fp } : {}),
+        count,
+        sample,
+      },
+    });
+    this.clearSelection();
   }
 
   /** The list parent in effect for the proposal, or null when there is none or it was cleared. */
@@ -1125,7 +1337,7 @@ export class RecorderController {
     if (!selected || !node || !isInside(node, containerNode) || node === containerNode) return;
     const containers = await this.containers();
     const relative = this.relativeTo(node, containerNode, selected.selection.candidates);
-    const candidates = rank(await this.withCounts(relative, 'item', containers), { itemCount: containers.length });
+    const candidates = rank(await this.withCounts(relative, 'item', containers, true), { itemCount: containers.length });
     if (candidates.length === 0) return;
     this.current = {
       ...this.current,
@@ -1237,6 +1449,7 @@ export class RecorderController {
       },
     });
     this.emitter.emit('recorder.fieldAdded', { name, type, scope, count: selectors[0]!.count ?? null });
+    this.clearSelection();
   }
 
   /**

@@ -13,7 +13,9 @@ export type Shortcut =
   | 'stopBrowse'
   | 'save'
   | 'skip'
-  | 'abort';
+  | 'abort'
+  | 'cancelEdit'
+  | 'clearSelection';
 
 export interface KeyLike {
   key: string;
@@ -37,6 +39,8 @@ export interface ShortcutContext {
   browsing?: boolean;
   /** The focused re-pick mode is active. */
   repicking?: boolean;
+  /** A saved field is open in the selection panel. */
+  editing?: boolean;
 }
 
 /** Whether the event target is a place the user types into. */
@@ -54,7 +58,8 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Map a key press to a panel shortcut: `p` picks, `b` toggles browse mode,
- * Esc cancels picking, closes a menu, or leaves browse mode, Enter confirms
+ * Esc closes a menu, cancels picking, leaves browse mode, cancels a field
+ * edit, or clears the selection, the first that applies; Enter confirms
  * the item proposal, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
  * reorder the focused field or step, Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
@@ -69,6 +74,8 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     if (ctx.picking) return 'cancel';
     if (ctx.browsing) return 'stopBrowse';
     if (ctx.repicking) return 'abort';
+    if (ctx.editing) return 'cancelEdit';
+    if (ctx.hasSelection) return 'clearSelection';
     return null;
   }
   if (mod) return null;

@@ -330,6 +330,8 @@
 }
 .ws-field-focused { box-shadow: inset 0 0 0 1px var(--ws-accent); }
 .ws-field-dragging { opacity: 0.5; }
+.ws-field[data-editing] { box-shadow: inset 0 0 0 2px var(--ws-accent); }
+.ws-clickable { cursor: pointer; }
 .ws-handle { cursor: grab; color: var(--ws-text-faint); font-family: var(--ws-mono); user-select: none; }
 .ws-select {
   height: 22px;

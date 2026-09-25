@@ -91,7 +91,8 @@ describe('inspector and candidates', () => {
     act(() => p.store.setHost({ ...proposed, proposal: null, selected: { ...proposed.selected!, primary: 2 } }));
     expect(p.qa('candidate')[2]!.dataset.primary).toBe('true');
     fireEvent.click(p.q('add-field')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField' });
+    const { defaults, scope } = proposed.selected!;
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, scope, attr: defaults.attr ?? null, optional: false, key: false } });
   });
 });
 

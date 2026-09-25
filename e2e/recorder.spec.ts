@@ -104,6 +104,66 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
   expect(JSON.parse(run.stdout)).toEqual(expectedRows(scoop.playground.url));
 });
 
+test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and run the edited recipe', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'edited']);
+  await pickTitlesAsItems(r);
+  expect((await r.state()).host!.selected).toBeNull();
+
+  // A typed item selector selects the first card's heading, with its coverage.
+  await r.fill('[data-ws="selection-selector"]', 'css=h2');
+  await r.clickPanel('[data-ws="selection-selector-go"]');
+  const typed = await r.until((s) => (s.host?.selected?.selection.candidates[0]?.value === 'h2' ? s.host.selected : undefined));
+  expect(typed.scope).toBe('item');
+  expect(typed.selection.text).toBe(dataset[0]!.title);
+  expect(typed.selection.candidates[0]).toMatchObject({ strategy: 'css', count: 24, items: 24 });
+  expect((await r.query('[data-ws="coverage-count"]'))!.text).toBe('24 / 24 items');
+  await r.fill('[data-ws="form-name"]', 'heading');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host!.draft.fields.length === 2 && s.host!.selected === null);
+  expect((await r.state()).host!.draft.fields[1]).toMatchObject({ name: 'heading', scope: 'item', count: 24 });
+
+  // Esc when not picking clears the selection and its highlight.
+  await r.pick('[data-testid="price"]', 3);
+  await r.key('Escape');
+  await r.until((s) => s.host?.selected === null);
+  const boxes = await r.page.evaluate(() => (window as unknown as { __webscoopTest: { boxes(): { variant: string }[] } }).__webscoopTest.boxes());
+  expect(boxes.some((b) => b.variant === 'selected')).toBe(false);
+  expect(await r.count('[data-ws="inspector"]')).toBe(0);
+
+  // Edit the price field's primary candidate and update it in place.
+  await addField(r, '[data-testid="price"]', 'price');
+  await r.clickPanel('[data-ws="field-edit"]', 2);
+  const editing = await r.until((s) => (s.host?.editing && s.host.selected ? s : undefined));
+  expect(editing.mode).toBe('editing');
+  expect(editing.host!.selected!.selection.text).toBe(`$${dataset[0]!.price.toFixed(2)}`);
+  const candidates = editing.host!.selected!.selection.candidates;
+  const other = candidates.findIndex((c, i) => i > 0 && c.count === 24);
+  expect(other).toBeGreaterThan(0);
+  await r.clickPanel('[data-ws="candidate"]', other);
+  await r.until((s) => s.host?.selected?.primary === other);
+  await r.clickPanel('[data-ws="update-field"]');
+  const updated = await r.until((s) => (s.host?.editing === null && s.host.selected === null ? s.host : undefined));
+  expect(updated.draft.fields.map((f) => f.name)).toEqual(['title', 'heading', 'price']);
+  expect(updated.draft.fields[2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
+
+  // Cancel an edit: the title keeps its type.
+  await r.clickPanel('[data-ws="field-summary"]', 0);
+  await r.until((s) => s.host?.editing?.index === 0 && s.host.selected);
+  await r.fill('[data-ws="form-type"]', 'html');
+  await r.clickPanel('[data-ws="cancel-edit"]');
+  const cancelled = await r.until((s) => (s.host?.editing === null ? s.host : undefined));
+  expect(cancelled.draft.fields[0]).toMatchObject({ name: 'title', type: 'text' });
+
+  const path = await save(r);
+  const result = await r.closeWindow();
+  expect(result.code, result.stderr).toBe(0);
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.fields[2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
+  const run = await scoop.run(['run', 'edited']);
+  expect(run.code, run.stderr).toBe(0);
+  expect(JSON.parse(run.stdout)).toEqual(dataset.map((p, index) => ({ _page: 1, _index: index, title: p.title, heading: p.title, price: p.price })));
+});
+
 test('hostile chrome: the panel sits above the header and modal, and Alt+click picks through the modal', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port, '&chrome=hostile'), '--var', 'tier=0', '--name', 'hostile']);
   const { page } = r;

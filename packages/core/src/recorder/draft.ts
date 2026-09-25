@@ -288,6 +288,8 @@ export interface NewDraftStep {
 export type DraftAction =
   | { type: 'addField'; field: NewField }
   | { type: 'updateField'; index: number; patch: FieldPatch }
+  /** Replace the field at `index` in place: options, selectors, fingerprint, and counts. */
+  | { type: 'replaceField'; index: number; field: NewField }
   | { type: 'replaceSelectors'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; count: number | null; sample: string | null }
   | { type: 'removeField'; index: number }
   | { type: 'moveField'; from: number; to: number }
@@ -351,26 +353,36 @@ function applyFieldPatch(field: DraftField, patch: FieldPatch): DraftField {
   return next;
 }
 
+function toDraftField(f: NewField): DraftField {
+  return {
+    name: f.name,
+    type: f.type,
+    scope: f.scope,
+    selectors: f.selectors,
+    ...(f.attr ? { attr: f.attr } : {}),
+    optional: f.optional ?? false,
+    key: f.key ?? false,
+    ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
+    count: f.count ?? null,
+    sample: f.sample ?? null,
+  };
+}
+
 /** The pure draft state machine. Every result is re-validated. */
 export function reduceDraft(draft: Draft, action: DraftAction): Draft {
   let next: Draft = draft;
   switch (action.type) {
     case 'addField': {
-      const f = action.field;
-      const field: DraftField = {
-        name: f.name,
-        type: f.type,
-        scope: f.scope,
-        selectors: f.selectors,
-        ...(f.attr ? { attr: f.attr } : {}),
-        optional: f.optional ?? false,
-        key: f.key ?? false,
-        ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
-        count: f.count ?? null,
-        sample: f.sample ?? null,
-      };
+      const field = toDraftField(action.field);
       let fields = [...draft.fields, field];
       if (field.key) fields = fields.map((other, i) => (i === fields.length - 1 ? other : { ...other, key: false }));
+      next = { ...draft, fields };
+      break;
+    }
+    case 'replaceField': {
+      if (!draft.fields[action.index]) return draft;
+      const field = toDraftField(action.field);
+      const fields = draft.fields.map((f, i) => (i === action.index ? field : field.key ? { ...f, key: false } : f));
       next = { ...draft, fields };
       break;
     }

@@ -65,6 +65,17 @@ describe('shortcuts', () => {
     expect(shortcutFor(key('x', { alt: true }), ctx({ focusedStep: 1 }))).toBeNull();
   });
 
+  it('cancels a field edit, else clears the selection, with Esc after the other Esc uses', () => {
+    expect(shortcutFor(key('Escape'), ctx({ hasSelection: true }))).toBe('clearSelection');
+    expect(shortcutFor(key('Escape'), ctx({ editing: true, hasSelection: true }))).toBe('cancelEdit');
+    expect(shortcutFor(key('Escape'), ctx({ editing: true }))).toBe('cancelEdit');
+    expect(shortcutFor(key('Escape'), ctx({ hasSelection: true, picking: true }))).toBe('cancel');
+    expect(shortcutFor(key('Escape'), ctx({ editing: true, menuOpen: true }))).toBe('closeMenu');
+    expect(shortcutFor(key('Escape'), ctx({ hasSelection: true, browsing: true }))).toBe('stopBrowse');
+    expect(shortcutFor(key('Escape'), ctx({ editing: true, repicking: true }))).toBe('abort');
+    expect(shortcutFor(key('Escape'), ctx({ hasSelection: true, typing: true }))).toBeNull();
+  });
+
   it('walks a breadcrumb trail', () => {
     const trail = [{ path: [1] }, { path: [1, 0] }, { path: [1, 0, 3] }];
     expect(walkTrail(trail, [1, 0, 3], -1)).toEqual({ path: [1, 0] });

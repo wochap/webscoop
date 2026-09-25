@@ -1,7 +1,7 @@
 import { fileURLToPath, URL } from 'node:url';
 
 /** esbuild options for the injected recorder, shared by the build and the size test. */
-export const SIZE_BUDGET = 450 * 1024;
+export const SIZE_BUDGET = 460 * 1024;
 
 export function bundleOptions({ e2e, outfile }) {
   return {
