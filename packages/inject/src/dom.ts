@@ -184,6 +184,38 @@ function queryAll(selector: string, within: ParentNode): Element[] {
   }
 }
 
+/** Split a selector list at its top-level commas, outside brackets, parentheses, and quotes. */
+function splitList(selector: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+  let quote = '';
+  for (const ch of selector) {
+    if (quote) {
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '[' || ch === '(') depth++;
+    else if (ch === ']' || ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * CSS inside an element the way Playwright resolves it: every compound of
+ * the selector matches strictly inside the element, so a combinator never
+ * reaches the element itself or its ancestors.
+ */
+function queryScoped(selector: string, within: Element): Element[] {
+  return queryAll(splitList(selector).map((part) => `:scope ${part}`).join(', '), within);
+}
+
 function cssString(value: string): string {
   return JSON.stringify(value);
 }
@@ -202,11 +234,12 @@ export function resolveLocal(candidate: ProtocolCandidate, within?: Element, doc
       return queryAll(`[id=${cssString(value)}]`, scope);
     case 'css':
     case 'class':
-      return queryAll(value, scope);
+      return within ? queryScoped(value, within) : queryAll(value, scope);
     case 'xpath': {
       const out: Element[] = [];
       try {
-        const expr = within && value.startsWith('/') && !value.startsWith('//') ? `.${value}` : value;
+        // Like Playwright: inside an element, `/a` and `//a` search below it, never from the document root.
+        const expr = within && value.startsWith('/') ? `.${value}` : value;
         const result = doc.evaluate(expr, within ?? doc, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
         for (let i = 0; i < result.snapshotLength; i++) {
           const node = result.snapshotItem(i);
@@ -232,12 +265,40 @@ export function resolveLocal(candidate: ProtocolCandidate, within?: Element, doc
 }
 
 /** First candidate that resolves anything, like the runner's fallback order. */
-export function resolveFirstLocal(candidates: readonly ProtocolCandidate[], doc: Document = document): Element[] {
+export function resolveFirstLocal(candidates: readonly ProtocolCandidate[], doc: Document = document, within?: Element): Element[] {
   for (const c of candidates) {
-    const found = resolveLocal(c, undefined, doc);
+    const found = resolveLocal(c, within, doc);
     if (found.length > 0) return found;
   }
   return [];
+}
+
+export interface LocalItem {
+  selectors: readonly ProtocolCandidate[];
+  within?: readonly ProtocolCandidate[] | undefined;
+  exclude: readonly ProtocolCandidate[];
+}
+
+/** Elements the exclusion selectors match anywhere on the page. */
+export function excludedLocal(exclude: readonly ProtocolCandidate[], doc: Document = document): Set<Element> {
+  return new Set(exclude.flatMap((c) => resolveLocal(c, undefined, doc)));
+}
+
+/**
+ * The item containers the way the runner finds them: the first match of the
+ * list parent, then the item selectors inside it, minus the exclusions
+ * unless `keepExcluded`. Empty when the list parent matches nothing.
+ */
+export function containersLocal(item: LocalItem, doc: Document = document, opts: { keepExcluded?: boolean } = {}): Element[] {
+  let parent: Element | undefined;
+  if (item.within && item.within.length > 0) {
+    parent = resolveFirstLocal(item.within, doc)[0];
+    if (!parent) return [];
+  }
+  const all = resolveFirstLocal(item.selectors, doc, parent);
+  if (opts.keepExcluded || item.exclude.length === 0) return all;
+  const hits = excludedLocal(item.exclude, doc);
+  return all.filter((el) => !hits.has(el));
 }
 
 /** Build the `picker.select` payload for an element. */

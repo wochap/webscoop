@@ -1,5 +1,6 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
+import { selectorChain } from '../chain';
 import { modeOf, type Actions, type Snapshot } from '../store';
 import { PickActionGrid, SelectorCandidateList } from './candidates';
 import { useActions, useSnapshot } from './context';
@@ -191,7 +192,16 @@ export function ScoopRoot() {
         <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
         {selected && (
           <>
-            <ElementInspector selection={selected.selection} trail={ui.trail} onSelectPath={actions.selectPath} />
+            <ElementInspector
+              selection={selected.selection}
+              trail={ui.trail}
+              onSelectPath={actions.selectPath}
+              chain={
+                selected.scope === 'item' && draft.item
+                  ? selectorChain([draft.item.within?.[0], draft.item.selectors[0], selected.selection.candidates[selected.primary]])
+                  : ''
+              }
+            />
             <SelectorCandidateList
               candidates={selected.selection.candidates}
               primary={selected.primary}

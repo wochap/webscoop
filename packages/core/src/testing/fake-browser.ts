@@ -312,7 +312,8 @@ export class FakeSession implements Session {
       case 'css':
       case 'class': {
         const test = compileCss(candidate.value);
-        matches = pool.filter((n) => test(n, null));
+        // Like Playwright, combinators only match elements strictly inside the scope.
+        matches = pool.filter((n) => test(n, scope));
         break;
       }
       case 'xpath': {

@@ -9,9 +9,11 @@ import {
   type RecorderState,
 } from '@webscoop/core/page';
 import {
+  containersLocal,
   describeSelection,
   elementAt,
   excerpt,
+  excludedLocal,
   isOwn,
   nodeForScore,
   pathOfElement,
@@ -228,7 +230,7 @@ export class Runtime implements Actions {
     const strictPrefix = (a: readonly number[], b: readonly number[]) => a.length < b.length && a.every((v, i) => b[i] === v);
     if (pick.ancestorOf.length > 0 && !pick.ancestorOf.some((p) => strictPrefix(path, p))) return 'outside the list';
     if (pick.ofContainers) {
-      const containers = host.draft.item ? resolveFirstLocal(host.draft.item.selectors, this.doc) : [];
+      const containers = host.draft.item ? containersLocal(host.draft.item, this.doc) : [];
       if (!containers.some((c) => c !== el && el.contains(c))) return 'outside the list';
     }
     if (pick.descendantOf && !strictPrefix(pick.descendantOf, path)) return 'outside the list';
@@ -279,7 +281,7 @@ export class Runtime implements Actions {
   private select(el: Element, newTrail: boolean): Promise<void> {
     const run = this.selecting.then(async () => {
       const item = this.store.get().host?.draft.item;
-      const containers = item ? resolveFirstLocal(item.selectors, this.doc) : [];
+      const containers = item ? containersLocal(item, this.doc) : [];
       const { selection, snapshot } = describeSelection(el, containers, this.doc);
       if (newTrail) this.store.setUi({ trail: selection.ancestors, level: 'proposed' });
       this.opts.overlay.setSelected(el);
@@ -293,7 +295,7 @@ export class Runtime implements Actions {
 
   private excluded(items: readonly Element[], exclude: readonly ProtocolCandidate[]): Element[] {
     if (exclude.length === 0) return [];
-    const hits = new Set(exclude.flatMap((c) => resolveLocal(c, undefined, this.doc)));
+    const hits = excludedLocal(exclude, this.doc);
     return items.filter((el) => hits.has(el));
   }
 
@@ -314,7 +316,7 @@ export class Runtime implements Actions {
       return overlay.setItems(items, 'sibling', this.excluded(items, host.proposal.exclude));
     }
     if (host.draft.item) {
-      const all = resolveFirstLocal(host.draft.item.selectors, this.doc);
+      const all = containersLocal(host.draft.item, this.doc, { keepExcluded: true });
       return overlay.setItems(all, 'container', this.excluded(all, host.draft.item.exclude));
     }
     overlay.setItems([], 'sibling');

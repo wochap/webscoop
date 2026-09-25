@@ -1,4 +1,4 @@
-import { dataset, render } from '@webscoop/playground';
+import { dataset, render, renderResults } from '@webscoop/playground';
 import { JSDOM } from 'jsdom';
 import type { SerializedElement, SerializedNode } from '../src';
 
@@ -24,4 +24,9 @@ export function snapshotFromHtml(html: string): SerializedElement {
 /** The tier 0 catalog as a serialized snapshot. */
 export function tier0Snapshot(opts: { sponsored?: number; mixed?: boolean; rows?: number } = {}): SerializedElement {
   return snapshotFromHtml(render(dataset, { tier: 0, seed: 1, ...opts }));
+}
+
+/** The playground's Google-like results page (`/results`) as a serialized snapshot. */
+export function resultsSnapshot(count = 8): SerializedElement {
+  return snapshotFromHtml(renderResults(dataset.slice(0, count)));
 }

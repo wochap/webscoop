@@ -289,3 +289,42 @@ test('tier 1: a recipe recorded with the role-only item candidate runs on tier 3
   expect(rows).toHaveLength(24);
   expect(rows.map((row) => row.title).sort()).toEqual(dataset.map((p) => p.title).sort());
 });
+
+test('results under div#rso: the proposal counts every result, and the saved recipe runs one row per result without healing', async ({ scoop }) => {
+  const url = `http://127.0.0.1:${scoop.playground.port}/results`;
+  const r = await scoop.record([url, '--name', 'serp']);
+  const picked = await r.pick('h3.LC20lb', 1);
+  expect(picked.mode).toBe('items');
+  const proposal = await r.until((s) => s.host?.proposal);
+  expect(proposal.proposed.count).toBeGreaterThan(0);
+  expect(proposal.proposed.count).toBe(8);
+  expect(proposal.skipped).toBe(1);
+  expect(proposal.within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
+  for (const c of proposal.proposed.selectors) expect(c.value).not.toMatch(/main|rso|GyAeWb|s6JM6d|center_col|dURPMd/);
+  expect((await r.query('[data-ws="items-count"]'))!.text).toBe('8');
+  expect((await r.query('[data-ws="selector-chain-text"]'))!.text).toMatch(/^id=rso » /);
+  await r.key('Enter');
+  await r.until((s) => s.host?.draft.item?.count === 8 && s.host.draft.fields.length === 1);
+  await renameLast(r, 'title');
+  await addField(r, 'div.VwiC3b span', 'snippet', 2);
+  const { draft } = (await r.state()).host!;
+  expect(draft.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
+    ['title', 'item', 8],
+    ['snippet', 'item', 8],
+  ]);
+  await r.clickPanel('[data-ws="test-run"]');
+  const results = await r.until((s) => s.host?.test);
+  expect(results.error).toBeUndefined();
+  expect(results.rowCount).toBe(8);
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.item!.within![0]).toEqual({ strategy: 'id', value: 'rso', stability: 'stable' });
+  const run = await scoop.run(['run', 'serp']);
+  expect(run.code, run.stderr).toBe(0);
+  expect(run.stderr).not.toMatch(/healed (item|within)/);
+  const rows = JSON.parse(run.stdout) as { title: string; snippet: string }[];
+  expect(rows.map((row) => row.title)).toEqual(dataset.slice(0, 8).map((p) => p.title));
+  expect(rows.every((row) => row.snippet.includes('rated'))).toBe(true);
+});

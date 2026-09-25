@@ -564,6 +564,48 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
   return applyChrome(renderer(ctx), ctx.chrome);
 }
 
+/** Results per group wrapper on the results page. */
+export const RESULTS_PER_GROUP = 4;
+
+/**
+ * A search results page shaped like Google's: the results sit under
+ * `div#rso`, a list parent with a stable `id` but a hashed class, nested in
+ * wrappers with hashed classes below an anchored `div.main`. Each result is a
+ * plain `div` with hashed classes, two levels below `div#rso` in group
+ * wrappers of `RESULTS_PER_GROUP`, and one dissimilar "People also ask" block
+ * sits among them at the same depth.
+ */
+export function renderResults(products: readonly Product[], query = 'electronics'): string {
+  const result = (p: Product) => `<div class="Mjj4Yd">
+<div class="yuRUbf"><a href="${escapeHtml(p.url)}"><h3 class="LC20lb">${escapeHtml(p.title)}</h3></a></div>
+<div class="VwiC3b"><span>${escapeHtml(p.category)} · ${formatPrice(p.price)} · rated ${p.rating} out of 5</span></div>
+</div>`;
+  const questions = `<div class="hlcw0c">
+<div class="Wt5Tfe">
+<div class="kno2x"><span>People also ask</span></div>
+${['Which one ships fastest?', 'Is there a warranty?', 'Can I return it?'].map((q) => `<div class="related9q"><span>${q}</span></div>`).join('\n')}
+</div>
+</div>`;
+  const groups: string[] = [];
+  for (let i = 0; i < products.length; i += RESULTS_PER_GROUP) {
+    groups.push(`<div class="hlcw0c">\n${products.slice(i, i + RESULTS_PER_GROUP).map(result).join('\n')}\n</div>`);
+    if (i === 0) groups.push(questions);
+  }
+  return page(
+    `${query} - Search | Playground`,
+    `<div class="searchform" id="searchform"><form role="search" action="/results"><input class="gLFyf" type="search" name="q" value="${escapeHtml(query)}"></form></div>
+<div class="main" id="main">
+<div class="GyAeWb">
+<div class="s6JM6d" id="center_col">
+<div class="dURPMd" id="rso">
+${groups.join('\n')}
+</div>
+</div>
+</div>
+</div>`,
+  );
+}
+
 /**
  * The product cards alone (the `<li>` elements of the list), rendered as
  * `render` renders them with the same tier and seed, so class and id tokens

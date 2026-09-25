@@ -9,6 +9,7 @@ import {
   PAGINATE_KINDS,
   render,
   renderCards,
+  renderResults,
   UnimplementedTierError,
   type ChromeMode,
   type Gate,
@@ -43,6 +44,8 @@ const ADVANCED_COOKIE = 'ws_go';
 
 /** Products per page of a paginated catalog. */
 export const PAGE_SIZE = 8;
+/** Results on the `/results` page unless `count` says otherwise. */
+const RESULTS = 8;
 /** Pages of a paginated catalog before `lastPageRepeats` takes over. */
 const LAST_PAGE = 3;
 
@@ -366,6 +369,12 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       if (delayMs > 0) await sleep(delayMs);
       if (setCookies.length > 0) headers['set-cookie'] = setCookies;
       res.writeHead(200, headers);
+      return void res.end(method === 'HEAD' ? undefined : html);
+    }
+    if (url.pathname === '/results') {
+      const count = intParam(url.searchParams.get('count'), 'count', 1, products.length) ?? RESULTS;
+      const html = renderResults(products.slice(0, count), url.searchParams.get('q') ?? undefined);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return void res.end(method === 'HEAD' ? undefined : html);
     }
     if (url.pathname === '/catalog/more') {

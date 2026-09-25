@@ -754,14 +754,24 @@ export class RecorderController {
     const withinNode = this.proposalWithin();
     const withinRef = await this.refOf(withinNode);
     const items = this.edits.includeAll ? p.all : p.siblings;
+    const parent = withinNode && withinRef ? { node: withinNode, ref: withinRef } : null;
+    const proposed = await this.levelView({ node: p.container, items }, parent, this.edits.item);
+    // A broader level at the list parent itself has no form relative to it.
+    const broader = p.broader && (!withinNode || (p.broader.node !== withinNode && isInside(p.broader.node, withinNode))) ? await this.levelView(p.broader, parent) : null;
+    const narrower = p.narrower ? await this.levelView(p.narrower, parent) : null;
+    const fellBack = [proposed, broader, narrower].some((l) => l?.fellBack);
     let view: ProposalView = {
       within: withinNode ? await this.withinView(withinNode, this.edits.within) : null,
-      proposed: await this.levelView({ node: p.container, items }, withinRef, this.edits.item),
-      broader: p.broader ? await this.levelView(p.broader, withinRef) : null,
-      narrower: p.narrower ? await this.levelView(p.narrower, withinRef) : null,
+      proposed: proposed.view,
+      broader: broader?.view ?? null,
+      narrower: narrower?.view ?? null,
       skipped: this.edits.includeAll ? 0 : p.skipped.length,
       includeAll: this.edits.includeAll,
-      error,
+      error:
+        error ??
+        (fellBack
+          ? { level: 'item', message: 'no item container selector matches inside the list parent; showing selectors for the whole page' }
+          : null),
       exclude: previous?.exclude ?? [],
     };
     if (view.exclude.length > 0) view = await this.recountProposal(view);
@@ -773,13 +783,35 @@ export class RecorderController {
     return withinRef ? this.withCounts(candidates, 'item', [withinRef]) : this.withCounts(candidates, 'page', []);
   }
 
-  private async levelView(level: ItemLevel, withinRef?: ElementRef, typed?: Candidate | null): Promise<LevelView> {
-    const generated = generate(level.node, { positional: false, level: true });
-    const ranked = rank(await this.countWithin(generated, withinRef), { itemCount: level.items.length });
+  /**
+   * Candidates for an item container level, relative to the list parent when
+   * there is one and counted inside it. When no relative candidate matches
+   * there, the level falls back to document relative candidates counted on
+   * the page, and `fellBack` says so.
+   */
+  private async itemCandidates(
+    node: AnnotatedNode,
+    parent: { node: AnnotatedNode; ref: ElementRef } | null,
+    itemCount: number,
+  ): Promise<{ selectors: Candidate[]; fellBack: boolean }> {
+    const generated = generate(node, { positional: false, level: true });
+    if (!parent) return { selectors: rank(await this.countWithin(generated, undefined), { itemCount }), fellBack: false };
+    const relative = dedupe(generated.map((c) => relativize(c, parent.node)).filter((c): c is Candidate => c !== null));
+    const ranked = rank(await this.countWithin(relative, parent.ref), { itemCount });
+    if (ranked.some((c) => (c.count ?? 0) > 0)) return { selectors: ranked, fellBack: false };
+    return { selectors: rank(await this.countWithin(generated, undefined), { itemCount }), fellBack: true };
+  }
+
+  private async levelView(
+    level: ItemLevel,
+    parent: { node: AnnotatedNode; ref: ElementRef } | null,
+    typed?: Candidate | null,
+  ): Promise<{ view: LevelView; fellBack: boolean }> {
+    const { selectors: ranked, fellBack } = await this.itemCandidates(level.node, parent, level.items.length);
     const selectors = typed
-      ? [...(await this.countWithin([typed], withinRef)), ...ranked.filter((c) => c.strategy !== typed.strategy || c.value !== typed.value)]
+      ? [...(await this.countWithin([typed], parent?.ref)), ...ranked.filter((c) => c.strategy !== typed.strategy || c.value !== typed.value)]
       : ranked;
-    return {
+    const view: LevelView = {
       tag: level.node.tag,
       label: levelLabel(level.node),
       path: pathOf(level.node),
@@ -790,6 +822,7 @@ export class RecorderController {
       paths: level.items.map(pathOf),
       samples: level.items.slice(0, 3).map((n) => excerpt(n)),
     };
+    return { view, fellBack };
   }
 
   /**
@@ -956,10 +989,12 @@ export class RecorderController {
     return this.showProposal();
   }
 
-  /** Set, re-pick, or clear the list parent of the confirmed item container. */
+  /** Set, re-pick, or clear the list parent of the confirmed item container, rewriting the item selectors relative to it. */
   private async editItemWithin(by: 'pick' | 'selector' | 'clear', msg: { path?: number[] | undefined; selector?: string | undefined; snapshot?: SerializedElement | undefined }): Promise<void> {
-    const item = this.draft.item!;
     if (by === 'clear') {
+      const root = msg.snapshot ? annotate(msg.snapshot) : annotate((await this.session.snapshot()) as SerializedElement);
+      const selectors = await this.rewriteItem(root, null);
+      this.replaceItemSelectors(selectors);
       this.apply({ type: 'setWithin', within: null });
       await this.recount();
       return;
@@ -980,12 +1015,62 @@ export class RecorderController {
     }
     if (TOP.has(node.tag)) throw new Error('outside the list: pick an element that holds the items');
     const ref = await this.refOf(node);
-    const inside = ref ? await containersFor(this.session, item.selectors.map(bare), item.exclude.map(bare), ref) : [];
-    if (inside.length === 0) throw new Error('outside the list: that element holds none of the item containers');
+    if (!ref) throw new Error('the picked element is not on the page');
+    const item = await this.rewriteItem(root, { node, ref });
     const selectors = orderForSave(await this.withinCandidates(node, typed), 0);
     if (selectors.length === 0) throw new Error('found no selector for that element');
+    this.replaceItemSelectors(item);
     this.apply({ type: 'setWithin', within: selectors, fingerprint: fingerprint(node) });
     await this.recount();
+  }
+
+  private replaceItemSelectors(selectors: ProtocolCandidate[]): void {
+    const { count: _c, total: _t, ...rest } = this.draft.item!;
+    this.apply({ type: 'setItem', item: { ...rest, selectors, count: null, total: null } });
+  }
+
+  /**
+   * Item container selectors for a new list parent (or the document, for
+   * null): regenerated for the first current container inside it, relative to
+   * it, and counted there. The old primary selector stays first when its
+   * relative form still finds that container.
+   */
+  private async rewriteItem(root: AnnotatedNode, parent: { node: AnnotatedNode; ref: ElementRef } | null): Promise<ProtocolCandidate[]> {
+    const item = this.draft.item!;
+    const current = await this.containers();
+    let first: { node: AnnotatedNode; ref: ElementRef } | null = null;
+    for (const ref of current) {
+      const [node] = await this.nodesFor([ref], root);
+      if (node && (!parent || (node !== parent.node && isInside(node, parent.node)))) {
+        first = { node, ref };
+        break;
+      }
+    }
+    if (!first) {
+      throw new Error(parent ? 'outside the list: that element holds none of the item containers' : 'found no item container on the page');
+    }
+    const { selectors: ranked, fellBack } = await this.itemCandidates(first.node, parent, current.length);
+    if (fellBack) throw new Error('no item container selector matches inside that element');
+    const old = item.selectors[0]!;
+    const relative = parent ? relativize(old, parent.node) : bare(old);
+    if (relative && !ranked.some((c) => c.strategy === relative.strategy && c.value === relative.value)) {
+      let refs: ElementRef[] = [];
+      try {
+        refs = await this.session.resolve(bare(relative), parent?.ref);
+      } catch {
+        // Not valid in this scope; the regenerated candidates stand.
+      }
+      // Same item set as the best regenerated candidate, and it finds the container.
+      let holds = refs.length > 0 && refs.length === ranked[0]?.count;
+      if (holds) {
+        holds = false;
+        for (const r of refs) if ((holds = await this.session.same(r, first.ref))) break;
+      }
+      if (holds) return orderForSave([{ ...relative, count: refs.length }, ...ranked], 0);
+    }
+    const kept = relative ? ranked.findIndex((c) => c.strategy === relative.strategy && c.value === relative.value) : -1;
+    const same = kept === -1 ? ranked.findIndex((c) => c.strategy === old.strategy && c.count === ranked[0]?.count) : kept;
+    return orderForSave(same > 0 ? toFront(ranked, same) : ranked, 0);
   }
 
   private async setPrimary(level: LevelKind, index: number, rung: Rung): Promise<void> {

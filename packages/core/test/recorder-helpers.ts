@@ -20,6 +20,7 @@ import {
 import { FakeBrowser, type FakeInteractiveSession, type FakePage } from '../src/testing';
 
 export const CATALOG = 'http://127.0.0.1:4777/catalog?tier=0';
+export const RESULTS = 'http://127.0.0.1:4777/results';
 
 export function referenceRecipe(): Recipe {
   return loadRecipe(readFileSync(join(import.meta.dirname, '../../cli/fixtures/playground-catalog.json'), 'utf8'));

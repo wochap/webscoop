@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DraftItem, LevelKind, LevelView, ProposalView, ProtocolCandidate } from '@webscoop/core/page';
+import { selectorChain } from '../chain';
 import { SelectorRow } from './candidates';
 import { useActions } from './context';
 import { Kbd } from './shell';
@@ -105,6 +106,19 @@ export function LevelField({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The composed chain of primary selectors, from the list parent down; display only. */
+export function SelectorChain({ chain }: { chain: string }) {
+  if (!chain) return null;
+  return (
+    <div className="ws-row" data-ws="selector-chain">
+      <span className="ws-caps">Chain</span>
+      <span className="ws-mono-sm ws-ellipsis ws-spacer" title={chain} data-ws="selector-chain-text">
+        {chain}
+      </span>
     </div>
   );
 }
@@ -252,6 +266,7 @@ export function ItemDetectCard({
         onClear={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
       />
       <LevelField level="item" label="Item" view={chosen} error={error('item')} rung={level} />
+      <SelectorChain chain={selectorChain([proposal.within?.selectors[proposal.within.primary], chosen.selectors[chosen.primary]])} />
       <div className="ws-row">
         <span className="ws-meta ws-spacer">Include all siblings</span>
         <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="include-all" />
@@ -326,6 +341,7 @@ export function ItemSummary({ item }: { item: DraftItem }) {
         </div>
       </div>
       <WithinSummary item={item} />
+      <SelectorChain chain={selectorChain([item.within?.[0], primary])} />
       <ExclusionInput exclude={item.exclude} />
     </section>
   );

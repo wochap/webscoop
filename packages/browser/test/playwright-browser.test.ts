@@ -145,6 +145,31 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     expect(sub.attrs['data-testid']).toBe('product-card');
   });
 
+  it('scopes css combinators strictly inside the scope element, and a leading // xpath below it, like the FakeBrowser', async () => {
+    const results = `${playground.url}/results`;
+    await session.goto(results, { timeoutMs: 10_000 });
+    const fake = await new FakeBrowser({ [results]: (await session.snapshot()) as SerializedElement }).open('/fake');
+    await fake.goto(results, { timeoutMs: 1000 });
+    const cases: [SelectorCandidate, number][] = [
+      // A combinator never reaches the scope element or its ancestors.
+      [c('css', 'div.main div.Mjj4Yd'), 0],
+      [c('css', 'div#rso > div'), 0],
+      [c('css', 'div > div.Mjj4Yd'), 8],
+      [c('class', 'div.Mjj4Yd'), 8],
+      // A leading `//` becomes `.//`: it searches below the scope, never from the document root.
+      [c('xpath', "//div[@id='rso']/div[1]/div[1]"), 0],
+      [c('xpath', "//div[@class='Mjj4Yd']"), 8],
+      [c('xpath', './div[1]/div[1]'), 1],
+    ];
+    const [rso] = await session.resolve(c('id', 'rso'));
+    const [fakeRso] = await fake.resolve(c('id', 'rso'));
+    for (const [candidate, expected] of cases) {
+      const label = `${candidate.strategy}=${candidate.value}`;
+      expect((await session.resolve(candidate, rso)).length, label).toBe(expected);
+      expect((await fake.resolve(candidate, fakeRso)).length, `fake ${label}`).toBe(expected);
+    }
+  });
+
   it('measures every element in snapshots, and positional xpaths address the same element', async () => {
     await session.goto(catalog(), { timeoutMs: 10_000 });
     const root = annotate((await session.snapshot()) as SerializedElement);

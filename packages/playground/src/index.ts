@@ -11,6 +11,8 @@ export {
   pagerHtml,
   render,
   renderCards,
+  renderResults,
+  RESULTS_PER_GROUP,
   sponsoredAttrs,
   tiers,
   UnimplementedTierError,

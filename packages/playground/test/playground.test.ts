@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dataset, formatPrice, render, startPlayground, type Playground } from '../src';
+import { dataset, formatPrice, render, renderResults, startPlayground, type Playground } from '../src';
 
 const running: Playground[] = [];
 async function start() {
@@ -310,6 +310,33 @@ describe('tier 4', () => {
     const three = render(dataset, { tier: 3, seed: 5 });
     const four = render(dataset, { tier: 4, seed: 5 });
     expect(four).toBe(three.replace(/\n<p class="x\w+" data-qa="rating" title="Rated [\d.]+ out of 5">[\d.]+<\/p>/g, ''));
+  });
+});
+
+describe('results page', () => {
+  it('serves 8 results under div#rso in group wrappers, with one questions block among them', async () => {
+    const pg = await start();
+    const res = await fetch(`${pg.url}/results`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toBe(renderResults(dataset.slice(0, 8)));
+    const d = new JSDOM(html).window.document;
+    const rso = d.querySelector('div.main div#rso')!;
+    expect(rso).not.toBeNull();
+    const results = Array.from(rso.querySelectorAll(':scope > div > div.Mjj4Yd'));
+    expect(results).toHaveLength(8);
+    expect(results.map((r) => r.querySelector('h3')!.textContent)).toEqual(dataset.slice(0, 8).map((p) => p.title));
+    expect(results.every((r) => r.querySelector('a')!.getAttribute('href') === dataset[results.indexOf(r)]!.url)).toBe(true);
+    expect(rso.querySelectorAll(':scope > div > div')).toHaveLength(9);
+    expect(rso.querySelectorAll(':scope > div > div.Wt5Tfe')).toHaveLength(1);
+    expect(rso.children).toHaveLength(3);
+  });
+
+  it('takes the result count from the query', async () => {
+    const pg = await start();
+    const d = new JSDOM(await (await fetch(`${pg.url}/results?count=12&q=mouse`)).text()).window.document;
+    expect(d.querySelectorAll('#rso div.Mjj4Yd')).toHaveLength(12);
+    expect(d.querySelector('input[name="q"]')!.getAttribute('value')).toBe('mouse');
   });
 });
 

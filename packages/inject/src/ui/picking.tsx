@@ -137,7 +137,18 @@ export function AncestorBreadcrumb({ trail, current, onSelect }: { trail: Crumb[
   );
 }
 
-export function ElementInspector({ selection, trail, onSelectPath }: { selection: ParsedSelection; trail: Crumb[]; onSelectPath: (path: Path) => void }) {
+export function ElementInspector({
+  selection,
+  trail,
+  onSelectPath,
+  chain = '',
+}: {
+  selection: ParsedSelection;
+  trail: Crumb[];
+  onSelectPath: (path: Path) => void;
+  /** The composed selector chain, for an item scoped selection. */
+  chain?: string;
+}) {
   return (
     <section className="ws-card" data-ws="inspector">
       <div className="ws-row">
@@ -157,6 +168,11 @@ export function ElementInspector({ selection, trail, onSelectPath }: { selection
         </span>
       )}
       <AttrTable attrs={selection.attrs} />
+      {chain && (
+        <span className="ws-mono-sm ws-ellipsis" title={chain} data-ws="inspector-chain">
+          {chain}
+        </span>
+      )}
       <AncestorBreadcrumb trail={trail.length > 0 ? trail : selection.ancestors} current={selection.path} onSelect={onSelectPath} />
     </section>
   );
