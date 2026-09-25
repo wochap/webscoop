@@ -52,6 +52,8 @@ For the selected element the panel SHALL list every generated selector candidate
 ### Requirement: Item inference from one pick
 When a selection is made and no item container is set, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the item container with `within` from the list parent field and make the original selection an item scoped field.
 
+The item container candidates of every level (proposed, broader, narrower) SHALL be relative to the list parent when one is set, and their match counts SHALL be counted inside the list parent. The stated number of matches SHALL agree with the item set the samples come from.
+
 #### Scenario: Catalog title infers 24 items
 - **WHEN** the user picks one product title on the tier 0 catalog
 - **THEN** the panel proposes the product list as list parent and the product card as container with 24 matches and all 24 cards are highlighted
@@ -67,6 +69,10 @@ When a selection is made and no item container is set, the recorder SHALL look f
 #### Scenario: Skipped siblings shown
 - **WHEN** the picked title sits in a result list with 8 results and one dissimilar block
 - **THEN** the proposal shows 8 matches and 1 skipped
+
+#### Scenario: Search results under an id anchored list parent
+- **WHEN** the user picks a result title on a page where the results sit under `div#rso` inside anchored wrappers, with hashed classes on each result
+- **THEN** the proposal's list parent is `id` `rso`, the item container's top candidate matches every result inside it, and the count is greater than 0 and equal to the number of samples' item set
 
 ### Requirement: Exclusions
 While the item container is proposed or set, the user SHALL be able to add an exclusion selector. Containers matching it SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list.
@@ -192,12 +198,13 @@ The panel SHALL list steps in order with kind, target summary, value, `when`, an
 #### Scenario: Replay one step
 - **WHEN** the user replays the search `type` step
 - **THEN** the search box on the live page contains the step's value
+
 ### Requirement: Editing the proposal fields
-While the proposal is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
+While the proposal is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
 
 #### Scenario: Pick a wider list parent
 - **WHEN** the proposal names `div.row` as list parent with 4 items and the user picks `div.grid` for the list parent
-- **THEN** the item count becomes 24 and all 24 cards are highlighted
+- **THEN** the item count becomes 24, all 24 cards are highlighted, and the item container candidates no longer mention `div.row`
 
 #### Scenario: Type a role selector for the item
 - **WHEN** the user replaces the item selector with `role=listitem`
@@ -207,6 +214,10 @@ While the proposal is shown, the user SHALL be able to change the list parent or
 - **WHEN** the user is picking a list parent and clicks an element that is not an ancestor of the item
 - **THEN** the click is ignored and the overlay tag says the element is outside the list
 
+#### Scenario: Clearing the list parent
+- **WHEN** the user clears the list parent field
+- **THEN** the item container candidates become document relative and are counted on the whole page
+
 ### Requirement: Include all siblings
 The proposal block SHALL offer an "include all siblings" toggle. When on, every element under the list parent on the item's level with the item's tag SHALL count as an item regardless of similarity, and the skipped count SHALL read 0. Toggling off SHALL restore the similarity filter. The toggle SHALL not be saved in the recipe; its effect is the item selector chosen on confirm.
 
@@ -215,15 +226,27 @@ The proposal block SHALL offer an "include all siblings" toggle. When on, every 
 - **THEN** the proposal shows 9 matches and 0 skipped
 
 ### Requirement: Saved list parent
-Confirming a proposal SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent field. Setting an item container manually from a selection SHALL leave `within` absent unless the user then sets a list parent from the item block. The item block in the panel SHALL show the list parent with its match count and allow re-picking or clearing it after confirmation.
+Confirming a proposal SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent field. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. Setting an item container manually from a selection SHALL leave `within` absent unless the user then sets a list parent from the item block. The item block in the panel SHALL show the list parent with its match count and allow re-picking or clearing it after confirmation. Setting, re-picking, or typing a list parent for a confirmed item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
 
 #### Scenario: Within saved on confirm
 - **WHEN** the user confirms a proposal whose list parent is the product list
-- **THEN** the draft's `item.within` lists the list's candidates and the saved recipe carries them
+- **THEN** the draft's `item.within` lists the list's candidates, `item.selectors` resolve the cards inside that list, and the saved recipe carries both
 
 #### Scenario: Cleared list parent
 - **WHEN** the user clears the list parent field and confirms
 - **THEN** the saved recipe's `item` has no `within`
+
+#### Scenario: List parent set after confirming
+- **WHEN** the user sets the item container from a selection with a document relative selector and then picks the product list as list parent
+- **THEN** `item.selectors` are rewritten relative to the product list and the item count stays 24
+
+#### Scenario: Highlights follow the list parent
+- **WHEN** a confirmed item has `within` and relative `item.selectors` that would also match elements outside the list parent
+- **THEN** only the containers inside the list parent are highlighted, and a pick inside one of them is item scoped
+
+#### Scenario: Recorded recipe runs
+- **WHEN** a recipe recorded on the id anchored results page is run on the same page
+- **THEN** the run resolves the list parent, finds every result inside it, and returns one row per result
 
 ### Requirement: Accessibility candidates for levels
 The list parent and item fields SHALL list their candidates like a field does, including role-only candidates, and the user MAY choose which is primary before confirming.
@@ -231,3 +254,14 @@ The list parent and item fields SHALL list their candidates like a field does, i
 #### Scenario: Role primary for the item
 - **WHEN** the item level has `role` `listitem` and `css` `li.product-item` candidates and the user picks the role one as primary
 - **THEN** the saved `item.selectors` lists `role` `listitem` first
+
+### Requirement: Selector chain display
+Where the panel shows an item container or an item scoped field, it SHALL also show the composed selector chain from the primary selectors: list parent, then item container, then field, separated by `»`, omitting the levels that are not set. The chain SHALL be display only; the recipe SHALL keep one scoped selector list per level.
+
+#### Scenario: Chain for an item field
+- **WHEN** the list parent is `id=rso`, the item container is `css=div > div`, and the selected element is an item scoped `h3`
+- **THEN** the panel shows `id=rso » css=div > div » css=h3`
+
+#### Scenario: Chain without a list parent
+- **WHEN** the confirmed item container has no list parent
+- **THEN** the chain starts at the item container

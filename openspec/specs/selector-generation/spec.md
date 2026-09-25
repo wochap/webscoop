@@ -57,6 +57,8 @@ Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`
 ### Requirement: Generalizing item scoped selectors
 When a field is inside an item container, its candidates SHALL be expressed relative to the container element, with positional segments (`:nth-child`, xpath indices) that differ between siblings removed. The cut point SHALL be the container element itself, identified by its position in the snapshot, not by matching the container's selector text against the candidate. A generalized candidate SHALL match exactly one element in every container where the field exists.
 
+In the same way, when an item container level has a list parent, the item container's candidates SHALL be expressed relative to the list parent element, cut at the list parent itself. Segments above the list parent (anchored ancestors, `id` anchors, the document root) SHALL NOT appear in them. An `xpath` candidate SHALL become a relative path starting with `./`. Strategies with no relative form SHALL be kept only when they still match inside the list parent. Without a list parent, item container candidates SHALL stay relative to the document.
+
 #### Scenario: Title inside card
 - **WHEN** the picked title is `article:nth-child(2) > a > h3` and the container is `article`
 - **THEN** the relative `css` candidate is `a > h3` and it matches one element in each of the 24 cards
@@ -64,6 +66,14 @@ When a field is inside an item container, its candidates SHALL be expressed rela
 #### Scenario: Bare div container
 - **WHEN** the container is a `div` with only hashed classes and the picked price is `div.asEBEc > div > div:nth-child(2) > span.price`
 - **THEN** the relative `css` candidate is `div > div:nth-child(2) > span.price` and the relative `class` candidate is `span.price`
+
+#### Scenario: Item container below an id anchored list parent
+- **WHEN** the list parent is `div#rso` inside `div.main > div`, and each item is a `div` two levels below it
+- **THEN** the item container's `css` candidate starts below `div#rso` (for example `div > div`), its `xpath` candidate starts with `./`, and neither contains `div.main` or `@id='rso'`
+
+#### Scenario: No list parent
+- **WHEN** the item container level has no list parent
+- **THEN** its candidates are the document relative candidates generated for the element
 
 ### Requirement: Sibling inference
 Given a picked element, inference SHALL find the repeating structure it belongs to. For each ancestor L of the picked element (candidate list parent, never `body`) and each ancestor-or-self I of the picked element below L (candidate item), the item set SHALL be every descendant of L reachable by the same tag path as I, ignoring sibling positions, whose tag equals I's tag and whose child-tag multiset to depth 2 is similar to the group. Similarity SHALL be judged against the group's centroid after one pass, so an unusual picked item still recovers its group. Inference SHALL propose the pair (L, I) with the most items where the item count is at least 3, preferring the nearest I on ties, and SHALL report the list parent, the item set, the siblings under L on I's level that were skipped as dissimilar, and the next broader and next narrower item levels with their match counts. The document body SHALL never be proposed as list parent or item. Single-child block wrappers below the item SHALL be descended into as today.
