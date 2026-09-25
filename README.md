@@ -26,6 +26,27 @@ browsers, so no browser download is needed. nixpkgs' `playwright-driver`
 version must equal the `playwright` version pinned in `package.json`
 (currently 1.59.1); bump both together.
 
+### Trying a local build
+
+Run the npm build output directly while iterating:
+
+```sh
+npm run build
+node packages/cli/dist/webscoop.js record 'https://www.google.com/search?q={query}' --var query="top+llms"
+```
+
+Or build the Nix package. `./result` keeps pointing at the last
+`nix build`, so rebuild after each change (the `npmDeps` hash in
+`flake.nix` only changes with `package-lock.json`):
+
+```sh
+nix build
+./result/bin/webscoop record 'https://www.google.com/search?q={query}' --var query="top+llms"
+```
+
+A running record session keeps the recorder it injected; restart it to
+pick up a new build.
+
 ### Without Nix
 
 Node 22 or newer (npm ships with it):
