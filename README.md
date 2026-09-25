@@ -131,6 +131,14 @@ webscoop run shop --jsonl > rows.jsonl
 webscoop run shop --pages all --jsonl > every-page.jsonl
 ```
 
+`<url-template>` is URL with `{name}` placeholders. Each placeholder needs
+matching `--var name=value` at record and run time.
+
+```sh
+webscoop record "https://shop.test/c/{category}" --name shop
+webscoop run shop --var category="running-shoes"
+```
+
 ### Pagination
 
 A recipe's `pagination` block says how to reach the next page. The runner
