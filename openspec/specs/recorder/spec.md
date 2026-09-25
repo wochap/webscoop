@@ -82,7 +82,7 @@ While the item container is proposed or set, the user SHALL be able to add an ex
 - **THEN** the count shows 22 and those 2 cards lose their highlight
 
 ### Requirement: Add as field
-The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within the draft), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), scope (`item` when the element is inside the container, else `page`), optional flag, and dedup key flag. Fields SHALL be listed in the panel with name, type, scope, sample value, and match count, and SHALL be reorderable by drag or Alt+Up and Alt+Down.
+The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within the draft), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), scope (`item` when the element is inside the container, else `page`), optional flag, and dedup key flag. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed in the panel with name, type, scope, sample value, and match count, and SHALL be reorderable by drag or Alt+Up and Alt+Down.
 
 #### Scenario: Link becomes url field
 - **WHEN** the user adds a product link as a field
@@ -91,6 +91,14 @@ The user SHALL be able to turn the selection into a field with a name (defaultin
 #### Scenario: Duplicate name is rejected inline
 - **WHEN** the user names a second field `price`
 - **THEN** the panel shows an error on the name and does not save until it is unique
+
+#### Scenario: Options chosen before adding
+- **WHEN** the user selects a price, sets the name to `amount`, the type to `number`, and turns on optional, then adds the field
+- **THEN** the field list shows `amount` as a `number` field marked optional
+
+#### Scenario: Adding returns to the empty state
+- **WHEN** the user adds the selection as a field
+- **THEN** the inspector, the candidate list, and the selected element highlight are gone, and the pick strip offers a new pick
 
 ### Requirement: Zero match fields
 A field whose primary selector matches nothing on the current page SHALL be marked with a warning in the field list and offer to re-pick or mark optional.
@@ -135,11 +143,19 @@ The recorder UI SHALL render inside a shadow root with all inherited styles rese
 - **THEN** the panel renders with its own font and colors, above the fixed header and the cookie modal
 
 ### Requirement: Keyboard
-The panel SHALL support: `p` to start picking, Esc to cancel picking or close a menu, Enter to confirm the current proposal, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Ctrl+S to save. Shortcuts SHALL NOT fire while typing in a panel input.
+The panel SHALL support: `p` to start picking, Esc to cancel picking, close a menu, cancel a field edit, or clear the selection when not picking, Enter to confirm the current proposal, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel picking, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
 
 #### Scenario: Enter confirms items
 - **WHEN** the item proposal is shown and the user presses Enter
 - **THEN** the container is confirmed
+
+#### Scenario: Esc clears the selection
+- **WHEN** an element is selected, picking is off, and the user presses Esc
+- **THEN** the panel returns to the empty state
+
+#### Scenario: Esc while picking keeps the selection
+- **WHEN** an element is selected, the user starts picking, and presses Esc
+- **THEN** picking stops and the previous selection is still shown
 
 ### Requirement: Session end
 Closing the browser window or pressing Ctrl+C SHALL end the session. If the draft has unsaved changes, the CLI SHALL print a warning naming the recipe on stderr. The process SHALL exit 0 after a save and 1 when the session ended with an error.
@@ -265,3 +281,48 @@ Where the panel shows an item container or an item scoped field, it SHALL also s
 #### Scenario: Chain without a list parent
 - **WHEN** the confirmed item container has no list parent
 - **THEN** the chain starts at the item container
+
+### Requirement: Clear the selection
+The selection panel SHALL offer a clear control. Clearing SHALL remove the selection, any item proposal shown for it, and a pending field edit, stop highlighting the selected element, and show the empty state: the pick strip with no inspector, candidates, or actions. The draft SHALL NOT change. Confirmed item containers SHALL stay highlighted.
+
+#### Scenario: Clear after a pick with a proposal
+- **WHEN** the user picks a title, the item proposal appears, and the user clicks the clear control
+- **THEN** the proposal and the inspector disappear, no item container is set, and the draft's fields are unchanged
+
+### Requirement: Typed selector for the selection
+The selection panel SHALL accept selector text in the same `strategy=value` syntax as the list parent and item container fields. With scope `item`, the text SHALL be resolved inside each item container; with scope `page`, against the document. When it matches, the typed candidate SHALL become the primary candidate, shown with its stability and match count, and the first element it matches (in the first container that holds a match for item scope) SHALL become the selected element with its inspector. For item scope the panel SHALL show the number of containers holding at least one match out of the container count. A candidate that matches in only some containers SHALL be accepted, and the panel SHALL offer to mark the field optional. Text that is invalid or matches nothing SHALL show an inline error and leave the previous selection in effect. The same input SHALL be available when nothing is selected and an item container is set.
+
+#### Scenario: Typed item selector
+- **WHEN** 24 product cards are confirmed and the user types `css=h3` with no element selected
+- **THEN** the first card's `h3` becomes the selection, the primary candidate is `css=h3` with 24 matches, the scope is `item`, and the panel shows `24 / 24 items`
+
+#### Scenario: Partial match
+- **WHEN** 10 result containers are confirmed and the user types a selector that matches in 7 of them
+- **THEN** the panel shows `7 / 10 items` and offers to mark the field optional, and the field can be added
+
+#### Scenario: Matches nothing
+- **WHEN** the user types `css=.no-such-class`
+- **THEN** an inline error says the selector matches nothing and the previous selection stays
+
+### Requirement: Edit a saved field
+The panel SHALL offer an edit action on each field in the list, by clicking the field's summary or an Edit button. Editing SHALL open the field in the selection panel, prefilled with its name, type, attribute, scope, optional flag, dedup key flag, its saved selector candidates with current match counts, and its primary candidate. The element the field's primary selector resolves to (inside the first container that holds a match for item scope) SHALL be selected and inspected, and every match SHALL be highlighted. When the field resolves nothing on the current page, the panel SHALL show the saved values with a zero-match notice and no selected element. While editing, a new pick or a typed selector SHALL replace the selection for the edited field, and the field options SHALL keep their edited values. "Update field" SHALL replace the field at its position with the edited values and selectors, the chosen candidate first, and refresh its fingerprint from the selected element. "Cancel" SHALL leave the field unchanged. Both SHALL return the panel to the empty state. The field being edited SHALL be marked in the field list, and other panel actions that act on the selection (use as item container, pagination target, record as step) SHALL be unavailable while editing.
+
+#### Scenario: Open a field for editing
+- **WHEN** the draft has an item scoped `price` field of type `number`, marked optional, with a `testid` primary, and the user clicks its Edit button
+- **THEN** the selection panel shows `price`, `number`, optional on, the `testid` candidate as primary with its count, and the first card's price element is selected and highlighted
+
+#### Scenario: Change the primary candidate and update
+- **WHEN** the user edits `price`, chooses its `css` candidate as primary, and clicks Update field
+- **THEN** the field stays at the same position in the list and its first saved selector is the `css` candidate
+
+#### Scenario: Re-pick while editing
+- **WHEN** the user edits `title`, picks the subtitle element instead, and clicks Update field
+- **THEN** the `title` field's selectors resolve the subtitle, its name and options are unchanged, and no new field is added
+
+#### Scenario: Cancel an edit
+- **WHEN** the user edits `title`, changes its type to `html`, and clicks Cancel
+- **THEN** the `title` field keeps type `text` and its selectors
+
+#### Scenario: Field not on the page
+- **WHEN** the user edits a field whose selectors match nothing on the current page
+- **THEN** the panel shows the field's saved values and candidates with 0 matches, a zero-match notice, and no selected element
