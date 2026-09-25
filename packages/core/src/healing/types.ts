@@ -11,6 +11,8 @@ interface TargetBase {
 /** Something the runner resolves on a page, with the place in the recipe a promotion writes to. */
 export type HealTarget =
   | (TargetBase & { kind: 'item' })
+  /** The list parent in `item.within`. */
+  | (TargetBase & { kind: 'within' })
   | (TargetBase & {
       kind: 'field';
       index: number;
@@ -32,7 +34,7 @@ export type HealTarget =
       label?: string;
     });
 
-/** Name used in reports and events: the field name, `item`, `pagination`, or the step's label or `step:N`. */
+/** Name used in reports and events: the field name, `item`, `within`, `pagination`, or the step's label or `step:N`. */
 export function targetName(target: HealTarget): string {
   switch (target.kind) {
     case 'field':

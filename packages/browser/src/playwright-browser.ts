@@ -56,6 +56,7 @@ function locate(root: Root, candidate: SelectorCandidate): Locator {
     case 'text':
       return root.getByText(value, { exact: true });
     case 'css':
+    case 'class':
       return root.locator(`css=${value}`);
     case 'xpath':
       return root.locator(`xpath=${value}`);

@@ -2,7 +2,7 @@ import type { ElementRef, SerializedElement } from '../ports';
 import type { Fingerprint, SelectorCandidate } from '../recipe/schema';
 import { descendantsOf, type AnnotatedNode } from '../selectors/annotated';
 import { fingerprint } from '../selectors/fingerprint';
-import { compoundOf, generate, type Candidate } from '../selectors/generate';
+import { generate, type Candidate } from '../selectors/generate';
 import { rank } from '../selectors/rank';
 import { relativize } from '../selectors/relativize';
 import { refForNode, xpathFor } from '../selectors/xpath';
@@ -108,8 +108,9 @@ export async function promote(target: HealTarget, resolution: Resolution, ctx: H
   if (!node) return finish([...resolving, resolution.selector, ...oldAlive], target.fingerprint);
 
   const root = await ctx.snapshotOf(within);
-  let fresh: Candidate[] = generate(node, { positional: target.kind !== 'item' });
-  if (itemScoped) fresh = fresh.map((c) => relativize(c, compoundOf(root))).filter((c): c is Candidate => c !== null);
+  const level = target.kind === 'item' || target.kind === 'within';
+  let fresh: Candidate[] = generate(node, { positional: target.kind !== 'item', level });
+  if (itemScoped) fresh = fresh.map((c) => relativize(c, root)).filter((c): c is Candidate => c !== null);
 
   const verified: Candidate[] = [];
   for (const c of fresh) {

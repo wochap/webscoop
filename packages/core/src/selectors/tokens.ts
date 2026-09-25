@@ -19,14 +19,27 @@ function mixedRun(run: string): boolean {
 }
 
 /**
+ * Short obfuscated tokens such as `asEBEc` or `kXeqYt`: 5 to 8 letters only,
+ * at least two upper-case letters after the first. A single trailing
+ * upper-case run is an acronym (`itemUSD`), not a hash.
+ */
+function shortMixedCase(token: string): boolean {
+  if (!/^[A-Za-z]{5,8}$/.test(token)) return false;
+  const rest = token.slice(1);
+  if ((rest.match(/[A-Z]/g) ?? []).length < 2) return false;
+  return !/^[a-z]*[A-Z]+$/.test(rest);
+}
+
+/**
  * Classify a class token or attribute value as `hashed` when it matches a
  * generated pattern: a run of 5 or more mixed letters and digits, a `css-`,
- * `sc-`, `jsx-`, or `emotion-` prefix, or a trailing `-` plus 4 or more hex or
- * base64 characters.
+ * `sc-`, `jsx-`, or `emotion-` prefix, a trailing `-` plus 4 or more hex or
+ * base64 characters, or a short mixed-case token of letters only.
  */
 export function classifyToken(token: string): TokenClass {
   if (HASHED_PREFIX.test(token)) return 'hashed';
   if (HASHED_SUFFIX.test(token)) return 'hashed';
+  if (shortMixedCase(token)) return 'hashed';
   for (const [run] of token.matchAll(ALNUM_RUN)) if (mixedRun(run)) return 'hashed';
   // Values with no letters at all, such as `48213`, are not written by a person either.
   return /^\d{3,}$/.test(token) ? 'hashed' : 'stable';

@@ -52,6 +52,34 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       expect(steps.rows).toEqual(await runRows(scoop, 'playground-steps'));
     });
 
+    test('a recipe with a list parent and a class candidate emits the rows webscoop run emits', async ({ scoop }) => {
+      const recipe = structuredClone(scoop.recipe);
+      recipe.name = 'within-catalog';
+      recipe.url = `${recipe.url}&rows=4`;
+      recipe.item = {
+        ...recipe.item!,
+        within: [
+          { strategy: 'role', value: 'list', stability: 'stable' },
+          { strategy: 'css', value: 'ul.product-list', stability: 'medium' },
+        ],
+      };
+      recipe.fields = recipe.fields.map((f) =>
+        f.name === 'title' ? { ...f, selectors: [{ strategy: 'class', value: 'h2.product-title', stability: 'medium' }, ...f.selectors] } : f,
+      );
+      await scoop.writeRecipe(recipe);
+      const scoped = await exportAndRun(scoop, 'within-catalog', format);
+      expect(scoped.code, scoped.stderr).toBe(0);
+      expect(scoped.rows).toHaveLength(24);
+      expect(scoped.rows).toEqual(await runRows(scoop, 'within-catalog'));
+
+      recipe.name = 'lost-list';
+      recipe.item.within = [{ strategy: 'css', value: 'ol.no-such-list', stability: 'medium' }];
+      await scoop.writeRecipe(recipe);
+      const lost = await exportAndRun(scoop, 'lost-list', format);
+      expect(lost.code, lost.stderr).toBe(3);
+      expect(lost.stderr).toMatch(/list parent \(item\.within\) matched no element/);
+    });
+
     test('a required field matching nothing exits 3 with empty stdout', async ({ scoop }) => {
       const recipe = structuredClone(scoop.recipe);
       recipe.name = 'dead-price';

@@ -2,7 +2,7 @@ import { convertValue, defaultAttr } from './convert';
 import type { FieldReport, Row, RunReport } from './events';
 import { healContext, SnapshotCache } from './healing/context';
 import { rankMatches } from './healing/fuzzy';
-import { candidatesResolver, resolveTarget } from './healing/ladder';
+import { candidatesResolver, firstCandidateResolver, resolveTarget } from './healing/ladder';
 import { promote, type Promotion } from './healing/promote';
 import type { Viewport } from './healing/score';
 import { isHealed, targetName, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
@@ -48,6 +48,8 @@ export interface PageExtraction {
 export interface ResolvedSelectors {
   /** Item container selectors, or null when the recipe has no item block or nothing matched. */
   item: SelectorCandidate[] | null;
+  /** List parent selectors, or null when the recipe has no `item.within` or nothing matched. */
+  within?: SelectorCandidate[] | null;
   /** Per recipe field, in recipe order: the selectors that resolved it, or null when nothing did. */
   fields: (SelectorCandidate[] | null)[];
 }
@@ -110,6 +112,9 @@ interface Settled {
 
 const UNRESOLVED: HealOutcome = { kind: 'unresolved' };
 
+/** Whether the ladder goes past the stored candidates, so an unresolved target may still be found another way. */
+const heals = (ladder: readonly Resolver[]) => ladder.some((rung) => rung !== candidatesResolver && rung !== firstCandidateResolver);
+
 /** Promote when the target healed; item scoped fuzzy matches must hold in at least half the containers. */
 const settleWith =
   (target: HealTarget, ctx: HealContext, promoteStored: boolean) =>
@@ -129,16 +134,33 @@ const settleWith =
     return { resolution, selectors: promotion.selectors, promotion };
   };
 
-/** Item containers the selectors find, minus the exclusions. */
-async function containersFor(session: Session, selectors: readonly SelectorCandidate[], exclude: readonly SelectorCandidate[]): Promise<ElementRef[]> {
-  const found = await resolveFirst(session, selectors);
+/** Item containers the selectors find (inside the list parent, when given), minus the exclusions. */
+export async function containersFor(
+  session: Session,
+  selectors: readonly SelectorCandidate[],
+  exclude: readonly SelectorCandidate[],
+  within?: ElementRef,
+): Promise<ElementRef[]> {
+  const found = await resolveFirst(session, selectors, within);
   return found ? excludeContainers(session, found.refs, exclude) : [];
+}
+
+/**
+ * The list parent: the first element the first resolving `within` candidate
+ * matches. Undefined for a recipe without `within`; null when nothing resolves.
+ */
+export async function listParent(session: Session, within: readonly SelectorCandidate[] | undefined | null): Promise<ElementRef | null | undefined> {
+  if (!within) return undefined;
+  const found = await resolveFirst(session, within);
+  return found?.refs[0] ?? null;
 }
 
 /** How many item containers the page holds now, with the selectors an earlier page resolved. */
 export async function countItems(session: Session, recipe: Recipe, resolved: ResolvedSelectors): Promise<number> {
   if (!recipe.item || !resolved.item) return 0;
-  return (await containersFor(session, resolved.item, recipe.item.exclude ?? [])).length;
+  const parent = recipe.item.within ? await listParent(session, resolved.within ?? recipe.item.within) : undefined;
+  if (parent === null) return 0;
+  return (await containersFor(session, resolved.item, recipe.item.exclude ?? [], parent)).length;
 }
 
 export interface TargetResult {
@@ -293,22 +315,71 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     opts.onHealed?.(settled.promotion);
   };
 
-  // Item container.
+  // List parent, then the item container inside it.
   let containers: (ElementRef | undefined)[] = [undefined];
   let item: RunReport['item'] = null;
   let itemAncestors: readonly string[] = [];
   let itemFingerprint: Fingerprint | undefined;
   let itemSelectors: SelectorCandidate[] | null = null;
-  if (recipe.item && reused) {
+  let withinSelectors: SelectorCandidate[] | null = null;
+  let parent: ElementRef | undefined;
+  let withinReport: NonNullable<RunReport['item']>['within'];
+  /** The list parent resolved nothing: without healing the containers count as unresolved. */
+  let withinMissing = false;
+  if (recipe.item?.within) {
+    if (reused) {
+      withinSelectors = reused.within ?? null;
+      const found = withinSelectors ? await resolveFirst(session, withinSelectors) : null;
+      parent = found?.refs[0];
+      withinReport = {
+        candidateIndex: found ? 0 : null,
+        candidate: withinSelectors?.[0] ?? null,
+        outcome: found ? { kind: 'candidate', index: 0 } : UNRESOLVED,
+      };
+    } else {
+      const target: HealTarget = {
+        kind: 'within',
+        selectors: recipe.item.within,
+        ...(recipe.item.withinFingerprint ? { fingerprint: recipe.item.withinFingerprint } : {}),
+      };
+      const ctx = context();
+      const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
+      record(settled);
+      parent = settled?.resolution.refs[0];
+      const outcome = settled?.resolution.outcome ?? UNRESOLVED;
+      withinSelectors = settled?.selectors ?? null;
+      withinReport = {
+        candidateIndex: outcome.kind === 'candidate' ? outcome.index : null,
+        candidate: settled?.selectors[0] ?? null,
+        outcome,
+        ...(notes.has('within') ? { notes: notes.get('within')! } : {}),
+      };
+    }
+    // With healing on, a list parent that cannot heal leaves the containers to the document.
+    withinMissing = !parent && !heals(ladder);
+  }
+  const withinPart = withinReport ? { within: withinReport } : {};
+  if (recipe.item && withinMissing) {
+    containers = [];
+    item = {
+      candidateIndex: null,
+      candidate: null,
+      count: 0,
+      outcome: UNRESOLVED,
+      notes: ['the list parent (item.within) matched no element'],
+      ...withinPart,
+    };
+  } else if (recipe.item && reused) {
     const selectors = reused.item;
     itemSelectors = selectors;
-    const kept = selectors ? await containersFor(session, selectors, recipe.item.exclude ?? []) : [];
+    const kept = selectors ? await containersFor(session, selectors, recipe.item.exclude ?? [], parent) : [];
     containers = kept;
     item = {
       candidateIndex: kept.length > 0 ? 0 : null,
       candidate: selectors?.[0] ?? null,
       count: kept.length,
       outcome: kept.length > 0 ? { kind: 'candidate', index: 0 } : UNRESOLVED,
+      ...withinPart,
     };
   } else if (recipe.item) {
     const target: HealTarget = {
@@ -316,14 +387,14 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       selectors: recipe.item.selectors,
       ...(recipe.item.fingerprint ? { fingerprint: recipe.item.fingerprint } : {}),
     };
-    const ctx = context();
+    const ctx = context(parent ? { within: parent } : {});
     const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
     record(settled);
     let refs: ElementRef[] = [];
     if (settled) {
       refs = settled.resolution.refs;
       if (settled.resolution.outcome.kind !== 'candidate' && settled.selectors[0]) {
-        const all = await session.resolve(settled.selectors[0]);
+        const all = await session.resolve(settled.selectors[0], parent);
         if (all.length > refs.length) refs = all;
       }
     }
@@ -336,6 +407,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       count: kept.length,
       outcome,
       ...(notes.has('item') ? { notes: notes.get('item')! } : {}),
+      ...withinPart,
     };
     itemSelectors = settled?.selectors ?? null;
     itemFingerprint = settled?.promotion?.fingerprint ?? recipe.item.fingerprint;
@@ -438,6 +510,10 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
 
   const missingRequired: string[] = [];
   const warnings: string[] = [];
+  if (recipe.item && withinReport?.outcome.kind === 'unresolved') {
+    if (withinMissing) missingRequired.push('within');
+    else warnings.push(`list parent (item.within) missing on page ${opts.page}; item containers were found in the whole document`);
+  }
   if (recipe.item && rows.length === 0) missingRequired.push('item');
   for (const report of fields) {
     if (report.optional) continue;
@@ -449,6 +525,10 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     }
   }
 
-  const resolved: ResolvedSelectors = { item: itemSelectors, fields: states.map((s) => s.settled?.selectors ?? null) };
+  const resolved: ResolvedSelectors = {
+    item: itemSelectors,
+    ...(recipe.item?.within ? { within: withinSelectors } : {}),
+    fields: states.map((s) => s.settled?.selectors ?? null),
+  };
   return { rows, item, fields, missingRequired, warnings, promotions, resolved };
 }

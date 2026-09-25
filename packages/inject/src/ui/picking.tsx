@@ -2,12 +2,24 @@ import { classifyToken, attrStability, type Crumb, type ParsedSelection, type Pa
 import { walkTrail } from '../keyboard';
 import { Kbd } from './shell';
 
-export function PickModeStrip({ picking, onStart, onCancel }: { picking: boolean; onStart: () => void; onCancel: () => void }) {
+export function PickModeStrip({
+  picking,
+  onStart,
+  onCancel,
+  level,
+}: {
+  picking: boolean;
+  onStart: () => void;
+  onCancel: () => void;
+  /** Set while picking a list level: only some elements can be picked. */
+  level?: 'within' | 'item' | null;
+}) {
   if (picking) {
+    const title = level === 'within' ? 'Click the element that holds every item' : level === 'item' ? 'Click one item inside the list' : 'Hover and click an element';
     return (
-      <div className="ws-strip ws-strip-active" data-ws="pick-strip" data-picking="true">
+      <div className="ws-strip ws-strip-active" data-ws="pick-strip" data-picking="true" data-level={level ?? undefined}>
         <div className="ws-col ws-spacer">
-          <span className="ws-title">Hover and click an element</span>
+          <span className="ws-title">{title}</span>
           <span className="ws-meta">
             <Kbd>Alt</Kbd> + click picks through overlays · <Kbd>Esc</Kbd> cancels
           </span>

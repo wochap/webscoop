@@ -22,6 +22,6 @@ export function snapshotFromHtml(html: string): SerializedElement {
 }
 
 /** The tier 0 catalog as a serialized snapshot. */
-export function tier0Snapshot(opts: { sponsored?: number } = {}): SerializedElement {
+export function tier0Snapshot(opts: { sponsored?: number; mixed?: boolean; rows?: number } = {}): SerializedElement {
   return snapshotFromHtml(render(dataset, { tier: 0, seed: 1, ...opts }));
 }

@@ -53,6 +53,13 @@ export interface RunReport {
     outcome: HealOutcome;
     /** Why healing rungs declined the item container. */
     notes?: string[];
+    /** How the list parent (`item.within`) resolved, for a recipe that has one. */
+    within?: {
+      candidateIndex: number | null;
+      candidate: SelectorCandidate | null;
+      outcome: HealOutcome;
+      notes?: string[];
+    };
   } | null;
   fields: FieldReport[];
   /** How the pagination target resolved, when the run needed it. */

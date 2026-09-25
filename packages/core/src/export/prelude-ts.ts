@@ -16,7 +16,7 @@ import { chromium, errors, type Locator, type Page } from 'playwright';
 // Recipe shapes (the constants at the end of the file)
 // ---------------------------------------------------------------------------
 
-type Strategy = 'role' | 'testid' | 'id' | 'text' | 'css' | 'xpath';
+type Strategy = 'role' | 'testid' | 'id' | 'text' | 'css' | 'class' | 'xpath';
 interface Selector {
   strategy: Strategy;
   value: string;
@@ -44,6 +44,8 @@ interface Step {
 }
 interface Item {
   selectors: Selector[];
+  /** The list parent: containers are found inside its first match. */
+  within?: Selector[];
   exclude: Selector[];
 }
 type FieldType = 'text' | 'number' | 'url' | 'image' | 'date' | 'html';
@@ -452,6 +454,7 @@ function locate(root: Root, selector: Selector): Locator {
     case 'text':
       return root.getByText(value, { exact: true });
     case 'css':
+    case 'class':
       return root.locator('css=' + value);
     case 'xpath':
       return root.locator('xpath=' + value);
@@ -584,12 +587,13 @@ async function replaySteps(session: Session, page: number, values: Record<string
 /** The selectors page 1 settled on; later pages use them as they are. */
 interface Resolved {
   item: Selector[] | null;
+  within: Selector[] | null;
   fields: (Selector[] | null)[];
 }
 
 interface Extraction {
   rows: Row[];
-  /** Required fields that matched on no row, or "item" when no container matched. */
+  /** Required fields that matched on no row, "item" when no container matched, and "within" when the list parent did not. */
   missingRequired: string[];
   warnings: string[];
   resolved: Resolved;
@@ -615,12 +619,17 @@ async function settleSelectors(selectors: readonly Selector[], scopes: readonly 
 
 /** Every row of the current page, from item container fromIndex on (a page that grew). */
 async function extractPage(page: Page, pageNumber: number, pageUrl: string, resolved: Resolved | null, fromIndex: number): Promise<Extraction> {
-  // Item container.
+  // List parent, then the item container inside it.
   let containers: (Locator | undefined)[] = [undefined];
   let itemSelectors: Selector[] | null = null;
+  let withinSelectors: Selector[] | null = null;
+  let withinMissing = false;
   if (ITEM) {
+    const parent = await listParent(page, resolved);
+    withinSelectors = parent.selectors;
+    withinMissing = parent.missing;
     const selectors = resolved ? resolved.item : ITEM.selectors;
-    const found = selectors ? await resolveFirst(page, selectors) : null;
+    const found = selectors && !withinMissing ? await resolveFirst(parent.root, selectors) : null;
     containers = found ? await keptContainers(page, found) : [];
     itemSelectors = resolved ? resolved.item : found ? ITEM.selectors.slice(found.index) : null;
   }
@@ -665,6 +674,7 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
 
   const missingRequired: string[] = [];
   const warnings: string[] = [];
+  if (withinMissing) missingRequired.push('within');
   if (ITEM && rows.length === 0) missingRequired.push('item');
   for (const { field, missingRows } of states) {
     if (field.optional) continue;
@@ -676,7 +686,16 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
       );
     }
   }
-  return { rows, missingRequired, warnings, resolved: { item: itemSelectors, fields: states.map((s) => s.selectors) } };
+  return { rows, missingRequired, warnings, resolved: { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) } };
+}
+
+/** Where item containers are searched: inside the list parent's first match, else the page. */
+async function listParent(page: Page, resolved: Resolved | null): Promise<{ root: Root; selectors: Selector[] | null; missing: boolean }> {
+  if (!ITEM?.within) return { root: page, selectors: null, missing: false };
+  const selectors = resolved ? resolved.within : ITEM.within;
+  const found = selectors ? await resolveFirst(page, selectors) : null;
+  if (!found) return { root: page, selectors: null, missing: true };
+  return { root: found.locator.nth(0), selectors: resolved ? resolved.within : ITEM.within.slice(found.index), missing: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -890,7 +909,9 @@ async function scrape(opts: Options): Promise<number> {
       targetSelectors: null,
       async count() {
         if (!ITEM || !resolved?.item) return 0;
-        const found = await resolveFirst(page, resolved.item);
+        const parent = await listParent(page, resolved);
+        if (parent.missing) return 0;
+        const found = await resolveFirst(parent.root, resolved.item);
         return found ? (await keptContainers(page, found)).length : 0;
       },
     };
@@ -911,9 +932,11 @@ async function scrape(opts: Options): Promise<number> {
         url = page.url();
       }
       const extraction = await extractPage(page, pageNumber, url, resolved, fromIndex);
-      const names = resolved ? extraction.missingRequired.filter((name) => name !== 'item') : extraction.missingRequired;
+      const names = resolved ? extraction.missingRequired.filter((name) => name !== 'item' && name !== 'within') : extraction.missingRequired;
       if (names.length > 0) {
-        const message = names.includes('item')
+        const message = names.includes('within')
+          ? 'the list parent (item.within) matched no element, so the item container is unresolved'
+          : names.includes('item')
           ? 'the item container matched no element'
           : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element' + (resolved ? ' on page ' + pageNumber : '');
         throw new Failure(message, EXIT_UNRESOLVED);

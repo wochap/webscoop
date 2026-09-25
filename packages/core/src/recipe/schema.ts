@@ -52,6 +52,9 @@ export const VarSchema = z.object({
 
 export const ItemSchema = z.object({
   selectors: z.array(SelectorCandidateSchema).min(1),
+  /** The list parent: containers are resolved inside the first element its first resolving candidate matches. */
+  within: z.array(SelectorCandidateSchema).min(1).optional(),
+  withinFingerprint: FingerprintSchema.optional(),
   exclude: z.array(SelectorCandidateSchema).optional(),
   fingerprint: FingerprintSchema.optional(),
 });

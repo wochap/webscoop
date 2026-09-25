@@ -95,6 +95,16 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     expect(await texts(c('text', dataset[2]!.title))).toEqual([dataset[2]!.title]);
   });
 
+  it('resolves a bare role and a class candidate, inside a list parent too', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const [list] = await session.resolve(c('role', 'list'));
+    expect(list).toBeDefined();
+    expect(await session.resolve(c('role', 'listitem'))).toHaveLength(24);
+    expect(await session.resolve(c('role', 'listitem'), list)).toHaveLength(24);
+    expect(await texts(c('class', 'ul.product-list h2.product-title'))).toHaveLength(24);
+    expect(await texts(c('class', 'h2.product-title'), (await session.resolve(c('role', 'listitem')))[1])).toEqual([dataset[1]!.title]);
+  });
+
   it('scopes a field inside one container and reads attributes and html', async () => {
     await session.goto(catalog(), { timeoutMs: 10_000 });
     const cards = await session.resolve(c('testid', 'product-card'));
@@ -121,6 +131,8 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
       c('css', 'a.product-link'),
       c('xpath', '//ul/li[5]//h2'),
       c('text', dataset[7]!.title),
+      c('role', 'listitem'),
+      c('class', 'article.product-card h2.product-title'),
     ];
     for (const candidate of candidates) {
       const live = await texts(candidate);

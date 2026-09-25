@@ -99,6 +99,33 @@ describe('item container', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts a list parent with its fingerprint and keeps it through load', () => {
+    const within = [
+      { strategy: 'role' as const, value: 'list', stability: 'stable' as const },
+      { strategy: 'css' as const, value: 'ul.product-list', stability: 'medium' as const },
+    ];
+    const withinFingerprint = { tag: 'ul', role: 'list', textSample: '', attrs: {}, ancestors: ['main'], bbox: { x: 0, y: 0, w: 0, h: 0 } };
+    const recipe = loadRecipe(
+      base({
+        item: { selectors: [{ strategy: 'role', value: 'listitem', stability: 'stable' }], within, withinFingerprint },
+        fields: [itemField],
+      }),
+    );
+    expect(recipe.item!.within).toEqual(within);
+    expect(recipe.item!.withinFingerprint).toEqual(withinFingerprint);
+  });
+
+  it('rejects an empty list parent', () => {
+    const errors = errorsOf(base({ item: { selectors: [{ strategy: 'testid', value: 'card', stability: 'stable' }], within: [] }, fields: [itemField] }));
+    expect(errors[0]!.path).toBe('$.item.within');
+  });
+
+  it('leaves within absent on a recipe without one', () => {
+    const recipe = loadRecipe(base({ item: { selectors: [{ strategy: 'testid', value: 'card', stability: 'stable' }] }, fields: [itemField] }));
+    expect(recipe.item).toEqual({ selectors: [{ strategy: 'testid', value: 'card', stability: 'stable' }] });
+    expect('within' in recipe.item!).toBe(false);
+  });
+
   it('rejects an item scoped field without an item block, naming the field', () => {
     const errors = errorsOf(base({ fields: [itemField] }));
     expect(errors).toHaveLength(1);
@@ -162,6 +189,17 @@ describe('selector candidates', () => {
       }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it('accepts a class candidate', () => {
+    const recipe = loadRecipe(
+      base({
+        fields: [
+          { name: 'price', type: 'text', scope: 'page', selectors: [{ strategy: 'class', value: 'span.price.kXeqYt', stability: 'fragile' }] },
+        ],
+      }),
+    );
+    expect(recipe.fields[0]!.selectors[0]).toEqual({ strategy: 'class', value: 'span.price.kXeqYt', stability: 'fragile' });
   });
 
   it('rejects an unknown strategy and names it', () => {

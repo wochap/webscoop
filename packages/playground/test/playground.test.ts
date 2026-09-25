@@ -70,6 +70,56 @@ describe('render', () => {
   });
 });
 
+describe('mixed and rows', () => {
+  it('interleaves 6 questions blocks, thumbnails on odd dataset indices, and one ad card', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog?mixed=1`)).text();
+    const d = new JSDOM(html).window.document;
+    const list = d.querySelector('ul.product-list')!;
+    expect(list.querySelectorAll('article.product-card')).toHaveLength(24);
+    const blocks = Array.from(list.querySelectorAll('.mixed-questions'));
+    expect(blocks).toHaveLength(6);
+    for (const block of blocks) {
+      expect(block.tagName).toBe('ARTICLE');
+      expect(Array.from(block.children).map((c) => c.tagName)).toEqual(['H3', 'BUTTON', 'BUTTON', 'BUTTON']);
+      expect(dataset.some((p) => block.textContent!.includes(p.title))).toBe(false);
+      // After every fourth card.
+      expect(block.closest('li')!.previousElementSibling!.querySelector('.product-card')).not.toBeNull();
+    }
+    const items = Array.from(list.children).map((li) => (li.querySelector('.mixed-questions') ? 'Q' : 'C')).join('');
+    expect(items).toBe('CCCCQ'.repeat(6));
+    const thumbs = Array.from(list.querySelectorAll('article.product-card')).filter((c) => c.querySelector('img.product-thumb')).map((c) => c.getAttribute('data-product-id'));
+    expect(thumbs).toEqual(dataset.filter((_, i) => i % 2 === 1).map((p) => p.id));
+    expect(Array.from(list.querySelectorAll('.mixed-ad')).map((c) => c.getAttribute('data-product-id'))).toEqual(['p01']);
+    expect(list.querySelector('.mixed-ad h2')!.textContent).toBe(dataset[0]!.title);
+    expect(render(dataset, { tier: 0, seed: 1, mixed: false })).toBe(render(dataset, { tier: 0, seed: 1 }));
+  });
+
+  it('groups the cards in 6 rows of 4', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog?rows=4`)).text();
+    const list = new JSDOM(html).window.document.querySelector('ul.product-list')!;
+    const rows = Array.from(list.children);
+    expect(rows).toHaveLength(6);
+    for (const row of rows) {
+      expect(row.className).toBe('product-row');
+      expect(Array.from(row.children).map((li) => li.className)).toEqual(Array(4).fill('product-item'));
+      expect(row.querySelectorAll('li > article.product-card')).toHaveLength(4);
+    }
+    expect(Array.from(list.querySelectorAll('[data-product-id]')).map((c) => c.getAttribute('data-product-id'))).toEqual(dataset.map((p) => p.id));
+    const mixed = new JSDOM(render(dataset, { tier: 0, seed: 1, rows: 4, mixed: true })).window.document;
+    expect(mixed.querySelectorAll('.product-row')).toHaveLength(6);
+    expect(mixed.querySelectorAll('.product-row .mixed-questions')).toHaveLength(6);
+    expect((await fetch(`${pg.url}/catalog?rows=0`)).status).toBe(400);
+    expect((await fetch(`${pg.url}/catalog?mixed=2`)).status).toBe(400);
+  });
+
+  it('renames the new classes on churned tiers', () => {
+    const html = render(dataset, { tier: 1, seed: 1, rows: 4, mixed: true });
+    for (const cls of ['product-row', 'mixed-questions', 'product-thumb', 'mixed-ad']) expect(html).not.toContain(cls);
+  });
+});
+
 const CHURNED = ['class', 'id', 'data-testid'];
 
 function doc(html: string): Document {

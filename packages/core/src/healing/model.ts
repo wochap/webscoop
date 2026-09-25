@@ -78,6 +78,8 @@ export function plausible(node: AnnotatedNode, target: HealTarget): boolean {
   switch (target.kind) {
     case 'item':
       return node.children.some((c) => c.type === 'element') && normalize(textContent(node)) !== '';
+    case 'within':
+      return node.children.filter((c) => c.type === 'element').length > 1;
     case 'pagination':
       return node.tag === 'a' || node.tag === 'button' || node.role === 'link' || node.role === 'button';
     case 'step':
@@ -178,6 +180,8 @@ function describeTarget(target: HealTarget): string[] {
   switch (target.kind) {
     case 'item':
       return ['Field: item', 'Type: container of one repeated result (a card, row, or list entry)'];
+    case 'within':
+      return ['Field: within', 'Type: list that holds every repeated result'];
     case 'pagination':
       return ['Field: pagination', 'Type: link or button to the next page'];
     case 'step':

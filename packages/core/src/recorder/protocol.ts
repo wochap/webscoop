@@ -70,11 +70,18 @@ export const SelectionSchema = z.object({
   containerPath: z._default(z.nullable(PathSchema), null),
 });
 
+/** The two proposal fields the user edits: the list parent and the item container. */
+export const LEVEL_KINDS = ['within', 'item'] as const;
+/** Item container levels of a proposal: the proposed one and the ladder shortcuts around it. */
+export const RUNGS = ['proposed', 'broader', 'narrower'] as const;
+
 export const LevelSchema = z.object({
   tag: z.string(),
   label: z.string(),
   path: PathSchema,
   selectors: z.array(CandidateSchema),
+  /** Index in `selectors` of the candidate saved first. */
+  primary: z._default(index(), 0),
   /** Matches left after the proposal's exclusions. */
   count: z.nullable(count()),
   /** Matches before exclusions. */
@@ -84,9 +91,17 @@ export const LevelSchema = z.object({
 });
 
 export const ProposalSchema = z.object({
+  /** The list parent, or null when there is none or the user cleared it. */
+  within: z._default(z.nullable(LevelSchema), null),
   proposed: LevelSchema,
   broader: z.nullable(LevelSchema),
   narrower: z.nullable(LevelSchema),
+  /** Elements on the item level under the list parent left out as dissimilar; 0 with `includeAll`. */
+  skipped: z._default(count(), 0),
+  /** Whether every element on the item level counts, similar or not. Not saved in the recipe. */
+  includeAll: z._default(z.boolean(), false),
+  /** Why the last edit of a field was refused; the previous value stays in effect. */
+  error: z._default(z.nullable(z.object({ level: z.enum(LEVEL_KINDS), message: z.string() })), null),
   /** Exclusions added before confirming; they move to the item on confirm. */
   exclude: z._default(z.array(CandidateSchema), []),
 });
@@ -113,6 +128,11 @@ export const DraftFieldSchema = z.object({
 
 export const DraftItemSchema = z.object({
   selectors: z.array(CandidateSchema).check(z.minLength(1)),
+  /** The list parent's candidates; containers are found inside its first match. */
+  within: z.optional(z.array(CandidateSchema).check(z.minLength(1))),
+  withinFingerprint: z.optional(ProtocolFingerprintSchema),
+  /** Matches of the list parent's primary selector on the current page, null until counted. */
+  withinCount: z.optional(z.nullable(count())),
   exclude: z.array(CandidateSchema),
   fingerprint: z.optional(ProtocolFingerprintSchema),
   /** Containers left after exclusions. */
@@ -213,11 +233,27 @@ export const GuardContextSchema = z.object({
   deadline: z.number(),
 });
 
+/**
+ * Restricted picking for a proposal field: which elements a click may set.
+ * An element must be a strict ancestor of one of `ancestorOf` (or of a
+ * confirmed item container with `ofContainers`), a strict descendant of
+ * `descendantOf`, and an ancestor-or-self of `containing`, where set.
+ */
+export const LevelPickSchema = z.object({
+  level: z.enum(LEVEL_KINDS),
+  ancestorOf: z.array(PathSchema),
+  ofContainers: z.boolean(),
+  descendantOf: z.nullable(PathSchema),
+  containing: z.nullable(PathSchema),
+});
+
 export const RecorderStateSchema = z.object({
   url: z.string(),
   draft: DraftSchema,
   selected: z.nullable(SelectedSchema),
   proposal: z.nullable(ProposalSchema),
+  /** Set while the user picks the list parent or the item container on the page. */
+  levelPick: z._default(z.nullable(LevelPickSchema), null),
   /** Field index waiting for a re-pick. */
   repick: z.nullable(index()),
   /** Step index waiting for a re-pick. */
@@ -277,6 +313,23 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('inspect.primary', { index: index() }),
   msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
   msg('draft.cancelItems', {}),
+  /**
+   * Set the list parent or the item container: from an element picked on the
+   * page (with a fresh snapshot when no proposal is shown), from typed
+   * selector text, or clear the list parent.
+   */
+  msg('draft.setLevel', {
+    level: z.enum(LEVEL_KINDS),
+    by: z.enum(['pick', 'selector', 'clear']),
+    path: z.optional(PathSchema),
+    selector: z.optional(z.string()),
+    snapshot: z.optional(SnapshotSchema),
+  }),
+  /** Start restricted picking for a proposal field. */
+  msg('draft.pickLevel', { level: z.enum(LEVEL_KINDS) }),
+  msg('draft.toggleIncludeAll', {}),
+  /** Choose the candidate saved first for the list parent or an item level. */
+  msg('draft.setPrimary', { level: z.enum(LEVEL_KINDS), index: index(), rung: z.optional(z.enum(RUNGS)) }),
   msg('draft.setItem', {}),
   msg('draft.clearItem', {}),
   msg('draft.addExclusion', { selector: z.string().check(z.minLength(1)) }),
@@ -334,6 +387,9 @@ export type ParsedSelection = z.infer<typeof SelectionSchema>;
 export type LevelView = z.infer<typeof LevelSchema>;
 export type LevelViewInput = z.input<typeof LevelSchema>;
 export type ProposalView = z.infer<typeof ProposalSchema>;
+export type LevelKind = (typeof LEVEL_KINDS)[number];
+export type Rung = (typeof RUNGS)[number];
+export type LevelPick = z.infer<typeof LevelPickSchema>;
 export type VarValue = z.infer<typeof VarValueSchema>;
 export type DraftField = z.infer<typeof DraftFieldSchema>;
 export type DraftItem = z.infer<typeof DraftItemSchema>;

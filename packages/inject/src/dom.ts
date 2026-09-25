@@ -201,6 +201,7 @@ export function resolveLocal(candidate: ProtocolCandidate, within?: Element, doc
     case 'id':
       return queryAll(`[id=${cssString(value)}]`, scope);
     case 'css':
+    case 'class':
       return queryAll(value, scope);
     case 'xpath': {
       const out: Element[] = [];

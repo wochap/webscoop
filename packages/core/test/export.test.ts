@@ -55,7 +55,38 @@ const hasPython = (() => {
   }
 })();
 
+/** The catalog recipe with a list parent and a class candidate on the title. */
+function withinRecipe(): Recipe {
+  const recipe = fixture('playground-catalog');
+  return {
+    ...recipe,
+    name: 'playground-within',
+    item: {
+      ...recipe.item!,
+      within: [
+        { strategy: 'role', value: 'list', stability: 'stable' },
+        { strategy: 'css', value: 'ul.product-list', stability: 'medium' },
+      ],
+    },
+    fields: recipe.fields.map((f) => (f.name === 'title' ? { ...f, selectors: [{ strategy: 'class', value: 'h2.product-title', stability: 'medium' }, ...f.selectors] } : f)),
+  };
+}
+
 describe('buildPlan', () => {
+  it('carries the list parent and class candidates, and leaves within out without one', () => {
+    const plan = buildPlan(withinRecipe());
+    expect(plan.item!.within).toEqual([
+      { strategy: 'role', value: 'list' },
+      { strategy: 'css', value: 'ul.product-list' },
+    ]);
+    expect(plan.fields[0]!.selectors[0]).toEqual({ strategy: 'class', value: 'h2.product-title' });
+    expect('within' in buildPlan(fixture('playground-catalog')).item!).toBe(false);
+    const ts = renderTs(plan, OPTS);
+    expect(ts).toContain('"within": [');
+    expect(ts).toContain("case 'class':");
+    expect(renderPy(plan, OPTS)).toContain('"within": [');
+  });
+
   it('resolves the catalog recipe: attribute defaults, read modes, key, and no pagination', () => {
     const plan = buildPlan(fixture('playground-catalog'));
     expect(plan.recipe).toBe('playground-catalog');
@@ -356,7 +387,7 @@ print(json.dumps({"conversions": conversions, "pages": pages}))
 // Renderers
 // ---------------------------------------------------------------------------
 
-const plans = (): [string, ExportPlan][] => FIXTURE_NAMES.map((name) => [name, buildPlan(fixture(name))]);
+const plans = (): [string, ExportPlan][] => [...FIXTURE_NAMES.map((name): [string, ExportPlan] => [name, buildPlan(fixture(name))]), ['playground-within', buildPlan(withinRecipe())]];
 
 describe('renderTs', () => {
   it.each(FIXTURE_NAMES)('matches the snapshot for %s', async (name) => {

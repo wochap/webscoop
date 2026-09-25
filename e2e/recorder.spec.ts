@@ -212,3 +212,80 @@ test('--edit shows six fields with counts, test runs 24 rows, and Ctrl+S saves i
   expect(result.stderr).not.toContain('unsaved');
   expect(loadRecipe(await readFile(scoop.recipePath, 'utf8'))).toEqual(original);
 });
+
+test('rows=4: one title proposes 24 cards under the product list, saved and run', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port, '&rows=4'), '--var', 'tier=0', '--name', 'rows']);
+  const picked = await r.pick('h2.product-title', 5);
+  expect(picked.mode).toBe('items');
+  const proposal = await r.until((s) => s.host?.proposal);
+  expect(proposal.proposed.count).toBe(24);
+  expect(proposal.within!.label).toBe('ul.product-list');
+  expect((await r.query('[data-ws="level-input-within"]'))!.value).toBe('role=list');
+  expect((await r.query('[data-ws="items-count"]'))!.text).toBe('24');
+  await r.key('Enter');
+  await r.until((s) => s.host?.draft.item && s.host.draft.fields.length === 1);
+  await renameLast(r, 'title');
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.item!.within![0]).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
+  const run = await scoop.run(['run', 'rows']);
+  expect(run.code, run.stderr).toBe(0);
+  expect((JSON.parse(run.stdout) as { title: string }[]).map((row) => row.title)).toEqual(dataset.map((p) => p.title));
+});
+
+test('mixed=1: 24 cards with 6 skipped, include all shows 30, and the saved recipe runs 24 rows', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port, '&mixed=1'), '--var', 'tier=0', '--name', 'mixed']);
+  await r.pick('h2.product-title', 2);
+  await r.until((s) => s.host?.proposal?.proposed.count === 24);
+  expect((await r.state()).host!.proposal!.skipped).toBe(6);
+  expect((await r.query('[data-ws="items-skipped"]'))!.text).toBe('6 skipped as dissimilar');
+  await r.clickPanel('[data-ws="include-all"]');
+  await r.until((s) => s.host?.proposal?.proposed.count === 30 && s.host.proposal.skipped === 0);
+  expect((await r.query('[data-ws="items-count"]'))!.text).toBe('30');
+  await r.clickPanel('[data-ws="include-all"]');
+  await r.until((s) => s.host?.proposal?.proposed.count === 24 && s.host.proposal.skipped === 6);
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => s.host?.draft.item?.count === 24 && s.host.draft.fields.length === 1);
+  await renameLast(r, 'title');
+  await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+
+  const run = await scoop.run(['run', 'mixed']);
+  expect(run.code, run.stderr).toBe(0);
+  const rows = JSON.parse(run.stdout) as { title: string }[];
+  expect(rows).toHaveLength(24);
+  expect(rows.map((row) => row.title)).toEqual(dataset.map((p) => p.title));
+});
+
+test('tier 1: a recipe recorded with the role-only item candidate runs on tier 3 without healing the container', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=1', '--name', 'by-role']);
+  await r.pick('h2', 3);
+  await r.until((s) => s.host?.proposal?.broader);
+  // The list entry, which keeps its tag on every tier, with its role as the primary selector.
+  await r.clickPanel('[data-ws="level-broader"]');
+  const broader = (await r.state()).host!.proposal!.broader!;
+  const role = broader.selectors.findIndex((c) => c.strategy === 'role' && c.value === 'listitem');
+  expect(role).toBeGreaterThanOrEqual(0);
+  if (broader.primary !== role) {
+    await r.clickPanel('[data-ws="level-more-item"]');
+    await r.clickPanel(`[data-ws="level-candidates-item"] [data-ws="candidate"]:nth-child(${role + 1})`);
+    await r.until((s) => s.host?.proposal?.broader?.primary === role);
+  }
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => s.host?.draft.item && s.host.draft.fields.length === 1);
+  await renameLast(r, 'title');
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.item!.selectors[0]).toEqual({ strategy: 'role', value: 'listitem', stability: 'stable' });
+  expect(recipe.item!.within![0]).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
+  const run = await scoop.run(['run', 'by-role', '--var', 'tier=3', '--no-save']);
+  expect(run.code, run.stderr).toBe(0);
+  expect(run.stderr).not.toMatch(/healed (item|within)/);
+  const rows = JSON.parse(run.stdout) as { title: string }[];
+  expect(rows).toHaveLength(24);
+  expect(rows.map((row) => row.title).sort()).toEqual(dataset.map((p) => p.title).sort());
+});

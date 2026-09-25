@@ -83,6 +83,11 @@ describe('classifyToken', () => {
     ['product-card', 'stable'],
     ['pc__price', 'stable'],
     ['product-p02', 'stable'],
+    ['asEBEc', 'hashed'],
+    ['bdfBwQ', 'hashed'],
+    ['navBar', 'stable'],
+    ['iOS', 'stable'],
+    ['itemUSD', 'stable'],
   ])('%s is %s', (token, expected) => {
     expect(classifyToken(token)).toBe(expected);
   });
@@ -154,6 +159,40 @@ describe('generate', () => {
     expect(pick(generate(title), 'css')).toEqual({ strategy: 'css', value: 'h2.product-title', stability: 'medium' });
   });
 
+  it('adds a class candidate with hashed tokens only when it differs from css', () => {
+    const root = annotate(h('body', {}, h('div', { class: 'asEBEc' }, h('div', { class: 'price kXeqYt' }, '$1'), h('div', { class: 'plain' }, 'x'))));
+    const price = find(root, (n) => n.attrs.class === 'price kXeqYt');
+    const candidates = generate(price);
+    expect(pick(candidates, 'css')).toEqual({ strategy: 'css', value: 'div.price', stability: 'medium' });
+    expect(pick(candidates, 'class')).toEqual({ strategy: 'class', value: 'div.price.kXeqYt', stability: 'fragile' });
+    expect(strategies(candidates)).toEqual(['text', 'css', 'class', 'xpath']);
+    // Same value as css: no class candidate.
+    const plain = find(root, (n) => n.attrs.class === 'plain');
+    expect(pick(generate(plain), 'class')).toBeUndefined();
+    expect(pick(generate(find(root, (n) => n.tag === 'body')), 'class')).toBeUndefined();
+  });
+
+  it('prefixes the class candidate with the nearest anchored ancestor when the element has no stable token', () => {
+    const root = annotate(h('body', {}, h('section', { class: 'results' }, h('div', { class: 'asEBEc' }, h('span', { class: 'kXeqYt' }, '$1')))));
+    const span = find(root, (n) => n.tag === 'span');
+    expect(pick(generate(span), 'css')!.value).toBe('section.results > div > span');
+    expect(pick(generate(span), 'class')).toEqual({ strategy: 'class', value: 'section.results span.kXeqYt', stability: 'fragile' });
+  });
+
+  it('adds role-only candidates for container levels', () => {
+    const root = annotate(
+      h('body', {}, h('ul', { class: 'list' }, h('li', { class: 'product-item' }, h('article', {}, h('h2', {}, 'A'))), h('li', {}, h('div', { class: 'box' }, 'x')))),
+    );
+    const level = (n: AnnotatedNode) => pick(generate(n, { level: true, positional: false }), 'role');
+    expect(level(find(root, (n) => n.tag === 'li'))).toEqual({ strategy: 'role', value: 'listitem', stability: 'stable' });
+    expect(level(find(root, (n) => n.tag === 'ul'))).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
+    expect(level(find(root, (n) => n.tag === 'article'))).toEqual({ strategy: 'role', value: 'article', stability: 'stable' });
+    expect(level(find(root, (n) => n.tag === 'div'))).toBeUndefined();
+    // Fields keep role plus name.
+    expect(pick(generate(find(root, (n) => n.tag === 'li')), 'role')).toBeUndefined();
+    expect(pick(generate(find(root, (n) => n.tag === 'h2')), 'role')?.value).toBe('heading|A');
+  });
+
   it('omits text for elements with more than one child node', () => {
     const root = annotate(h('p', {}, 'a', h('b', {}, 'b')));
     expect(pick(generate(root), 'text')).toBeUndefined();
@@ -191,6 +230,17 @@ describe('rank', () => {
   });
 });
 
+describe('rank with class candidates', () => {
+  it('ranks css before class at equal counts and a class candidate with the item count above a mismatched css one', () => {
+    const css24: Candidate = { strategy: 'css', value: 'div > div:nth-child(2)', stability: 'fragile', count: 24 };
+    const class24: Candidate = { strategy: 'class', value: 'div.price.kXeqYt', stability: 'fragile', count: 24 };
+    const xpath24: Candidate = { strategy: 'xpath', value: './div[1]/div[2]', stability: 'fragile', count: 24 };
+    expect(rank([xpath24, class24, css24], { itemCount: 24 })).toEqual([css24, class24, xpath24]);
+    const css30: Candidate = { ...css24, count: 30 };
+    expect(rank([css30, class24], { itemCount: 24 })).toEqual([class24, css30]);
+  });
+});
+
 describe('relativize', () => {
   it('drops the container and its position', () => {
     const candidate: Candidate = { strategy: 'css', value: 'article:nth-child(2) > a > h3', stability: 'fragile' };
@@ -202,6 +252,32 @@ describe('relativize', () => {
     expect(relativize({ strategy: 'text', value: 'Mouse', stability: 'fragile' }, 'article')).toBeNull();
     expect(relativize({ strategy: 'id', value: 'x', stability: 'stable' }, 'article')).toBeNull();
     expect(relativize({ strategy: 'xpath', value: "//article[@id='p3']/h2[1]", stability: 'fragile' }, 'article.card')?.value).toBe('./h2[1]');
+  });
+
+  it('cuts at a bare div container by element, not by selector text', () => {
+    const item = (price: string) =>
+      h('div', { class: 'asEBEc' }, h('div', {}, h('div', {}, h('span', {}, 'label')), h('div', {}, h('span', { class: 'kXeqYt' }, price))));
+    const root = annotate(h('body', {}, h('main', {}, item('$1'), item('$2'), item('$3'))));
+    const container = find(root, (n) => n.attrs.class === 'asEBEc' && descendantsOf(n).some((d) => d.children[0]?.type === 'text' && d.children[0].text === '$2'));
+    const price = find(container, (n) => n.attrs.class === 'kXeqYt');
+    const candidates = generate(price);
+    expect(pick(candidates, 'css')!.value).toBe('main > div:nth-child(2) > div > div:nth-child(2) > span');
+    expect(relativize(pick(candidates, 'css')!, container)).toEqual({ strategy: 'css', value: 'div > div:nth-child(2) > span', stability: 'fragile' });
+    expect(relativize(pick(candidates, 'class')!, container)).toEqual({ strategy: 'class', value: 'span.kXeqYt', stability: 'fragile' });
+    expect(relativize(pick(candidates, 'xpath')!, container)?.value).toBe('./div[1]/div[2]/span[1]');
+    // The text form matches the last bare `div` segment and cuts too deep.
+    expect(relativize(pick(candidates, 'css')!, compoundOf(container))?.value).toBe('span');
+    // The container itself has no relative form.
+    expect(relativize(pick(generate(container), 'css')!, container)).toBeNull();
+  });
+
+  it('keeps the a > h3 cut by element', () => {
+    const root = annotate(
+      h('body', {}, h('div', { class: 'grid' }, h('article', {}, h('a', {}, h('h3', {}, 'A'))), h('article', {}, h('a', {}, h('h3', {}, 'B'))))),
+    );
+    const second = find(root, (n) => n.tag === 'h3' && n.children[0]?.type === 'text' && n.children[0].text === 'B');
+    const article = second.parent!.parent!;
+    expect(relativize(pick(generate(second), 'css')!, article)).toEqual({ strategy: 'css', value: 'a > h3', stability: 'medium' });
   });
 
   it('matches once per card on the tier 0 snapshot', async () => {
@@ -243,10 +319,110 @@ describe('inferItems', () => {
     const cards = Array.from({ length: 5 }, (_, i) => h('article', {}, h('a', { href: `/p/${i}` }, h('h3', {}, `T${i}`), h('span', {}, '$1'))));
     const root = annotate(h('html', {}, h('body', {}, h('div', { class: 'grid' }, cards))));
     const proposal = inferItems(find(root, (n) => n.tag === 'h3'))!;
+    expect(proposal.within?.attrs.class).toBe('grid');
     expect(proposal.container.tag).toBe('article');
     expect(proposal.siblings).toHaveLength(5);
+    expect(proposal.skipped).toEqual([]);
+    expect(proposal.broader).toBeNull();
     expect(proposal.narrower?.node.tag).toBe('a');
     expect(proposal.narrower?.items).toHaveLength(5);
+  });
+
+  it('names the product list as list parent on tier 0', () => {
+    const root = annotate(tier0Snapshot());
+    const proposal = inferItems(byClass(root, 'product-title', 3))!;
+    expect(proposal.within?.attrs.class).toBe('product-list');
+    expect(proposal.all).toHaveLength(24);
+  });
+
+  const card = (i: number, extra: SerializedElement[] = []) =>
+    h('article', { class: 'card' }, ...extra, h('a', { href: `/p/${i}` }, h('h3', {}, `T${i}`)), h('p', {}, 'text'), h('span', {}, '$1'));
+
+  it('finds cards grouped in rows as cousins under the grid', () => {
+    const rows = Array.from({ length: 6 }, (_, r) => h('div', { class: 'row' }, Array.from({ length: 4 }, (_, c) => card(r * 4 + c))));
+    const root = annotate(h('html', {}, h('body', {}, h('div', { class: 'grid' }, rows))));
+    const title = find(root, (n) => n.tag === 'h3' && n.children[0]?.type === 'text' && n.children[0].text === 'T9');
+    const proposal = inferItems(title)!;
+    expect(proposal.within?.attrs.class).toBe('grid');
+    expect(proposal.container.tag).toBe('article');
+    expect(proposal.siblings).toHaveLength(24);
+    expect(proposal.broader?.node.attrs.class).toBe('row');
+    expect(proposal.broader?.items).toHaveLength(6);
+    expect(proposal.narrower?.node.tag).toBe('a');
+  });
+
+  const questions = () => h('li', {}, h('article', { class: 'questions' }, h('h3', {}, 'People also ask'), h('button', {}, 'a'), h('button', {}, 'b'), h('button', {}, 'c')));
+  const results = (thumb: number | null) =>
+    annotate(
+      h(
+        'html',
+        {},
+        h(
+          'body',
+          {},
+          h('ul', { class: 'results' }, [
+            ...Array.from({ length: 4 }, (_, i) => h('li', {}, card(i, i === thumb ? [h('img', { src: 'x' })] : []))),
+            questions(),
+            ...Array.from({ length: 4 }, (_, i) => h('li', {}, card(i + 4, i + 4 === thumb ? [h('img', { src: 'x' })] : []))),
+          ]),
+        ),
+      ),
+    );
+
+  it('skips a dissimilar sibling and reports it', () => {
+    const root = results(null);
+    const proposal = inferItems(find(root, (n) => n.tag === 'h3' && n.parent?.tag === 'a'))!;
+    expect(proposal.within?.attrs.class).toBe('results');
+    expect(proposal.container.attrs.class).toBe('card');
+    expect(proposal.siblings).toHaveLength(8);
+    expect(proposal.skipped).toHaveLength(1);
+    expect(proposal.skipped[0]!.attrs.class).toBe('questions');
+    expect(proposal.all).toHaveLength(9);
+  });
+
+  it('finds the group when the odd item is picked', () => {
+    const root = results(5);
+    const title = find(root, (n) => n.tag === 'h3' && n.children[0]?.type === 'text' && n.children[0].text === 'T5');
+    expect(descendantsOf(title.parent!.parent!).some((n) => n.tag === 'img')).toBe(true);
+    const proposal = inferItems(title)!;
+    expect(proposal.siblings).toHaveLength(8);
+    expect(proposal.skipped).toHaveLength(1);
+  });
+
+  it('recomputes items for a fixed list parent and item level', () => {
+    const rows = Array.from({ length: 6 }, (_, r) => h('div', { class: 'row' }, Array.from({ length: 4 }, (_, c) => card(r * 4 + c))));
+    const root = annotate(h('html', {}, h('body', {}, h('div', { class: 'grid' }, rows))));
+    const title = find(root, (n) => n.tag === 'h3' && n.children[0]?.type === 'text' && n.children[0].text === 'T5');
+    const row = title.parent!.parent!.parent!;
+    const narrow = inferItems(title, { within: row })!;
+    expect(narrow.within).toBe(row);
+    expect(narrow.siblings).toHaveLength(4);
+    const wide = inferItems(title, { within: row.parent! })!;
+    expect(wide.siblings).toHaveLength(24);
+    const rowsOnly = inferItems(title, { within: row.parent!, item: row })!;
+    expect(rowsOnly.container).toBe(row);
+    expect(rowsOnly.siblings).toHaveLength(6);
+    expect(inferItems(title, { within: title })).toBeNull();
+  });
+
+  it('finds 24 cards with 6 skipped questions blocks on the mixed catalog, from a plain and from an odd card', () => {
+    const root = annotate(tier0Snapshot({ mixed: true }));
+    for (const nth of [2, 3]) {
+      const proposal = inferItems(byClass(root, 'product-title', nth))!;
+      expect(proposal.within?.attrs.class).toBe('product-list');
+      expect(proposal.container.tag).toBe('article');
+      expect(proposal.siblings).toHaveLength(24);
+      expect(proposal.skipped).toHaveLength(6);
+      expect(proposal.all).toHaveLength(30);
+    }
+  });
+
+  it('finds the 24 cards across row wrappers on the rows catalog', () => {
+    const root = annotate(tier0Snapshot({ rows: 4 }));
+    const proposal = inferItems(byClass(root, 'product-title', 9))!;
+    expect(proposal.within?.attrs.class).toBe('product-list');
+    expect(proposal.container.tag).toBe('article');
+    expect(proposal.siblings).toHaveLength(24);
   });
 
   it('reports no container for a single hero heading', () => {
@@ -332,7 +508,9 @@ describe('determinism', () => {
         candidates: generate(title),
         fingerprint: fingerprint(title),
         container: pathOf(proposal.container),
+        within: pathOf(proposal.within!),
         siblings: proposal.siblings.map(pathOf),
+        skipped: proposal.skipped.map(pathOf),
         broader: proposal.broader?.items.map(pathOf),
       };
     };

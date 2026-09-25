@@ -145,6 +145,8 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   if (draft.item) {
     recipe.item = {
       selectors: draft.item.selectors.map(bare),
+      ...(draft.item.within && draft.item.within.length > 0 ? { within: draft.item.within.map(bare) } : {}),
+      ...(draft.item.within && draft.item.withinFingerprint ? { withinFingerprint: draft.item.withinFingerprint } : {}),
       exclude: draft.item.exclude.map(bare),
       ...(draft.item.fingerprint ? { fingerprint: draft.item.fingerprint } : {}),
     };
@@ -226,6 +228,8 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
   const item: DraftItem | null = recipe.item
     ? {
         selectors: recipe.item.selectors.map(bare),
+        ...(recipe.item.within ? { within: recipe.item.within.map(bare), withinCount: null } : {}),
+        ...(recipe.item.withinFingerprint ? { withinFingerprint: recipe.item.withinFingerprint } : {}),
         exclude: (recipe.item.exclude ?? []).map(bare),
         ...(recipe.item.fingerprint ? { fingerprint: recipe.item.fingerprint } : {}),
         count: null,
@@ -290,7 +294,9 @@ export type DraftAction =
   | { type: 'setItem'; item: DraftItem | null }
   | { type: 'addExclusion'; candidate: ProtocolCandidate }
   | { type: 'removeExclusion'; index: number }
-  | { type: 'setItemCounts'; count: number | null; total: number | null }
+  | { type: 'setItemCounts'; count: number | null; total: number | null; withinCount?: number | null }
+  /** Set or clear (null) the item container's list parent. */
+  | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint'] }
   | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[] }
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
@@ -413,8 +419,22 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       break;
     case 'setItemCounts':
       if (!draft.item) return draft;
-      next = { ...draft, item: { ...draft.item, count: action.count, total: action.total } };
+      next = {
+        ...draft,
+        item: { ...draft.item, count: action.count, total: action.total, ...(action.withinCount !== undefined && draft.item.within ? { withinCount: action.withinCount } : {}) },
+      };
       break;
+    case 'setWithin': {
+      if (!draft.item) return draft;
+      const { within: _w, withinFingerprint: _f, withinCount: _c, ...rest } = draft.item;
+      next = {
+        ...draft,
+        item: action.within && action.within.length > 0
+          ? { ...rest, within: action.within, ...(action.fingerprint ? { withinFingerprint: action.fingerprint } : {}), withinCount: action.within[0]!.count ?? null }
+          : rest,
+      };
+      break;
+    }
     case 'setFieldCounts':
       next = {
         ...draft,

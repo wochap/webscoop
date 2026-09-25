@@ -13,12 +13,14 @@ import {
   parse,
   parseHostMessage,
   parsePageMessage,
+  pathOf,
   ProtocolError,
   reduceDraft,
   slugName,
   type Draft,
   type HostMessage,
   type PageMessage,
+  type AnnotatedNode,
   type RecorderState,
 } from '../src';
 import { FakeBrowser, h } from '../src/testing';
@@ -37,6 +39,7 @@ const sampleState: RecorderState = {
   draft: newDraft(),
   selected: null,
   proposal: null,
+  levelPick: null,
   repick: null,
   repickStep: null,
   repickContext: null,
@@ -71,6 +74,13 @@ describe('protocol', () => {
     { kind: 'inspect.primary', index: 1 },
     { kind: 'draft.confirmItems', level: 'broader' },
     { kind: 'draft.cancelItems' },
+    { kind: 'draft.setLevel', level: 'within', by: 'pick', path: [1, 0, 1] },
+    { kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'role=listitem' },
+    { kind: 'draft.setLevel', level: 'within', by: 'clear', snapshot: h('html') },
+    { kind: 'draft.pickLevel', level: 'item' },
+    { kind: 'draft.toggleIncludeAll' },
+    { kind: 'draft.setPrimary', level: 'item', index: 1, rung: 'broader' },
+    { kind: 'draft.setPrimary', level: 'within', index: 0 },
     { kind: 'draft.setItem' },
     { kind: 'draft.clearItem' },
     { kind: 'draft.addExclusion', selector: '.sponsored' },
@@ -118,6 +128,23 @@ describe('protocol', () => {
         ...sampleState,
         repick: 0,
         repickContext: { field: 'price', index: 0, oldSelector: candidate, fingerprint: fp, sample: '$1', threshold: 0.7, reason: 'run', picked: { score: 0.91, sample: '$2', selector: candidate } },
+      },
+    },
+    {
+      kind: 'draft.state',
+      state: {
+        ...sampleState,
+        levelPick: { level: 'within', ancestorOf: [[1, 0, 1, 2]], ofContainers: false, descendantOf: null, containing: null },
+        proposal: {
+          within: { tag: 'ul', label: 'ul.product-list', path: [1, 0, 1], selectors: [{ strategy: 'role', value: 'list', stability: 'stable', count: 1 }], primary: 0, count: 1, total: 1, paths: [[1, 0, 1]], samples: [] },
+          proposed: { tag: 'article', label: 'article.card', path: [1, 0, 1, 0, 0], selectors: [{ strategy: 'class', value: 'article.card.kXeqYt', stability: 'fragile', count: 24 }], primary: 0, count: 24, total: 24, paths: [], samples: [] },
+          broader: null,
+          narrower: null,
+          skipped: 6,
+          includeAll: false,
+          error: { level: 'item', message: 'matches nothing' },
+          exclude: [],
+        },
       },
     },
     {
@@ -274,7 +301,14 @@ describe('RecorderController', () => {
     expect(state.selected!.selection.candidates.find((c) => c.strategy === 'role')?.count).toBe(1);
     expect(state.proposal!.proposed.count).toBe(24);
     expect(state.proposal!.proposed.paths).toHaveLength(24);
-    expect(state.proposal!.proposed.selectors[0]).toMatchObject({ strategy: 'testid', value: 'product-card', count: 24 });
+    expect(state.proposal!.proposed.selectors.slice(0, 2)).toMatchObject([
+      { strategy: 'role', value: 'article', count: 24 },
+      { strategy: 'testid', value: 'product-card', count: 24 },
+    ]);
+    expect(state.proposal!.within).toMatchObject({ tag: 'ul', count: 1 });
+    expect(state.proposal!.within!.selectors[0]).toMatchObject({ strategy: 'role', value: 'list', count: 1 });
+    expect(state.proposal!.within!.selectors.map((c) => c.value)).toContain('product-list');
+    expect(state.proposal!.skipped).toBe(0);
     for (const c of state.proposal!.proposed.selectors) expect(c.count).toBeTypeOf('number');
     expect(state.proposal!.proposed.samples[0]).toContain(dataset[0]!.title);
     expect(state.proposal!.broader).toMatchObject({ tag: 'li', count: 24 });
@@ -288,7 +322,8 @@ describe('RecorderController', () => {
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
     const { draft } = t.controller;
     expect(draft.item).toMatchObject({ count: 24, total: 24 });
-    expect(draft.item!.selectors[0]!.value).toBe('product-card');
+    expect(draft.item!.selectors.slice(0, 2).map((c) => c.value)).toEqual(['article', 'product-card']);
+    expect(draft.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
     expect(draft.fields).toHaveLength(1);
     expect(draft.fields[0]).toMatchObject({ name: 'wireless_mouse', type: 'text', scope: 'item', count: 24, sample: dataset[0]!.title });
     expect(draft.fields[0]!.selectors[0]).toMatchObject({ strategy: 'role', value: 'heading', count: 24 });
@@ -386,7 +421,10 @@ describe('RecorderController', () => {
     const recipe = loadRecipe(t.storage.files.get('shop-catalog')!);
     expect(recipe.url).toBe('http://127.0.0.1:4777/catalog?tier={tier}');
     expect(recipe.vars).toEqual([{ name: 'tier', type: 'string', default: '0' }]);
-    expect(recipe.item!.selectors[0]).toEqual({ strategy: 'testid', value: 'product-card', stability: 'stable' });
+    expect(recipe.item!.selectors[0]).toEqual({ strategy: 'role', value: 'article', stability: 'stable' });
+    expect(recipe.item!.selectors[1]).toEqual({ strategy: 'testid', value: 'product-card', stability: 'stable' });
+    expect(recipe.item!.within![0]).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
+    expect(recipe.item!.withinFingerprint?.tag).toBe('ul');
     expect(recipe.fields[0]!.fingerprint?.tag).toBe('h2');
     expect(t.events.map((e) => e.name)).toContain('recorder.saved');
   });
@@ -419,5 +457,155 @@ describe('RecorderController', () => {
     const t = await harness(tier0Snapshot(), newDraft());
     await t.session.userClose();
     expect(await t.controller.closed()).toBe('closed');
+  });
+});
+
+describe('RecorderController proposal fields', () => {
+  const title = (t: { page: AnnotatedNode }, nth = 0) => byClass(t.page, 'product-title', nth);
+  const proposal = (t: { controller: { state: RecorderState } }) => t.controller.state.proposal!;
+
+  it('reports skipped dissimilar siblings on the mixed catalog', async () => {
+    const t = await harness(tier0Snapshot({ mixed: true }), newDraft());
+    await t.pick(title(t, 1));
+    expect(proposal(t)).toMatchObject({ skipped: 6, includeAll: false, error: null });
+    expect(proposal(t).within!.label).toBe('ul.product-list');
+    expect(proposal(t).proposed).toMatchObject({ tag: 'article', count: 24 });
+    expect(proposal(t).proposed.paths).toHaveLength(24);
+    expect(t.events.find((e) => e.name === 'recorder.itemsProposed')!.payload).toMatchObject({ count: 24, within: 'list', skipped: 6 });
+  });
+
+  it('toggles include all siblings', async () => {
+    const t = await harness(tier0Snapshot({ mixed: true }), newDraft());
+    await t.pick(title(t, 1));
+    await t.send({ kind: 'draft.toggleIncludeAll' });
+    expect(proposal(t)).toMatchObject({ skipped: 0, includeAll: true });
+    expect(proposal(t).proposed).toMatchObject({ count: 30 });
+    expect(proposal(t).proposed.paths).toHaveLength(30);
+    expect(proposal(t).proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'article', count: 30 });
+    await t.send({ kind: 'draft.toggleIncludeAll' });
+    expect(proposal(t)).toMatchObject({ skipped: 6, includeAll: false });
+    expect(proposal(t).proposed.count).toBe(24);
+  });
+
+  it('narrows and widens the list parent by picking', async () => {
+    const t = await harness(tier0Snapshot({ rows: 4 }), newDraft());
+    await t.pick(title(t, 5));
+    expect(proposal(t).proposed.count).toBe(24);
+    const row = byClass(t.page, 'product-row', 1);
+    await t.send({ kind: 'draft.pickLevel', level: 'within' });
+    expect(t.controller.state.levelPick).toEqual({ level: 'within', ancestorOf: [proposal(t).proposed.path], ofContainers: false, descendantOf: null, containing: null });
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(row) });
+    expect(t.controller.state.levelPick).toBeNull();
+    expect(proposal(t).within!.path).toEqual(pathOf(row));
+    expect(proposal(t).proposed.count).toBe(4);
+    expect(proposal(t).proposed.paths).toHaveLength(4);
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')) });
+    expect(proposal(t).proposed.count).toBe(24);
+    expect(proposal(t).proposed.paths).toHaveLength(24);
+    // An element that is not an ancestor of the item is refused and nothing changes.
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'category-heading')) });
+    expect(proposal(t).error).toMatchObject({ level: 'within', message: expect.stringContaining('outside the list') });
+    expect(proposal(t).proposed.count).toBe(24);
+  });
+
+  it('sets the item level by typed selector and refuses one that matches nothing', async () => {
+    const t = await harness(tier0Snapshot(), newDraft());
+    await t.pick(title(t, 2));
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'role=listitem' });
+    expect(proposal(t).error).toBeNull();
+    expect(proposal(t).proposed).toMatchObject({ tag: 'li', count: 24 });
+    expect(proposal(t).proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem', count: 24 });
+    expect(proposal(t).proposed.paths).toHaveLength(24);
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'selector', selector: '.no-such-card' });
+    expect(proposal(t).error).toEqual({ level: 'item', message: '".no-such-card" matches nothing inside the list parent' });
+    expect(proposal(t).proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem', count: 24 });
+    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    expect(t.controller.draft.item!.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
+    expect(t.controller.draft.item!.count).toBe(24);
+    expect(t.controller.draft.fields[0]).toMatchObject({ scope: 'item', count: 24 });
+  });
+
+  it('picks the item level inside the list parent only', async () => {
+    const t = await harness(tier0Snapshot(), newDraft());
+    const pick = title(t, 2);
+    await t.pick(pick);
+    await t.send({ kind: 'draft.pickLevel', level: 'item' });
+    expect(t.controller.state.levelPick).toMatchObject({ level: 'item', descendantOf: proposal(t).within!.path, containing: pathOf(pick) });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'pick', path: pathOf(pick.parent!.parent!) });
+    expect(proposal(t).proposed).toMatchObject({ tag: 'li', count: 24 });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'pick', path: pathOf(title(t, 3)) });
+    expect(proposal(t).error?.message).toContain('holds the selected element');
+  });
+
+  it('saves the list parent with the chosen primaries, and leaves it out when cleared', async () => {
+    const t = await harness(tier0Snapshot(), newDraft());
+    await t.pick(title(t, 0));
+    const broader = proposal(t).broader!;
+    const role = broader.selectors.findIndex((c) => c.strategy === 'role');
+    const css = broader.selectors.findIndex((c) => c.strategy === 'css');
+    await t.send({ kind: 'draft.setPrimary', level: 'item', index: css, rung: 'broader' });
+    expect(proposal(t).broader!.primary).toBe(css);
+    await t.send({ kind: 'draft.setPrimary', level: 'item', index: role, rung: 'broader' });
+    const withinCss = proposal(t).within!.selectors.findIndex((c) => c.strategy === 'css');
+    await t.send({ kind: 'draft.setPrimary', level: 'within', index: withinCss });
+    await t.send({ kind: 'draft.confirmItems', level: 'broader' });
+    const item = t.controller.draft.item!;
+    expect(item.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
+    expect(item.within![0]).toMatchObject({ strategy: 'css', value: 'ul.product-list' });
+    expect(item.withinFingerprint?.tag).toBe('ul');
+    expect(item.withinCount).toBe(1);
+    await t.send({ kind: 'draft.setName', name: 'shop-within' });
+    await t.send({ kind: 'save.request' });
+    const saved = loadRecipe(t.storage.files.get('shop-within')!);
+    expect(saved.item!.selectors[0]).toEqual({ strategy: 'role', value: 'listitem', stability: 'stable' });
+    expect(saved.item!.within![0]).toEqual({ strategy: 'css', value: 'ul.product-list', stability: 'medium' });
+
+    const cleared = await harness(tier0Snapshot(), newDraft());
+    await cleared.pick(title(cleared, 0));
+    await cleared.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    expect(proposal(cleared).within).toBeNull();
+    expect(proposal(cleared).proposed.count).toBe(24);
+    await cleared.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    expect(cleared.controller.draft.item!.within).toBeUndefined();
+    await cleared.send({ kind: 'save.request' });
+    expect(loadRecipe(cleared.storage.files.get('shop-catalog')!).item).not.toHaveProperty('within');
+  });
+
+  it('re-picks and clears the list parent from the confirmed item', async () => {
+    const t = await harness(tier0Snapshot(), newDraft());
+    await t.pick(title(t, 0));
+    await t.send({ kind: 'draft.setItem' });
+    expect(t.controller.draft.item!.within).toBeUndefined();
+    await t.send({ kind: 'draft.pickLevel', level: 'within' });
+    expect(t.controller.state.levelPick).toMatchObject({ level: 'within', ofContainers: true });
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')), snapshot: t.snapshot });
+    expect(t.controller.draft.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
+    expect(t.controller.draft.item).toMatchObject({ withinCount: 1 });
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'category-heading')), snapshot: t.snapshot });
+    expect(t.controller.state.error).toContain('outside the list');
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    expect(t.controller.draft.item!.within).toBeUndefined();
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'selector', selector: 'css=ul.product-list' });
+    expect(t.controller.draft.item!.within![0]).toMatchObject({ strategy: 'css', value: 'ul.product-list', count: 1 });
+  });
+
+  it('relativizes item fields at a bare div container', async () => {
+    const item = (i: number) =>
+      h('div', { class: 'asEBEc' }, h('div', {}, h('div', {}, h('span', {}, 'Price')), h('div', {}, h('span', { class: 'price kXeqYt' }, `$${i}.00`))), h('h3', {}, `Item ${i}`));
+    const dom = h('html', {}, h('body', {}, h('main', { class: 'results' }, Array.from({ length: 5 }, (_, i) => item(i + 1)))));
+    const t = await harness(dom, newDraft());
+    const price = byClass(t.page, 'price', 1);
+    await t.pick(price);
+    expect(proposal(t).proposed.count).toBe(5);
+    expect(proposal(t).within!.label).toBe('main.results');
+    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    const field = t.controller.draft.fields[0]!;
+    expect(field.selectors[0]).toMatchObject({ strategy: 'css', value: 'span.price', count: 5 });
+    expect(field.selectors.map((c) => [c.strategy, c.value])).toContainEqual(['class', 'span.price.kXeqYt']);
+    expect(field.selectors.map((c) => [c.strategy, c.value])).toContainEqual(['xpath', './div[1]/div[2]/span[1]']);
+    // A later pick inside a container is relative to that container too.
+    const other = byClass(t.page, 'price', 3);
+    await t.pick(other, pathOf(other.parent!.parent!.parent!));
+    expect(t.controller.state.selected!.selection.candidates[0]).toMatchObject({ strategy: 'css', value: 'span.price', count: 5 });
   });
 });

@@ -59,6 +59,8 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
       setValue(el, value);
       (el as HTMLInputElement).form?.requestSubmit();
     },
+    /** Markup of the hover tag, empty without a hover. */
+    tag: () => overlay.tagMarkup,
     boxes: () =>
       overlay.boxes().map(({ variant, light, el }) => {
         const r = el.getBoundingClientRect();

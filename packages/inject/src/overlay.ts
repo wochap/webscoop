@@ -1,7 +1,7 @@
 import { roleOf } from './dom';
 import { SANS, MONO } from './fonts';
 
-export type BoxVariant = 'hover' | 'selected' | 'sibling' | 'container' | 'excluded';
+export type BoxVariant = 'hover' | 'selected' | 'sibling' | 'container' | 'excluded' | 'list' | 'blocked';
 
 export const OVERLAY_CSS = `
 :host { all: initial; }
@@ -12,6 +12,8 @@ export const OVERLAY_CSS = `
 .ws-box-sibling { border: 1px dashed #9184d9; background: rgba(145, 132, 217, 0.13); border-radius: 5px; }
 .ws-box-container { border: 1px dashed #c9ccd9; border-radius: 5px; }
 .ws-box-excluded { border: 1px dashed #f0a9a9; background: rgba(240, 169, 169, 0.10); border-radius: 5px; }
+.ws-box-list { outline: 2px dotted #e6c98f; outline-offset: 3px; border-radius: 6px; }
+.ws-box-blocked { border: 2px dashed #f0a9a9; background: rgba(240, 169, 169, 0.08); }
 .ws-halo-dark.ws-box-hover, .ws-halo-dark.ws-box-sibling { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), inset 0 0 0 1px rgba(14, 15, 24, 0.6); }
 .ws-halo-light.ws-box-hover, .ws-halo-light.ws-box-sibling { box-shadow: 0 0 0 1px rgba(243, 245, 254, 0.95), inset 0 0 0 1px rgba(243, 245, 254, 0.7); }
 .ws-halo-dark.ws-box-selected { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), 0 0 0 4px rgba(181, 171, 252, 0.25); }
@@ -24,6 +26,7 @@ export const OVERLAY_CSS = `
 .ws-tag i { color: #b2b6ca; font-style: normal; font-family: '${SANS}', system-ui, sans-serif; }
 .ws-tag em { color: #e6c98f; font-style: normal; }
 .ws-tag em.ws-likely { color: #9fdcbc; }
+.ws-tag em.ws-refused { color: #f0a9a9; }
 `;
 
 /** Relative luminance of an `rgb()`/`rgba()` color, or null when transparent or unparsable. */
@@ -63,6 +66,7 @@ interface Tracked {
 export class Overlay {
   private hover: Tracked | null = null;
   private selected: Tracked | null = null;
+  private list: Tracked | null = null;
   private groups: Tracked[] = [];
   private readonly tag: HTMLDivElement;
   private tagText = '';
@@ -108,15 +112,23 @@ export class Overlay {
     t?.box.remove();
   }
 
-  /** Hover highlight with its tag, or null to clear. A score (while re-picking) is appended to the tag. */
-  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }): void {
-    if (this.hover?.el === el) return;
+  /**
+   * Hover highlight with its tag, or null to clear. A score (while
+   * re-picking) is appended to the tag; a refusal reason (while picking a
+   * list level) marks the element as not selectable.
+   */
+  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }, refused?: string): void {
+    if (this.hover?.el === el && this.hover.variant === (refused ? 'blocked' : 'hover')) return;
     this.drop(this.hover);
-    this.hover = el ? this.make(el, 'hover') : null;
+    this.hover = el ? this.make(el, refused ? 'blocked' : 'hover') : null;
     if (el) {
       const role = roleOf(el);
       const tag = el.tagName.toLowerCase();
-      const suffix = score ? ` <em class="ws-score${score.likely ? ' ws-likely' : ''}">${score.value.toFixed(2)}${score.likely ? ' likely' : ''}</em>` : '';
+      const suffix = refused
+        ? ` <em class="ws-refused">${escape(refused)}</em>`
+        : score
+          ? ` <em class="ws-score${score.likely ? ' ws-likely' : ''}">${score.value.toFixed(2)}${score.likely ? ' likely' : ''}</em>`
+          : '';
       this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}${suffix}`;
     }
     this.schedule();
@@ -134,6 +146,14 @@ export class Overlay {
     this.schedule();
   }
 
+  /** Outline of the list parent, or null to clear. */
+  setList(el: Element | null): void {
+    if (this.list?.el === el) return;
+    this.drop(this.list);
+    this.list = el ? this.make(el, 'list') : null;
+    this.schedule();
+  }
+
   /** Item highlights: siblings of a proposal or confirmed containers, plus excluded ones. */
   setItems(items: readonly Element[], variant: 'sibling' | 'container', excluded: readonly Element[] = []): void {
     for (const t of this.groups) t.box.remove();
@@ -147,12 +167,13 @@ export class Overlay {
   clear(): void {
     this.setHover(null);
     this.setSelected(null);
+    this.setList(null);
     this.setItems([], 'sibling');
   }
 
   /** Current boxes, for tests and the e2e hook. */
   boxes(): { variant: BoxVariant; light: boolean; el: Element }[] {
-    return [this.hover, this.selected, ...this.groups]
+    return [this.hover, this.selected, this.list, ...this.groups]
       .filter((t): t is Tracked => t !== null)
       .map(({ variant, light, el }) => ({ variant, light, el }));
   }
@@ -168,7 +189,7 @@ export class Overlay {
 
   /** Reposition every box now. */
   update(): void {
-    for (const t of [this.hover, this.selected, ...this.groups]) if (t) place(t);
+    for (const t of [this.hover, this.selected, this.list, ...this.groups]) if (t) place(t);
     this.placeTag();
   }
 

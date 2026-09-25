@@ -1,6 +1,6 @@
 import { convertValue, defaultAttr } from '../convert';
-import { excludeContainers, extractPage, resolveFirst } from '../extract';
-import type { ElementRef, InteractiveSession, PageInfo, StoragePort } from '../ports';
+import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
+import type { ElementRef, InteractiveSession, PageInfo, SerializedElement, StoragePort } from '../ports';
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
 import { validateRecipe } from '../recipe/validate';
@@ -8,13 +8,16 @@ import { replaySteps } from '../steps/replay';
 import {
   annotate,
   compoundOf,
+  descendantsOf,
   fingerprint,
   generate,
   inferItems,
   nodeAt,
   normalize,
+  parseSelector,
   pathOf,
   rank,
+  refForNode,
   relativize,
   textContent,
   type AnnotatedNode,
@@ -46,7 +49,10 @@ import {
   type ProposalView,
   type ProtocolCandidate,
   type GuardContextView,
+  type LevelKind,
+  type LevelPick,
   type RecorderState,
+  type Rung,
   type RepickContext,
   type TestResults,
 } from './protocol';
@@ -91,7 +97,7 @@ export interface RecorderOptions {
 
 /** Rows sent to the panel after a test run; the count is always the full count. */
 const MAX_TEST_ROWS = 200;
-type LevelName = 'proposed' | 'broader' | 'narrower';
+const TOP = new Set(['html', 'body', 'head']);
 
 function excerpt(node: AnnotatedNode, max = 80): string {
   return normalize(textContent(node)).slice(0, max);
@@ -112,6 +118,18 @@ function dedupe<T extends Candidate>(candidates: readonly T[]): T[] {
   });
 }
 
+function isInside(node: AnnotatedNode, container: AnnotatedNode): boolean {
+  for (let cur: AnnotatedNode | null | undefined = node; cur; cur = cur.parent) if (cur === container) return true;
+  return false;
+}
+
+/** Move the candidate at `index` to the front. */
+function toFront<T>(list: readonly T[], index: number): T[] {
+  const chosen = list[index];
+  if (chosen === undefined) throw new Error(`no candidate at index ${index}`);
+  return [chosen, ...list.filter((_, i) => i !== index)];
+}
+
 /** Primary candidate first, then the rest in ranked order, without candidates that match nothing. */
 function orderForSave(candidates: readonly ProtocolCandidate[], primary: number): ProtocolCandidate[] {
   const first = candidates[primary] ?? candidates[0];
@@ -129,7 +147,16 @@ export class RecorderController {
   readonly emitter: RecorderEmitter;
   private current: RecorderState;
   private node: AnnotatedNode | null = null;
+  /** Snapshot the last pick came with. */
+  private root: AnnotatedNode | null = null;
   private proposal: ItemProposal | null = null;
+  /** Proposal edits that inference does not know about: typed selectors, a cleared list parent, include all. */
+  private edits: { within: Candidate | null; item: Candidate | null; withinCleared: boolean; includeAll: boolean } = {
+    within: null,
+    item: null,
+    withinCleared: false,
+    includeAll: false,
+  };
   private queue: Promise<unknown> = Promise.resolve();
   private readonly unsubscribe: (() => void)[] = [];
   private closedResolve!: (reason: 'closed' | 'ended') => void;
@@ -163,6 +190,7 @@ export class RecorderController {
       draft: opts.draft,
       selected: null,
       proposal: null,
+      levelPick: null,
       repick: repickContext ? repickContext.index : null,
       repickStep: null,
       repickContext,
@@ -332,7 +360,9 @@ export class RecorderController {
         this.closedResolve('ended');
         return;
       case 'picker.hover':
+        return;
       case 'picker.cancel':
+        if (this.current.levelPick) this.current = { ...this.current, levelPick: null };
         return;
       case 'picker.select':
         this.current = { ...this.current, url: msg.url };
@@ -351,9 +381,19 @@ export class RecorderController {
       case 'draft.confirmItems':
         return void (await this.confirmItems(msg.level));
       case 'draft.cancelItems':
-        this.proposal = null;
-        this.current = { ...this.current, proposal: null };
+        this.dropProposal();
         return;
+      case 'draft.setLevel':
+        return void (await this.setLevel(msg.level, msg.by, msg));
+      case 'draft.pickLevel':
+        this.current = { ...this.current, levelPick: this.levelPickFor(msg.level) };
+        return;
+      case 'draft.toggleIncludeAll':
+        if (!this.proposal || !this.current.proposal) throw new Error('no item proposal to change');
+        this.edits = { ...this.edits, includeAll: !this.edits.includeAll };
+        return void (await this.showProposal());
+      case 'draft.setPrimary':
+        return void (await this.setPrimary(msg.level, msg.index, msg.rung ?? 'proposed'));
       case 'draft.setItem':
         return void (await this.setItemFromSelection());
       case 'draft.clearItem':
@@ -495,9 +535,9 @@ export class RecorderController {
   private async containers(): Promise<ElementRef[]> {
     const item = this.draft.item;
     if (!item) return [];
-    const resolved = await resolveFirst(this.session, item.selectors.map(bare));
-    if (!resolved) return [];
-    return excludeContainers(this.session, resolved.refs, item.exclude.map(bare));
+    const parent = await listParent(this.session, item.within?.map(bare));
+    if (parent === null) return [];
+    return containersFor(this.session, item.selectors.map(bare), item.exclude.map(bare), parent);
   }
 
   private async countPage(candidate: ProtocolCandidate): Promise<number> {
@@ -558,7 +598,8 @@ export class RecorderController {
     const item = this.draft.item;
     let containers: ElementRef[] = [];
     if (item) {
-      const resolved = await resolveFirst(this.session, item.selectors.map(bare));
+      const parent = await listParent(this.session, item.within?.map(bare));
+      const resolved = parent === null ? null : await resolveFirst(this.session, item.selectors.map(bare), parent);
       const total = resolved?.refs.length ?? 0;
       containers = resolved ? await excludeContainers(this.session, resolved.refs, item.exclude.map(bare)) : [];
       const exclude: ProtocolCandidate[] = [];
@@ -567,7 +608,8 @@ export class RecorderController {
         ...this.current,
         draft: { ...this.draft, item: { ...this.draft.item!, exclude } },
       };
-      this.apply({ type: 'setItemCounts', count: containers.length, total });
+      const withinCount = item.within?.[0] ? await this.countPage(item.within[0]) : null;
+      this.apply({ type: 'setItemCounts', count: containers.length, total, withinCount });
     }
     const counts: { count: number | null; sample: string | null }[] = [];
     for (const field of this.draft.fields) {
@@ -588,6 +630,7 @@ export class RecorderController {
     const node = nodeAt(root, selection.path);
     if (!node) throw new Error('the selected element is not in the page snapshot');
     this.node = node;
+    this.root = root;
 
     const base = dedupe(selection.candidates.length > 0 ? selection.candidates : generate(node));
     const containerNode = this.draft.item && selection.containerPath ? nodeAt(root, selection.containerPath) : null;
@@ -596,8 +639,7 @@ export class RecorderController {
     if (containerNode) {
       scope = 'item';
       const containers = await this.containers();
-      const compound = compoundOf(containerNode);
-      const relative = dedupe(base.map((c) => relativize(c, compound)).filter((c): c is Candidate => c !== null));
+      const relative = this.relativeTo(node, containerNode, base);
       candidates = rank(await this.withCounts(relative, 'item', containers), { itemCount: containers.length });
       if (candidates.length === 0) {
         scope = 'page';
@@ -616,8 +658,10 @@ export class RecorderController {
       ...this.current,
       selected: { selection: { ...selection, candidates }, scope, defaults, primary: 0 },
       proposal: null,
+      levelPick: null,
     };
     this.proposal = null;
+    this.resetEdits();
     this.emitter.emit('recorder.selected', { tag: node.tag, path: selection.path, scope, candidates });
 
     const repickStep = this.current.repickStep;
@@ -651,16 +695,13 @@ export class RecorderController {
       const proposal = inferItems(node);
       if (proposal) {
         this.proposal = proposal;
-        const view = {
-          proposed: await this.levelView({ node: proposal.container, items: proposal.siblings }),
-          broader: proposal.broader ? await this.levelView(proposal.broader) : null,
-          narrower: proposal.narrower ? await this.levelView(proposal.narrower) : null,
-          exclude: [],
-        };
-        this.current = { ...this.current, proposal: view };
+        await this.showProposal();
+        const view = this.current.proposal!;
         this.emitter.emit('recorder.itemsProposed', {
           count: view.proposed.count,
           container: view.proposed.selectors[0]?.value ?? view.proposed.tag,
+          within: view.within?.selectors[0]?.value ?? null,
+          skipped: view.skipped,
           broader: view.broader?.count ?? null,
           narrower: view.narrower?.count ?? null,
         });
@@ -668,15 +709,82 @@ export class RecorderController {
     }
   }
 
-  private async levelView(level: ItemLevel): Promise<LevelView> {
-    const selectors = rank(await this.withCounts(generate(level.node, { positional: false }), 'page', []), {
-      itemCount: level.items.length,
-    });
+  /**
+   * Candidates for a pick inside an item container, relative to the
+   * container element. Candidates generated here carry the element each
+   * segment stands for, so the cut falls at the container itself; others
+   * (from the page) are cut by selector text.
+   */
+  private relativeTo(node: AnnotatedNode, containerNode: AnnotatedNode, extra: readonly Candidate[] = []): Candidate[] {
+    const fresh = generate(node);
+    const keys = new Set(fresh.map((c) => c.strategy));
+    const all = [...fresh, ...extra.filter((c) => !keys.has(c.strategy))];
+    return dedupe(all.map((c) => relativize(c, containerNode)).filter((c): c is Candidate => c !== null));
+  }
+
+  private resetEdits(): void {
+    this.edits = { within: null, item: null, withinCleared: false, includeAll: false };
+  }
+
+  private dropProposal(): void {
+    this.proposal = null;
+    this.resetEdits();
+    this.current = { ...this.current, proposal: null, levelPick: null };
+  }
+
+  /** The list parent in effect for the proposal, or null when there is none or it was cleared. */
+  private proposalWithin(): AnnotatedNode | null {
+    return this.edits.withinCleared ? null : (this.proposal?.within ?? null);
+  }
+
+  private async refOf(node: AnnotatedNode | null): Promise<ElementRef | undefined> {
+    if (!node) return undefined;
+    try {
+      return (await refForNode(this.session, node)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Rebuild the proposal view from the inferred proposal and the edits, keeping exclusions and primaries. */
+  private async showProposal(error: ProposalView['error'] = null): Promise<void> {
+    const p = this.proposal;
+    if (!p) return;
+    const previous = this.current.proposal;
+    const withinNode = this.proposalWithin();
+    const withinRef = await this.refOf(withinNode);
+    const items = this.edits.includeAll ? p.all : p.siblings;
+    let view: ProposalView = {
+      within: withinNode ? await this.withinView(withinNode, this.edits.within) : null,
+      proposed: await this.levelView({ node: p.container, items }, withinRef, this.edits.item),
+      broader: p.broader ? await this.levelView(p.broader, withinRef) : null,
+      narrower: p.narrower ? await this.levelView(p.narrower, withinRef) : null,
+      skipped: this.edits.includeAll ? 0 : p.skipped.length,
+      includeAll: this.edits.includeAll,
+      error,
+      exclude: previous?.exclude ?? [],
+    };
+    if (view.exclude.length > 0) view = await this.recountProposal(view);
+    this.current = { ...this.current, proposal: view };
+  }
+
+  /** Counts inside the list parent, else on the page. */
+  private async countWithin(candidates: readonly Candidate[], withinRef: ElementRef | undefined): Promise<Candidate[]> {
+    return withinRef ? this.withCounts(candidates, 'item', [withinRef]) : this.withCounts(candidates, 'page', []);
+  }
+
+  private async levelView(level: ItemLevel, withinRef?: ElementRef, typed?: Candidate | null): Promise<LevelView> {
+    const generated = generate(level.node, { positional: false, level: true });
+    const ranked = rank(await this.countWithin(generated, withinRef), { itemCount: level.items.length });
+    const selectors = typed
+      ? [...(await this.countWithin([typed], withinRef)), ...ranked.filter((c) => c.strategy !== typed.strategy || c.value !== typed.value)]
+      : ranked;
     return {
       tag: level.node.tag,
       label: levelLabel(level.node),
       path: pathOf(level.node),
       selectors,
+      primary: 0,
       count: selectors[0]?.count ?? null,
       total: selectors[0]?.count ?? null,
       paths: level.items.map(pathOf),
@@ -684,38 +792,254 @@ export class RecorderController {
     };
   }
 
-  private levelNode(level: LevelName): AnnotatedNode | null {
+  /**
+   * Candidates for the list parent, ranked: only those whose first match is
+   * the element itself, since the runner uses the first match. A typed
+   * selector comes first.
+   */
+  private async withinCandidates(node: AnnotatedNode, typed?: Candidate | null): Promise<Candidate[]> {
+    const ref = await this.refOf(node);
+    const kept: Candidate[] = [];
+    for (const c of generate(node, { level: true })) {
+      let refs: ElementRef[];
+      try {
+        refs = await this.session.resolve(bare(c));
+      } catch {
+        continue;
+      }
+      if (refs.length === 0 || (ref && !(await this.session.same(refs[0]!, ref)))) continue;
+      kept.push({ ...c, count: refs.length });
+    }
+    const ranked = rank(kept);
+    if (!typed) return ranked;
+    const [counted] = await this.withCounts([typed], 'page', []);
+    return [counted!, ...ranked.filter((c) => c.strategy !== typed.strategy || c.value !== typed.value)];
+  }
+
+  private async withinView(node: AnnotatedNode, typed?: Candidate | null): Promise<LevelView> {
+    const selectors = await this.withinCandidates(node, typed);
+    return {
+      tag: node.tag,
+      label: levelLabel(node),
+      path: pathOf(node),
+      selectors,
+      primary: 0,
+      count: selectors[0]?.count ?? null,
+      total: selectors[0]?.count ?? null,
+      paths: [pathOf(node)],
+      samples: [],
+    };
+  }
+
+  private levelNode(level: Rung): AnnotatedNode | null {
     const p = this.proposal;
     if (!p) return null;
     if (level === 'proposed') return p.container;
     return (level === 'broader' ? p.broader : p.narrower)?.node ?? null;
   }
 
-  private async confirmItems(level: LevelName): Promise<void> {
-    const view = this.current.proposal?.[level];
+  /** Snapshot nodes for live elements: same tag, attributes, and leading text, in document order. */
+  private async nodesFor(refs: readonly ElementRef[], root: AnnotatedNode): Promise<AnnotatedNode[]> {
+    const pool = descendantsOf(root);
+    const used = new Set<AnnotatedNode>();
+    const lead = (el: SerializedElement) => normalize(textContent(el)).slice(0, 100);
+    const out: AnnotatedNode[] = [];
+    for (const ref of refs) {
+      const snap = await this.session.snapshot(ref);
+      if (snap.type !== 'element') continue;
+      const keys = Object.keys(snap.attrs);
+      const text = lead(snap);
+      const hit = pool.find(
+        (n) =>
+          !used.has(n) &&
+          n.tag === snap.tag &&
+          Object.keys(n.attrs).length === keys.length &&
+          keys.every((k) => n.attrs[k] === snap.attrs[k]) &&
+          lead(n) === text,
+      );
+      if (hit) {
+        used.add(hit);
+        out.push(hit);
+      }
+    }
+    return out;
+  }
+
+  /** Which elements a click may set while picking a proposal field or the confirmed item's list parent. */
+  private levelPickFor(level: LevelKind): LevelPick {
+    const view = this.current.proposal;
+    if (view && this.proposal) {
+      if (level === 'within') return { level, ancestorOf: [view.proposed.path], ofContainers: false, descendantOf: null, containing: null };
+      const within = this.proposalWithin();
+      return { level, ancestorOf: [], ofContainers: false, descendantOf: within ? pathOf(within) : null, containing: this.node ? pathOf(this.node) : null };
+    }
+    if (this.draft.item && level === 'within') return { level, ancestorOf: [], ofContainers: true, descendantOf: null, containing: null };
+    throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
+  }
+
+  private async setLevel(
+    level: LevelKind,
+    by: 'pick' | 'selector' | 'clear',
+    msg: { path?: number[] | undefined; selector?: string | undefined; snapshot?: SerializedElement | undefined },
+  ): Promise<void> {
+    this.current = { ...this.current, levelPick: null };
+    if (this.proposal && this.current.proposal) return this.editProposal(level, by, msg);
+    if (this.draft.item && level === 'within') return this.editItemWithin(by, msg);
+    throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
+  }
+
+  /** Edit a proposal field; a refused edit shows its reason and keeps the previous value. */
+  private async editProposal(
+    level: LevelKind,
+    by: 'pick' | 'selector' | 'clear',
+    msg: { path?: number[] | undefined; selector?: string | undefined },
+  ): Promise<void> {
+    const p = this.proposal!;
+    const pick = this.node!;
+    const root = this.root!;
+    const refuse = (message: string) => {
+      this.current = { ...this.current, proposal: { ...this.current.proposal!, error: { level, message } } };
+    };
+    if (by === 'clear') {
+      if (level === 'item') return refuse('the item container cannot be empty; choose "Not a list" instead');
+      this.edits = { ...this.edits, within: null, withinCleared: true };
+      return this.showProposal();
+    }
+    if (by === 'pick') {
+      const node = msg.path ? nodeAt(root, msg.path) : null;
+      if (!node) return refuse('the picked element is not in the page snapshot');
+      if (level === 'within') {
+        if (TOP.has(node.tag) || node === p.container || !isInside(p.container, node)) return refuse('outside the list: pick an element that holds the item');
+        const next = inferItems(pick, { within: node });
+        if (!next) return refuse('no items like the picked one inside that element');
+        this.proposal = next;
+        this.edits = { ...this.edits, within: null, item: null, withinCleared: false };
+        return this.showProposal();
+      }
+      const within = this.proposalWithin();
+      const listRoot = within ?? root.children.find((c): c is AnnotatedNode => c.type === 'element' && c.tag === 'body') ?? root;
+      if (TOP.has(node.tag) || node === listRoot || !isInside(node, listRoot)) return refuse('outside the list: pick an element inside the list parent');
+      if (!isInside(pick, node)) return refuse('pick an element that holds the selected element');
+      const next = inferItems(pick, { within: listRoot, item: node });
+      if (!next) return refuse('no items at that level');
+      this.proposal = { ...next, within: p.within };
+      this.edits = { ...this.edits, item: null };
+      return this.showProposal();
+    }
+    const text = (msg.selector ?? '').trim();
+    if (!text) return refuse('type a selector');
+    const candidate = parseSelector(text);
+    let refs: ElementRef[];
+    const within = this.proposalWithin();
+    const withinRef = level === 'item' ? await this.refOf(within) : undefined;
+    try {
+      refs = await this.session.resolve(bare(candidate), withinRef);
+    } catch (error) {
+      return refuse(`invalid selector "${text}": ${(error as Error).message.split('\n')[0]}`);
+    }
+    if (refs.length === 0) return refuse(`"${text}" matches nothing${withinRef ? ' inside the list parent' : ''}`);
+    if (level === 'within') {
+      const [node] = await this.nodesFor([refs[0]!], root);
+      if (!node) return refuse(`"${text}" matches an element that is not in the page snapshot`);
+      if (!isInside(pick, node) || node === pick) return refuse('outside the list: the list parent must hold the selected element');
+      const next = inferItems(pick, { within: node });
+      if (!next) return refuse(`no items like the picked one inside "${text}"`);
+      this.proposal = next;
+      this.edits = { ...this.edits, within: candidate, item: null, withinCleared: false };
+      return this.showProposal();
+    }
+    const nodes = await this.nodesFor(refs, within ?? root);
+    const container = nodes.find((n) => isInside(pick, n)) ?? nodes[0];
+    if (!container) return refuse(`"${text}" matches elements that are not in the page snapshot`);
+    this.proposal = { ...p, container, siblings: nodes, all: nodes, skipped: [], broader: null, narrower: null };
+    this.edits = { ...this.edits, item: candidate };
+    return this.showProposal();
+  }
+
+  /** Set, re-pick, or clear the list parent of the confirmed item container. */
+  private async editItemWithin(by: 'pick' | 'selector' | 'clear', msg: { path?: number[] | undefined; selector?: string | undefined; snapshot?: SerializedElement | undefined }): Promise<void> {
+    const item = this.draft.item!;
+    if (by === 'clear') {
+      this.apply({ type: 'setWithin', within: null });
+      await this.recount();
+      return;
+    }
+    const root = msg.snapshot ? annotate(msg.snapshot) : (this.root ?? annotate((await this.session.snapshot()) as SerializedElement));
+    let node: AnnotatedNode | null | undefined;
+    let typed: Candidate | null = null;
+    if (by === 'pick') {
+      node = msg.path ? nodeAt(root, msg.path) : null;
+      if (!node) throw new Error('the picked element is not in the page snapshot');
+    } else {
+      const text = (msg.selector ?? '').trim();
+      typed = parseSelector(text);
+      const refs = await this.session.resolve(bare(typed));
+      if (refs.length === 0) throw new Error(`"${text}" matches nothing`);
+      [node] = await this.nodesFor([refs[0]!], root);
+      if (!node) throw new Error(`"${text}" matches an element that is not in the page snapshot`);
+    }
+    if (TOP.has(node.tag)) throw new Error('outside the list: pick an element that holds the items');
+    const ref = await this.refOf(node);
+    const inside = ref ? await containersFor(this.session, item.selectors.map(bare), item.exclude.map(bare), ref) : [];
+    if (inside.length === 0) throw new Error('outside the list: that element holds none of the item containers');
+    const selectors = orderForSave(await this.withinCandidates(node, typed), 0);
+    if (selectors.length === 0) throw new Error('found no selector for that element');
+    this.apply({ type: 'setWithin', within: selectors, fingerprint: fingerprint(node) });
+    await this.recount();
+  }
+
+  private async setPrimary(level: LevelKind, index: number, rung: Rung): Promise<void> {
+    const view = this.current.proposal;
+    if (view && this.proposal) {
+      const target = level === 'within' ? view.within : view[rung];
+      if (!target || !target.selectors[index]) throw new Error(`no candidate at index ${index}`);
+      const updated = { ...target, primary: index, count: target.selectors[index].count ?? null, total: target.selectors[index].count ?? null };
+      this.current = { ...this.current, proposal: level === 'within' ? { ...view, within: updated } : { ...view, [rung]: updated } };
+      if (view.exclude.length > 0) this.current = { ...this.current, proposal: await this.recountProposal(this.current.proposal!) };
+      return;
+    }
+    const item = this.draft.item;
+    if (!item) throw new Error('no item container to change');
+    if (level === 'within') {
+      if (!item.within) throw new Error('the item container has no list parent');
+      this.apply({ type: 'setWithin', within: toFront(item.within, index), ...(item.withinFingerprint ? { fingerprint: item.withinFingerprint } : {}) });
+    } else {
+      const { count: _c, total: _t, ...rest } = item;
+      this.apply({ type: 'setItem', item: { ...rest, selectors: toFront(item.selectors, index), count: null, total: null } });
+    }
+    await this.recount();
+  }
+
+  private async confirmItems(level: Rung): Promise<void> {
+    const proposal = this.current.proposal;
+    const view = proposal?.[level];
     const containerNode = this.levelNode(level);
-    if (!view || !containerNode) throw new Error(`no ${level} item level to confirm`);
-    const selectors = orderForSave(view.selectors, 0);
-    const exclude = this.current.proposal?.exclude ?? [];
+    if (!proposal || !view || !containerNode) throw new Error(`no ${level} item level to confirm`);
+    const selectors = orderForSave(view.selectors, view.primary);
+    const exclude = proposal.exclude;
+    const withinNode = this.proposalWithin();
+    const within = proposal.within && withinNode ? orderForSave(proposal.within.selectors, proposal.within.primary) : [];
     this.apply({
       type: 'setItem',
-      item: { selectors, exclude, fingerprint: fingerprint(containerNode), count: null, total: null },
+      item: {
+        selectors,
+        ...(within.length > 0 ? { within, withinFingerprint: fingerprint(withinNode!), withinCount: null } : {}),
+        exclude,
+        fingerprint: fingerprint(containerNode),
+        count: null,
+        total: null,
+      },
     });
-    this.proposal = null;
-    this.current = { ...this.current, proposal: null };
+    this.dropProposal();
     await this.recount();
     this.emitter.emit('recorder.itemsConfirmed', { count: this.draft.item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
 
     // The original pick becomes an item scoped field.
     const selected = this.current.selected;
     const node = this.node;
-    if (!selected || !node || !this.isInside(node, containerNode)) return;
+    if (!selected || !node || !isInside(node, containerNode) || node === containerNode) return;
     const containers = await this.containers();
-    const relative = dedupe(
-      selected.selection.candidates
-        .map((c) => relativize(c, compoundOf(containerNode)))
-        .filter((c): c is Candidate => c !== null),
-    );
+    const relative = this.relativeTo(node, containerNode, selected.selection.candidates);
     const candidates = rank(await this.withCounts(relative, 'item', containers), { itemCount: containers.length });
     if (candidates.length === 0) return;
     this.current = {
@@ -730,18 +1054,12 @@ export class RecorderController {
     await this.addField({});
   }
 
-  private isInside(node: AnnotatedNode, container: AnnotatedNode): boolean {
-    for (let cur: AnnotatedNode | null | undefined = node; cur; cur = cur.parent) if (cur === container) return true;
-    return false;
-  }
-
   private async setItemFromSelection(): Promise<void> {
     const selected = this.current.selected;
     if (!selected || !this.node) throw new Error('select an element first');
     const selectors = orderForSave(selected.selection.candidates, selected.primary);
     this.apply({ type: 'setItem', item: { selectors, exclude: [], fingerprint: selected.selection.fingerprint, count: null, total: null } });
-    this.proposal = null;
-    this.current = { ...this.current, proposal: null };
+    this.dropProposal();
     await this.recount();
     this.emitter.emit('recorder.itemsConfirmed', { count: this.draft.item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
   }
@@ -783,10 +1101,11 @@ export class RecorderController {
   /** Recount each proposal level with the pending exclusions applied. */
   private async recountProposal(proposal: ProposalView): Promise<ProposalView> {
     const exclude = proposal.exclude.map(bare);
+    const withinRef = await this.refOf(this.proposalWithin());
     const level = async (view: LevelView | null): Promise<LevelView | null> => {
-      const primary = view?.selectors[0];
+      const primary = view?.selectors[view.primary];
       if (!view || !primary) return view;
-      const refs = await this.session.resolve(bare(primary));
+      const refs = await this.session.resolve(bare(primary), withinRef);
       const kept = await excludeContainers(this.session, refs, exclude);
       return { ...view, count: kept.length, total: refs.length };
     };
@@ -943,7 +1262,15 @@ export class RecorderController {
         durationMs: Math.max(0, this.now().getTime() - started.getTime()),
         warnings: extraction.warnings,
         ...(extraction.missingRequired.length > 0
-          ? { error: `required ${extraction.missingRequired.includes('item') ? 'item container' : `field${extraction.missingRequired.length > 1 ? 's' : ''} ${extraction.missingRequired.join(', ')}`} matched no element` }
+          ? {
+              error: `required ${
+                extraction.missingRequired.includes('within')
+                  ? 'list parent'
+                  : extraction.missingRequired.includes('item')
+                    ? 'item container'
+                    : `field${extraction.missingRequired.length > 1 ? 's' : ''} ${extraction.missingRequired.join(', ')}`
+              } matched no element`,
+            }
           : {}),
       };
     }

@@ -42,6 +42,19 @@ describe('paginated catalog, url kind', () => {
     expect(ids((await get(pg, '/catalog?paginate=url')).html)).toEqual(range(1, 8));
   });
 
+  it('interleaves questions blocks per page with mixed=1', async () => {
+    const pg = await start();
+    const { html } = await get(pg, '/catalog?paginate=url&page=1&mixed=1');
+    const list = doc(html).querySelector('ul.product-list')!;
+    expect(list.querySelectorAll('article.product-card')).toHaveLength(8);
+    expect(list.querySelectorAll('.mixed-questions')).toHaveLength(2);
+    expect(ids(html)).toEqual(range(1, 8));
+    const second = doc((await get(pg, '/catalog?paginate=url&page=2&mixed=1&rows=4')).html);
+    expect(second.querySelectorAll('.product-row')).toHaveLength(2);
+    expect(second.querySelectorAll('.mixed-questions')).toHaveLength(2);
+    expect(second.querySelectorAll('.mixed-ad')).toHaveLength(1);
+  });
+
   it('has no Next link on page 3 and nothing beyond it', async () => {
     const pg = await start();
     const page3 = (await get(pg, '/catalog?paginate=url&page=3&tier=0')).html;

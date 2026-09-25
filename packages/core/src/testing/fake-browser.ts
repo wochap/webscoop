@@ -309,7 +309,8 @@ export class FakeSession implements Session {
         matches = pool.filter((n) => hit(n) && !n.children.some(hit));
         break;
       }
-      case 'css': {
+      case 'css':
+      case 'class': {
         const test = compileCss(candidate.value);
         matches = pool.filter((n) => test(n, null));
         break;

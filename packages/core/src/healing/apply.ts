@@ -14,6 +14,9 @@ export function applyPromotions(recipe: Recipe, promotions: readonly Promotion[]
       case 'item':
         if (out.item) out.item = { ...out.item, ...patch };
         break;
+      case 'within':
+        if (out.item) out.item = { ...out.item, within: patch.selectors, ...(patch.fingerprint ? { withinFingerprint: patch.fingerprint } : {}) };
+        break;
       case 'field': {
         const field = out.fields[p.target.index];
         if (field) out.fields[p.target.index] = { ...field, ...patch };

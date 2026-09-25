@@ -91,7 +91,8 @@ export interface ExportPlan {
   url: string;
   vars: PlanVar[];
   steps: PlanStep[];
-  item: { selectors: PlanSelector[]; exclude: PlanSelector[] } | null;
+  /** Item container; `within` is the list parent, present only when the recipe has one. */
+  item: { selectors: PlanSelector[]; within?: PlanSelector[]; exclude: PlanSelector[] } | null;
   fields: PlanField[];
   /** Name of the dedup key field, or null to dedup by all field values. */
   key: string | null;
@@ -169,7 +170,13 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     url: recipe.url,
     vars,
     steps,
-    item: recipe.item ? { selectors: selectors(recipe.item.selectors), exclude: selectors(recipe.item.exclude ?? []) } : null,
+    item: recipe.item
+      ? {
+          selectors: selectors(recipe.item.selectors),
+          ...(recipe.item.within ? { within: selectors(recipe.item.within) } : {}),
+          exclude: selectors(recipe.item.exclude ?? []),
+        }
+      : null,
     fields,
     key: recipe.fields.find((f) => f.key)?.name ?? null,
     pagination: {

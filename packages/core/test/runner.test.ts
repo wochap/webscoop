@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadRecipe, recordEvents, RunEmitter, Runner, runRecipe, type BrowserPort } from '../src';
-import { FakeBrowser } from '../src/testing';
-import { catalog, cards, PAGE, recipe } from './helpers';
+import { FakeBrowser, h } from '../src/testing';
+import { card, catalog, cards, css, PAGE, recipe } from './helpers';
 
 function setup(dom = catalog(cards(24)), delayMs = 0) {
   const browser = new FakeBrowser({ [PAGE]: { dom, title: 'Catalog', delayMs } });
@@ -131,5 +131,51 @@ describe('Runner abort while opening', () => {
     const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p', signal: controller.signal });
     expect(result).toMatchObject({ ok: false, reason: 'aborted' });
     expect(browser.openSessions).toBe(0);
+  });
+});
+
+describe('Runner with a list parent', () => {
+  /** The catalog plus a sidebar list of 4 cards, after the main list. */
+  function withSidebar() {
+    const dom = catalog(cards(24));
+    const body = dom.children.find((c) => c.type === 'element' && c.tag === 'body') as ReturnType<typeof catalog>;
+    body.children.push(h('aside', {}, h('ul', { class: 'sidebar' }, cards(4, (i) => ({ title: `Related ${i + 1}` })).map((c, i) => h('li', {}, card(c, 100 + i))))));
+    return dom;
+  }
+  const role = (value: string) => ({ strategy: 'role' as const, value, stability: 'stable' as const });
+
+  it('resolves containers inside the list parent and leaves the sidebar out', async () => {
+    const { browser } = setup(withSidebar());
+    const scoped = recipe({ item: { selectors: [role('listitem')], within: [role('list')] } });
+    const result = await runRecipe({ recipe: loadRecipe(scoped), browser, profileDir: '/p' });
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(24);
+    expect(result.rows.some((r) => String(r.title).startsWith('Related'))).toBe(false);
+    expect(result.report.item).toMatchObject({ count: 24, within: { candidateIndex: 0, candidate: role('list'), outcome: { kind: 'candidate', index: 0 } } });
+
+    const unscoped = await runRecipe({ recipe: loadRecipe(recipe({ item: { selectors: [role('listitem')] } })), browser, profileDir: '/p' });
+    expect(unscoped.rows).toHaveLength(28);
+    expect(unscoped.report.item!.within).toBeUndefined();
+  });
+
+  it('reports within as missing and the container unresolved when the list parent matches nothing', async () => {
+    const { browser, emitter, log } = setup(withSidebar());
+    const missing = recipe({ item: { selectors: [role('listitem')], within: [css('ol.gone')] } });
+    const result = await runRecipe({ recipe: loadRecipe(missing), browser, profileDir: '/p', emitter, healing: { enabled: false, writeBack: false } });
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required', rows: [] });
+    expect(result.ok === false && result.fields).toEqual(['within', 'item']);
+    expect(result.ok === false && result.message).toContain('item.within');
+    const report = log.of('run.failed')[0]!.report;
+    expect(report.item).toMatchObject({ count: 0, outcome: { kind: 'unresolved' }, within: { candidate: null, outcome: { kind: 'unresolved' } } });
+  });
+
+  it('falls back to the document with a warning when healing cannot find the list parent', async () => {
+    const { browser } = setup(withSidebar());
+    const missing = recipe({ item: { selectors: [role('listitem')], within: [css('ol.gone')] } });
+    const result = await runRecipe({ recipe: loadRecipe(missing), browser, profileDir: '/p' });
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(28);
+    expect(result.report.item!.within!.outcome).toEqual({ kind: 'unresolved' });
+    expect(result.report.warnings.join('\n')).toContain('item.within');
   });
 });

@@ -17,6 +17,10 @@ export interface RenderOptions {
   gate?: Gate | null;
   /** Heading for the page. Default the first product's category, `Catalog` for none. */
   category?: string;
+  /** Interleave dissimilar blocks, thumbnails on some cards, and an ad card. Default false. */
+  mixed?: boolean;
+  /** Group the cards N per `div.product-row` wrapper. Default none. */
+  rows?: number | null;
 }
 
 export const GATE_KINDS = ['cookie', 'search', 'tabs'] as const;
@@ -71,6 +75,13 @@ export interface RenderContext {
   /** Gate around the list; `catalogPage` renders it, so tier churn renames its tokens too. */
   gate: Gate | null;
   category: string | undefined;
+  /**
+   * A `questions` block after every fourth card, a `product-thumb` image on
+   * cards with an odd dataset index, and `mixed-ad` on the first card.
+   */
+  mixed: boolean;
+  /** Cards per `div.product-row` wrapper, or null for a flat list. */
+  rows: number | null;
 }
 
 /** Class and attribute markup for a sponsored card, empty for a regular one. */
@@ -157,11 +168,40 @@ export const DEFAULT_MARKUP: Readonly<Markup> = Object.freeze({
   rating: true,
 });
 
+/** Position of a product in the full dataset, from its id (`p01` is 0). */
+function datasetIndex(p: Product): number {
+  return Number(p.id.replace(/\D/g, '')) - 1;
+}
+
+/** A block that shares the list with the cards but holds no product: a heading and three buttons. */
+function questionsBlock(markup: Markup): string {
+  const options = ['Which one ships fastest?', 'Is there a warranty?', 'Can I return it?'];
+  return `<li class="product-item">
+<${markup.cardTag} class="mixed-questions">
+<h3 class="questions-title">People also ask</h3>
+${options.map((o) => `<button class="questions-option" type="button">${o}</button>`).join('\n')}
+</${markup.cardTag}>
+</li>`;
+}
+
+/** The list's entries: cards, questions blocks after every fourth card when mixed, grouped in rows when asked. */
+function listEntries(ctx: RenderContext, cards: readonly string[], markup: Markup): string {
+  const groups: string[][] = [];
+  cards.forEach((card, i) => {
+    if (ctx.rows === null || i % ctx.rows === 0) groups.push([]);
+    const group = groups.at(-1)!;
+    group.push(card);
+    if (ctx.mixed && (i + 1) % 4 === 0) group.push(questionsBlock(markup));
+  });
+  if (ctx.rows === null) return groups.flat().join('\n');
+  return groups.map((g) => `<div class="product-row">\n${g.join('\n')}\n</div>`).join('\n');
+}
+
 function catalogPage(ctx: RenderContext, layout: Layout, markup: Markup = DEFAULT_MARKUP): string {
   const { products } = ctx;
   const category = ctx.category ?? products[0]?.category ?? 'Catalog';
   const testid = markup.testidAttr;
-  const items = layout.order
+  const cards = layout.order
     .map((productIndex, position) => ({ p: products[productIndex]!, position, s: sponsoredAttrs(ctx, position) }))
     .map(({ p, position, s }) => {
       const [titleOpen, titleClose] =
@@ -172,21 +212,22 @@ function catalogPage(ctx: RenderContext, layout: Layout, markup: Markup = DEFAUL
       const rating = markup.rating
         ? `\n<p class="product-rating" ${testid}="rating" ${markup.ratingAttr}="Rated ${p.rating} out of 5">${p.rating}</p>`
         : '';
-      let content = `<img class="product-image" src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}" width="220" height="140">
+      const thumb = ctx.mixed && datasetIndex(p) % 2 === 1 ? `<img class="product-thumb" src="${escapeHtml(p.image)}" alt="" width="48" height="48">\n` : '';
+      const ad = ctx.mixed && position === 0 ? ' mixed-ad' : '';
+      let content = `${thumb}<img class="product-image" src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}" width="220" height="140">
 ${layout.priceFirst(position) ? `${price}\n${title}` : `${title}\n${price}`}${rating}
 <a class="product-link" href="${escapeHtml(p.url)}">${escapeHtml(markup.linkText)}</a>`;
       for (let depth = layout.wrappers(position) - 1; depth >= 0; depth--) {
         content = `<div class="${WRAPPER_CLASSES[depth % WRAPPER_CLASSES.length]}">\n${content}\n</div>`;
       }
       return `<li class="product-item">
-<${markup.cardTag} class="product-card${s.cls}" id="product-${p.id}" ${testid}="product-card" data-product-id="${p.id}"${s.attrs}>
+<${markup.cardTag} class="product-card${s.cls}${ad}" id="product-${p.id}" ${testid}="product-card" data-product-id="${p.id}"${s.attrs}>
 ${content}
 </${markup.cardTag}>
 </li>`;
-    })
-    .join('\n');
+    });
   const list = `<ul class="product-list" ${testid}="product-list">
-${items}
+${listEntries(ctx, cards, markup)}
 </ul>`;
   return page(
     `${category} | Playground`,
@@ -517,6 +558,8 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
     pager: opts.pager ?? null,
     gate: opts.gate ?? null,
     category: opts.category,
+    mixed: opts.mixed ?? false,
+    rows: opts.rows ?? null,
   };
   return applyChrome(renderer(ctx), ctx.chrome);
 }

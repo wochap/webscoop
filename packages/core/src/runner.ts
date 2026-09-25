@@ -490,13 +490,18 @@ export class Runner {
         if (!resolved) {
           report.item = extraction.item;
           report.fields = extraction.fields;
-          report.healed += extraction.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(extraction.item?.outcome) ? 1 : 0);
+          report.healed +=
+            extraction.fields.filter((f) => isHealed(f.outcome)).length +
+            (isHealed(extraction.item?.outcome) ? 1 : 0) +
+            (isHealed(extraction.item?.within?.outcome) ? 1 : 0);
           for (const field of extraction.fields) this.emitter.emit('field.resolved', { page, field });
           if (extraction.missingRequired.length > 0) {
             const names = extraction.missingRequired;
             throw new RunFailure(
               'missing-required',
-              names.includes('item')
+              names.includes('within')
+                ? 'the list parent (item.within) matched no element, so the item container is unresolved'
+                : names.includes('item')
                 ? 'the item container matched no element'
                 : `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element`,
               names,
@@ -505,7 +510,7 @@ export class Runner {
           resolved = extraction.resolved;
         } else {
           // A later page with no items is the end of the list, not a failure; a field gone from every item is.
-          const names = extraction.missingRequired.filter((name) => name !== 'item');
+          const names = extraction.missingRequired.filter((name) => name !== 'item' && name !== 'within');
           if (names.length > 0) {
             throw new RunFailure(
               'missing-required',

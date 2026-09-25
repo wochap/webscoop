@@ -124,6 +124,69 @@ describe('item detection', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.confirmItems', level: 'broader' });
   });
 
+  it('prefills the list parent and item fields, edits them, and toggles include all', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    expect((p.q('level-input-within') as HTMLInputElement).value).toBe('role=list');
+    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('role=article');
+    expect(p.q('items-skipped')!.textContent).toBe('0 skipped as dissimilar');
+
+    fireEvent.change(p.q('level-input-item')!, { target: { value: 'role=listitem' } });
+    fireEvent.submit(p.q('level-input-item')!.closest('form')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'role=listitem' });
+    fireEvent.click(p.q('level-pick-within')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.pickLevel', level: 'within' });
+    fireEvent.click(p.q('level-clear-within')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    fireEvent.click(p.q('include-all')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.toggleIncludeAll' });
+
+    // Candidates of a level, and the primary choice on the chosen rung.
+    fireEvent.click(p.q('level-broader')!);
+    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('role=listitem');
+    fireEvent.click(p.q('level-more-item')!);
+    const rows = p.q('level-candidates-item')!.querySelectorAll('[data-ws="candidate"]');
+    fireEvent.click(rows[1]!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setPrimary', level: 'item', index: 1, rung: 'broader' });
+
+    // A refused edit shows inline, and a new host value replaces the text.
+    const proposal = proposed.proposal!;
+    act(() =>
+      p.store.setHost({
+        ...proposed,
+        proposal: { ...proposal, skipped: 6, includeAll: false, error: { level: 'item', message: '".nope" matches nothing inside the list parent' } },
+      }),
+    );
+    expect(p.q('level-error-item')!.textContent).toContain('matches nothing');
+    expect(p.q('level-error-within')).toBeNull();
+    expect(p.q('items-skipped')!.textContent).toBe('6 skipped as dissimilar');
+  });
+
+  it('shows the list parent of the confirmed item with its count, re-pick, and clear', async () => {
+    const { proposed } = await hostStates();
+    const item = {
+      selectors: [{ strategy: 'role' as const, value: 'article', stability: 'stable' as const, count: 24 }],
+      within: [{ strategy: 'role' as const, value: 'list', stability: 'stable' as const, count: 1 }],
+      withinCount: 1,
+      exclude: [],
+      count: 24,
+      total: 24,
+    };
+    const p = renderPanel({ ...proposed, proposal: null, draft: { ...proposed.draft, item } });
+    expect(p.q('within-selector')!.textContent).toBe('role=list');
+    expect(p.q('within-count')!.textContent).toBe('1');
+    fireEvent.click(p.q('within-repick')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.pickLevel', level: 'within' });
+    fireEvent.click(p.q('within-clear')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+
+    const { within: _w, withinCount: _c, ...bare } = item;
+    const none = renderPanel({ ...proposed, proposal: null, draft: { ...proposed.draft, item: bare } });
+    expect(none.qa('within-selector').at(-1)!.textContent).toBe('none');
+    expect(none.qa('within-clear')).toHaveLength(0);
+    expect(none.qa('within-repick').at(-1)!.textContent).toBe('Pick');
+  });
+
   it('does not confirm while typing in the exclusion input', async () => {
     const { proposed } = await hostStates();
     const p = renderPanel(proposed);

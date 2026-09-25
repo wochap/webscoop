@@ -188,7 +188,7 @@ export function ScoopRoot() {
         }
       >
         <RecipeBar draft={draft} editingVar={ui.editingVar} setEditingVar={(editingVar) => actions.setUi({ editingVar })} />
-        <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} />
+        <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
         {selected && (
           <>
             <ElementInspector selection={selected.selection} trail={ui.trail} onSelectPath={actions.selectPath} />

@@ -8,7 +8,18 @@ import {
   type ProtocolCandidate,
   type RecorderState,
 } from '@webscoop/core/page';
-import { describeSelection, elementAt, excerpt, isOwn, nodeForScore, resolveFirstLocal, resolveLocal } from './dom';
+import {
+  describeSelection,
+  elementAt,
+  excerpt,
+  isOwn,
+  nodeForScore,
+  pathOfElement,
+  readDocument,
+  resolveFirstLocal,
+  resolveLocal,
+  snapshotOf,
+} from './dom';
 import type { Overlay } from './overlay';
 import type { ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
@@ -123,6 +134,10 @@ export class Runtime implements Actions {
       this.toast('ok', `Saved ${next.saved.name}${next.saved.path ? ` to ${next.saved.path}` : ''}`);
     }
     if (!next.proposal && prev?.proposal) this.store.setUi({ level: 'proposed' });
+    // A new item level (an edit, include all) starts from the proposed rung again.
+    else if (next.proposal && prev?.proposal && next.proposal.proposed.path.join() !== prev.proposal.proposed.path.join()) this.store.setUi({ level: 'proposed' });
+    // Picking a list level opens ready to pick; picking ends when the host clears it.
+    if (next.levelPick && !prev?.levelPick && !this.store.get().ui.picking) this.startPicking();
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
     if (next.repickStep !== null && (prev?.repickStep ?? null) === null && !this.store.get().ui.picking) this.startPicking();
     // The focused re-pick mode opens ready to pick.
@@ -198,7 +213,35 @@ export class Runtime implements Actions {
     });
   }
 
+  /**
+   * Why an element cannot be picked for the list level being picked, or null
+   * when it can: the list parent must hold the item, the item must sit inside
+   * the list parent and hold the original selection.
+   */
+  levelRefusal(el: Element): string | null {
+    const host = this.store.get().host;
+    const pick = host?.levelPick;
+    if (!pick) return null;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'html' || tag === 'body') return 'outside the list';
+    const path = pathOfElement(el);
+    const strictPrefix = (a: readonly number[], b: readonly number[]) => a.length < b.length && a.every((v, i) => b[i] === v);
+    if (pick.ancestorOf.length > 0 && !pick.ancestorOf.some((p) => strictPrefix(path, p))) return 'outside the list';
+    if (pick.ofContainers) {
+      const containers = host.draft.item ? resolveFirstLocal(host.draft.item.selectors, this.doc) : [];
+      if (!containers.some((c) => c !== el && el.contains(c))) return 'outside the list';
+    }
+    if (pick.descendantOf && !strictPrefix(pick.descendantOf, path)) return 'outside the list';
+    if (pick.containing && !(strictPrefix(path, pick.containing) || path.join() === pick.containing.join())) return 'does not hold the selection';
+    return null;
+  }
+
   hover(el: Element | null): void {
+    if (this.store.get().host?.levelPick) {
+      const refused = el ? this.levelRefusal(el) : null;
+      this.opts.overlay.setHover(el, el ? excerpt(el) : '', undefined, refused ?? undefined);
+      return;
+    }
     const ctx = this.store.get().host?.repickContext;
     if (!ctx?.fingerprint) {
       this.opts.overlay.setHover(el, el ? excerpt(el) : '');
@@ -211,6 +254,18 @@ export class Runtime implements Actions {
 
   /** The user clicked an element while picking. */
   pick(el: Element): void {
+    const host = this.store.get().host;
+    if (host?.levelPick) {
+      // Out of range: the click is ignored and picking goes on; the hover tag says why.
+      if (this.levelRefusal(el)) return;
+      this.store.setUi({ picking: false });
+      this.opts.overlay.setHover(null);
+      const { level } = host.levelPick;
+      // Without a proposal the host has no snapshot of this page yet: send one.
+      const snapshot = host.proposal ? undefined : snapshotOf(readDocument(el, this.doc).root);
+      void this.send({ kind: 'draft.setLevel', level, by: 'pick', path: pathOfElement(el), ...(snapshot ? { snapshot } : {}) });
+      return;
+    }
     this.store.setUi({ picking: false });
     this.opts.overlay.setHover(null);
     void this.select(el, true);
@@ -248,7 +303,11 @@ export class Runtime implements Actions {
     const overlay = this.opts.overlay;
     const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
     overlay.setSelected(selected);
-    if (!host || !ui.highlight || host.guardContext) return overlay.setItems([], 'sibling');
+    if (!host || !ui.highlight || host.guardContext) {
+      overlay.setList(null);
+      return overlay.setItems([], 'sibling');
+    }
+    overlay.setList(this.listParent());
     if (host.proposal) {
       const level = host.proposal[ui.level] ?? host.proposal.proposed;
       const items = level.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);
@@ -259,6 +318,15 @@ export class Runtime implements Actions {
       return overlay.setItems(all, 'container', this.excluded(all, host.draft.item.exclude));
     }
     overlay.setItems([], 'sibling');
+  }
+
+  /** The list parent to outline: the proposal's, else the confirmed item's first match. */
+  private listParent(): Element | null {
+    const host = this.store.get().host;
+    if (!host) return null;
+    if (host.proposal) return host.proposal.within ? elementAt(host.proposal.within.path, this.doc) : null;
+    const within = host.draft.item?.within;
+    return within ? (resolveFirstLocal(within, this.doc)[0] ?? null) : null;
   }
 
   // Keyboard ------------------------------------------------------------------

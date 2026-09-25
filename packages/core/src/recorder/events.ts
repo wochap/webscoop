@@ -6,7 +6,16 @@ export interface RecorderEvents {
   'recorder.ready': { url: string };
   'recorder.navigated': { url: string };
   'recorder.selected': { tag: string; path: number[]; scope: FieldScope; candidates: ProtocolCandidate[] };
-  'recorder.itemsProposed': { count: number | null; container: string; broader: number | null; narrower: number | null };
+  'recorder.itemsProposed': {
+    count: number | null;
+    container: string;
+    /** Primary selector value of the list parent, null without one. */
+    within: string | null;
+    /** Elements left out as dissimilar. */
+    skipped: number;
+    broader: number | null;
+    narrower: number | null;
+  };
   'recorder.itemsConfirmed': { count: number | null; selector: string };
   'recorder.excluded': { selector: string; count: number | null };
   'recorder.fieldAdded': { name: string; type: FieldType; scope: FieldScope; count: number | null };

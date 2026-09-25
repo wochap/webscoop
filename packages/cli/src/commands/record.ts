@@ -95,7 +95,9 @@ async function resolveValues(io: CliIo, template: string, given: Record<string, 
 function logEvents(io: CliIo, emitter: RecorderEmitter): void {
   emitter.on('recorder.ready', (e) => log(io, `recorder ready on ${e.url}`));
   emitter.on('recorder.selected', (e) => log(io, `selected <${e.tag}>: ${e.candidates.length} selector candidates, scope ${e.scope}`));
-  emitter.on('recorder.itemsProposed', (e) => log(io, `found ${e.count ?? '?'} repeating items (${e.container})`));
+  emitter.on('recorder.itemsProposed', (e) =>
+    log(io, `found ${e.count ?? '?'} repeating items (${e.container}${e.within ? ` in ${e.within}` : ''})${e.skipped > 0 ? `, ${e.skipped} skipped as dissimilar` : ''}`),
+  );
   emitter.on('recorder.itemsConfirmed', (e) => log(io, `item container set: ${e.selector} (${e.count ?? '?'} items)`));
   emitter.on('recorder.excluded', (e) => log(io, `excluded ${e.selector}: ${e.count ?? '?'} items left`));
   emitter.on('recorder.fieldAdded', (e) => log(io, `added field ${e.name} (${e.type}, ${e.scope}, ${e.count ?? '?'} matches)`));

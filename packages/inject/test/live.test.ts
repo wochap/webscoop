@@ -15,7 +15,9 @@ const SHOTS = resolve(import.meta.dirname, '../../../test-results/inject');
 
 interface Hook {
   state(): { host: RecorderState | null; ui: { picking: boolean }; mode: string };
-  query(selector: string): { text: string; rect: { x: number; y: number; w: number; h: number }; fontFamily: string; backgroundColor: string } | null;
+  query(selector: string): { text: string; value: string; rect: { x: number; y: number; w: number; h: number }; fontFamily: string; backgroundColor: string } | null;
+  submit(selector: string, value: string): void;
+  tag(): string;
   boxes(): { variant: string; light: boolean; rect: { x: number; y: number; w: number; h: number } }[];
   fontsReady(): Promise<number>;
   click(selector: string): void;
@@ -136,6 +138,61 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     expect(state.proposal!.proposed.count).toBe(24);
     expect(await page.evaluate(() => (window as unknown as { __hostClicks: unknown[] }).__hostClicks)).toEqual([]);
     expect(await page.locator('#cookie-backdrop').count()).toBe(1);
+  });
+
+  async function pickTitle(page: Page, nth: number) {
+    await page.keyboard.press('p');
+    await page.locator('h2.product-title').nth(nth).scrollIntoViewIfNeeded();
+    const title = (await page.locator('h2.product-title').nth(nth).boundingBox())!;
+    await page.mouse.move(title.x + 8, title.y + title.height / 2);
+    await page.mouse.click(title.x + 8, title.y + title.height / 2);
+    await expect.poll(() => hook(page, (h) => h.state().host?.proposal?.proposed.count ?? null)).toBe(24);
+  }
+
+  it('prefills the list parent and item fields and recounts after an edit', async () => {
+    const { page } = await open('tier=0');
+    await pickTitle(page, 1);
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-within"]')!.value)).toBe('role=list');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('role=article');
+    expect(await hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('24');
+    expect((await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'list')).toHaveLength(1);
+
+    await hook(page, (h) => h.submit('[data-ws="level-input-item"]', 'css=li.product-item:nth-child(-n+5)'));
+    await expect.poll(() => hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('5');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('css=li.product-item:nth-child(-n+5)');
+    await expect.poll(async () => (await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'sibling').length).toBe(5);
+
+    await hook(page, (h) => h.submit('[data-ws="level-input-item"]', '.no-such-card'));
+    await expect.poll(() => hook(page, (h) => h.query('[data-ws="level-error-item"]')?.text ?? null)).toContain('matches nothing');
+    expect(await hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('5');
+    await page.screenshot({ path: join(SHOTS, 'list-fields.png') });
+  });
+
+  it('picks the list parent only among ancestors of the item and says why others are refused', async () => {
+    const { page } = await open('tier=0');
+    await pickTitle(page, 1);
+    await hook(page, (h) => h.click('[data-ws="level-pick-within"]'));
+    await expect.poll(() => hook(page, (h) => h.state().ui.picking)).toBe(true);
+    expect(await hook(page, (h) => h.state().host!.levelPick?.level)).toBe('within');
+
+    const heading = (await page.locator('h1').boundingBox())!;
+    await page.mouse.move(heading.x + 5, heading.y + heading.height / 2);
+    await expect.poll(() => hook(page, (h) => h.tag())).toContain('outside the list');
+    expect((await hook(page, (h) => h.boxes())).some((b) => b.variant === 'blocked')).toBe(true);
+    await page.mouse.click(heading.x + 5, heading.y + heading.height / 2);
+    expect(await hook(page, (h) => h.state().ui.picking)).toBe(true);
+    expect(await hook(page, (h) => h.state().host!.proposal!.within!.tag)).toBe('ul');
+
+    // The gap between cards belongs to the list itself, an ancestor of every card.
+    const [a, b] = [(await page.locator('li.product-item').nth(0).boundingBox())!, (await page.locator('li.product-item').nth(1).boundingBox())!];
+    const gap = { x: (a.x + a.width + b.x) / 2, y: a.y + a.height / 2 };
+    await page.mouse.move(gap.x, gap.y);
+    await expect.poll(() => hook(page, (h) => h.tag())).not.toContain('outside the list');
+    await page.mouse.click(gap.x, gap.y);
+    await expect.poll(() => hook(page, (h) => h.state().host!.levelPick)).toBeNull();
+    expect(await hook(page, (h) => h.state().ui.picking)).toBe(false);
+    expect(await hook(page, (h) => h.state().host!.proposal!.within!.tag)).toBe('ul');
+    expect(await hook(page, (h) => h.state().host!.proposal!.proposed.count)).toBe(24);
   });
 
   it('removes itself on detach, gives the page its clicks and margin back, and attaches again', async () => {

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  annotate,
+  descendantsOf,
+  fingerprint,
+  loadRecipe,
   RUN_EVENT_NAMES,
   recordEvents,
   RunEmitter,
@@ -7,11 +11,12 @@ import {
   type Recipe,
   type RepickHandler,
   type RunEvents,
+  type SelectorCandidate,
   type SerializedElement,
 } from '../src';
-import { FakeBrowser } from '../src/testing';
+import { FakeBrowser, h } from '../src/testing';
 import { catalogSnapshot, fingerprintedRecipe } from './healing-helpers';
-import { css, testid } from './helpers';
+import { card, cards, catalog, css, recipe, testid } from './helpers';
 import { CATALOG } from './recorder-helpers';
 
 function setup(dom: SerializedElement, recipe: Recipe, extra: Partial<ConstructorParameters<typeof Runner>[0]> = {}) {
@@ -153,5 +158,57 @@ describe('runner re-pick', () => {
     const result = await t.runner.run();
     expect(result.ok).toBe(true);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('list parent healing', () => {
+  const role = (value: string): SelectorCandidate => ({ strategy: 'role', value, stability: 'stable' });
+
+  /** The reference recipe with a list parent recorded on tier 0. */
+  function withinRecipe(within: SelectorCandidate[]): Recipe {
+    const recipe = fingerprintedRecipe();
+    const list = descendantsOf(annotate(catalogSnapshot(0))).find((n) => n.attrs.class === 'product-list')!;
+    return { ...recipe, item: { ...recipe.item!, within, withinFingerprint: fingerprint(list) } };
+  }
+
+  it('heals a renamed list through its role candidate and writes the new list parent back', async () => {
+    const t = setup(catalogSnapshot(1), withinRecipe([css('ul.product-list'), role('list')]));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(24);
+    expect(result.report.item!.within).toMatchObject({ candidateIndex: 1, outcome: { kind: 'candidate', index: 1 } });
+    const healed = t.log.of('field.healed').find((e) => e.target === 'within')!;
+    expect(healed.oldPrimary).toEqual(css('ul.product-list'));
+    const written = t.saved[0]!;
+    expect(written.item!.within![0]).toEqual(role('list'));
+    expect(written.item!.withinFingerprint!.tag).toBe('ul');
+  });
+
+  it('heals a renamed list by fingerprint when no candidate resolves', async () => {
+    const t = setup(catalogSnapshot(1), withinRecipe([css('ul.product-list')]));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(24);
+    expect(result.report.item!.within!.outcome.kind).toBe('fuzzy');
+    expect(t.saved[0]!.item!.within!.map((c) => c.strategy)).toContain('role');
+  });
+
+  it('scores container matches only inside the list parent', async () => {
+    const dom = catalog(cards(24));
+    const body = dom.children.find((c) => c.type === 'element' && c.tag === 'body') as SerializedElement;
+    // The sidebar repeats the first card exactly, so a document-wide match is ambiguous.
+    body.children.push(h('aside', {}, h('ul', { class: 'sidebar' }, h('li', {}, card(cards(1)[0]!, 0)))));
+    const first = descendantsOf(annotate(dom)).find((n) => n.tag === 'article')!;
+    const base = loadRecipe(recipe({ url: CATALOG, vars: [], item: { selectors: [css('.gone')] } }));
+    const broken: Recipe = { ...base, item: { ...base.item!, fingerprint: fingerprint(first) } };
+
+    const unscoped = await setup(dom, broken).runner.run();
+    expect(unscoped).toMatchObject({ ok: false, reason: 'missing-required' });
+
+    const scoped: Recipe = { ...broken, item: { ...broken.item!, within: [role('list')] } };
+    const result = await setup(dom, scoped).runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(24);
+    expect(result.report.item!.outcome.kind).toBe('fuzzy');
   });
 });
