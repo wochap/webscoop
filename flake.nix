@@ -28,6 +28,7 @@
         root = ./.;
         fileset = lib.fileset.unions [
           ./package.json
+          ./README.md
           ./package-lock.json
           ./tsconfig.base.json
           ./vitest.config.ts
