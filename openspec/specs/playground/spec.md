@@ -200,3 +200,20 @@ With `gate=tabs`, `/catalog` SHALL render two tabs, `About` (active by default, 
 #### Scenario: Products tab needed on every page
 - **WHEN** `gate=tabs&paginate=url&page=2` is loaded
 - **THEN** no product element exists until the Products tab is clicked
+### Requirement: Mixed result blocks
+`/catalog` SHALL accept `mixed=1`. When set, the product list SHALL keep every product card in dataset order and additionally: insert a `questions` block after every fourth card, rendered with the card tag and a `mixed-questions` class but children that are a heading and three `button` elements and no product content; render a thumbnail `img` with class `product-thumb` only on cards whose dataset index is odd; and mark the first card as an ad with class `mixed-ad`, keeping its product content. The parameter SHALL combine with `paginate`, in which case blocks are inserted per page after every fourth card of that page.
+
+#### Scenario: Blocks interleaved
+- **WHEN** `/catalog?mixed=1` is requested
+- **THEN** 24 product cards and 6 `mixed-questions` blocks share the list, and cards for p02, p04, ... carry a `product-thumb` image while p01, p03, ... do not
+
+#### Scenario: Mixed with url pagination
+- **WHEN** `/catalog?paginate=url&page=1&mixed=1` is requested
+- **THEN** 8 product cards and 2 `mixed-questions` blocks are rendered
+
+### Requirement: Row-grouped catalog
+`/catalog` SHALL accept `rows=N` with N from 1 to 24. When set, product cards SHALL be grouped N per `div.product-row` wrapper inside the product list, in dataset order, each card still wrapped in its `product-item` element. The parameter SHALL combine with `paginate` and `mixed`.
+
+#### Scenario: Six rows of four
+- **WHEN** `/catalog?rows=4` is requested
+- **THEN** the list holds 6 `product-row` elements each holding 4 product cards, 24 in total

@@ -41,7 +41,7 @@ The score between a stored fingerprint and a live element SHALL be a weighted su
 - **THEN** the score is below 0.7
 
 ### Requirement: Fuzzy search space and threshold
-Fuzzy matching SHALL score elements within the target's scope: inside the resolved item container for item scoped fields, inside the document for page scoped fields and the container itself. Only elements whose tag equals the fingerprint tag, or whose role equals the fingerprint role, SHALL be scored. The best element SHALL be accepted when its score is at least the recipe's `healing.fuzzyThreshold` and exceeds the runner-up by at least 0.05; otherwise the rung fails. For item scoped fields the match SHALL be established on one container, the one that best matches the item fingerprint at or above the threshold, else the first container, and the derived selector verified to resolve in at least half of the containers. The ancestor component SHALL tolerate up to 3 wrapper elements inserted between the element and its stored ancestors.
+Fuzzy matching SHALL score elements within the target's scope: inside the resolved item container for item scoped fields, inside the resolved list parent for the container when `within` is present, inside the document for page scoped fields, the list parent, and the container without `within`. Only elements whose tag equals the fingerprint tag, or whose role equals the fingerprint role, SHALL be scored. The best element SHALL be accepted when its score is at least the recipe's `healing.fuzzyThreshold` and exceeds the runner-up by at least 0.05; otherwise the rung fails. For item scoped fields the match SHALL be established on one container, the one that best matches the item fingerprint at or above the threshold, else the first container, and the derived selector verified to resolve in at least half of the containers. The ancestor component SHALL tolerate up to 3 wrapper elements inserted between the element and its stored ancestors.
 
 #### Scenario: Ambiguous match rejected
 - **WHEN** two elements score 0.82 and 0.80 against a fingerprint with threshold 0.7
@@ -54,6 +54,10 @@ Fuzzy matching SHALL score elements within the target's scope: inside the resolv
 #### Scenario: Item field verified across containers
 - **WHEN** the fuzzy match in the first container yields a selector that resolves in 20 of 24 containers
 - **THEN** the match is accepted and the field is `partial` on the 4 rows where it is missing
+
+#### Scenario: Container healed inside the list parent
+- **WHEN** the container selector breaks, `within` still resolves, and a sidebar holds elements with the same tag
+- **THEN** fuzzy matching for the container scores only elements inside the list parent
 
 ### Requirement: Promotion after healing
 When a target resolves by any rung other than its first stored candidate, the runner SHALL generate fresh candidates for the resolved element using selector generation, place the resolving selector first, append previous candidates that still resolve after it, drop candidates that no longer resolve, and refresh the fingerprint from the live element. The promoted recipe SHALL be written to its original location only after the run completes successfully and only when write-back is enabled. Write-back SHALL preserve every recipe field the runner did not change.
@@ -145,3 +149,9 @@ When a target's field no longer exists on the page, the ladder SHALL end in `unr
 #### Scenario: Tier 4 rating removed
 - **WHEN** the page no longer contains any rating element and `rating` is required
 - **THEN** the run reports `rating` as `missing` with outcome `unresolved` and exits 3, and no other field's value is placed into `rating`
+### Requirement: List parent healing
+The list parent in `item.within` SHALL be a healing target with its own fingerprint, healed before the container with the same ladder. Promotion after healing SHALL apply to `within` like any other target. When `within` cannot be healed, the container SHALL be resolved against the document and the outcome reported as `within` missing.
+
+#### Scenario: List parent renamed
+- **WHEN** the list's class changes and its role stays `list`
+- **THEN** `within` heals through its `role` candidate or the fuzzy rung and the run proceeds with 24 rows

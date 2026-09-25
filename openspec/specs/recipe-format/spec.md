@@ -29,7 +29,7 @@ A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a
 - **THEN** validation fails and the error names `category`
 
 ### Requirement: Item container
-A recipe MAY declare an `item` block with `selectors` (a ranked list of selector candidates) and an optional `exclude` list of selectors. When `item` is present, fields with scope `item` SHALL be resolved relative to each matched container, after removing any container that also matches an `exclude` selector. When `item` is absent, every field SHALL have scope `page` and the recipe yields exactly one row.
+A recipe MAY declare an `item` block with `selectors` (a ranked list of selector candidates), an optional `within` list of selector candidates naming the list parent, and an optional `exclude` list of selectors. When `within` is present, containers SHALL be resolved inside the first element that the first resolving `within` candidate matches; when `within` is absent, containers SHALL be resolved against the whole document. When `item` is present, fields with scope `item` SHALL be resolved relative to each matched container, after removing any container that also matches an `exclude` selector. When `item` is absent, every field SHALL have scope `page` and the recipe yields exactly one row.
 
 #### Scenario: Item scoped recipe
 - **WHEN** `item.selectors` matches 24 elements and no `exclude` is set
@@ -38,6 +38,14 @@ A recipe MAY declare an `item` block with `selectors` (a ranked list of selector
 #### Scenario: Excluded containers are dropped
 - **WHEN** `item.selectors` matches 24 elements and `exclude` matches 2 of them
 - **THEN** the recipe yields 22 rows
+
+#### Scenario: Containers limited to the list parent
+- **WHEN** `item.within` is `role=list`, the page has a main list of 24 `listitem` elements and a sidebar list of 4, and `item.selectors` is `role=listitem`
+- **THEN** the recipe yields 24 rows
+
+#### Scenario: List parent absent
+- **WHEN** no `within` candidate resolves on the page
+- **THEN** the item container is treated as unresolved and healing applies to `within` before the container
 
 #### Scenario: Item field without container is rejected
 - **WHEN** a field has scope `item` and the recipe has no `item` block
@@ -55,11 +63,15 @@ A recipe SHALL declare at least one field under `fields`. Each field SHALL have 
 - **THEN** validation fails
 
 ### Requirement: Selector candidates
-Each selector candidate SHALL have a `strategy` among `role`, `testid`, `id`, `text`, `css`, `xpath`, a `value` string, and a `stability` among `stable`, `medium`, `fragile`. The order of the list is the order of preference. Candidates SHALL be self-describing so that a runner can try them without any other context.
+Each selector candidate SHALL have a `strategy` among `role`, `testid`, `id`, `text`, `css`, `class`, `xpath`, a `value` string, and a `stability` among `stable`, `medium`, `fragile`. The order of the list is the order of preference. Candidates SHALL be self-describing so that a runner can try them without any other context. A `class` candidate's value SHALL be a CSS selector.
 
 #### Scenario: Role candidate shape
 - **WHEN** a candidate is `{ "strategy": "role", "value": "heading|Wireless Mouse", "stability": "stable" }`
 - **THEN** validation succeeds and the runner can resolve it as an accessible role `heading` with accessible name `Wireless Mouse`
+
+#### Scenario: Class candidate shape
+- **WHEN** a candidate is `{ "strategy": "class", "value": "span.price.kXeqYt", "stability": "fragile" }`
+- **THEN** validation succeeds and the runner resolves it as a CSS selector
 
 #### Scenario: Unknown strategy is rejected
 - **WHEN** a candidate has strategy `magic`

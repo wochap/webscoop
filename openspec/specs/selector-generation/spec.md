@@ -7,25 +7,41 @@ Defines how selector candidates, their stability ratings, and fingerprints are d
 ## Requirements
 
 ### Requirement: Candidate strategies generated per element
-For a picked element the generator SHALL produce at most one candidate per strategy, in this order of consideration: `role` (accessible role plus accessible name, when both exist), `testid` (`data-testid`), `id`, `text` (exact trimmed text, at most 80 characters, only for elements whose text is a single text node), `css` (shortest path of tag and stable class tokens from the nearest stable ancestor), `xpath` (positional path from the nearest ancestor with an `id` or `data-testid`, else from the document root). A strategy that does not apply SHALL be omitted, not emitted empty.
+For a picked element the generator SHALL produce at most one candidate per strategy, in this order of consideration: `role` (accessible role plus accessible name when both exist; for elements generated as a container or list level, the role alone when the element has an explicit or implicit ARIA role other than `generic`, `presentation`, or `none`), `testid` (`data-testid`), `id`, `text` (exact trimmed text, at most 80 characters, only for elements whose text is a single text node), `css` (shortest path of tag and stable class tokens from the nearest stable ancestor), `class` (the element's tag plus every one of its own class tokens, hashed ones included, joined to the nearest anchored ancestor with a descendant combinator), `xpath` (positional path from the nearest ancestor with an `id` or `data-testid`, else from the document root). A strategy that does not apply SHALL be omitted, not emitted empty. The `class` strategy SHALL be emitted only when the element has at least one class token and its value differs from the `css` candidate.
 
 #### Scenario: Element with testid and heading role
 - **WHEN** the element is `<h3 data-testid="product-title">Wireless Mouse</h3>`
 - **THEN** candidates include `role` `heading|Wireless Mouse`, `testid` `product-title`, `text` `Wireless Mouse`, a `css` candidate, and an `xpath` candidate, and no `id` candidate
 
+#### Scenario: Role-only candidate for a container level
+- **WHEN** the container level element is `<li class="product-item">` with no accessible name
+- **THEN** its candidates include `role` `listitem` rated `stable`
+
+#### Scenario: Class candidate keeps hashed tokens
+- **WHEN** the element is `<div class="price kXeqYt">` inside `<div class="asEBEc">` and the picked element has no stable class
+- **THEN** the `css` candidate is `div.asEBEc > div.price` when `price` is stable, and a `class` candidate `div.price.kXeqYt` exists rated `fragile`
+
 ### Requirement: Hashed class detection
-Class tokens SHALL be classified as hashed when they match generated patterns: tokens containing a run of 5 or more mixed letters and digits, tokens with a `css-`, `sc-`, `jsx-`, or `emotion-` prefix, or tokens ending in a hyphen followed by 4 or more hex or base64 characters. Hashed tokens SHALL NOT appear in `css` candidates. Attributes whose value looks hashed by the same rules SHALL be flagged hashed in the inspector.
+Class tokens SHALL be classified as hashed when they match generated patterns: tokens containing a run of 5 or more mixed letters and digits, tokens with a `css-`, `sc-`, `jsx-`, or `emotion-` prefix, tokens ending in a hyphen followed by 4 or more hex or base64 characters, or tokens of 5 to 8 characters made only of letters with at least two upper-case letters after the first character and no hyphen or underscore. Hashed tokens SHALL NOT appear in `css` candidates but SHALL appear in `class` candidates. Attributes whose value looks hashed by the same rules SHALL be flagged hashed in the inspector.
 
 #### Scenario: CSS-in-JS class ignored
 - **WHEN** the element has classes `card sc-bdfBwQ kXeqYt`
 - **THEN** the `css` candidate uses `card` only
 
+#### Scenario: Short obfuscated token detected
+- **WHEN** the element has classes `asEBEc navBar`
+- **THEN** `asEBEc` is hashed and `navBar` is stable
+
 ### Requirement: Stability rating
-Each candidate SHALL carry a stability: `role` and `testid` are `stable`; `id` is `stable` unless the value looks hashed or numeric, then `fragile`; `css` is `medium` when built only from tags and stable classes, `fragile` when it needs `:nth-child`; `text` is `fragile`; `xpath` is `fragile`.
+Each candidate SHALL carry a stability: `role` and `testid` are `stable`; `id` is `stable` unless the value looks hashed or numeric, then `fragile`; `css` is `medium` when built only from tags and stable classes, `fragile` when it needs `:nth-child`; `class` is `medium` when every class token is stable, `fragile` when any is hashed; `text` is `fragile`; `xpath` is `fragile`.
 
 #### Scenario: Numeric id is fragile
 - **WHEN** the element has `id="item-48213"`
 - **THEN** the `id` candidate is rated `fragile`
+
+#### Scenario: Class candidate with a hashed token
+- **WHEN** the element has classes `price kXeqYt`
+- **THEN** the `class` candidate is rated `fragile`
 
 ### Requirement: Ranking
 Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`), then by the strategy order above. When a candidate is intended to match one element per item, candidates whose match count on the current page equals the item count SHALL rank above those that do not. Uniqueness on the page SHALL break remaining ties.
@@ -34,19 +50,39 @@ Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`
 - **WHEN** an element has a `testid` candidate matching 24 and a `css` candidate matching 24
 - **THEN** the `testid` candidate ranks first
 
+#### Scenario: Class candidate outranks positional css
+- **WHEN** a field has a `css` candidate `div > div:nth-child(2)` matching 24 and a `class` candidate `div.price.kXeqYt` matching 24, both `fragile`
+- **THEN** the `css` candidate ranks first by strategy order, and the `class` candidate ranks above any candidate whose count differs from 24
+
 ### Requirement: Generalizing item scoped selectors
-When a field is inside an item container, its candidates SHALL be expressed relative to the container, with positional segments (`:nth-child`, xpath indices) that differ between siblings removed. A generalized candidate SHALL match exactly one element in every container where the field exists.
+When a field is inside an item container, its candidates SHALL be expressed relative to the container element, with positional segments (`:nth-child`, xpath indices) that differ between siblings removed. The cut point SHALL be the container element itself, identified by its position in the snapshot, not by matching the container's selector text against the candidate. A generalized candidate SHALL match exactly one element in every container where the field exists.
 
 #### Scenario: Title inside card
 - **WHEN** the picked title is `article:nth-child(2) > a > h3` and the container is `article`
 - **THEN** the relative `css` candidate is `a > h3` and it matches one element in each of the 24 cards
 
+#### Scenario: Bare div container
+- **WHEN** the container is a `div` with only hashed classes and the picked price is `div.asEBEc > div > div:nth-child(2) > span.price`
+- **THEN** the relative `css` candidate is `div > div:nth-child(2) > span.price` and the relative `class` candidate is `span.price`
+
 ### Requirement: Sibling inference
-Given a picked element, inference SHALL walk up its ancestors and, for each, compare it against its element siblings by tag and by the multiset of child tags to depth 2. The first ancestor with at least two siblings scoring above a similarity threshold SHALL be the proposed container, its siblings the item set. Inference SHALL also report the next broader and next narrower candidate levels with their match counts. The document body SHALL never be proposed.
+Given a picked element, inference SHALL find the repeating structure it belongs to. For each ancestor L of the picked element (candidate list parent, never `body`) and each ancestor-or-self I of the picked element below L (candidate item), the item set SHALL be every descendant of L reachable by the same tag path as I, ignoring sibling positions, whose tag equals I's tag and whose child-tag multiset to depth 2 is similar to the group. Similarity SHALL be judged against the group's centroid after one pass, so an unusual picked item still recovers its group. Inference SHALL propose the pair (L, I) with the most items where the item count is at least 3, preferring the nearest I on ties, and SHALL report the list parent, the item set, the siblings under L on I's level that were skipped as dissimilar, and the next broader and next narrower item levels with their match counts. The document body SHALL never be proposed as list parent or item. Single-child block wrappers below the item SHALL be descended into as today.
 
 #### Scenario: Grid of cards
 - **WHEN** the picked element is a title inside one of 24 `article` cards in a `div.grid`
-- **THEN** the proposed container is the `article`, the broader level is none or a wrapper with 24 matches, and the narrower level is the `a` inside each card
+- **THEN** the proposed list parent is `div.grid`, the container is the `article`, the broader level is none or a wrapper with 24 matches, and the narrower level is the `a` inside each card
+
+#### Scenario: Cards grouped in rows
+- **WHEN** 24 cards sit 4 per row under 6 `div.row` elements inside `div.grid` and the picked element is one title
+- **THEN** the proposed list parent is `div.grid`, the item set holds all 24 cards, and the broader level is `div.row` with 6 matches
+
+#### Scenario: Dissimilar sibling skipped and reported
+- **WHEN** a result list has 8 result blocks and one "questions" block with a different child structure under the same parent
+- **THEN** the item set holds the 8 results and one skipped sibling is reported
+
+#### Scenario: Odd item picked
+- **WHEN** the picked title is inside the one result that carries a thumbnail and 7 results do not
+- **THEN** the item set holds all 8 results
 
 #### Scenario: Single hero element
 - **WHEN** the picked element is the only `h1` on the page with no similar siblings at any level

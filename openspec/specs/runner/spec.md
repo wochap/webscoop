@@ -35,7 +35,7 @@ The runner SHALL navigate to the substituted URL and wait until the document is 
 - **THEN** the run completes normally
 
 ### Requirement: Candidate resolution order
-For the item container and for each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. When no candidate resolves and healing is enabled, the runner SHALL continue down the healing ladder defined by the healing capability before treating the target as missing. The candidate or healing rung used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and name, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` by CSS selector, `xpath` by XPath.
+For the list parent, the item container, and each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. When no candidate resolves and healing is enabled, the runner SHALL continue down the healing ladder defined by the healing capability before treating the target as missing. The candidate or healing rung used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and name, or by role alone when the value has no name part, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` and `class` by CSS selector, `xpath` by XPath.
 
 #### Scenario: First candidate fails, second succeeds
 - **WHEN** a field's first candidate matches nothing and its second matches one element
@@ -45,12 +45,24 @@ For the item container and for each field, the runner SHALL try selector candida
 - **WHEN** no candidate of a field matches and its fingerprint matches a live element above the threshold
 - **THEN** the field is extracted from that element and the report records the fuzzy outcome
 
+#### Scenario: Role-only candidate
+- **WHEN** the item container's first candidate is `role` `listitem`
+- **THEN** every element with role `listitem` inside the list parent is a container
+
 ### Requirement: Item scoped extraction
-When the recipe has an `item` block, the runner SHALL resolve containers, drop those matching an `exclude` selector, and resolve each `item` scoped field relative to each remaining container. A field that resolves more than one element within a container SHALL use the first. Page scoped fields SHALL be resolved once against the document and repeated on every row.
+When the recipe has an `item` block, the runner SHALL resolve the list parent from `item.within` when present and resolve containers inside it, else against the document; drop containers matching an `exclude` selector; and resolve each `item` scoped field relative to each remaining container. A field that resolves more than one element within a container SHALL use the first. Page scoped fields SHALL be resolved once against the document and repeated on every row. When `within` is present and resolves nothing, the container SHALL count as unresolved and the run report SHALL name `within` as the missing target.
 
 #### Scenario: Mixed scopes
 - **WHEN** a recipe has 24 containers, an item field `title`, and a page field `category`
 - **THEN** 24 rows are emitted and each carries the same `category` value
+
+#### Scenario: Containers scoped by within
+- **WHEN** `item.within` resolves the product list and `item.selectors` also matches 4 cards in a sidebar
+- **THEN** 24 rows are emitted and the sidebar cards are ignored
+
+#### Scenario: Within missing
+- **WHEN** no `within` candidate resolves
+- **THEN** the run report marks the item container missing and names `within`
 
 ### Requirement: Missing fields
 A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing`. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. On later pages a required field missing on every row SHALL fail the run with exit 3 after emitting the earlier pages. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once.

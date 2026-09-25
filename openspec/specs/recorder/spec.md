@@ -50,11 +50,11 @@ For the selected element the panel SHALL list every generated selector candidate
 - **THEN** the list shows a `testid` candidate with match count 24 and a `stable` badge
 
 ### Requirement: Item inference from one pick
-When a selection is made and no item container is set, the recorder SHALL look for a repeating structure: the nearest ancestor that has at least two siblings with the same tag and a similar child structure. When found, the panel SHALL propose that ancestor as the item container, state the number of matches, highlight every match on the page, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the item container and make the original selection an item scoped field.
+When a selection is made and no item container is set, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the item container with `within` from the list parent field and make the original selection an item scoped field.
 
 #### Scenario: Catalog title infers 24 items
 - **WHEN** the user picks one product title on the tier 0 catalog
-- **THEN** the panel proposes the product card as container with 24 matches and all 24 cards are highlighted
+- **THEN** the panel proposes the product list as list parent and the product card as container with 24 matches and all 24 cards are highlighted
 
 #### Scenario: Broader level
 - **WHEN** the proposal is the inner link element with 24 matches and the user chooses the broader level
@@ -63,6 +63,10 @@ When a selection is made and no item container is set, the recorder SHALL look f
 #### Scenario: No repetition
 - **WHEN** the user picks the page heading
 - **THEN** no container is proposed and the field is offered with scope `page`
+
+#### Scenario: Skipped siblings shown
+- **WHEN** the picked title sits in a result list with 8 results and one dissimilar block
+- **THEN** the proposal shows 8 matches and 1 skipped
 
 ### Requirement: Exclusions
 While the item container is proposed or set, the user SHALL be able to add an exclusion selector. Containers matching it SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list.
@@ -188,3 +192,42 @@ The panel SHALL list steps in order with kind, target summary, value, `when`, an
 #### Scenario: Replay one step
 - **WHEN** the user replays the search `type` step
 - **THEN** the search box on the live page contains the step's value
+### Requirement: Editing the proposal fields
+While the proposal is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
+
+#### Scenario: Pick a wider list parent
+- **WHEN** the proposal names `div.row` as list parent with 4 items and the user picks `div.grid` for the list parent
+- **THEN** the item count becomes 24 and all 24 cards are highlighted
+
+#### Scenario: Type a role selector for the item
+- **WHEN** the user replaces the item selector with `role=listitem`
+- **THEN** the count reflects `listitem` elements inside the list parent and the highlights update
+
+#### Scenario: Picking outside the allowed range
+- **WHEN** the user is picking a list parent and clicks an element that is not an ancestor of the item
+- **THEN** the click is ignored and the overlay tag says the element is outside the list
+
+### Requirement: Include all siblings
+The proposal block SHALL offer an "include all siblings" toggle. When on, every element under the list parent on the item's level with the item's tag SHALL count as an item regardless of similarity, and the skipped count SHALL read 0. Toggling off SHALL restore the similarity filter. The toggle SHALL not be saved in the recipe; its effect is the item selector chosen on confirm.
+
+#### Scenario: Include dissimilar block
+- **WHEN** the proposal shows 8 matches and 1 skipped and the user turns the toggle on
+- **THEN** the proposal shows 9 matches and 0 skipped
+
+### Requirement: Saved list parent
+Confirming a proposal SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent field. Setting an item container manually from a selection SHALL leave `within` absent unless the user then sets a list parent from the item block. The item block in the panel SHALL show the list parent with its match count and allow re-picking or clearing it after confirmation.
+
+#### Scenario: Within saved on confirm
+- **WHEN** the user confirms a proposal whose list parent is the product list
+- **THEN** the draft's `item.within` lists the list's candidates and the saved recipe carries them
+
+#### Scenario: Cleared list parent
+- **WHEN** the user clears the list parent field and confirms
+- **THEN** the saved recipe's `item` has no `within`
+
+### Requirement: Accessibility candidates for levels
+The list parent and item fields SHALL list their candidates like a field does, including role-only candidates, and the user MAY choose which is primary before confirming.
+
+#### Scenario: Role primary for the item
+- **WHEN** the item level has `role` `listitem` and `css` `li.product-item` candidates and the user picks the role one as primary
+- **THEN** the saved `item.selectors` lists `role` `listitem` first

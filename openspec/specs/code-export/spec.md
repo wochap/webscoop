@@ -39,11 +39,15 @@ Each stored selector candidate SHALL map to the same Playwright locator the runn
 - **THEN** the script extracts with the second candidate
 
 ### Requirement: Steps and extraction parity
-The script SHALL replay steps by kind and `when` as the runner does, skipping optional steps whose target is absent and exiting 3 for required ones; SHALL resolve the item container, drop excluded containers, read item scoped fields within each container and page scoped fields once; SHALL read attributes, inner HTML, or text per field type and attribute; SHALL convert values with the same rules as the CLI (`number`, `url`, `image`, `date`, `html`, `text`); and SHALL emit rows with `_page` and `_index`.
+The script SHALL replay steps by kind and `when` as the runner does, skipping optional steps whose target is absent and exiting 3 for required ones; SHALL resolve the list parent from `item.within` when present and the item container inside it, drop excluded containers, read item scoped fields within each container and page scoped fields once; SHALL read attributes, inner HTML, or text per field type and attribute; SHALL convert values with the same rules as the CLI (`number`, `url`, `image`, `date`, `html`, `text`); and SHALL emit rows with `_page` and `_index`. The script SHALL resolve `class` candidates as CSS selectors.
 
 #### Scenario: Rows equal the runner
 - **WHEN** the reference catalog recipe is exported and run against playground tier 0
 - **THEN** the script's rows equal `webscoop run` rows on every field including `_page` and `_index`
+
+#### Scenario: Within honoured
+- **WHEN** a recipe with `item.within` is exported and run against a page with a sidebar list
+- **THEN** the script's rows equal `webscoop run` rows and exclude the sidebar
 
 #### Scenario: Required step absent
 - **WHEN** a required click step finds no target
