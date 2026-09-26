@@ -158,7 +158,7 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
       [c('class', 'div.Mjj4Yd'), 8],
       // `:scope` anchors a combinator at the scope element itself.
       [c('css', ':scope > div > div'), 9],
-      [c('css', 'div > div'), 29],
+      [c('css', 'div > div'), 69],
       [c('css', ':scope > div'), 3],
       // A leading `//` becomes `.//`: it searches below the scope, never from the document root.
       [c('xpath', "//div[@id='rso']/div[1]/div[1]"), 0],
@@ -172,6 +172,18 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
       expect((await session.resolve(candidate, rso)).length, label).toBe(expected);
       expect((await fake.resolve(candidate, fakeRso)).length, `fake ${label}`).toBe(expected);
     }
+  });
+
+  it('matches a result link by role and its long name regardless of whitespace', async () => {
+    await session.goto(`${playground.url}/results`, { timeoutMs: 10_000 });
+    const p = dataset[0]!;
+    const crumbs = `› catalog › ${p.category.toLowerCase()} › ${p.url.split('/').pop()}`;
+    // The page inspector's name drops the space before the breadcrumb; Playwright's keeps it.
+    const inspected = `${p.title} Playground Shop https://shop.playground.example${crumbs}`;
+    expect(inspected.length).toBeGreaterThan(80);
+    expect(await session.resolve(c('role', `link|${inspected}`))).toHaveLength(1);
+    expect(await session.resolve(c('role', `link|${p.title} Playground Shop https://shop.playground.example ${crumbs}`))).toHaveLength(1);
+    expect(await session.resolve(c('role', `link|${p.title}`))).toHaveLength(0);
   });
 
   it('measures every element in snapshots, and positional xpaths address the same element', async () => {

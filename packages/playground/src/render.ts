@@ -573,11 +573,16 @@ export const RESULTS_PER_GROUP = 4;
  * wrappers with hashed classes below an anchored `div.main`. Each result is a
  * plain `div` with hashed classes, two levels below `div#rso` in group
  * wrappers of `RESULTS_PER_GROUP`, and one dissimilar "People also ask" block
- * sits among them at the same depth.
+ * sits among them at the same depth. Each result link wraps its heading
+ * and a breadcrumb, like Google's.
  */
 export function renderResults(products: readonly Product[], query = 'electronics'): string {
+  // The result link wraps the title, the site name, and a breadcrumb `cite`
+  // whose ` › ` segments sit in a nested `role="text"` span, as on Google:
+  // accessible name implementations disagree on the space before the `›`,
+  // and the link's name runs past 80 characters.
   const result = (p: Product) => `<div class="Mjj4Yd">
-<div class="yuRUbf"><a href="${escapeHtml(p.url)}"><h3 class="LC20lb">${escapeHtml(p.title)}</h3></a></div>
+<div class="yuRUbf"><div><span><a class="zReHs" href="${escapeHtml(p.url)}"><br><h3 class="LC20lb">${escapeHtml(p.title)}</h3><div class="notranslate ESMNde"><div class="q0vns"><span class="H9lube"><div class="eqA2re" aria-hidden="true"><img class="XNo5Ab" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt=""></div></span><div class="CA5RN"><div><span class="VuuXrf">Playground Shop</span></div><div class="byrV5b"><cite class="qLRx3b" role="text">https://shop.playground.example<span class="ylgVCe" role="text"> › catalog › ${escapeHtml(p.category.toLowerCase())} › ${escapeHtml(p.url.split('/').pop() ?? '')}</span></cite></div></div></div></div></a></span></div></div>
 <div class="VwiC3b"><span>${escapeHtml(p.category)} · ${formatPrice(p.price)} · rated ${p.rating} out of 5</span></div>
 </div>`;
   const questions = `<div class="hlcw0c">

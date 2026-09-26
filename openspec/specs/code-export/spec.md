@@ -32,7 +32,7 @@ The script SHALL launch Chromium headed by default and headless with `--headless
 - **THEN** no browser window is shown and the rows are produced
 
 ### Requirement: Selector mapping
-Each stored selector candidate SHALL map to the same Playwright locator the runner uses: `role` to `getByRole(role, { name, exact: true })` (or `getByRole(role)` without a name), `testid` to `getByTestId`, `id` to a CSS id locator, `text` to `getByText(value, { exact: true })`, `css` to `locator('css=...')`, `xpath` to `locator('xpath=...')`. For every target the script SHALL try candidates in stored order and use the first with at least one match.
+Each stored selector candidate SHALL map to the same Playwright locator the runner uses: `role` to `getByRole(role, { name })` with the name matched as a whole but ignoring whitespace (or `getByRole(role)` without a name), `testid` to `getByTestId`, `id` to a CSS id locator, `text` to `getByText(value, { exact: true })`, `css` to `locator('css=...')`, `xpath` to `locator('xpath=...')`. For every target the script SHALL try candidates in stored order and use the first with at least one match.
 
 #### Scenario: Second candidate used
 - **WHEN** a field's first candidate matches nothing and its second matches

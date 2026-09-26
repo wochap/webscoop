@@ -35,7 +35,7 @@ The runner SHALL navigate to the substituted URL and wait until the document is 
 - **THEN** the run completes normally
 
 ### Requirement: Candidate resolution order
-For the list parent, the item container, and each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. When no candidate resolves and healing is enabled, the runner SHALL continue down the healing ladder defined by the healing capability before treating the target as missing. The candidate or healing rung used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and name, or by role alone when the value has no name part, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` and `class` by CSS selector, `xpath` by XPath.
+For the list parent, the item container, and each field, the runner SHALL try selector candidates in listed order and use the first that resolves at least one element. When no candidate resolves and healing is enabled, the runner SHALL continue down the healing ladder defined by the healing capability before treating the target as missing. The candidate or healing rung used SHALL be recorded in the run report. Candidate strategies resolve as follows: `role` by accessible role and whole accessible name compared without whitespace (accessible name implementations differ on spaces between child elements), or by role alone when the value has no name part, `testid` by `data-testid`, `id` by element id, `text` by exact visible text, `css` and `class` by CSS selector, `xpath` by XPath.
 
 #### Scenario: First candidate fails, second succeeds
 - **WHEN** a field's first candidate matches nothing and its second matches one element

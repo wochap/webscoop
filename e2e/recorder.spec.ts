@@ -388,3 +388,25 @@ test('results under div#rso: the proposal counts every result, and the saved rec
   expect(rows.map((row) => row.title)).toEqual(dataset.slice(0, 8).map((p) => p.title));
   expect(rows.every((row) => row.snippet.includes('rated'))).toBe(true);
 });
+
+test('results link: walking up from the heading offers role=link with its long name matching once, and the item field keeps the role alone', async ({ scoop }) => {
+  const url = `http://127.0.0.1:${scoop.playground.port}/results`;
+  const r = await scoop.record([url, '--name', 'serp-links']);
+  await r.pick('h3.LC20lb', 1);
+  await r.until((s) => s.host?.proposal);
+  await r.key('ArrowLeft');
+  const selected = await r.until((s) => (s.host?.selected?.selection.tag === 'a' ? s.host.selected : undefined));
+  const role = selected.selection.candidates.find((c) => c.strategy === 'role')!;
+  // The name runs past 80 characters and the page spells the breadcrumb without the space Playwright keeps.
+  expect(role.value.startsWith(`link|${dataset[1]!.title} `)).toBe(true);
+  expect(role.value.length).toBeGreaterThan(85);
+  expect(role.value).toContain('example›');
+  expect(role.count).toBe(1);
+  await r.key('Enter');
+  const draft = await r.until((s) => (s.host?.draft.item?.count === 8 && s.host.draft.fields.length === 1 ? s.host.draft : undefined));
+  const field = draft.fields[0]!;
+  expect(field.scope).toBe('item');
+  expect(field.count).toBe(8);
+  expect(field.selectors.find((c) => c.strategy === 'role')).toMatchObject({ value: 'link' });
+  expect((await r.closeWindow()).code).toBe(0);
+});

@@ -446,13 +446,19 @@ class Session {
 
 type Root = Page | Locator;
 
+/** A role name as a pattern that ignores whitespace: accessible name implementations differ on spaces between child elements. */
+function roleName(name: string): RegExp {
+  const chars = [...name.replace(/\s+/g, '')].map((ch) => ch.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'));
+  return new RegExp('^\\s*' + chars.join('\\s*') + '\\s*$');
+}
+
 function locate(root: Root, selector: Selector): Locator {
   const { value } = selector;
   switch (selector.strategy) {
     case 'role': {
       const bar = value.indexOf('|');
       const role = (bar === -1 ? value : value.slice(0, bar)) as Parameters<Page['getByRole']>[0];
-      return bar === -1 ? root.getByRole(role) : root.getByRole(role, { name: value.slice(bar + 1), exact: true });
+      return bar === -1 ? root.getByRole(role) : root.getByRole(role, { name: roleName(value.slice(bar + 1)) });
     }
     case 'testid':
       return root.getByTestId(value);

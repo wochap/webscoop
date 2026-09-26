@@ -66,7 +66,8 @@ describe('item containers relative to the list parent', () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
     const title = byClass(t.page, 'LC20lb', 5);
     await t.pick(title);
-    const group = title.parent!.parent!.parent!.parent!;
+    let group = title.parent!;
+    while (group.attrs.class !== 'hlcw0c') group = group.parent!;
     expect(group.attrs.class).toBe('hlcw0c');
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(group) });
     expect(proposal(t).proposed.count).toBe(4);

@@ -294,7 +294,7 @@ export class FakeSession implements Session {
       case 'role': {
         const [role, ...rest] = candidate.value.split('|');
         const name = rest.length > 0 ? rest.join('|') : undefined;
-        matches = pool.filter((n) => roleOf(n) === role && (name === undefined || accessibleName(n) === name));
+        matches = pool.filter((n) => roleOf(n) === role && (name === undefined || accessibleName(n).replace(/\s+/g, '') === name.replace(/\s+/g, '')));
         break;
       }
       case 'testid':

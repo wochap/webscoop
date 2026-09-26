@@ -443,11 +443,17 @@ class Session:
 # ---------------------------------------------------------------------------
 
 
+def role_name(name):
+    """A role name as a pattern that ignores whitespace, like the TypeScript runner."""
+    chars = [re.escape(ch) for ch in re.sub(r"\s+", "", name)]
+    return re.compile(r"^\s*" + r"\s*".join(chars) + r"\s*$")
+
+
 def locate(root, selector):
     strategy, value = selector["strategy"], selector["value"]
     if strategy == "role":
         role, bar, name = value.partition("|")
-        return root.get_by_role(role, name=name, exact=True) if bar else root.get_by_role(role)
+        return root.get_by_role(role, name=role_name(name)) if bar else root.get_by_role(role)
     if strategy == "testid":
         return root.get_by_test_id(value)
     if strategy == "id":

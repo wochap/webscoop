@@ -171,7 +171,9 @@ export function generate(node: AnnotatedNode, ctx: GenerateContext = {}): Candid
   const out: Candidate[] = [];
   if (node.role && !NO_ROLE.has(node.role)) {
     if (ctx.level) out.push({ strategy: 'role', value: node.role, stability: 'stable' });
-    else if (node.name && node.name.length <= max) out.push({ strategy: 'role', value: `${node.role}|${node.name}`, stability: 'stable' });
+    // No length cap: a link wrapping a heading and a URL has a long name, and
+    // item scoped fields keep only the role (`relativize` drops the name).
+    else if (node.name) out.push({ strategy: 'role', value: `${node.role}|${node.name}`, stability: 'stable' });
   }
   const testid = node.attrs['data-testid'];
   if (testid) out.push({ strategy: 'testid', value: testid, stability: 'stable' });

@@ -41,13 +41,23 @@ class PwRef implements ElementRef {
 
 type Root = Page | Locator;
 
+/**
+ * A role candidate's name as a pattern that ignores whitespace: accessible
+ * name implementations differ on spaces between child elements (the page's
+ * inspector writes `com› blog` where Playwright computes `com › blog`).
+ */
+function roleName(name: string): RegExp {
+  const chars = [...name.replace(/\s+/g, '')].map((ch) => ch.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'));
+  return new RegExp(`^\\s*${chars.join('\\s*')}\\s*$`);
+}
+
 function locate(root: Root, candidate: SelectorCandidate): Locator {
   const { value } = candidate;
   switch (candidate.strategy) {
     case 'role': {
       const bar = value.indexOf('|');
       const role = (bar === -1 ? value : value.slice(0, bar)) as Parameters<Page['getByRole']>[0];
-      return bar === -1 ? root.getByRole(role) : root.getByRole(role, { name: value.slice(bar + 1), exact: true });
+      return bar === -1 ? root.getByRole(role) : root.getByRole(role, { name: roleName(value.slice(bar + 1)) });
     }
     case 'testid':
       return root.getByTestId(value);

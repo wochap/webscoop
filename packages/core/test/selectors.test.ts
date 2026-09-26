@@ -241,6 +241,21 @@ describe('rank with class candidates', () => {
   });
 });
 
+describe('role candidates with long names', () => {
+  it('keeps the role candidate when the accessible name is longer than the text limit, and relativizes it to the role', () => {
+    const title = 'Wireless Mouse with Silent Clicks and Long Battery Life';
+    const root = annotate(
+      h('html', {}, h('body', {}, h('div', { class: 'Mjj4Yd' }, h('a', { href: '/r', class: 'zReHs' }, h('h3', {}, title), h('span', {}, 'Playground Shop https://shop.playground.example › catalog › electronics › p0001'))))),
+    );
+    const link = descendantsOf(root).find((n) => n.tag === 'a')!;
+    const role = generate(link).find((c) => c.strategy === 'role')!;
+    expect(role.value.startsWith(`link|${title}`)).toBe(true);
+    expect(role.value.length).toBeGreaterThan(80);
+    const item = descendantsOf(root).find((n) => n.attrs.class === 'Mjj4Yd')!;
+    expect(relativize(role, item)).toMatchObject({ strategy: 'role', value: 'link' });
+  });
+});
+
 describe('relativize', () => {
   it('anchors a css candidate below its container with :scope when asked', () => {
     const root = annotate(

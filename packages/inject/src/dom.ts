@@ -69,6 +69,11 @@ export function roleOf(el: Element): string | undefined {
   }
 }
 
+/** Accessible names compared without whitespace, like the host's role matching. */
+export function sameName(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
+}
+
 export function nameOf(el: Element): string | undefined {
   try {
     const name = collapseWhitespace(computeAccessibleName(el));
@@ -254,7 +259,7 @@ export function resolveLocal(candidate: ProtocolCandidate, within?: Element, doc
       const bar = value.indexOf('|');
       const role = bar === -1 ? value : value.slice(0, bar);
       const name = bar === -1 ? undefined : value.slice(bar + 1);
-      return queryAll('*', scope).filter((el) => roleOf(el) === role && (name === undefined || nameOf(el) === name));
+      return queryAll('*', scope).filter((el) => roleOf(el) === role && (name === undefined || sameName(nameOf(el), name)));
     }
     case 'text': {
       const wanted = collapseWhitespace(value);
