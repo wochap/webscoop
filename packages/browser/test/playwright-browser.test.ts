@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { annotate, descendantsOf, refForNode, TimeoutError, xpathFor, type SelectorCandidate, type SerializedElement, type Session } from '@webscoop/core';
@@ -6,6 +8,7 @@ import { FakeBrowser } from '@webscoop/core/testing';
 import { dataset, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PlaywrightBrowser } from '../src';
+import { PlaywrightSession } from '../src/playwright-browser';
 
 const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 
@@ -13,6 +16,22 @@ const c = (strategy: SelectorCandidate['strategy'], value: string): SelectorCand
   strategy,
   value,
   stability: 'medium',
+});
+
+describe('PlaywrightSession snapshot errors', () => {
+  it('names the call when a host snapshot fails', async () => {
+    const page = {
+      on() {},
+      evaluate: async () => {
+        throw new Error('Execution context was destroyed');
+      },
+    };
+    const session = new PlaywrightSession({} as never, page as never);
+    const error = await session.snapshot().catch((e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/^snapshot: /);
+    expect((error as Error).message).toContain('Execution context was destroyed');
+  });
 });
 
 describe.skipIf(!hasDisplay)('PlaywrightBrowser title (integration)', () => {
@@ -76,6 +95,47 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
   it('waits for a slow page within the timeout', async () => {
     const info = await session.goto(`${playground.url}/catalog?tier=0&delayMs=1500`, { timeoutMs: 10_000 });
     expect(info.status).toBe(200);
+  });
+
+  it('treats load as ready on a page that never goes network idle', async () => {
+    const server: Server = createServer((req, res) => {
+      if (req.url === '/hang') return; // never answers
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><title>busy</title><p id="ready">ready</p><script>fetch("/hang")</script>');
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      const started = Date.now();
+      const info = await session.goto(url, { timeoutMs: 30_000 });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(info.status).toBe(200);
+      expect(await texts(c('id', 'ready'))).toEqual(['ready']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+    }
+  });
+
+  it('snapshots a document nested 300 elements deep', async () => {
+    const depth = 300;
+    const html = `${'<div>'.repeat(depth - 1)}<div id="innermost">deep</div>${'</div>'.repeat(depth - 1)}`;
+    await session.goto(`data:text/html,${encodeURIComponent(html)}`, { timeoutMs: 10_000 });
+    const doc = (await session.snapshot()) as SerializedElement;
+    let node = doc.children.find((child): child is SerializedElement => child.type === 'element' && child.tag === 'body')!;
+    let divs = 0;
+    for (;;) {
+      const next = node.children.find((child): child is SerializedElement => child.type === 'element');
+      if (!next) break;
+      node = next;
+      if (node.tag === 'div') divs++;
+    }
+    expect(divs).toBe(depth);
+    expect(node.attrs.id).toBe('innermost');
+    expect(node.children).toEqual([{ type: 'text', text: 'deep' }]);
+    const [outer] = await session.resolve(c('xpath', '/html/body/div'));
+    const sub = (await session.snapshot(outer)) as SerializedElement;
+    expect(sub.tag).toBe('div');
   });
 
   it('fails with a TimeoutError when the page is slower than the timeout', async () => {

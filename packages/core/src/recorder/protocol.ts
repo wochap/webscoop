@@ -399,7 +399,7 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
   msg('draft.cancelItems', {}),
   /** Reopen the confirmed item as a proposal, seeded from its list parent, container, and exclusions. */
-  msg('draft.editItem', {}),
+  msg('draft.editItem', { snapshot: z.optional(SnapshotSchema) }),
   /**
    * Set the list parent or the item container: from an element picked on the
    * page (with a fresh snapshot when no proposal is shown), from typed

@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent } from '@testing-library/react';
+import { HOST_BINDING, type PageMessage } from '@webscoop/core';
+import { dataset, render } from '@webscoop/playground';
 import { afterEach, describe, expect, it } from 'vitest';
+import { Overlay } from '../src/overlay';
+import { Runtime } from '../src/runtime';
 import { hostStates, renderPanel, withTable } from './panel';
 
 afterEach(cleanup);
@@ -53,5 +57,25 @@ describe('editing the confirmed item container in the panel', () => {
     expect(panel.q('items-card')!.textContent).toContain('Repeating items found');
     expect(panel.q('confirm-items')!.textContent).toContain('Use these 24 items');
     expect(panel.q('cancel-items')!.textContent).toBe('Not a list');
+  });
+
+  it('attaches the page snapshot to draft.editItem', async () => {
+    const html = render(dataset, { tier: 0, seed: 1 });
+    document.documentElement.innerHTML = html.replace(/^[\s\S]*?<html[^>]*>/, '').replace(/<\/html>\s*$/, '');
+    const { confirmed } = await confirmedState();
+    const sent: PageMessage[] = [];
+    (window as unknown as Record<string, unknown>)[HOST_BINDING] = async (msg: PageMessage) => {
+      sent.push(msg);
+      return { kind: 'draft.state', state: confirmed };
+    };
+    const layer = document.createElement('div');
+    document.body.appendChild(layer);
+    const overlay = new Overlay(layer);
+    const runtime = new Runtime({ win: window, overlay });
+    runtime.store.setHost(confirmed);
+    await runtime.send({ kind: 'draft.editItem' });
+    expect(sent.at(-1)).toMatchObject({ kind: 'draft.editItem', snapshot: { tag: 'html' } });
+    runtime.dispose();
+    overlay.dispose();
   });
 });

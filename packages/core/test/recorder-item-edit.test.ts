@@ -1,6 +1,6 @@
 import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
-import { emptyDraft, type Draft, type RecorderState } from '../src';
+import { detach, emptyDraft, type Draft, type RecorderState } from '../src';
 import { h } from '../src/testing';
 import { byClass, cardPath, harness, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
@@ -45,6 +45,20 @@ describe('editing the confirmed item container', () => {
     // The draft does not change until the update.
     expect(t.controller.draft.tables[0]!.item).toEqual(before);
     expect(t.controller.draft.tables[0]!.fields).toHaveLength(2);
+  });
+
+  it('uses the snapshot the page attaches instead of asking the browser', async () => {
+    const t = await confirmed();
+    const scoped = t.session.snapshot.bind(t.session);
+    t.session.snapshot = async (within) => {
+      if (!within) throw new Error('snapshot: the host should not ask for the document');
+      return scoped(within);
+    };
+    await t.send({ kind: 'draft.editItem', snapshot: detach(t.page) });
+    expect(t.controller.state.error).toBeNull();
+    const p = proposal(t);
+    expect(p.editing).toBe(true);
+    expect(p.proposed).toMatchObject({ tag: 'article', count: 24 });
   });
 
   it('updates to the broader level, keeps the fields, and refreshes their counts', async () => {

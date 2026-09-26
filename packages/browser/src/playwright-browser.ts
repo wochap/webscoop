@@ -73,8 +73,12 @@ function locate(root: Root, candidate: SelectorCandidate): Locator {
   }
 }
 
-/** Runs in the page: serialize an element subtree into `SerializedNode` form. */
-function serializeInPage(element: Element | null): SerializedNode {
+/**
+ * Runs in the page: serialize an element subtree into `SerializedNode` form as
+ * a JSON string. A string crosses DevTools at any document depth; a nested
+ * object hits Chromium's CBOR-to-JSON nesting limit on deep pages.
+ */
+function serializeInPage(element: Element | null): string {
   const walk = (node: Node): SerializedNode | null => {
     if (node.nodeType === Node.TEXT_NODE) return { type: 'text', text: node.textContent ?? '' };
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
@@ -90,10 +94,10 @@ function serializeInPage(element: Element | null): SerializedNode {
     const bbox = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
     return { type: 'element', tag: el.tagName.toLowerCase(), attrs, children, bbox };
   };
-  return walk(element ?? document.documentElement) ?? { type: 'text', text: '' };
+  return JSON.stringify(walk(element ?? document.documentElement) ?? { type: 'text', text: '' });
 }
 
-class PlaywrightSession implements InteractiveSession {
+export class PlaywrightSession implements InteractiveSession {
   /** Current handler per exposed name; a binding can be registered only once per context. */
   private readonly bindings = new Map<string, (msg: unknown) => Promise<unknown>>();
 
@@ -120,7 +124,10 @@ class PlaywrightSession implements InteractiveSession {
     const deadline = Date.now() + opts.timeoutMs;
     try {
       const response = await this.page.goto(url, { waitUntil: 'load', timeout: opts.timeoutMs });
-      await this.page.waitForLoadState('networkidle', { timeout: Math.max(1, deadline - Date.now()) });
+      // `load` is ready; idle is only a short grace, since some pages never stop requesting.
+      await this.page
+        .waitForLoadState('networkidle', { timeout: Math.max(1, Math.min(SETTLE_IDLE_MS, deadline - Date.now())) })
+        .catch(() => {});
       return { url: this.page.url(), title: await this.page.title(), status: response?.status() ?? null };
     } catch (error) {
       if (error instanceof errors.TimeoutError) {
@@ -149,15 +156,19 @@ class PlaywrightSession implements InteractiveSession {
     const [ha, hb] = await Promise.all([(a as PwRef).locator.elementHandle(), (b as PwRef).locator.elementHandle()]);
     try {
       if (!ha || !hb) return false;
-      return await this.page.evaluate(([x, y]) => x === y, [ha, hb] as const);
+      return await ha.evaluate((x, y) => x === y, hb);
     } finally {
       await Promise.all([ha?.dispose(), hb?.dispose()]);
     }
   }
 
   async snapshot(within?: ElementRef): Promise<SerializedNode> {
-    if (within) return (within as PwRef).locator.evaluate(serializeInPage);
-    return this.page.evaluate(serializeInPage, null);
+    try {
+      const json = within ? await (within as PwRef).locator.evaluate(serializeInPage) : await this.page.evaluate(serializeInPage, null);
+      return JSON.parse(json) as SerializedNode;
+    } catch (error) {
+      throw new Error(`snapshot: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
   }
 
   async click(ref: ElementRef): Promise<void> {

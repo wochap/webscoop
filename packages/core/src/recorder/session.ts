@@ -431,7 +431,7 @@ export class RecorderController {
         else this.dropProposal();
         return;
       case 'draft.editItem':
-        return void (await this.editItem());
+        return void (await this.editItem(msg.snapshot));
       case 'draft.setLevel':
         return void (await this.setLevel(msg.level, msg.by, msg));
       case 'draft.pickLevel':
@@ -1031,12 +1031,12 @@ export class RecorderController {
    * both fixed, seeded with the item's exclusions. The pick stands in as the
    * first item field's element in that container, else the container itself.
    */
-  private async editItem(): Promise<void> {
+  private async editItem(snapshot?: SerializedElement): Promise<void> {
     this.notEditing();
     const item = this.table().item;
     if (!item) throw new Error('no item container to edit');
     this.clearSelection();
-    const root = annotate((await this.session.snapshot()) as SerializedElement);
+    const root = annotate(snapshot ?? ((await this.session.snapshot()) as SerializedElement));
     const parentRef = await listParent(this.session, item.within?.map(bare));
     const [containerRef] = parentRef === null ? [] : await this.containers();
     const [containerNode] = containerRef ? await this.nodesFor([containerRef], root) : [];

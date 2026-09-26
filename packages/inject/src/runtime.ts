@@ -94,9 +94,12 @@ export class Runtime implements Actions {
     }
   }
 
-  /** The host maps a typed selector's or an edited field's first match to a path in the page's own snapshot. */
+  /**
+   * The host maps a typed selector's, an edited field's, or the edited item
+   * container's first match to a path in the page's own snapshot.
+   */
   private withSnapshot(msg: PageMessage): PageMessage {
-    if ((msg.kind !== 'selection.setSelector' && msg.kind !== 'draft.editField') || msg.snapshot) return msg;
+    if ((msg.kind !== 'selection.setSelector' && msg.kind !== 'draft.editField' && msg.kind !== 'draft.editItem') || msg.snapshot) return msg;
     return { ...msg, snapshot: snapshotOf(readDocument(null, this.doc).root) };
   }
 
