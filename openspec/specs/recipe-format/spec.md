@@ -75,7 +75,7 @@ A table MAY declare an `item` block with `selectors` (a ranked list of selector 
 - **THEN** validation fails and the error names the field
 
 ### Requirement: Fields
-Every table SHALL declare at least one field under `fields`. Each field SHALL have a `name` (unique within its table), a `type` among `text`, `number`, `url`, `image`, `date`, `html`, an optional `scope` of `item` or `page` defaulting to `item` when the table has an `item` block and to `page` otherwise, a ranked non-empty `selectors` list, an optional `attr` naming the attribute to read instead of text content, an `optional` boolean defaulting to false, and an optional `fingerprint` object. At most one field per table MAY set `key: true` to mark it as the table's dedup key.
+Every table SHALL declare at least one field under `fields`. Each field SHALL have a `name` (unique within its table), a `type` among `text`, `number`, `url`, `image`, `date`, `html`, an optional `scope` of `item` or `page` defaulting to `item` when the table has an `item` block and to `page` otherwise, a ranked non-empty `selectors` list, an optional `attr` naming the attribute to read instead of text content, an `optional` boolean defaulting to false, a `fallback` boolean defaulting to false, and an optional `fingerprint` object. At most one field per table MAY set `key: true` to mark it as the table's dedup key.
 
 #### Scenario: Duplicate field names are rejected
 - **WHEN** two fields of one table share the name `price`
@@ -92,6 +92,10 @@ Every table SHALL declare at least one field under `fields`. Each field SHALL ha
 #### Scenario: Scope defaults from the table
 - **WHEN** a field in a table with an `item` block omits `scope`
 - **THEN** the field has scope `item`
+
+#### Scenario: Fallback defaults to false
+- **WHEN** a field omits `fallback`
+- **THEN** the field has `fallback` false and a saved recipe omits the key
 
 ### Requirement: Selector candidates
 Each selector candidate SHALL have a `strategy` among `role`, `testid`, `id`, `text`, `css`, `class`, `xpath`, a `value` string, and a `stability` among `stable`, `medium`, `fragile`. The order of the list is the order of preference. Candidates SHALL be self-describing so that a runner can try them without any other context. A `class` candidate's value SHALL be a CSS selector.

@@ -332,15 +332,23 @@ The list parent and item fields SHALL list their candidates like a field does, i
 - **THEN** the saved `item.selectors` lists `role` `listitem` first
 
 ### Requirement: Selector chain display
-Where the panel shows an item container or an item scoped field, it SHALL also show the composed selector chain from the primary selectors: list parent, then item container, then field, separated by `»`, omitting the levels that are not set. The chain SHALL be display only; the recipe SHALL keep one scoped selector list per level.
+Where the panel shows an item container or an item scoped field, it SHALL also show the composed selector chain from the primary selectors: list parent, then item container, then field, omitting the levels that are not set. The chain SHALL be shown as a path of chips, one chip per level, each chip holding that level's full `strategy=value` text, wrapping onto more lines instead of truncating. The chips SHALL be display only and not interactive. The same component SHALL be used in the item summary, the item proposal, the inspector, and every item scoped field row. The recipe SHALL keep one scoped selector list per level.
 
 #### Scenario: Chain for an item field
 - **WHEN** the list parent is `id=rso`, the item container is `css=:scope > div > div`, and the selected element is an item scoped `h3`
-- **THEN** the panel shows `id=rso » css=:scope > div > div » css=h3`
+- **THEN** the panel shows the chips `id=rso`, `css=:scope > div > div`, `css=h3` in that order
 
 #### Scenario: Chain without a list parent
 - **WHEN** the confirmed item container has no list parent
 - **THEN** the chain starts at the item container
+
+#### Scenario: Long selector wraps
+- **WHEN** a field's primary candidate is `class=div.VwiC3b.yXK7lf.p4wth.r025kc.hJNv6b`
+- **THEN** the field row shows the whole value, wrapped, with no ellipsis
+
+#### Scenario: Chips are not interactive
+- **WHEN** the user clicks a chip in a field row's chain
+- **THEN** nothing changes except what clicking the field row already does
 
 ### Requirement: Clear the selection
 The selection panel SHALL offer a clear control. Clearing SHALL remove the selection, any item proposal shown for it, and a pending field edit, stop highlighting the selected element, and show the empty state: the pick strip with no inspector, candidates, or actions. The draft SHALL NOT change. Confirmed item containers SHALL stay highlighted.
@@ -453,3 +461,28 @@ When the host needs the page's DOM snapshot without a pick, such as when the con
 #### Scenario: Host snapshot of a deep document
 - **WHEN** the host requests a snapshot of a document nested more than 200 elements deep
 - **THEN** the snapshot is returned with every element present
+
+### Requirement: Field fallback toggle
+Each field row SHALL offer a `fallback` toggle next to `optional` and `key`, off by default, that sets the field's `fallback` value in the draft. A test run SHALL honor the value.
+
+#### Scenario: Turn fallback on
+- **WHEN** the user turns on `fallback` for field `desc` and saves
+- **THEN** the saved recipe has `fallback: true` on `desc`
+
+#### Scenario: Test run with fallback off
+- **WHEN** the item container matches a block where the required field's primary candidate misses, and `fallback` is off
+- **THEN** the test run drops that row and reports the missing field
+
+### Requirement: Field container coverage
+Each item scoped field row SHALL show the number of item containers in which the field's primary candidate matches, out of the container count, such as `9 / 11 items`.
+
+#### Scenario: Partial coverage shown
+- **WHEN** 11 containers are set and the field's primary candidate matches in 9
+- **THEN** the field row shows `9 / 11 items`
+
+### Requirement: Highlight matches the runner
+The page highlight of item containers SHALL cover the same elements the runner resolves as containers for the same item block, including CSS selectors that start with `:scope`.
+
+#### Scenario: Scope prefixed container selector
+- **WHEN** the list parent is `id=rso` and the item container is `css=:scope > div > div > div` matching 11 elements
+- **THEN** all 11 elements are highlighted as items

@@ -201,3 +201,22 @@ When a window port is supplied, the runner SHALL call `hide` after the browser s
 #### Scenario: Show then hide around a guard
 - **WHEN** a guard is raised and later clears
 - **THEN** `show` is called on raise and `hide` on clear
+
+### Requirement: Per-row candidate fallback
+After the runner settles an item scoped field on a page (candidate order and healing, as in candidate resolution order), it SHALL resolve that field in each container with the settled primary candidate only, unless the field sets `fallback: true`. A container where the settled primary candidate matches nothing SHALL yield no value for that field, and the missing fields rules SHALL apply. With `fallback: true`, the runner SHALL try the settled candidates in listed order in each container and use the first that matches inside it. Healing SHALL behave the same in both modes.
+
+#### Scenario: Fallback off, primary misses in one container
+- **WHEN** a required item field `desc` has `fallback` false, its primary candidate matches in 9 of 10 containers, and a later candidate matches in the tenth
+- **THEN** the tenth row is dropped for missing `desc` and no value comes from the later candidate
+
+#### Scenario: Fallback off, optional field
+- **WHEN** an optional item field with `fallback` false misses its primary candidate in one container
+- **THEN** that row is kept and the field is empty
+
+#### Scenario: Fallback on
+- **WHEN** an item field sets `fallback: true`, its primary candidate misses in one container, and its second candidate matches there
+- **THEN** that row takes the value from the second candidate
+
+#### Scenario: Healing still applies with fallback off
+- **WHEN** a field with `fallback` false has no candidate matching in the first container and a fuzzy heal holds in most containers
+- **THEN** the healed selector is used for every row as before
