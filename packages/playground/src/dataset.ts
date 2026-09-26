@@ -10,9 +10,12 @@ export interface Product {
   /** Rating out of 5. */
   rating: number;
   category: string;
+  /** Seller name, cycling a fixed list by dataset index. */
+  seller: string;
 }
 
 const CATEGORY = 'Electronics';
+const SELLERS = ['Acme', 'Northwind', 'Globex', 'Initech'] as const;
 
 const rows: [title: string, price: number, rating: number][] = [
   ['Wireless Mouse', 24.99, 4.5],
@@ -53,6 +56,7 @@ export const dataset: readonly Product[] = Object.freeze(
       image: `/img/${id}.svg`,
       rating,
       category: CATEGORY,
+      seller: SELLERS[i % SELLERS.length]!,
     });
   }),
 );

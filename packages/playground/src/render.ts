@@ -21,6 +21,8 @@ export interface RenderOptions {
   mixed?: boolean;
   /** Group the cards N per `div.product-row` wrapper. Default none. */
   rows?: number | null;
+  /** Two identical `p.product-note` siblings per card after the rating. Default false. */
+  twins?: boolean;
 }
 
 export const GATE_KINDS = ['cookie', 'search', 'tabs'] as const;
@@ -82,6 +84,11 @@ export interface RenderContext {
   mixed: boolean;
   /** Cards per `div.product-row` wrapper, or null for a flat list. */
   rows: number | null;
+  /**
+   * Two `p.product-note > span` siblings per card after the rating: shipping
+   * days from the dataset index, then `Sold by <seller>`.
+   */
+  twins: boolean;
 }
 
 /** Class and attribute markup for a sponsored card, empty for a regular one. */
@@ -214,8 +221,11 @@ function catalogPage(ctx: RenderContext, layout: Layout, markup: Markup = DEFAUL
         : '';
       const thumb = ctx.mixed && datasetIndex(p) % 2 === 1 ? `<img class="product-thumb" src="${escapeHtml(p.image)}" alt="" width="48" height="48">\n` : '';
       const ad = ctx.mixed && position === 0 ? ' mixed-ad' : '';
+      const twins = ctx.twins
+        ? `\n<p class="product-note"><span>Ships in ${1 + (datasetIndex(p) % 5)} days</span></p>\n<p class="product-note"><span>Sold by ${escapeHtml(p.seller)}</span></p>`
+        : '';
       let content = `${thumb}<img class="product-image" src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}" width="220" height="140">
-${layout.priceFirst(position) ? `${price}\n${title}` : `${title}\n${price}`}${rating}
+${layout.priceFirst(position) ? `${price}\n${title}` : `${title}\n${price}`}${rating}${twins}
 <a class="product-link" href="${escapeHtml(p.url)}">${escapeHtml(markup.linkText)}</a>`;
       for (let depth = layout.wrappers(position) - 1; depth >= 0; depth--) {
         content = `<div class="${WRAPPER_CLASSES[depth % WRAPPER_CLASSES.length]}">\n${content}\n</div>`;
@@ -560,6 +570,7 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
     category: opts.category,
     mixed: opts.mixed ?? false,
     rows: opts.rows ?? null,
+    twins: opts.twins ?? false,
   };
   return applyChrome(renderer(ctx), ctx.chrome);
 }

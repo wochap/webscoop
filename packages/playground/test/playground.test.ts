@@ -19,7 +19,7 @@ describe('dataset', () => {
     expect(dataset).toHaveLength(24);
     expect(new Set(dataset.map((p) => p.id)).size).toBe(24);
     for (const p of dataset) {
-      expect(Object.keys(p).sort()).toEqual(['category', 'id', 'image', 'price', 'rating', 'title', 'url']);
+      expect(Object.keys(p).sort()).toEqual(['category', 'id', 'image', 'price', 'rating', 'seller', 'title', 'url']);
     }
   });
 });
@@ -117,6 +117,72 @@ describe('mixed and rows', () => {
   it('renames the new classes on churned tiers', () => {
     const html = render(dataset, { tier: 1, seed: 1, rows: 4, mixed: true });
     for (const cls of ['product-row', 'mixed-questions', 'product-thumb', 'mixed-ad']) expect(html).not.toContain(cls);
+  });
+});
+
+describe('twins', () => {
+  /** Per card: its product id and the `p` siblings holding only a `span`, in order. */
+  function twinsOf(html: string) {
+    const d = new JSDOM(html).window.document;
+    return Array.from(d.querySelectorAll('[data-product-id]')).map((card) => ({
+      id: card.getAttribute('data-product-id')!,
+      notes: Array.from(card.querySelectorAll('p')).filter(
+        (p) => p.children.length === 1 && p.children[0]!.tagName === 'SPAN' && p.childNodes.length === 1,
+      ),
+    }));
+  }
+
+  it('renders two product-note twins on every card after the rating and before the link', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog?twins=1`)).text();
+    const cards = twinsOf(html);
+    expect(cards).toHaveLength(24);
+    for (const { id, notes } of cards) {
+      expect(notes, id).toHaveLength(2);
+      expect(notes.every((n) => n.getAttribute('class') === 'product-note' && n.attributes.length === 1)).toBe(true);
+      expect(notes[0]!.nextElementSibling).toBe(notes[1]);
+      expect(notes[0]!.previousElementSibling!.getAttribute('class')).toBe('product-rating');
+      expect(notes[1]!.nextElementSibling!.tagName).toBe('A');
+      const p = dataset.find((row) => row.id === id)!;
+      expect(notes[1]!.textContent).toBe(`Sold by ${p.seller}`);
+    }
+    const byId = new Map(cards.map((c) => [c.id, c.notes]));
+    expect(byId.get('p01')![0]!.textContent).toBe('Ships in 1 days');
+    expect(byId.get('p05')![0]!.textContent).toBe('Ships in 5 days');
+    expect(byId.get('p06')![0]!.textContent).toBe('Ships in 1 days');
+  });
+
+  it('combines with mixed, rows, and url pagination', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog?twins=1&mixed=1&rows=4&paginate=url&page=1`)).text();
+    const cards = twinsOf(html);
+    expect(cards).toHaveLength(8);
+    for (const { id, notes } of cards) expect(notes, id).toHaveLength(2);
+    expect(count(html, 'class="product-note"')).toBe(16);
+  });
+
+  it('hashes both twins to one class at tier 1 and keeps their texts', () => {
+    const plain = twinsOf(render(dataset, { tier: 0, seed: 3, twins: true }));
+    const churned = render(dataset, { tier: 1, seed: 3, twins: true });
+    expect(churned).not.toContain('product-note');
+    const cards = twinsOf(churned);
+    expect(cards).toHaveLength(24);
+    for (const [i, { id, notes }] of cards.entries()) {
+      expect(notes, id).toHaveLength(2);
+      const cls = notes[0]!.getAttribute('class');
+      expect(cls).toBeTruthy();
+      expect(notes[1]!.getAttribute('class')).toBe(cls);
+      expect(notes.map((n) => n.textContent)).toEqual(plain[i]!.notes.map((n) => n.textContent));
+    }
+    expect(new Set(cards.map((c) => c.notes[0]!.getAttribute('class'))).size).toBe(1);
+  });
+
+  it('renders no twins without the flag', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog`)).text();
+    expect(html).not.toContain('product-note');
+    expect(html).not.toContain('Sold by');
+    expect(render(dataset, { tier: 0, seed: 1, twins: false })).toBe(render(dataset, { tier: 0, seed: 1 }));
   });
 });
 
