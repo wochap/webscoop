@@ -1,4 +1,4 @@
-import { dataset } from '@webscoop/playground';
+import { dataset, render } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
 import {
   detectPagination,
@@ -26,7 +26,7 @@ import {
 } from '../src';
 import { FakeBrowser, h } from '../src/testing';
 import { byClass, CATALOG, cardPath, harness, referenceRecipe } from './recorder-helpers';
-import { tier0Snapshot } from './snapshot';
+import { snapshotFromHtml, tier0Snapshot } from './snapshot';
 
 const candidate = { strategy: 'testid', value: 'price', stability: 'stable' } as const;
 const fp = { tag: 'span', textSample: '$1', attrs: {}, ancestors: ['a'], bbox: { x: 0, y: 0, w: 1, h: 1 } };
@@ -459,6 +459,23 @@ describe('RecorderController', () => {
     expect(results.tables[0]!.dropped).toEqual({ count: 6, fields: ['url'] });
     expect(results.tables[0]!.fields.find((f) => f.name === 'url')?.status).toBe('partial');
     expect(results.warnings[0]).toMatch(/^dropped 6 rows on page 1: required field "url" missing on rows /);
+    expect(results.error).toBeUndefined();
+  });
+
+  it('drops a row whose required field reads empty and reports it', async () => {
+    // Blank the fourth card's title: the element is there but holds only whitespace.
+    let seen = 0;
+    const html = render(dataset, { tier: 0, seed: 1 }).replace(/(<h2 class="product-title">)[^<]*(<\/h2>)/g, (match, open: string, close: string) =>
+      seen++ === 3 ? `${open}  \n  ${close}` : match,
+    );
+    expect(seen).toBe(24);
+    const t = await harness(snapshotFromHtml(html), draftFromRecipe(referenceRecipe()));
+    const results = await t.controller.testRun();
+    expect(results.tables[0]!.rowCount).toBe(23);
+    expect(results.tables[0]!.rows.every((row) => typeof row.title === 'string' && row.title !== '')).toBe(true);
+    expect(results.tables[0]!.dropped).toEqual({ count: 1, fields: ['title'] });
+    expect(results.tables[0]!.fields.find((f) => f.name === 'title')?.status).toBe('partial');
+    expect(results.warnings[0]).toBe('dropped 1 row on page 1: required field "title" missing on row 3');
     expect(results.error).toBeUndefined();
   });
 

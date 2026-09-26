@@ -42,7 +42,7 @@ export interface TableExtraction {
   containerCount: number;
   /** The first extracted row, before dropping, or null when there were none. */
   firstRow: Row | null;
-  /** Rows left out because a required field resolved nothing: container index and the fields that were missing. */
+  /** Rows left out because a required field resolved nothing or read empty: container index and the fields that were missing. */
   dropped: DroppedRow[];
   item: RunReport['item'];
   fields: FieldReport[];
@@ -133,6 +133,15 @@ async function readValue(session: Session, field: RecipeField, ref: ElementRef, 
   const attr = field.attr ?? defaultAttr(field.type);
   const raw = await session.read(ref, { ...(attr ? { attr } : {}), mode: field.type === 'html' ? 'html' : 'text' });
   return convertValue(field.type, raw, pageUrl);
+}
+
+/**
+ * A field's value on one row: found only when an element resolved and its
+ * converted value is neither null nor empty. Empty values yield null.
+ */
+async function fieldValue(session: Session, field: RecipeField, ref: ElementRef | undefined, pageUrl: string): Promise<{ value: unknown; found: boolean }> {
+  const value = ref ? await readValue(session, field, ref, pageUrl) : null;
+  return value === null || value === '' ? { value: null, found: false } : { value, found: true };
 }
 
 /** How a target ended up after the ladder: the selectors rows use, and its promotion when it healed. */
@@ -477,7 +486,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       if (field.scope === 'page') {
         const settled = await replay(selectors);
         const ref = settled?.resolution.refs[0];
-        const pageValue = ref ? { value: await readValue(session, field, ref, opts.pageUrl), found: true } : { value: null, found: false };
+        const pageValue = await fieldValue(session, field, ref, opts.pageUrl);
         states.push({ field, settled, pageValue, missingRows: [] });
       } else {
         const outcome: HealOutcome = selectors ? { kind: 'candidate', index: 0 } : UNRESOLVED;
@@ -494,7 +503,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
       record(settled);
       const ref = settled?.resolution.refs[0];
-      const pageValue = ref ? { value: await readValue(session, field, ref, opts.pageUrl), found: true } : { value: null, found: false };
+      const pageValue = await fieldValue(session, field, ref, opts.pageUrl);
       states.push({ field, settled, pageValue, missingRows: [] });
       continue;
     }
@@ -519,9 +528,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       let result = state.pageValue;
       if (!result) {
         const resolved = state.settled ? await resolveFirst(session, state.settled.selectors, container) : null;
-        result = resolved
-          ? { value: await readValue(session, state.field, resolved.refs[0]!, opts.pageUrl), found: true }
-          : { value: null, found: false };
+        result = await fieldValue(session, state.field, resolved?.refs[0], opts.pageUrl);
       }
       if (!result.found) state.missingRows.push(index);
       row[state.field.name] = result.value;
@@ -530,7 +537,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   }
   const containerCount = extracted.length;
 
-  // Drop rows on which a required field resolved nothing.
+  // Drop rows on which a required field resolved nothing or read empty.
   const dropped: DroppedRow[] = [];
   const rows: Row[] = [];
   for (const [index, row] of extracted.entries()) {

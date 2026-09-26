@@ -139,6 +139,44 @@ describe('missing fields', () => {
     expect(out.fields.find((f) => f.name === 'badge')?.status).toBe('missing');
   });
 
+  it('drops the row when a required text field reads only whitespace', async () => {
+    const s = await session(catalog(cards(24, (i) => (i === 5 ? { title: '  \n ' } : {}))));
+    const out = (await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(23);
+    expect(out.rows.some((row) => row.title === '' || row.title === null)).toBe(false);
+    expect(out.dropped).toEqual([{ index: 5, fields: ['title'] }]);
+    expect(out.fields.find((f) => f.name === 'title')).toMatchObject({ status: 'partial', missingRows: [5] });
+    expect(out.warnings).toEqual(['dropped 1 row on page 1: required field "title" missing on row 5']);
+  });
+
+  it('drops the row when a required number is unparsable', async () => {
+    const s = await session(catalog(cards(24, (i) => (i === 2 ? { price: 'n/a' } : {}))));
+    const out = (await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(23);
+    expect(out.dropped).toEqual([{ index: 2, fields: ['price'] }]);
+    expect(out.fields.find((f) => f.name === 'price')?.status).toBe('partial');
+  });
+
+  it('yields null for an optional field that reads empty', async () => {
+    const s = await session(catalog(cards(24, (i) => (i === 3 ? { title: '   ' } : {}))));
+    const base = recipe();
+    base.fields = base.fields!.map((f) => (f.name === 'title' ? { ...f, optional: true } : f));
+    const out = (await extractPage(s, loadRecipe(base), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(24);
+    expect(out.rows[3]!.title).toBeNull();
+    expect(out.dropped).toEqual([]);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('drops every row when a required page field reads empty', async () => {
+    const s = await session(catalog(cards(3), '  '));
+    const out = (await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toEqual([]);
+    expect(out.dropped).toHaveLength(3);
+    expect(out.missingRequired).toEqual(['category']);
+    expect(out.fields.find((f) => f.name === 'category')?.status).toBe('missing');
+  });
+
   it('flags the item container when it matches nothing', async () => {
     const s = await session(catalog([]));
     const out = (await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 })).tables[0]!;

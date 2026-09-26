@@ -632,6 +632,19 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
         expect(out.stderr).toMatch(/warning: table "questions": the item container matched no element on page 1; the table yields no rows/);
       }, 60_000);
 
+      it('drops the row on which a required field reads empty and warns naming the field', async () => {
+        const recipe = fixture('playground-catalog');
+        // The first card resolves its image, which holds no text; the other cards resolve their title.
+        const xpath = ".//img[contains(@class, 'product-image')][not(ancestor::li[1]/preceding-sibling::li)] | .//h2";
+        const desc = { name: 'desc', type: 'text' as const, scope: 'item' as const, selectors: [{ strategy: 'xpath' as const, value: xpath, stability: 'fragile' as const }], optional: false };
+        const out = await runScript(format, { ...recipe, name: 'empty-desc', fields: [...recipe.fields!, desc] });
+        expect(out.code, out.stderr).toBe(0);
+        const rows = JSON.parse(out.stdout) as Rows;
+        expect(rows).toHaveLength(23);
+        expect(rows.every((row) => typeof row.desc === 'string' && row.desc !== '')).toBe(true);
+        expect(out.stderr).toMatch(/dropped 1 row on page 1: required field "desc" missing on row 0/);
+      }, 60_000);
+
       it('exits 3 naming the table when a required field of a secondary table matches nothing', async () => {
         const recipe = fixture('playground-tables');
         const tables = recipe.tables!.map((t) =>

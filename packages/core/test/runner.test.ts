@@ -59,6 +59,24 @@ describe('Runner', () => {
     expect(result.rows).toEqual([]);
   });
 
+  it('drops rows whose required field reads empty, like rows missing it', async () => {
+    const { browser } = setup(catalog(cards(24, (i) => (i === 4 ? { title: ' \t ' } : {}))));
+    const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p' });
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(23);
+    expect(result.rows.every((row) => typeof row.title === 'string' && row.title !== '')).toBe(true);
+    expect(result.report.warnings).toEqual(['dropped 1 row on page 1: required field "title" missing on row 4']);
+    expect(result.report).toMatchObject({ rowCount: 23, droppedCount: 1, pages: [{ page: 1, rows: 23, dropped: 1 }] });
+    expect(result.report.fields.find((f) => f.name === 'title')).toMatchObject({ status: 'partial', missingRows: [4] });
+  });
+
+  it('fails with missing-required when a required field reads empty on every row', async () => {
+    const { browser } = setup(catalog(cards(24, () => ({ title: '   ' }))));
+    const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p' });
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['title'] });
+    expect(result.rows).toEqual([]);
+  });
+
   it('fails before opening the browser when a variable has no value', async () => {
     const { browser, emitter, log } = setup();
     const r = recipe({ vars: [{ name: 'category', type: 'string' }] });

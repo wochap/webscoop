@@ -657,6 +657,12 @@ async function readValue(field: Field, element: Locator, pageUrl: string): Promi
   return convertValue(field.type, raw, pageUrl);
 }
 
+/** A field's value on one row: found only when an element matched and its value is neither null nor empty. Empty values yield null. */
+async function fieldValue(field: Field, element: Locator | null, pageUrl: string): Promise<{ value: Value; found: boolean }> {
+  const value = element ? await readValue(field, element, pageUrl) : null;
+  return value === null || value === '' ? { value: null, found: false } : { value, found: true };
+}
+
 /** First candidate, in stored order, that matches in any of the scopes; its selectors from there on. */
 async function settleSelectors(selectors: readonly Selector[], scopes: readonly Root[]): Promise<Selector[] | null> {
   for (const [index, selector] of selectors.entries()) {
@@ -710,7 +716,7 @@ async function extractTable(
     const state: State = { field, selectors, missingRows: [] };
     if (field.scope === 'page') {
       const found = selectors ? await resolveFirst(page, selectors) : null;
-      state.pageValue = found ? { value: await readValue(field, found.locator.nth(0), pageUrl), found: true } : { value: null, found: false };
+      state.pageValue = await fieldValue(field, found ? found.locator.nth(0) : null, pageUrl);
     }
     states.push(state);
   }
@@ -722,7 +728,7 @@ async function extractTable(
       let result = state.pageValue;
       if (!result) {
         const found = state.selectors ? await resolveFirst(container ?? page, state.selectors) : null;
-        result = found ? { value: await readValue(state.field, found.locator.nth(0), pageUrl), found: true } : { value: null, found: false };
+        result = await fieldValue(state.field, found ? found.locator.nth(0) : null, pageUrl);
       }
       if (!result.found) state.missingRows.push(index);
       row[state.field.name] = result.value;
@@ -731,7 +737,7 @@ async function extractTable(
   }
   const containerCount = extracted.length;
 
-  // Drop rows on which a required field resolved nothing.
+  // Drop rows on which a required field resolved nothing or read empty.
   const required = states.filter((s) => !s.field.optional);
   const rows: Row[] = [];
   for (const [index, row] of extracted.entries()) {

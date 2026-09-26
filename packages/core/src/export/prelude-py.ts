@@ -603,6 +603,12 @@ def read_value(page, field, element, page_url):
     return convert_value(page, field["type"], raw, page_url)
 
 
+def field_value(page, field, element, page_url):
+    """A field's value on one row and whether it was found: an element matched and its value is neither None nor empty. Empty values yield None."""
+    value = read_value(page, field, element, page_url) if element is not None else None
+    return (None, False) if value is None or value == "" else (value, True)
+
+
 def settle_selectors(selectors, scopes):
     """First candidate, in stored order, that matches in any of the scopes; its selectors from there on."""
     for index, selector in enumerate(selectors):
@@ -655,7 +661,7 @@ def extract_table(page, table, page_number, page_url, resolved, from_index):
         state = {"field": field, "selectors": selectors, "page_value": None, "missing_rows": []}
         if field["scope"] == "page":
             found = resolve_first(page, selectors) if selectors else None
-            state["page_value"] = (read_value(page, field, found.locator.nth(0), page_url), True) if found else (None, False)
+            state["page_value"] = field_value(page, field, found.locator.nth(0) if found else None, page_url)
         states.append(state)
 
     extracted = []
@@ -665,14 +671,14 @@ def extract_table(page, table, page_number, page_url, resolved, from_index):
             result = state["page_value"]
             if result is None:
                 found = resolve_first(container if container is not None else page, state["selectors"]) if state["selectors"] else None
-                result = (read_value(page, state["field"], found.locator.nth(0), page_url), True) if found else (None, False)
+                result = field_value(page, state["field"], found.locator.nth(0) if found else None, page_url)
             if not result[1]:
                 state["missing_rows"].append(index)
             row[state["field"]["name"]] = result[0]
         extracted.append(row)
     container_count = len(extracted)
 
-    # Drop rows on which a required field resolved nothing.
+    # Drop rows on which a required field resolved nothing or read empty.
     required = [s for s in states if not s["field"]["optional"]]
     rows = []
     for index, row in enumerate(extracted):
