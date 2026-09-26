@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DraftStep } from '@webscoop/core/page';
 import { recordAsStep } from '../src/ui/App';
 import { targetSummary } from '../src/ui/steps';
-import { baseState, hostStates, newDraft, renderPanel } from './panel';
+import { baseState, hostStates, newDraft, renderPanel, withTable } from './panel';
 
 afterEach(cleanup);
 
@@ -21,7 +21,7 @@ const step = (kind: DraftStep['kind'], extra: Partial<DraftStep> = {}): DraftSte
 });
 
 function withSteps(steps: DraftStep[]) {
-  return baseState({ ...newDraft(), fields: [field], steps });
+  return baseState({ ...withTable(newDraft(), { fields: [field] }), steps });
 }
 
 describe('steps list', () => {

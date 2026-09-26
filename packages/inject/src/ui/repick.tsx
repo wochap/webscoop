@@ -95,7 +95,11 @@ export function RepickPanel({
       <div className={`ws-strip${picking ? ' ws-strip-active' : ''}`} data-ws="repick-prompt" data-picking={String(picking)}>
         <div className="ws-col ws-spacer">
           <span className="ws-title">
-            Click the new location of <span className="ws-mono">{context.field}</span>
+            Click the new location of{' '}
+            <span className="ws-mono" data-ws="repick-field" data-table={context.table}>
+              {context.table === 'items' ? '' : `${context.table}.`}
+              {context.field}
+            </span>
           </span>
           <span className="ws-meta">
             {context.reason === 'run' ? 'The run is waiting. ' : ''}

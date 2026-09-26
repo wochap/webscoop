@@ -1,6 +1,6 @@
 import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
-import { detach, draftFromRecipe, draftToRecipe, emptyDraft, inDraftForm, nodeAt, reduceDraft, tablesOf, validateRecipe, type Draft } from '../src';
+import { detach, draftFromRecipe, draftToRecipe, emptyDraft, nodeAt, reduceDraft, tablesOf, validateRecipe, type Draft } from '../src';
 import { h } from '../src/testing';
 import { byClass, cardPath, harness, referenceRecipe, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
@@ -22,7 +22,7 @@ async function answerPending(t: Harness): Promise<void> {
   const pending = t.controller.state.pendingSelect;
   if (!pending) throw new Error('no pending select');
   const node = nodeAt(t.page, pending.path)!;
-  const inCard = t.controller.draft.item ? cardPathOrNull(node) : null;
+  const inCard = t.controller.draft.tables[0]!.item ? cardPathOrNull(node) : null;
   await t.pick(node, inCard);
 }
 
@@ -43,12 +43,12 @@ describe('draft replaceField', () => {
       index: 1,
       field: { name: 'title', type: 'number', scope: 'page', selectors: [{ strategy: 'css', value: '.b', stability: 'medium' }], optional: true },
     });
-    expect(replaced.fields.map((f) => f.name)).toEqual(['title', 'title', 'rating']);
-    expect(replaced.fields[1]).toMatchObject({ type: 'number', optional: true, selectors: [{ value: '.b' }] });
-    expect(replaced.fields[1]!.error).toMatch(/title/);
+    expect(replaced.tables[0]!.fields.map((f) => f.name)).toEqual(['title', 'title', 'rating']);
+    expect(replaced.tables[0]!.fields[1]).toMatchObject({ type: 'number', optional: true, selectors: [{ value: '.b' }] });
+    expect(replaced.tables[0]!.fields[1]!.error).toMatch(/title/);
     const fixed = reduceDraft(replaced, { type: 'replaceField', index: 1, field: { name: 'amount', type: 'number', scope: 'page', selectors } });
-    expect(fixed.fields.map((f) => f.name)).toEqual(['title', 'amount', 'rating']);
-    expect(fixed.fields.every((f) => f.error === undefined)).toBe(true);
+    expect(fixed.tables[0]!.fields.map((f) => f.name)).toEqual(['title', 'amount', 'rating']);
+    expect(fixed.tables[0]!.fields.every((f) => f.error === undefined)).toBe(true);
   });
 });
 
@@ -63,18 +63,18 @@ describe('clearing the selection', () => {
     expect(t.controller.draft).toBe(draft);
     // Nothing is left to confirm.
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item).toBeNull();
+    expect(t.controller.draft.tables[0]!.item).toBeNull();
   });
 
   it('returns to the empty state after adding a field, also from confirming items', async () => {
     const t = await withItems();
-    expect(t.controller.draft.fields).toHaveLength(1);
+    expect(t.controller.draft.tables[0]!.fields).toHaveLength(1);
     expect(t.controller.state.selected).toBeNull();
     const price = byClass(t.page, 'product-price', 0);
     await t.pick(price, cardPath(price));
     await t.send({ kind: 'draft.addField', patch: { name: 'amount', type: 'number', scope: 'item', attr: null, optional: true, key: false } });
     expect(t.controller.state.selected).toBeNull();
-    expect(t.controller.draft.fields[1]).toMatchObject({ name: 'amount', type: 'number', optional: true, key: false, count: 24 });
+    expect(t.controller.draft.tables[0]!.fields[1]).toMatchObject({ name: 'amount', type: 'number', optional: true, key: false, count: 24 });
   });
 });
 
@@ -92,8 +92,8 @@ describe('typed selection selector', () => {
     expect(t.controller.state.pendingSelect).toBeNull();
     expect(t.controller.state.proposal).toBeNull();
     await t.send({ kind: 'draft.addField', patch: { name: 'heading' } });
-    expect(t.controller.draft.fields[1]).toMatchObject({ name: 'heading', scope: 'item', count: 24, sample: dataset[0]!.title });
-    expect(t.controller.draft.fields[1]!.selectors[0]).toMatchObject({ strategy: 'css', value: 'h2' });
+    expect(t.controller.draft.tables[0]!.fields[1]).toMatchObject({ name: 'heading', scope: 'item', count: 24, sample: dataset[0]!.title });
+    expect(t.controller.draft.tables[0]!.fields[1]!.selectors[0]).toMatchObject({ strategy: 'css', value: 'h2' });
   });
 
   it('reports the covered containers for a partial match, 7 of 10', async () => {
@@ -104,13 +104,13 @@ describe('typed selection selector', () => {
     await t.pick(byClass(t.page, 'card', 0));
     await t.send({ kind: 'draft.setItem' });
     await t.send({ kind: 'selection.clear' });
-    expect(t.controller.draft.item!.count).toBe(10);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(10);
     await t.send({ kind: 'selection.setSelector', selector: 'css=.badge', snapshot: snapshotOf(t) });
     const pending = t.controller.state.pendingSelect!;
     await t.pick(nodeAt(t.page, pending.path)!, [1, 0, 0]);
     expect(t.controller.state.selected!.selection.candidates[0]).toMatchObject({ value: '.badge', count: 7, items: 7 });
     await t.send({ kind: 'draft.addField', patch: { name: 'badge', optional: true } });
-    expect(t.controller.draft.fields[0]).toMatchObject({ name: 'badge', scope: 'item', optional: true, count: 7 });
+    expect(t.controller.draft.tables[0]!.fields[0]).toMatchObject({ name: 'badge', scope: 'item', optional: true, count: 7 });
   });
 
   it('refuses text that matches nothing or is invalid and keeps the previous selection', async () => {
@@ -148,7 +148,7 @@ describe('editing a saved field', () => {
 
   it('opens the field with its options, saved candidates, and element', async () => {
     const t = await withPrice();
-    const field = t.controller.draft.fields[1]!;
+    const field = t.controller.draft.tables[0]!.fields[1]!;
     await t.send({ kind: 'draft.editField', index: 1, snapshot: snapshotOf(t) });
     const { editing, pendingSelect } = t.controller.state;
     expect(editing).toMatchObject({ index: 1, options: { name: 'price', type: 'number', scope: 'item', optional: true, key: false }, primary: 0 });
@@ -172,7 +172,7 @@ describe('editing a saved field', () => {
     expect(css).toBeGreaterThan(0);
     await t.send({ kind: 'inspect.primary', index: css });
     await t.send({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'number', scope: 'item', attr: null, optional: true, key: false } });
-    const fields = t.controller.draft.fields;
+    const fields = t.controller.draft.tables[0]!.fields;
     expect(fields.map((f) => f.name)).toEqual(['wireless_mouse', 'price']);
     expect(fields[1]!.selectors[0]).toMatchObject({ strategy: 'css', value: candidates[css]!.value });
     expect(fields[1]).toMatchObject({ count: 24, sample: String(dataset[0]!.price) });
@@ -188,7 +188,7 @@ describe('editing a saved field', () => {
     expect(t.controller.state.editing).toMatchObject({ index: 0 });
     expect(t.controller.state.proposal).toBeNull();
     await t.send({ kind: 'draft.updateEditedField', patch: { name: 'wireless_mouse', type: 'text', scope: 'item', attr: null, optional: false, key: false } });
-    const fields = t.controller.draft.fields;
+    const fields = t.controller.draft.tables[0]!.fields;
     expect(fields).toHaveLength(2);
     expect(fields[0]).toMatchObject({ name: 'wireless_mouse', type: 'text', sample: String(dataset[0]!.rating) });
     expect(fields[0]!.fingerprint!.textSample).toBe(String(dataset[0]!.rating));
@@ -210,7 +210,7 @@ describe('editing a saved field', () => {
     await answerPending(t);
     await t.send({ kind: 'draft.addField' });
     expect(t.controller.state.error).toMatch(/finish editing/);
-    expect(t.controller.draft.fields).toHaveLength(2);
+    expect(t.controller.draft.tables[0]!.fields).toHaveLength(2);
   });
 
   it('shows a field that matches nothing with zero counts and no element', async () => {
@@ -222,7 +222,7 @@ describe('editing a saved field', () => {
     expect(t.controller.state).toMatchObject({ pendingSelect: null, selected: null });
     expect(t.controller.state.editing!.candidates).toEqual([{ ...selectors[0], count: 0, items: 0 }]);
     await t.send({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', optional: true } });
-    expect(t.controller.draft.fields[1]).toMatchObject({ name: 'price', type: 'text', selectors: [{ value: '.gone' }] });
+    expect(t.controller.draft.tables[0]!.fields[1]).toMatchObject({ name: 'price', type: 'text', selectors: [{ value: '.gone' }] });
   });
 });
 
@@ -236,17 +236,21 @@ describe('editing a one entry tables recipe', () => {
     const tables = recipe();
     const draft = draftFromRecipe(tables);
     const shorthand = draftFromRecipe(referenceRecipe());
-    expect(draft.table).toBe('products');
-    expect(shorthand.table).toBeUndefined();
-    const { table: _table, ...rest } = draft;
-    expect(rest).toEqual(shorthand);
+    expect(draft.form).toBe('tables');
+    expect(shorthand.form).toBe('shorthand');
+    expect(draft.tables.map((t) => t.name)).toEqual(['products']);
+    const { form: _form, tables: t1, ...rest } = draft;
+    const { form: _form2, tables: t2, ...restShorthand } = shorthand;
+    expect(rest).toEqual(restShorthand);
+    expect(t1[0]!.fields).toEqual(t2[0]!.fields);
     const validated = validateRecipe(draftToRecipe(draft));
     expect(validated.ok).toBe(true);
     if (!validated.ok) return;
-    const saved = inDraftForm(draft, validated.recipe);
+    const saved = validated.recipe;
     expect(saved.fields).toBeUndefined();
     expect(tablesOf(saved).map((t) => t.name)).toEqual(['products']);
     expect(tablesOf(saved)[0]!.fields.map((f) => f.name)).toEqual(tablesOf(tables)[0]!.fields.map((f) => f.name));
-    expect(inDraftForm(shorthand, validated.recipe)).toBe(validated.recipe);
+    const again = validateRecipe(draftToRecipe(shorthand));
+    expect(again.ok && again.recipe.tables).toBeUndefined();
   });
 });

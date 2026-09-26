@@ -463,7 +463,10 @@ matches the fingerprint (`likely` at or above the threshold). Click the new
 location, then **Use and save**: the field gets fresh selectors for that
 element, the picked one first, and a new fingerprint, and the command exits 0.
 `s` skips and `Esc` aborts (the first `Esc` only stops picking); both leave
-the recipe unchanged. An unknown field name exits 1. `run --interactive` shows
+the recipe unchanged. In a recipe with several tables, name the field as
+`table.field` (`--repick questions.title`); a bare name works when only one
+table has it. An unknown table or field, or a bare name several tables share,
+exits 1 naming them. `run --interactive` shows
 the same panel when a run needs it, with **Use and continue**.
 
 ### Recording a recipe
@@ -496,8 +499,19 @@ panel.
    **Pagination target** to record pagination; the panel sets its kind, page
    limit, stop rules, and the delay between pages.
 5. **Test run** extracts the current page with the draft and shows a results
-   drawer (table and JSON) with per-field status.
+   drawer (table and JSON) with per-field status, one tab per table.
 6. `Ctrl+S` saves to the recipes directory. Saving keeps the session open.
+
+The table strip above the field list holds one tab per table with its row
+count. Picks, item detection, and new fields go to the active table; the
+others stay collapsed until clicked. **+ Table** adds a table (named `page`
+when every table has an item container), and the active table can be renamed
+or removed. A pick outside the active table's items defaults to a table
+without an item container, and the field form's **Table** select can send it
+to any table or to a new one. To record a second list, add a table and pick
+one of its items. A draft with one table named `items` saves in the shorthand
+form; any other draft saves with `tables`. `--edit` loads every table of a
+recipe.
 
 Close the browser window or press `Ctrl+C` to end the session. The exit code
 is 0 when the session ends, with a warning on stderr naming the recipe when

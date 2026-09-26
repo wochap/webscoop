@@ -29,15 +29,15 @@ function chromiumUsing(profileDir: string): string[] {
 async function renameLast(r: Recording, name: string): Promise<void> {
   const count = await r.count('[data-ws="field-name"]');
   await r.fill('[data-ws="field-name"]', name, count - 1);
-  await r.until((s) => s.host?.draft.fields.at(-1)?.name === name);
+  await r.until((s) => s.host?.draft.tables[0]!.fields.at(-1)?.name === name);
 }
 
 /** Pick an element and add it as a field with a name. */
 async function addField(r: Recording, selector: string, name: string, index = 0): Promise<void> {
-  const before = (await r.state()).host!.draft.fields.length;
+  const before = (await r.state()).host!.draft.tables[0]!.fields.length;
   await r.pick(selector, index);
   await r.clickPanel('[data-ws="add-field"]');
-  await r.until((s) => s.host!.draft.fields.length === before + 1);
+  await r.until((s) => s.host!.draft.tables[0]!.fields.length === before + 1);
   await renameLast(r, name);
 }
 
@@ -45,7 +45,7 @@ async function pickTitlesAsItems(r: Recording, index = 0): Promise<void> {
   const picked = await r.pick('h2.product-title', index);
   expect(picked.mode).toBe('items');
   await r.key('Enter');
-  await r.until((s) => s.host?.draft.item && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
 }
 
@@ -73,7 +73,7 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
   const port = scoop.playground.port;
   const r = await scoop.record([template(port), '--var', 'tier=0', '--name', 'shop-catalog']);
   await pickTitlesAsItems(r);
-  const item = (await r.state()).host!.draft.item!;
+  const item = (await r.state()).host!.draft.tables[0]!.item!;
   expect(item.count).toBe(24);
   await addField(r, '[data-testid="price"]', 'price');
   await addField(r, 'a.product-link', 'url');
@@ -82,7 +82,7 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
   await addField(r, 'h1.category-heading', 'category');
 
   const { draft } = (await r.state()).host!;
-  expect(draft.fields.map((f) => [f.name, f.type, f.scope, f.count])).toEqual([
+  expect(draft.tables[0]!.fields.map((f) => [f.name, f.type, f.scope, f.count])).toEqual([
     ['title', 'text', 'item', 24],
     ['price', 'number', 'item', 24],
     ['url', 'url', 'item', 24],
@@ -90,7 +90,7 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
     ['rating', 'number', 'item', 24],
     ['category', 'text', 'page', 1],
   ]);
-  expect(draft.fields.every((f) => f.error === undefined)).toBe(true);
+  expect(draft.tables[0]!.fields.every((f) => f.error === undefined)).toBe(true);
   const path = await save(r);
   const result = await r.closeWindow();
   expect(result.code, result.stderr).toBe(0);
@@ -119,8 +119,8 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   expect((await r.query('[data-ws="coverage-count"]'))!.text).toBe('24 / 24 items');
   await r.fill('[data-ws="form-name"]', 'heading');
   await r.clickPanel('[data-ws="add-field"]');
-  await r.until((s) => s.host!.draft.fields.length === 2 && s.host!.selected === null);
-  expect((await r.state()).host!.draft.fields[1]).toMatchObject({ name: 'heading', scope: 'item', count: 24 });
+  await r.until((s) => s.host!.draft.tables[0]!.fields.length === 2 && s.host!.selected === null);
+  expect((await r.state()).host!.draft.tables[0]!.fields[1]).toMatchObject({ name: 'heading', scope: 'item', count: 24 });
 
   // Esc when not picking clears the selection and its highlight.
   await r.pick('[data-testid="price"]', 3);
@@ -143,8 +143,8 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   await r.until((s) => s.host?.selected?.primary === other);
   await r.clickPanel('[data-ws="update-field"]');
   const updated = await r.until((s) => (s.host?.editing === null && s.host.selected === null ? s.host : undefined));
-  expect(updated.draft.fields.map((f) => f.name)).toEqual(['title', 'heading', 'price']);
-  expect(updated.draft.fields[2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
+  expect(updated.draft.tables[0]!.fields.map((f) => f.name)).toEqual(['title', 'heading', 'price']);
+  expect(updated.draft.tables[0]!.fields[2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
 
   // Cancel an edit: the title keeps its type.
   await r.clickPanel('[data-ws="field-summary"]', 0);
@@ -152,7 +152,7 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   await r.fill('[data-ws="form-type"]', 'html');
   await r.clickPanel('[data-ws="cancel-edit"]');
   const cancelled = await r.until((s) => (s.host?.editing === null ? s.host : undefined));
-  expect(cancelled.draft.fields[0]).toMatchObject({ name: 'title', type: 'text' });
+  expect(cancelled.draft.tables[0]!.fields[0]).toMatchObject({ name: 'title', type: 'text' });
 
   const path = await save(r);
   const result = await r.closeWindow();
@@ -202,7 +202,7 @@ test('sponsored=2: excluding .sponsored leaves 22 items in the recipe and the ru
   expect(boxes.filter((b) => b.variant === 'sibling')).toHaveLength(22);
   // Focus is still in the exclusion input, where Enter adds another exclusion; confirm with the button.
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.item?.count === 22 && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 22 && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -251,8 +251,8 @@ test('marking a ?page=2 link proposes url pagination, saved and run', async ({ s
 test('--edit shows six fields with counts, test runs 24 rows, and Ctrl+S saves it unchanged', async ({ scoop }) => {
   const original = loadRecipe(await readFile(scoop.recipePath, 'utf8'));
   const r = await scoop.record(['--edit', 'playground-catalog']);
-  const counted = await r.until((s) => (s.host?.draft.fields.every((f) => f.count !== null) ? s : undefined));
-  expect(counted.host!.draft.fields.map((f) => [f.name, f.count])).toEqual([
+  const counted = await r.until((s) => (s.host?.draft.tables[0]!.fields.every((f) => f.count !== null) ? s : undefined));
+  expect(counted.host!.draft.tables[0]!.fields.map((f) => [f.name, f.count])).toEqual([
     ['title', 24],
     ['price', 24],
     ['url', 24],
@@ -263,8 +263,8 @@ test('--edit shows six fields with counts, test runs 24 rows, and Ctrl+S saves i
   expect(await r.count('[data-ws="field"]')).toBe(6);
   await r.clickPanel('[data-ws="test-run"]');
   const results = await r.until((s) => s.host?.test);
-  expect(results.rowCount).toBe(24);
-  expect(results.fields.map((f) => f.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+  expect(results.tables[0]!.rowCount).toBe(24);
+  expect(results.tables[0]!.fields.map((f) => f.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
   expect(await r.count('[data-ws="result-row"]')).toBe(24);
   await save(r);
   const result = await r.closeWindow();
@@ -283,7 +283,7 @@ test('rows=4: one title proposes 24 cards under the product list, saved and run'
   expect((await r.query('[data-ws="level-input-within"]'))!.value).toBe('role=list');
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('24');
   await r.key('Enter');
-  await r.until((s) => s.host?.draft.item && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -299,7 +299,7 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
   const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'edit-items']);
   await pickTitlesAsItems(r);
   await addField(r, '[data-testid="price"]', 'price');
-  expect((await r.state()).host!.draft.item!.fingerprint!.tag).toBe('article');
+  expect((await r.state()).host!.draft.tables[0]!.item!.fingerprint!.tag).toBe('article');
 
   await r.clickPanel('[data-ws="edit-item"]');
   const editing = await r.until((s) => (s.host?.proposal?.editing ? s.host.proposal : null));
@@ -308,10 +308,10 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
   expect((await r.query('[data-ws="confirm-items"]'))!.text).toContain('Update items');
   await r.clickPanel('[data-ws="level-broader"]');
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => !s.host?.proposal && s.host?.draft.item?.fingerprint?.tag === 'li');
+  await r.until((s) => !s.host?.proposal && s.host?.draft.tables[0]!.item?.fingerprint?.tag === 'li');
   const updated = (await r.state()).host!.draft;
-  expect(updated.item!.count).toBe(24);
-  expect(updated.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
+  expect(updated.tables[0]!.item!.count).toBe(24);
+  expect(updated.tables[0]!.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
     ['title', 'item', 24],
     ['price', 'item', 24],
   ]);
@@ -321,8 +321,8 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
   await r.clickPanel('[data-ws="cancel-items"]');
   await r.until((s) => !s.host?.proposal);
   const after = (await r.state()).host!.draft;
-  expect(after.item).toEqual(updated.item);
-  expect(after.fields.map((f) => f.name)).toEqual(['title', 'price']);
+  expect(after.tables[0]!.item).toEqual(updated.tables[0]!.item);
+  expect(after.tables[0]!.fields.map((f) => f.name)).toEqual(['title', 'price']);
 
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -348,7 +348,7 @@ test('mixed=1: 24 cards with 6 skipped, include all shows 30, and the saved reci
   await r.clickPanel('[data-ws="include-all"]');
   await r.until((s) => s.host?.proposal?.proposed.count === 24 && s.host.proposal.skipped === 6);
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.item?.count === 24 && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24 && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -375,7 +375,7 @@ test('tier 1: a recipe recorded with the role-only item candidate runs on tier 3
     await r.until((s) => s.host?.proposal?.broader?.primary === role);
   }
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.item && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -405,18 +405,18 @@ test('results under div#rso: the proposal counts every result, and the saved rec
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('8');
   expect((await r.query('[data-ws="selector-chain-text"]'))!.text).toMatch(/^id=rso » /);
   await r.key('Enter');
-  await r.until((s) => s.host?.draft.item?.count === 8 && s.host.draft.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   await addField(r, 'div.VwiC3b span', 'snippet', 2);
   const { draft } = (await r.state()).host!;
-  expect(draft.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
+  expect(draft.tables[0]!.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
     ['title', 'item', 8],
     ['snippet', 'item', 8],
   ]);
   await r.clickPanel('[data-ws="test-run"]');
   const results = await r.until((s) => s.host?.test);
   expect(results.error).toBeUndefined();
-  expect(results.rowCount).toBe(8);
+  expect(results.tables[0]!.rowCount).toBe(8);
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
 
@@ -444,8 +444,8 @@ test('results link: walking up from the heading offers role=link with its long n
   expect(role.value).toContain('example›');
   expect(role.count).toBe(1);
   await r.key('Enter');
-  const draft = await r.until((s) => (s.host?.draft.item?.count === 8 && s.host.draft.fields.length === 1 ? s.host.draft : undefined));
-  const field = draft.fields[0]!;
+  const draft = await r.until((s) => (s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1 ? s.host.draft : undefined));
+  const field = draft.tables[0]!.fields[0]!;
   expect(field.scope).toBe('item');
   expect(field.count).toBe(8);
   expect(field.selectors.find((c) => c.strategy === 'role')).toMatchObject({ value: 'link' });

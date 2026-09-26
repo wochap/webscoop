@@ -26,7 +26,7 @@ function item(extra: Partial<DraftItem> = {}): DraftItem {
 
 function stateWith(i: DraftItem, extra: Partial<RecorderState> = {}): RecorderState {
   const state = baseState();
-  return { ...state, draft: { ...state.draft, item: i }, ...extra };
+  return { ...state, draft: { ...state.draft, tables: [{ ...state.draft.tables[0]!, item: i }] }, ...extra };
 }
 
 describe('scoped resolution in the page', () => {

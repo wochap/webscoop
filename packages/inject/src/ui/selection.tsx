@@ -1,10 +1,68 @@
 import { useState } from 'react';
-import type { Crumb, FieldOptions, RecorderState } from '@webscoop/core/page';
+import { currentTable, type Crumb, type DraftTable, type FieldOptions, type RecorderState } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { CoverageHint, EditActions, PickActionGrid, SelectorCandidateList, SelectorInput } from './candidates';
 import { useActions } from './context';
 import { FieldOptionsForm, formPatch, nameProblem } from './fields';
 import { ElementInspector } from './picking';
+import { newTableName, tableNameProblem } from './tables';
+
+const NEW_TABLE = 'new';
+
+/** The table a new field goes to: every table of the draft, or a new one named inline. */
+export function TableSelect({
+  tables,
+  value,
+  newName,
+  newError,
+  onChange,
+  onNewName,
+}: {
+  tables: readonly DraftTable[];
+  /** Index of the chosen table, or null for a new table. */
+  value: number | null;
+  newName: string;
+  newError: string | null;
+  onChange: (table: number | null) => void;
+  onNewName: (name: string) => void;
+}) {
+  return (
+    <div className="ws-col" data-ws="form-table-row">
+      <div className="ws-row">
+        <span className="ws-meta">table</span>
+        <select
+          className="ws-select ws-spacer"
+          value={value === null ? NEW_TABLE : String(value)}
+          aria-label="Table"
+          data-ws="form-table"
+          onChange={(e) => onChange(e.target.value === NEW_TABLE ? null : Number(e.target.value))}
+        >
+          {tables.map((t, i) => (
+            <option key={`${i}-${t.name}`} value={String(i)}>
+              {t.name}
+            </option>
+          ))}
+          <option value={NEW_TABLE}>New table…</option>
+        </select>
+        {value === null && (
+          <input
+            className={`ws-input ws-input-sm ws-mono-sm ws-spacer${newError ? ' ws-invalid' : ''}`}
+            value={newName}
+            aria-label="New table name"
+            aria-invalid={newError ? true : undefined}
+            data-ws="form-table-name"
+            onChange={(e) => onNewName(e.target.value)}
+          />
+        )}
+      </div>
+      {value === null && newError && (
+        <span className="ws-error" data-ws="form-table-error">
+          {newError}
+        </span>
+      )}
+    </div>
+  );
+}
 
 /** The step "record as step" makes from a picked element: typing for text boxes, a click for anything else. */
 export function recordAsStep(tag: string, attrs: Record<string, string>): { kind: 'click' } | { kind: 'type'; value: string } {
@@ -22,7 +80,7 @@ export function recordAsStep(tag: string, attrs: Record<string, string>): { kind
 export function SelectionPanel({ host, trail }: { host: RecorderState; trail: Crumb[] }) {
   const { selected, editing, draft, proposal } = host;
   if (!selected && !editing) {
-    if (!draft.item || proposal) return null;
+    if (!currentTable(draft).item || proposal) return null;
     return <TypedSelector host={host} scope="item" />;
   }
   const seed: FieldOptions = editing
@@ -49,12 +107,18 @@ function SelectionBody({ host, trail, seed }: { host: RecorderState; trail: Crum
   const actions = useActions();
   const [form, setForm] = useState(seed);
   const { selected, editing, draft, proposal } = host;
+  const [newName, setNewName] = useState(() => newTableName(draft.tables));
   const candidates = selected ? selected.selection.candidates : editing!.candidates;
   const primaryIndex = selected ? selected.primary : editing!.primary;
   const primary = candidates[primaryIndex];
   const scope = selected?.scope ?? editing!.options.scope;
-  const containers = scope === 'item' ? (draft.item?.count ?? null) : null;
-  const taken = draft.fields.filter((_, i) => i !== editing?.index).map((f) => f.name);
+  // A new selection is computed for its target table (null: a new one); an edit stays in the active table.
+  const targetIndex = editing ? draft.activeTable : (selected!.table ?? null);
+  const target = targetIndex === null ? null : (draft.tables[targetIndex] ?? currentTable(draft));
+  const item = target?.item ?? null;
+  const containers = scope === 'item' ? (item?.count ?? null) : null;
+  const taken = (target?.fields ?? []).filter((_, i) => i !== editing?.index).map((f) => f.name);
+  const newError = targetIndex === null ? tableNameProblem(newName, draft.tables) : null;
   const nameError = nameProblem(form.name, taken);
   const clear = () => void actions.send({ kind: 'selection.clear' });
   return (
@@ -65,7 +129,7 @@ function SelectionBody({ host, trail, seed }: { host: RecorderState; trail: Crum
           trail={trail}
           onSelectPath={actions.selectPath}
           onClear={clear}
-          chain={selected.scope === 'item' && draft.item ? selectorChain([draft.item.within?.[0], draft.item.selectors[0], primary]) : ''}
+          chain={selected.scope === 'item' && item ? selectorChain([item.within?.[0], item.selectors[0], primary]) : ''}
         />
       ) : (
         <div className="ws-warning" role="alert" data-ws="edit-zero-match">
@@ -84,7 +148,17 @@ function SelectionBody({ host, trail, seed }: { host: RecorderState; trail: Crum
       <TypedSelector host={host} scope={form.scope} />
       {!proposal && (
         <>
-          <FieldOptionsForm value={form} onChange={setForm} nameError={nameError} hasItem={draft.item !== null} />
+          {!editing && (
+            <TableSelect
+              tables={draft.tables}
+              value={targetIndex}
+              newName={newName}
+              newError={newError}
+              onChange={(table) => void actions.send({ kind: 'selection.retarget', table })}
+              onNewName={setNewName}
+            />
+          )}
+          <FieldOptionsForm value={form} onChange={setForm} nameError={nameError} hasItem={item !== null} />
           {editing ? (
             <EditActions
               canUpdate={nameError === null}
@@ -94,10 +168,10 @@ function SelectionBody({ host, trail, seed }: { host: RecorderState; trail: Crum
           ) : (
             <PickActionGrid
               scope={form.scope}
-              hasItem={draft.item !== null}
+              hasItem={item !== null}
               repicking={host.repick !== null}
-              canAdd={nameError === null}
-              onAddField={() => void actions.send({ kind: 'draft.addField', patch: formPatch(form) })}
+              canAdd={nameError === null && newError === null}
+              onAddField={() => void actions.send({ kind: 'draft.addField', patch: { ...formPatch(form), table: targetIndex === null ? { new: newName.trim() } : targetIndex } })}
               onRecordStep={() => void actions.send({ kind: 'draft.addStep', step: recordAsStep(selected!.selection.tag, selected!.selection.attrs) })}
               onUseAsItems={() => void actions.send({ kind: 'draft.setItem' })}
               onPagination={() => void actions.send({ kind: 'draft.markPagination' })}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { hostStates, renderPanel } from './panel';
+import { hostStates, renderPanel, withTable } from './panel';
 
 afterEach(cleanup);
 
@@ -22,7 +22,7 @@ describe('editing the confirmed item container in the panel', () => {
 
   it('shows a zero-match notice and no Edit when the item container matches nothing', async () => {
     const { confirmed } = await confirmedState();
-    const panel = renderPanel({ ...confirmed, draft: { ...confirmed.draft, item: { ...confirmed.draft.item!, count: 0, total: 0 } } });
+    const panel = renderPanel({ ...confirmed, draft: withTable(confirmed.draft, { item: { ...confirmed.draft.tables[0]!.item!, count: 0, total: 0 } }) });
     expect(panel.q('edit-item')).toBeNull();
     expect(panel.q('item-zero')!.textContent).toMatch(/matches nothing/);
     expect(panel.q('clear-item')).not.toBeNull();

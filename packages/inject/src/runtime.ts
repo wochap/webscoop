@@ -1,4 +1,5 @@
 import {
+  currentTable,
   HOST_BINDING,
   parseHostMessage,
   scoreFingerprint,
@@ -6,6 +7,7 @@ import {
   type PageMessage,
   type Path,
   type ProtocolCandidate,
+  type DraftItem,
   type RecorderState,
 } from '@webscoop/core/page';
 import {
@@ -26,6 +28,9 @@ import type { Overlay } from './overlay';
 import type { ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
 import { handleKey } from './ui/App';
+
+/** The active table's item container, which picks and highlights work against. */
+const activeItem = (host: RecorderState | null | undefined): DraftItem | null => (host ? currentTable(host.draft).item : null);
 
 type HostFn = (msg: unknown) => Promise<unknown>;
 
@@ -242,7 +247,8 @@ export class Runtime implements Actions {
     const strictPrefix = (a: readonly number[], b: readonly number[]) => a.length < b.length && a.every((v, i) => b[i] === v);
     if (pick.ancestorOf.length > 0 && !pick.ancestorOf.some((p) => strictPrefix(path, p))) return 'outside the list';
     if (pick.ofContainers) {
-      const containers = host.draft.item ? containersLocal(host.draft.item, this.doc) : [];
+      const item = activeItem(host);
+      const containers = item ? containersLocal(item, this.doc) : [];
       if (!containers.some((c) => c !== el && el.contains(c))) return 'outside the list';
     }
     if (pick.descendantOf && !strictPrefix(pick.descendantOf, path)) return 'outside the list';
@@ -292,7 +298,7 @@ export class Runtime implements Actions {
 
   private select(el: Element, newTrail: boolean): Promise<void> {
     const run = this.selecting.then(async () => {
-      const item = this.store.get().host?.draft.item;
+      const item = activeItem(this.store.get().host);
       const containers = item ? containersLocal(item, this.doc) : [];
       const { selection, snapshot } = describeSelection(el, containers, this.doc);
       if (newTrail) this.store.setUi({ trail: selection.ancestors, level: 'proposed' });
@@ -329,9 +335,10 @@ export class Runtime implements Actions {
       const items = level.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);
       return overlay.setItems(items, 'sibling', this.excluded(items, host.proposal.exclude));
     }
-    if (host.draft.item) {
-      const all = containersLocal(host.draft.item, this.doc, { keepExcluded: true });
-      return overlay.setItems(all, 'container', this.excluded(all, host.draft.item.exclude));
+    const item = activeItem(host);
+    if (item) {
+      const all = containersLocal(item, this.doc, { keepExcluded: true });
+      return overlay.setItems(all, 'container', this.excluded(all, item.exclude));
     }
     overlay.setItems([], 'sibling');
   }
@@ -346,7 +353,8 @@ export class Runtime implements Actions {
     if (!primary) return [];
     const scope = selected?.scope ?? editing.options.scope;
     if (scope === 'page') return resolveLocal(primary, undefined, this.doc);
-    const containers = host.draft.item ? containersLocal(host.draft.item, this.doc) : [];
+    const item = activeItem(host);
+    const containers = item ? containersLocal(item, this.doc) : [];
     return containers.flatMap((c) => resolveLocal(primary, c, this.doc));
   }
 
@@ -355,7 +363,7 @@ export class Runtime implements Actions {
     const host = this.store.get().host;
     if (!host) return null;
     if (host.proposal) return host.proposal.within ? elementAt(host.proposal.within.path, this.doc) : null;
-    const within = host.draft.item?.within;
+    const within = activeItem(host)?.within;
     return within ? (resolveFirstLocal(within, this.doc)[0] ?? null) : null;
   }
 

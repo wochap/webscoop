@@ -23,7 +23,7 @@ async function save(r: Recording): Promise<string> {
 /** Record from an existing recipe (its fields already there), wait for the counts. */
 async function edit(scoop: Scoop, name: string): Promise<Recording> {
   const r = await scoop.record(['--edit', name]);
-  await r.until((s) => s.host?.draft.fields.every((f) => f.count !== null));
+  await r.until((s) => s.host?.draft.tables[0]!.fields.every((f) => f.count !== null));
   return r;
 }
 

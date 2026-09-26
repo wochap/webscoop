@@ -32,15 +32,19 @@ import {
   detectPagination,
   draftErrors,
   draftToRecipe,
-  inDraftForm,
+  defaultTableName,
   fieldDefaults,
+  tableNameError,
   reduceDraft,
   type DraftAction,
 } from './draft';
 import { RecorderEmitter } from './events';
 import {
+  currentTable,
   HOST_BINDING,
   parsePageMessage,
+  type DraftItem,
+  type DraftTable,
   type Draft,
   type FieldPatch,
   type HostMessage,
@@ -57,6 +61,7 @@ import {
   type Rung,
   type RepickContext,
   type TestResults,
+  type TestTable,
 } from './protocol';
 
 /**
@@ -65,7 +70,7 @@ import {
  */
 export type RecorderMode =
   | { kind: 'full' }
-  | { kind: 'repick'; fieldIndex: number; reason: 'run' | 'cli'; sample?: string | null }
+  | { kind: 'repick'; fieldIndex: number; reason: 'run' | 'cli'; sample?: string | null; /** Table holding the field; default the first. */ table?: string }
   | { kind: 'guard' };
 
 /** Hooks for the guard banner's buttons. */
@@ -180,23 +185,30 @@ export class RecorderController {
     this.emitter = opts.emitter ?? new RecorderEmitter();
     const mode = opts.mode ?? { kind: 'full' };
     let repickContext: RepickContext | null = null;
+    let draft = opts.draft;
     if (mode.kind === 'repick') {
-      const field = opts.draft.fields[mode.fieldIndex];
+      const tableIndex = mode.table === undefined ? 0 : draft.tables.findIndex((t) => t.name === mode.table);
+      if (tableIndex === -1) throw new Error(`no table named ${mode.table}`);
+      // The re-picked field's table is active while the re-pick lasts.
+      draft = { ...draft, activeTable: tableIndex };
+      const table = draft.tables[tableIndex]!;
+      const field = table.fields[mode.fieldIndex];
       if (!field) throw new Error(`no field at index ${mode.fieldIndex}`);
       repickContext = {
+        table: table.name,
         field: field.name,
         index: mode.fieldIndex,
         oldSelector: bare(field.selectors[0]!),
         fingerprint: field.fingerprint ?? null,
         sample: mode.sample ?? field.sample ?? (field.fingerprint?.textSample || null),
-        threshold: opts.draft.healing?.fuzzyThreshold ?? 0.7,
+        threshold: draft.healing?.fuzzyThreshold ?? 0.7,
         reason: mode.reason,
         picked: null,
       };
     }
     this.current = {
       url: 'about:blank',
-      draft: opts.draft,
+      draft,
       selected: null,
       proposal: null,
       levelPick: null,
@@ -227,6 +239,11 @@ export class RecorderController {
 
   get draft(): Draft {
     return this.current.draft;
+  }
+
+  /** The active table: it receives picks, item inference, and field edits. */
+  private table(): DraftTable {
+    return currentTable(this.current.draft);
   }
 
   /** Resolves when the user closes the browser or ends the session from the panel. */
@@ -384,8 +401,10 @@ export class RecorderController {
         return;
       case 'selection.setSelector':
         return void (await this.setSelector(msg.selector, msg.scope, msg.snapshot));
+      case 'selection.retarget':
+        return void (await this.retarget(msg.table));
       case 'inspect.count': {
-        const containers = msg.scope === 'item' ? await this.containers() : [];
+        const containers = msg.scope === 'item' ? await this.targetContainers() : [];
         const count = msg.scope === 'item' ? (await this.countIn(msg.candidate, containers)).count : await this.countPage(msg.candidate);
         return { kind: 'inspect.countResult', count };
       }
@@ -437,6 +456,7 @@ export class RecorderController {
         return void (await this.addField(msg.patch ?? {}));
       case 'draft.editField':
         this.notEditingItem();
+        if (msg.table !== undefined && msg.table !== this.draft.activeTable) this.activate(msg.table);
         return void (await this.editField(msg.index, msg.snapshot));
       case 'draft.updateEditedField':
         return void (await this.updateEditedField(msg.patch));
@@ -445,14 +465,14 @@ export class RecorderController {
         this.clearSelection();
         return;
       case 'draft.updateField': {
-        const before = this.draft.fields[msg.index];
+        const before = this.table().fields[msg.index];
         if (!before) throw new Error(`no field at index ${msg.index}`);
         this.apply({ type: 'updateField', index: msg.index, patch: msg.patch });
         if (msg.patch.type !== undefined || msg.patch.attr !== undefined || msg.patch.scope !== undefined) await this.recount();
         return;
       }
       case 'draft.removeField': {
-        const field = this.draft.fields[msg.index];
+        const field = this.table().fields[msg.index];
         if (!field) throw new Error(`no field at index ${msg.index}`);
         // Indexes shift: an open edit ends without changes.
         if (this.current.editing) this.clearSelection();
@@ -493,6 +513,32 @@ export class RecorderController {
         return;
       case 'draft.clearPagination':
         this.apply({ type: 'setPagination', pagination: null });
+        return;
+      case 'draft.addTable': {
+        this.notEditingItem();
+        const name = msg.name?.trim() || defaultTableName(this.draft);
+        const error = tableNameError(this.draft, name);
+        if (error) throw new Error(error);
+        this.clearSelection();
+        this.apply({ type: 'addTable', name });
+        return;
+      }
+      case 'draft.renameTable': {
+        const name = msg.name.trim();
+        const error = tableNameError(this.draft, name, this.draft.activeTable);
+        if (error) throw new Error(error);
+        this.apply({ type: 'renameTable', name });
+        return;
+      }
+      case 'draft.removeTable':
+        if (this.draft.tables.length < 2) throw new Error('a recipe needs at least one table');
+        this.notEditingItem();
+        this.clearSelection();
+        this.apply({ type: 'removeTable' });
+        return;
+      case 'draft.selectTable':
+        this.notEditingItem();
+        this.activate(msg.index);
         return;
       case 'draft.setName':
         this.apply({ type: 'setName', name: msg.name });
@@ -536,7 +582,7 @@ export class RecorderController {
     const ctx = this.current.repickContext;
     if (!ctx) throw new Error('no re-pick is in progress');
     if (!ctx.picked) throw new Error(`pick the new location of ${ctx.field} first`);
-    const field = this.draft.fields[ctx.index]!;
+    const field = this.table().fields[ctx.index]!;
     let reply: HostMessage | undefined;
     if (ctx.reason === 'cli') {
       reply = await this.save();
@@ -575,12 +621,23 @@ export class RecorderController {
 
   // Counting ----------------------------------------------------------------
 
-  private async containers(): Promise<ElementRef[]> {
-    const item = this.draft.item;
+  /** Item containers of the active table. */
+  private containers(): Promise<ElementRef[]> {
+    return this.containersOf(this.table().item);
+  }
+
+  private async containersOf(item: DraftItem | null): Promise<ElementRef[]> {
     if (!item) return [];
     const parent = await listParent(this.session, item.within?.map(bare));
     if (parent === null) return [];
     return containersFor(this.session, item.selectors.map(bare), item.exclude.map(bare), parent);
+  }
+
+  /** Item containers of the table the selection targets, else of the active table. */
+  private targetContainers(): Promise<ElementRef[]> {
+    const target = this.current.selected?.table;
+    if (target === null) return Promise.resolve([]);
+    return this.containersOf(this.draft.tables[target ?? this.draft.activeTable]?.item ?? null);
   }
 
   private async countPage(candidate: ProtocolCandidate): Promise<number> {
@@ -645,9 +702,16 @@ export class RecorderController {
     }
   }
 
-  /** Refresh item and field counts on the current page. */
+  /** Refresh every table's item and field counts, and the step counts, on the current page. */
   async recount(): Promise<void> {
-    const item = this.draft.item;
+    for (let t = 0; t < this.draft.tables.length; t++) await this.recountTable(t);
+    const stepCounts: (number | null)[] = [];
+    for (const step of this.draft.steps) stepCounts.push(step.target ? await this.countPage(step.target.selectors[0]!) : null);
+    this.apply({ type: 'setStepCounts', counts: stepCounts });
+  }
+
+  private async recountTable(t: number): Promise<void> {
+    const item = this.draft.tables[t]!.item;
     let containers: ElementRef[] = [];
     if (item) {
       const parent = await listParent(this.session, item.within?.map(bare));
@@ -656,23 +720,18 @@ export class RecorderController {
       containers = resolved ? await excludeContainers(this.session, resolved.refs, item.exclude.map(bare)) : [];
       const exclude: ProtocolCandidate[] = [];
       for (const c of item.exclude) exclude.push({ ...c, count: await this.countPage(c) });
-      this.current = {
-        ...this.current,
-        draft: { ...this.draft, item: { ...this.draft.item!, exclude } },
-      };
+      const tables = this.draft.tables.map((table, i) => (i === t && table.item ? { ...table, item: { ...table.item, exclude } } : table));
+      this.current = { ...this.current, draft: { ...this.draft, tables } };
       const withinCount = item.within?.[0] ? await this.countPage(item.within[0]) : null;
-      this.apply({ type: 'setItemCounts', count: containers.length, total, withinCount });
+      this.apply({ type: 'setItemCounts', count: containers.length, total, withinCount, table: t });
     }
     const counts: { count: number | null; sample: string | null }[] = [];
-    for (const field of this.draft.fields) {
+    for (const field of this.draft.tables[t]!.fields) {
       const primary = field.selectors[0]!;
       const count = field.scope === 'item' ? (await this.countIn(primary, containers)).count : await this.countPage(primary);
       counts.push({ count, sample: count > 0 ? await this.sample(field, containers) : null });
     }
-    this.apply({ type: 'setFieldCounts', counts });
-    const stepCounts: (number | null)[] = [];
-    for (const step of this.draft.steps) stepCounts.push(step.target ? await this.countPage(step.target.selectors[0]!) : null);
-    this.apply({ type: 'setStepCounts', counts: stepCounts });
+    this.apply({ type: 'setFieldCounts', counts, table: t });
   }
 
   // Selection ---------------------------------------------------------------
@@ -693,7 +752,7 @@ export class RecorderController {
     const editing = this.current.editing;
 
     const base = dedupe(selection.candidates.length > 0 ? selection.candidates : generate(node));
-    const containerNode = this.draft.item && selection.containerPath ? nodeAt(root, selection.containerPath) : null;
+    const containerNode = this.table().item && selection.containerPath ? nodeAt(root, selection.containerPath) : null;
     let scope: FieldScope = 'page';
     let candidates: ProtocolCandidate[];
     if (containerNode) {
@@ -718,14 +777,18 @@ export class RecorderController {
       scope = editing.options.scope;
     }
 
-    const taken = this.draft.fields.map((f) => f.name);
+    // A pick outside the active table's containers defaults to a table without containers, when there is one.
+    const active = this.draft.activeTable;
+    const pageTable = !containerNode && this.table().item && !editing && !typed ? this.draft.tables.findIndex((t) => t.item === null) : -1;
+    const table = pageTable === -1 ? active : pageTable;
+    const taken = this.draft.tables[table]!.fields.map((f) => f.name);
     const defaults = fieldDefaults(
       { tag: node.tag, attrs: node.attrs, text: selection.text, ...(selection.role ? { role: selection.role } : {}), ...(selection.name ? { name: selection.name } : {}) },
       taken,
     );
     this.current = {
       ...this.current,
-      selected: { selection: { ...selection, candidates }, scope, defaults, primary: 0 },
+      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table },
       proposal: null,
       levelPick: null,
       pendingSelect: null,
@@ -746,8 +809,8 @@ export class RecorderController {
     }
 
     const repick = this.current.repick;
-    if (repick !== null && this.draft.fields[repick]) {
-      const field = this.draft.fields[repick]!;
+    if (repick !== null && this.table().fields[repick]) {
+      const field = this.table().fields[repick]!;
       const containers = scope === 'item' ? await this.containers() : [];
       const selectors = orderForSave(candidates, 0);
       const sample = await this.sample({ ...field, scope, selectors }, containers);
@@ -764,7 +827,7 @@ export class RecorderController {
       return;
     }
 
-    if (!this.draft.item && !typed) {
+    if (!this.table().item && !typed) {
       const proposal = inferItems(node);
       if (proposal) {
         this.proposal = proposal;
@@ -793,6 +856,49 @@ export class RecorderController {
     const keys = new Set(fresh.map((c) => c.strategy));
     const all = [...fresh, ...extra.filter((c) => !keys.has(c.strategy))];
     return dedupe(all.map((c) => relativize(c, containerNode)).filter((c): c is Candidate => c !== null));
+  }
+
+  /** Make table `index` active. The selection, proposal, and any field edit belong to the previous table and end. */
+  private activate(index: number): void {
+    if (!this.draft.tables[index]) throw new Error(`no table at index ${index}`);
+    if (index === this.draft.activeTable) return;
+    this.clearSelection();
+    this.current = { ...this.current, repick: null, repickStep: null };
+    this.apply({ type: 'selectTable', index });
+  }
+
+  /**
+   * Recompute the selection for another table (null: a new one): item scope
+   * with candidates relative to the container holding the element when the
+   * table has containers and one holds it, else page scope with document
+   * candidates.
+   */
+  private async retarget(table: number | null): Promise<void> {
+    const selected = this.current.selected;
+    const node = this.node;
+    const root = this.root;
+    if (!selected || !node || !root) throw new Error('select an element first');
+    if (table !== null && !this.draft.tables[table]) throw new Error(`no table at index ${table}`);
+    const item = table === null ? null : this.draft.tables[table]!.item;
+    let scope: FieldScope = 'page';
+    let candidates: ProtocolCandidate[] = [];
+    let containerPath: number[] | null = null;
+    if (item) {
+      const containers = await this.containersOf(item);
+      const holder = (await this.nodesFor(containers, root)).find((c) => c !== node && isInside(node, c));
+      if (holder) {
+        candidates = rank(await this.withCounts(this.relativeTo(node, holder), 'item', containers, true), { itemCount: containers.length });
+        if (candidates.length > 0) {
+          scope = 'item';
+          containerPath = pathOf(holder);
+        }
+      }
+    }
+    if (scope === 'page') candidates = rank(await this.withCounts(dedupe(generate(node)), 'page', []));
+    this.current = {
+      ...this.current,
+      selected: { ...selected, scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
+    };
   }
 
   private resetEdits(): void {
@@ -831,7 +937,7 @@ export class RecorderController {
    */
   private async editItem(): Promise<void> {
     this.notEditing();
-    const item = this.draft.item;
+    const item = this.table().item;
     if (!item) throw new Error('no item container to edit');
     this.clearSelection();
     const root = annotate((await this.session.snapshot()) as SerializedElement);
@@ -843,7 +949,7 @@ export class RecorderController {
     const listRoot = withinNode ?? root.children.find((c): c is AnnotatedNode => c.type === 'element' && c.tag === 'body') ?? root;
 
     let seed: AnnotatedNode = containerNode;
-    const field = this.draft.fields.find((f) => f.scope === 'item');
+    const field = this.table().fields.find((f) => f.scope === 'item');
     if (field) {
       try {
         const [ref] = await this.session.resolve(bare(field.selectors[0]!), containerRef);
@@ -912,9 +1018,9 @@ export class RecorderController {
     };
     const text = selector.trim();
     if (!text) return refuse('type a selector');
-    const scope: FieldScope = scopeHint ?? this.current.editing?.options.scope ?? this.current.selected?.scope ?? (this.draft.item ? 'item' : 'page');
+    const scope: FieldScope = scopeHint ?? this.current.editing?.options.scope ?? this.current.selected?.scope ?? (this.table().item ? 'item' : 'page');
     const candidate = parseSelector(text);
-    const containers = scope === 'item' ? await this.containers() : [];
+    const containers = scope === 'item' ? await this.targetContainers() : [];
     if (scope === 'item' && containers.length === 0) return refuse('no item container on this page to search in');
     let found: Awaited<ReturnType<RecorderController['locate']>>;
     try {
@@ -935,7 +1041,7 @@ export class RecorderController {
    * With no match the panel shows the saved values and no selected element.
    */
   private async editField(index: number, snapshot: SerializedElement | undefined): Promise<void> {
-    const field = this.draft.fields[index];
+    const field = this.table().fields[index];
     if (!field) throw new Error(`no field at index ${index}`);
     this.clearSelection();
     const containers = field.scope === 'item' ? await this.containers() : [];
@@ -973,7 +1079,7 @@ export class RecorderController {
   private async updateEditedField(patch: FieldPatch): Promise<void> {
     const editing = this.current.editing;
     if (!editing) throw new Error('no field is being edited');
-    const field = this.draft.fields[editing.index];
+    const field = this.table().fields[editing.index];
     if (!field) throw new Error(`no field at index ${editing.index}`);
     const selected = this.current.selected;
     // Without a selected element the saved candidates all stay, the chosen one first.
@@ -1180,7 +1286,7 @@ export class RecorderController {
       const within = this.proposalWithin();
       return { level, ancestorOf: [], ofContainers: false, descendantOf: within ? pathOf(within) : null, containing: this.node ? pathOf(this.node) : null };
     }
-    if (this.draft.item && level === 'within') return { level, ancestorOf: [], ofContainers: true, descendantOf: null, containing: null };
+    if (this.table().item && level === 'within') return { level, ancestorOf: [], ofContainers: true, descendantOf: null, containing: null };
     throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
   }
 
@@ -1191,7 +1297,7 @@ export class RecorderController {
   ): Promise<void> {
     this.current = { ...this.current, levelPick: null };
     if (this.proposal && this.current.proposal) return this.editProposal(level, by, msg);
-    if (this.draft.item && level === 'within') return this.editItemWithin(by, msg);
+    if (this.table().item && level === 'within') return this.editItemWithin(by, msg);
     throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
   }
 
@@ -1299,7 +1405,7 @@ export class RecorderController {
   }
 
   private replaceItemSelectors(selectors: ProtocolCandidate[]): void {
-    const { count: _c, total: _t, ...rest } = this.draft.item!;
+    const { count: _c, total: _t, ...rest } = this.table().item!;
     this.apply({ type: 'setItem', item: { ...rest, selectors, count: null, total: null } });
   }
 
@@ -1310,7 +1416,7 @@ export class RecorderController {
    * relative form still finds that container.
    */
   private async rewriteItem(root: AnnotatedNode, parent: { node: AnnotatedNode; ref: ElementRef } | null): Promise<ProtocolCandidate[]> {
-    const item = this.draft.item!;
+    const item = this.table().item!;
     const current = await this.containers();
     let first: { node: AnnotatedNode; ref: ElementRef } | null = null;
     for (const ref of current) {
@@ -1357,7 +1463,7 @@ export class RecorderController {
       if (view.exclude.length > 0) this.current = { ...this.current, proposal: await this.recountProposal(this.current.proposal!) };
       return;
     }
-    const item = this.draft.item;
+    const item = this.table().item;
     if (!item) throw new Error('no item container to change');
     if (level === 'within') {
       if (!item.within) throw new Error('the item container has no list parent');
@@ -1392,7 +1498,7 @@ export class RecorderController {
     });
     this.dropProposal();
     await this.recount();
-    this.emitter.emit('recorder.itemsConfirmed', { count: this.draft.item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
+    this.emitter.emit('recorder.itemsConfirmed', { count: this.table().item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
     // An edit of the confirmed item keeps the fields as they are; the recount marks the broken ones.
     if (editing) return this.clearSelection();
 
@@ -1410,6 +1516,7 @@ export class RecorderController {
         ...selected,
         scope: 'item',
         primary: 0,
+        table: this.draft.activeTable,
         selection: { ...selected.selection, candidates, containerPath: pathOf(containerNode) },
       },
     };
@@ -1423,12 +1530,12 @@ export class RecorderController {
     this.apply({ type: 'setItem', item: { selectors, exclude: [], fingerprint: selected.selection.fingerprint, count: null, total: null } });
     this.dropProposal();
     await this.recount();
-    this.emitter.emit('recorder.itemsConfirmed', { count: this.draft.item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
+    this.emitter.emit('recorder.itemsConfirmed', { count: this.table().item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
   }
 
   private async addExclusion(selector: string): Promise<void> {
     const proposal = this.current.proposal;
-    if (!this.draft.item && !proposal) throw new Error('find or set an item container before adding an exclusion');
+    if (!this.table().item && !proposal) throw new Error('find or set an item container before adding an exclusion');
     const candidate: ProtocolCandidate = { strategy: 'css', value: selector.trim(), stability: 'medium' };
     let matches: number;
     try {
@@ -1439,7 +1546,7 @@ export class RecorderController {
     if (!proposal) {
       this.apply({ type: 'addExclusion', candidate });
       await this.recount();
-      this.emitter.emit('recorder.excluded', { selector: candidate.value, count: this.draft.item!.count });
+      this.emitter.emit('recorder.excluded', { selector: candidate.value, count: this.table().item!.count });
       return;
     }
     const exclude = [...proposal.exclude, { ...candidate, count: matches }];
@@ -1479,22 +1586,30 @@ export class RecorderController {
     };
   }
 
-  private async addField(patch: {
-    name?: string;
-    type?: FieldType;
-    scope?: FieldScope;
-    attr?: string | null;
-    optional?: boolean;
-    key?: boolean;
-  }): Promise<void> {
-    const selected = this.current.selected;
-    if (!selected) throw new Error('select an element first');
+  private async addField(patch: FieldPatch): Promise<void> {
+    if (!this.current.selected) throw new Error('select an element first');
+    // The target table: the form's, else the one the selection was computed for. It becomes active.
+    const target = patch.table ?? this.current.selected.table ?? this.draft.activeTable;
+    if (typeof target === 'number') {
+      if (!this.draft.tables[target]) throw new Error(`no table at index ${target}`);
+      if (target !== this.current.selected.table) await this.retarget(target);
+    } else {
+      const error = tableNameError(this.draft, target.new.trim());
+      if (error) throw new Error(error);
+      if (this.current.selected.table !== null) await this.retarget(null);
+    }
+    const selected = this.current.selected!;
+    if (typeof target === 'number') {
+      if (target !== this.draft.activeTable) this.apply({ type: 'selectTable', index: target });
+    } else {
+      this.apply({ type: 'addTable', name: target.new.trim() });
+    }
     const selectors = orderForSave(selected.selection.candidates, selected.primary);
     if (selectors.length === 0) throw new Error('the selection has no selector candidates');
     const type = patch.type ?? selected.defaults.type;
     const attr = patch.attr === null ? undefined : (patch.attr ?? (patch.type && patch.type !== selected.defaults.type ? defaultAttr(type) : selected.defaults.attr));
     const scope = patch.scope ?? selected.scope;
-    const taken = this.draft.fields.map((f) => f.name);
+    const taken = this.table().fields.map((f) => f.name);
     const name = patch.name ?? (taken.includes(selected.defaults.name) ? fieldDefaults({ tag: selected.selection.tag, attrs: selected.selection.attrs, text: selected.selection.text, ...(selected.selection.name ? { name: selected.selection.name } : {}) }, taken).name : selected.defaults.name);
     const containers = scope === 'item' ? await this.containers() : [];
     const sample = await this.sample({ selectors, type, scope, ...(attr ? { attr } : {}) }, containers);
@@ -1602,53 +1717,56 @@ export class RecorderController {
 
   // Test run and save --------------------------------------------------------
 
-  /** Run the draft on the current page, page 1 only, with the runner's extraction. */
+  /** Run the draft on the current page, page 1 only, with the runner's extraction; one result per table. */
   async testRun(): Promise<TestResults> {
     const started = this.now();
     const validated = validateRecipe(draftToRecipe(this.draft));
     let results: TestResults;
     if (!validated.ok) {
       results = {
-        rows: [],
-        rowCount: 0,
-        dropped: { count: 0, fields: [] },
-        fields: [],
+        tables: [],
         durationMs: 0,
         warnings: [],
         error: validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n'),
       };
     } else {
-      // The draft is always one table.
-      const extraction = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 })).tables[0]!;
-      const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
-      const droppedFields = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
+      const extracted = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 })).tables;
       results = {
-        rows: extraction.rows.slice(0, MAX_TEST_ROWS),
-        rowCount: extraction.rows.length,
-        dropped: { count: extraction.dropped.length, fields: droppedFields },
-        fields: extraction.fields.map((f) => ({ name: f.name, status: f.status })),
+        tables: extracted.map((extraction): TestTable => {
+          const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
+          const droppedFields = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
+          return {
+            name: extraction.name,
+            rows: extraction.rows.slice(0, MAX_TEST_ROWS),
+            rowCount: extraction.rows.length,
+            dropped: { count: extraction.dropped.length, fields: droppedFields },
+            fields: extraction.fields.map((f) => ({ name: f.name, status: f.status })),
+            ...(extraction.missingRequired.length > 0
+              ? {
+                  error: `required ${
+                    extraction.missingRequired.includes('within')
+                      ? 'list parent'
+                      : extraction.missingRequired.includes('item')
+                        ? 'item container'
+                        : `field${extraction.missingRequired.length > 1 ? 's' : ''} ${extraction.missingRequired.join(', ')}`
+                  } matched no element`,
+                }
+              : extraction.containerCount > 0 && extraction.rows.length === 0
+                ? { error: `every row was dropped for missing required field${droppedFields.length > 1 ? 's' : ''} ${droppedFields.join(', ')}` }
+                : {}),
+          };
+        }),
         durationMs: Math.max(0, this.now().getTime() - started.getTime()),
-        warnings: extraction.warnings,
-        ...(extraction.missingRequired.length > 0
-          ? {
-              error: `required ${
-                extraction.missingRequired.includes('within')
-                  ? 'list parent'
-                  : extraction.missingRequired.includes('item')
-                    ? 'item container'
-                    : `field${extraction.missingRequired.length > 1 ? 's' : ''} ${extraction.missingRequired.join(', ')}`
-              } matched no element`,
-            }
-          : extraction.containerCount > 0 && extraction.rows.length === 0
-            ? { error: `every row was dropped for missing required field${droppedFields.length > 1 ? 's' : ''} ${droppedFields.join(', ')}` }
-            : {}),
+        warnings: extracted.flatMap((e) => e.warnings),
       };
     }
     this.current = { ...this.current, test: results };
+    const failed = results.tables.filter((t) => t.error);
+    const error = results.error ?? (failed.length > 0 ? failed.map((t) => (results.tables.length > 1 ? `${t.name}: ${t.error}` : t.error)).join('; ') : undefined);
     this.emitter.emit('recorder.testRun', {
-      rows: results.rowCount,
+      rows: results.tables.reduce((sum, t) => sum + t.rowCount, 0),
       durationMs: results.durationMs,
-      ...(results.error ? { error: results.error } : {}),
+      ...(error ? { error } : {}),
     });
     return results;
   }
@@ -1660,7 +1778,7 @@ export class RecorderController {
     if (errors.length > 0 || !validated.ok) {
       return { kind: 'save.result', ok: false, errors, state: this.current };
     }
-    await this.opts.storage.save(inDraftForm(this.draft, validated.recipe));
+    await this.opts.storage.save(validated.recipe);
     this.apply({ type: 'markSaved' });
     const path = this.opts.pathFor?.(validated.recipe.name);
     this.current = {

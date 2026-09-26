@@ -174,21 +174,42 @@ export const DraftStepSchema = z.object({
   error: z.optional(z.string()),
 });
 
-export const ErrorEntrySchema = z.object({ path: z.string(), message: z.string() });
+export const ErrorEntrySchema = z.object({
+  path: z.string(),
+  message: z.string(),
+  /** Index of the table the error belongs to, for paths under a table or a field. */
+  table: z.optional(index()),
+  /** Index of the field in that table, for field paths. */
+  index: z.optional(index()),
+});
+
+/** One table of the draft: its name, item container, and fields. */
+export const DraftTableSchema = z.object({
+  name: z.string(),
+  item: z.nullable(DraftItemSchema),
+  fields: z.array(DraftFieldSchema),
+  /** Why the table does not validate as a whole, such as an invalid name or no fields. */
+  error: z.optional(z.string()),
+});
+
+/** How the draft is written: the shorthand (top level `item` and `fields`) or the `tables` form. */
+export const DRAFT_FORMS = ['shorthand', 'tables'] as const;
 
 export const DraftSchema = z.object({
   name: z.string(),
   nameError: z.optional(z.string()),
   url: z.string(),
   vars: z.array(VarValueSchema),
-  item: z.nullable(DraftItemSchema),
-  fields: z.array(DraftFieldSchema),
+  /** Every table, in strip order; there is always at least one. */
+  tables: z.array(DraftTableSchema).check(z.minLength(1)),
+  /** Index in `tables` of the table that receives picks, inference, and field edits. */
+  activeTable: index(),
+  /** The form the draft was created or loaded in; see `draftToRecipe` for when it is kept. */
+  form: z.enum(DRAFT_FORMS),
   steps: z._default(z.array(DraftStepSchema), []),
   pagination: z.nullable(DraftPaginationSchema),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
-  /** Name of the single table when the recipe was loaded in the `tables` form; saving keeps that form. Absent: shorthand. */
-  table: z.optional(z.string()),
   dirty: z.boolean(),
   errors: z.array(ErrorEntrySchema),
 });
@@ -200,9 +221,13 @@ export const SelectedSchema = z.object({
     name: z.string(),
     type: z.enum(FIELD_TYPES),
     attr: z.optional(z.string()),
+    /** Table the field goes to unless the user picks another. */
+    table: z._default(index(), 0),
   }),
   /** Index in `selection.candidates` of the primary candidate. */
   primary: index(),
+  /** Table the selection's scope and candidates are computed for; null for a new table. */
+  table: z._default(z.nullable(index()), 0),
 });
 
 /** The options of a field, as the selection panel's form shows them. */
@@ -226,12 +251,20 @@ export const EditingSchema = z.object({
   primary: z._default(index(), 0),
 });
 
-export const TestResultsSchema = z.object({
+export const TestTableSchema = z.object({
+  name: z.string(),
   rows: z.array(z.record(z.string(), z.unknown())),
   rowCount: count(),
   /** Rows left out because a required field resolved nothing, and the fields that caused it. */
   dropped: z.object({ count: count(), fields: z.array(z.string()) }),
   fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'healed', 'partial', 'missing']) })),
+  /** Why this table produced no rows, such as a required field that matched nothing. */
+  error: z.optional(z.string()),
+});
+
+export const TestResultsSchema = z.object({
+  /** One entry per table, in draft order; empty when the draft does not validate. */
+  tables: z.array(TestTableSchema),
   durationMs: z.number().check(z.nonnegative()),
   warnings: z.array(z.string()),
   error: z.optional(z.string()),
@@ -239,6 +272,8 @@ export const TestResultsSchema = z.object({
 
 /** What the focused re-pick mode shows about the field being re-picked. */
 export const RepickContextSchema = z.object({
+  /** Name of the table holding the field; the table is active while the re-pick lasts. */
+  table: z.string(),
   field: z.string(),
   index: index(),
   /** Primary selector before the re-pick. */
@@ -312,6 +347,8 @@ const FieldPatchSchema = z.object({
   attr: z.optional(z.nullable(z.string())),
   optional: z.optional(z.boolean()),
   key: z.optional(z.boolean()),
+  /** Table for a new field: an index, or a new table by name. The table becomes active. */
+  table: z.optional(z.union([index(), z.object({ new: z.string() })])),
 });
 
 const StepPatchSchema = z.object({
@@ -353,6 +390,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
    * `item`, else on the page. The snapshot maps the first match to a path.
    */
   msg('selection.setSelector', { selector: z.string(), scope: z.optional(z.enum(FIELD_SCOPES)), snapshot: z.optional(SnapshotSchema) }),
+  /** Recompute the selection's scope, candidates, and coverage for a table; null stands for a new table. */
+  msg('selection.retarget', { table: z.nullable(index()) }),
   msg('inspect.count', { candidate: SelectorSchema, scope: z.enum(FIELD_SCOPES) }),
   msg('inspect.primary', { index: index() }),
   msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
@@ -383,8 +422,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.addField', { patch: z.optional(FieldPatchSchema) }),
   msg('draft.updateField', { index: index(), patch: FieldPatchSchema }),
   msg('draft.removeField', { index: index() }),
-  /** Open a saved field in the selection panel; the snapshot maps its first match to a path. */
-  msg('draft.editField', { index: index(), snapshot: z.optional(SnapshotSchema) }),
+  /** Open a saved field in the selection panel; the snapshot maps its first match to a path. A table other than the active one is activated first. */
+  msg('draft.editField', { index: index(), table: z.optional(index()), snapshot: z.optional(SnapshotSchema) }),
   /** Replace the edited field in place with the form's options and the selection's candidates. */
   msg('draft.updateEditedField', { patch: FieldPatchSchema }),
   msg('draft.cancelEdit', {}),
@@ -398,6 +437,13 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.markPagination', {}),
   msg('draft.updatePagination', { patch: PaginationPatchSchema }),
   msg('draft.clearPagination', {}),
+  /** Add a table and make it active; without a name the host picks one. */
+  msg('draft.addTable', { name: z.optional(z.string()) }),
+  /** Rename the active table. */
+  msg('draft.renameTable', { name: z.string() }),
+  /** Remove the active table with its item container and fields; the last table stays. */
+  msg('draft.removeTable', {}),
+  msg('draft.selectTable', { index: index() }),
   msg('draft.setName', { name: z.string() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
   msg('draft.reopen', {}),
@@ -444,6 +490,8 @@ export type LevelPick = z.infer<typeof LevelPickSchema>;
 export type VarValue = z.infer<typeof VarValueSchema>;
 export type DraftField = z.infer<typeof DraftFieldSchema>;
 export type DraftItem = z.infer<typeof DraftItemSchema>;
+export type DraftTable = z.infer<typeof DraftTableSchema>;
+export type DraftForm = (typeof DRAFT_FORMS)[number];
 export type DraftPagination = z.infer<typeof DraftPaginationSchema>;
 export type DraftStep = z.infer<typeof DraftStepSchema>;
 export type StepPatch = z.infer<typeof StepPatchSchema>;
@@ -453,6 +501,7 @@ export type SelectedView = z.infer<typeof SelectedSchema>;
 export type FieldOptions = z.infer<typeof FieldOptionsSchema>;
 export type EditingView = z.infer<typeof EditingSchema>;
 export type TestResults = z.infer<typeof TestResultsSchema>;
+export type TestTable = z.infer<typeof TestTableSchema>;
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
 export type RepickContext = z.infer<typeof RepickContextSchema>;
 export type GuardContextView = z.infer<typeof GuardContextSchema>;
@@ -464,6 +513,11 @@ export type HostMessage = z.infer<typeof HostMessageSchema>;
 export type Message = PageMessage | HostMessage;
 export type PageMessageKind = ParsedPageMessage['kind'];
 export type HostMessageKind = HostMessage['kind'];
+
+/** The table that receives picks and field edits. */
+export function currentTable(draft: Pick<Draft, 'tables' | 'activeTable'>): DraftTable {
+  return draft.tables[draft.activeTable] ?? draft.tables[0]!;
+}
 
 export class ProtocolError extends Error {
   constructor(message: string) {

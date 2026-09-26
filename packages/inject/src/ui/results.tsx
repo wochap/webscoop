@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { TestResults } from '@webscoop/core/page';
+import type { TestResults, TestTable } from '@webscoop/core/page';
 import { useDrawerHost } from './context';
 
-export function TestRunSummary({ results }: { results: TestResults }) {
+export function TestRunSummary({ results, durationMs }: { results: TestTable; durationMs: number }) {
   return (
     <span className="ws-row" data-ws="test-summary">
       <span className="ws-title" data-ws="test-rows">
@@ -13,14 +14,14 @@ export function TestRunSummary({ results }: { results: TestResults }) {
           {results.dropped.count} row{results.dropped.count === 1 ? '' : 's'} dropped: {results.dropped.fields.join(', ')}
         </span>
       )}
-      <span className="ws-meta">in {results.durationMs} ms · page 1 only</span>
+      <span className="ws-meta">in {durationMs} ms · page 1 only</span>
     </span>
   );
 }
 
 const STATUS_TONE = { ok: 'ws-stable', healed: 'ws-stable', partial: 'ws-medium', missing: 'ws-fragile' } as const;
 
-export function FieldStatusList({ fields }: { fields: TestResults['fields'] }) {
+export function FieldStatusList({ fields }: { fields: TestTable['fields'] }) {
   return (
     <span className="ws-row ws-wrap" data-ws="field-status">
       {fields.map((f) => (
@@ -33,13 +34,15 @@ export function FieldStatusList({ fields }: { fields: TestResults['fields'] }) {
   );
 }
 
-export function RunLog({ results }: { results: TestResults }) {
-  const lines = [...(results.error ? [results.error] : []), ...results.warnings];
+/** The run's error, the shown table's error, then the warnings. */
+export function RunLog({ results, table }: { results: TestResults; table?: TestTable | undefined }) {
+  const errors = [...(results.error ? [results.error] : []), ...(table?.error ? [table.error] : [])];
+  const lines = [...errors, ...results.warnings];
   if (lines.length === 0) return null;
   return (
     <div className="ws-col" data-ws="run-log" style={{ padding: '6px 12px' }}>
       {lines.map((line, i) => (
-        <span key={i} className={i === 0 && results.error ? 'ws-error' : 'ws-meta'} style={{ whiteSpace: 'pre-wrap' }}>
+        <span key={i} className={i < errors.length ? 'ws-error' : 'ws-meta'} style={{ whiteSpace: 'pre-wrap' }}>
           {line}
         </span>
       ))}
@@ -52,7 +55,7 @@ function cell(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
-export function ResultsTable({ rows }: { rows: TestResults['rows'] }) {
+export function ResultsTable({ rows }: { rows: TestTable['rows'] }) {
   const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => c !== '_page');
   return (
     <table className="ws-table" data-ws="results-table">
@@ -78,27 +81,55 @@ export function ResultsTable({ rows }: { rows: TestResults['rows'] }) {
   );
 }
 
+/** One tab per table with its row count; shown only when the run has more than one table. */
+export function ResultTabs({ tables, shown, onShow }: { tables: TestTable[]; shown: string; onShow: (name: string) => void }) {
+  if (tables.length < 2) return null;
+  return (
+    <div className="ws-seg" role="tablist" aria-label="Result tables" data-ws="result-tabs">
+      {tables.map((t) => (
+        <button key={t.name} type="button" role="tab" aria-selected={t.name === shown} aria-pressed={t.name === shown} onClick={() => onShow(t.name)} data-ws="result-tab" data-table={t.name}>
+          {t.name} · {t.rowCount}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Bottom drawer in the page area, left of the panel. Renders into its own
- * host so the panel's containment does not trap it.
+ * Bottom drawer in the page area, left of the panel, with one tab per table,
+ * opened on the active table. Renders into its own host so the panel's
+ * containment does not trap it.
  */
 export function ResultsDrawer({
   results,
+  active,
   view,
   onView,
   onClose,
 }: {
   results: TestResults;
+  /** Name of the active table: the tab shown first. */
+  active?: string | undefined;
   view: 'table' | 'json';
   onView: (view: 'table' | 'json') => void;
   onClose: () => void;
 }) {
   const host = useDrawerHost();
+  const [picked, setPicked] = useState<string | null>(null);
+  const table = results.tables.find((t) => t.name === (picked ?? active)) ?? results.tables[0];
+  const rows = table?.rows ?? [];
   const drawer = (
     <div id="ws-drawer" data-ws="drawer" role="region" aria-label="Test run results">
       <div className="ws-drawer-head">
-        <TestRunSummary results={results} />
-        <FieldStatusList fields={results.fields} />
+        <ResultTabs tables={results.tables} shown={table?.name ?? ''} onShow={setPicked} />
+        {table ? (
+          <>
+            <TestRunSummary results={table} durationMs={results.durationMs} />
+            <FieldStatusList fields={table.fields} />
+          </>
+        ) : (
+          <span className="ws-meta">in {results.durationMs} ms · page 1 only</span>
+        )}
         <span className="ws-spacer" />
         <div className="ws-seg" role="group" aria-label="Results view">
           <button type="button" aria-pressed={view === 'table'} onClick={() => onView('table')} data-ws="view-table">
@@ -112,9 +143,9 @@ export function ResultsDrawer({
           ×
         </button>
       </div>
-      <RunLog results={results} />
+      <RunLog results={results} table={table} />
       <div className="ws-drawer-body">
-        {view === 'table' ? <ResultsTable rows={results.rows} /> : <pre className="ws-json" data-ws="results-json">{JSON.stringify(results.rows, null, 2)}</pre>}
+        {view === 'table' ? <ResultsTable rows={rows} /> : <pre className="ws-json" data-ws="results-json">{JSON.stringify(rows, null, 2)}</pre>}
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ describe('selector chain', () => {
     const state = t.controller.state;
     expect(state.selected!.scope).toBe('item');
     const confirmed = renderPanel(state);
-    const saved = state.draft.item!.selectors[0]!;
+    const saved = state.draft.tables[0]!.item!.selectors[0]!;
     expect(confirmed.q('item-summary')!.querySelector('[data-ws="selector-chain-text"]')!.textContent).toBe(`id=rso » ${saved.strategy}=${saved.value}`);
     const field = state.selected!.selection.candidates[0]!;
     expect(confirmed.q('inspector-chain')!.textContent).toBe(`id=rso » ${saved.strategy}=${saved.value} » ${field.strategy}=${field.value}`);
@@ -49,7 +49,7 @@ describe('selector chain', () => {
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
     await t.pick(byClass(t.page, 'gLFyf'));
     const panel = renderPanel(t.controller.state);
-    const saved = t.controller.state.draft.item!.selectors[0]!;
+    const saved = t.controller.state.draft.tables[0]!.item!.selectors[0]!;
     expect(panel.q('item-summary')!.querySelector('[data-ws="selector-chain-text"]')!.textContent).toBe(`${saved.strategy}=${saved.value}`);
     expect(panel.q('inspector-chain')).toBeNull();
   });

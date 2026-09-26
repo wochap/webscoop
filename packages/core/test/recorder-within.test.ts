@@ -105,11 +105,11 @@ describe('item containers relative to the list parent', () => {
     const cls = t.controller.state.selected!.selection.candidates.findIndex((c) => c.strategy === 'class');
     await t.send({ kind: 'inspect.primary', index: cls });
     await t.send({ kind: 'draft.setItem' });
-    expect(t.controller.draft.item!.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.main div.Mjj4Yd' });
-    expect(t.controller.draft.item).toMatchObject({ count: 8 });
+    expect(t.controller.draft.tables[0]!.item!.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.main div.Mjj4Yd' });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 8 });
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'dURPMd')), snapshot: t.snapshot });
     expect(t.controller.state.error).toBeNull();
-    const item = t.controller.draft.item!;
+    const item = t.controller.draft.tables[0]!.item!;
     expect(item.within![0]).toMatchObject({ strategy: 'id', value: 'rso' });
     expect(item.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.Mjj4Yd', count: 8 });
     for (const c of item.selectors) expect(c.value).not.toMatch(ABOVE_LIST);
@@ -118,11 +118,11 @@ describe('item containers relative to the list parent', () => {
     for (const c of item.selectors) expect((await t.session.resolve(c, rso)).length, `${c.strategy}=${c.value}`).toBeGreaterThan(0);
 
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
-    expect(t.controller.draft.item!.within).toBeUndefined();
+    expect(t.controller.draft.tables[0]!.item!.within).toBeUndefined();
     // The old primary finds the same 8 results in the whole document, so it stays first.
-    expect(t.controller.draft.item!.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.Mjj4Yd', count: 8 });
-    expect(t.controller.draft.item!.selectors.map((c) => c.value)).toContain('div.main div.Mjj4Yd');
-    expect(t.controller.draft.item).toMatchObject({ count: 8 });
+    expect(t.controller.draft.tables[0]!.item!.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.Mjj4Yd', count: 8 });
+    expect(t.controller.draft.tables[0]!.item!.selectors.map((c) => c.value)).toContain('div.main div.Mjj4Yd');
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 8 });
   });
 
   it('keeps a tier 0 item count when the product list is set as list parent after confirming', async () => {
@@ -130,10 +130,10 @@ describe('item containers relative to the list parent', () => {
     const card = byClass(t.page, 'product-card', 3);
     await t.pick(card);
     await t.send({ kind: 'draft.setItem' });
-    const before = t.controller.draft.item!;
+    const before = t.controller.draft.tables[0]!.item!;
     expect(before.count).toBe(24);
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')), snapshot: t.snapshot });
-    const after = t.controller.draft.item!;
+    const after = t.controller.draft.tables[0]!.item!;
     expect(after.selectors[0]).toMatchObject({ strategy: before.selectors[0]!.strategy, value: before.selectors[0]!.value });
     expect(after).toMatchObject({ count: 24, withinCount: 1 });
   });
@@ -142,7 +142,7 @@ describe('item containers relative to the list parent', () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
     await t.pick(byClass(t.page, 'LC20lb', 0));
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.fields[0]).toMatchObject({ scope: 'item', count: 8 });
+    expect(t.controller.draft.tables[0]!.fields[0]).toMatchObject({ scope: 'item', count: 8 });
     await t.send({ kind: 'save.request' });
     const recipe = loadRecipe(t.storage.files.get('search-results')!);
     expect(recipe.item!.within![0]).toMatchObject({ strategy: 'id', value: 'rso' });

@@ -1,4 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { currentTable } from '@webscoop/core/page';
 import { isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
 import { modeOf, type Actions, type Snapshot } from '../store';
 import { useActions, useSnapshot } from './context';
@@ -13,6 +14,7 @@ import { ResultsDrawer } from './results';
 import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
+import { ActiveTableBar, CollapsedTables, TableStrip } from './tables';
 
 /** Carry out a shortcut against the current state. */
 export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions): void {
@@ -48,7 +50,7 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
     case 'moveUp':
     case 'moveDown': {
       const from = ui.focusedField;
-      const count = host?.draft.fields.length ?? 0;
+      const count = host ? currentTable(host.draft).fields.length : 0;
       if (from === null) return;
       const to = shortcut === 'moveUp' ? from - 1 : from + 1;
       if (to < 0 || to >= count) return;
@@ -170,6 +172,13 @@ export function ScoopRoot() {
   }
 
   const { draft, proposal } = host;
+  const table = currentTable(draft);
+  const fieldCount = draft.tables.reduce((sum, t) => sum + t.fields.length, 0);
+  const locked = Boolean(proposal?.editing);
+  const edit = (index: number, other?: number) => {
+    if (ui.picking) actions.cancelPicking();
+    void actions.send({ kind: 'draft.editField', index, ...(other !== undefined ? { table: other } : {}) });
+  };
   return (
     <div onKeyDown={onKeyDown} style={{ display: 'contents' }} data-ws="panel">
       <PanelShell
@@ -177,9 +186,9 @@ export function ScoopRoot() {
         footer={
           <PanelFooter
             dirty={draft.dirty}
-            fieldCount={draft.fields.length}
+            fieldCount={fieldCount}
             stepCount={draft.steps.length}
-            canTest={draft.fields.length > 0}
+            canTest={fieldCount > 0}
             savedName={host.saved?.name ?? null}
             onTest={() => {
               void actions.send({ kind: 'test.run' });
@@ -192,6 +201,8 @@ export function ScoopRoot() {
         <RecipeBar draft={draft} editingVar={ui.editingVar} setEditingVar={(editingVar) => actions.setUi({ editingVar })} />
         <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
         <SelectionPanel host={host} trail={ui.trail} />
+        <TableStrip draft={draft} locked={locked} />
+        <ActiveTableBar draft={draft} />
         {proposal && (
           <ItemDetectCard
             proposal={proposal}
@@ -201,17 +212,22 @@ export function ScoopRoot() {
             onHighlight={(highlight) => actions.setUi({ highlight })}
           />
         )}
-        {draft.item && !proposal && <ItemSummary item={draft.item} />}
+        {table.item && !proposal && <ItemSummary item={table.item} />}
         <FieldList
-          fields={draft.fields}
+          fields={table.fields}
           focused={ui.focusedField}
           repick={host.repick}
           editing={host.editing?.index ?? null}
-          editLocked={Boolean(proposal?.editing)}
+          editLocked={locked}
           onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })}
-          onEdit={(index) => {
-            if (ui.picking) actions.cancelPicking();
-            void actions.send({ kind: 'draft.editField', index });
+          onEdit={(index) => edit(index)}
+        />
+        <CollapsedTables
+          draft={draft}
+          locked={locked}
+          onEdit={(other, index) => {
+            actions.setUi({ focusedField: null });
+            edit(index, other);
           }}
         />
         <StepList
@@ -223,7 +239,7 @@ export function ScoopRoot() {
           onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null })}
         />
         {draft.pagination && <PaginationEditor pagination={draft.pagination} />}
-        {draft.errors.length > 0 && draft.fields.length > 0 && (
+        {draft.errors.length > 0 && fieldCount > 0 && (
           <div className="ws-col" data-ws="draft-errors">
             {draft.errors.map((e, i) => (
               <span key={i} className="ws-error">
@@ -237,6 +253,7 @@ export function ScoopRoot() {
       {ui.drawerOpen && host.test && (
         <ResultsDrawer
           results={host.test}
+          active={table.name}
           view={ui.drawerView}
           onView={(drawerView) => actions.setUi({ drawerView })}
           onClose={() => actions.setUi({ drawerOpen: false })}

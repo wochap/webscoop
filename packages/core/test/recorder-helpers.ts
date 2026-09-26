@@ -4,14 +4,17 @@ import {
   annotate,
   descendantsOf,
   detach,
+  emptyDraft,
   loadRecipe,
   pathOf,
   RecorderController,
   RecorderEmitter,
   saveRecipe,
   selectionOf,
+  validateDraft,
   type AnnotatedNode,
   type Draft,
+  type DraftTable,
   type Recipe,
   type RecipeSummary,
   type SerializedElement,
@@ -92,6 +95,15 @@ export async function harness(dom: SerializedElement, draft: Draft, url = CATALO
     pick: (node, containerPath = null) =>
       send({ kind: 'picker.select', url, selection: selectionOf(node, { containerPath }), snapshot: detach(page) }),
   };
+}
+
+/** A validated draft with the given tables (one by default); the rest comes from `base`, else an empty catalog draft. */
+export function draftWith(
+  tables: Partial<DraftTable> | Partial<DraftTable>[],
+  base: Draft = emptyDraft({ name: 'shop-catalog', url: CATALOG, vars: [] }),
+): Draft {
+  const list = (Array.isArray(tables) ? tables : [tables]).map((t) => ({ name: 'items', item: null, fields: [], ...t }));
+  return validateDraft({ ...base, tables: list, activeTable: 0, form: list.length === 1 && list[0]!.name === 'items' ? base.form : 'tables' });
 }
 
 export const byClass = (root: AnnotatedNode, cls: string, nth = 0): AnnotatedNode =>

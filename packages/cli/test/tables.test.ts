@@ -1,10 +1,12 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildPlan, loadRecipe, renderPy, renderTs, saveRecipe, type RecipeInput, type Row, type RunReport } from '@webscoop/core';
-import { FakeBrowser, h } from '@webscoop/core/testing';
+import { buildPlan, loadRecipe, renderPy, renderTs, saveRecipe, tablesOf, type RecipeInput, type Row, type RunReport } from '@webscoop/core';
+import { FakeBrowser, h, type FakeInteractiveSession } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
 import { RowSink, summary } from '../src/commands/run';
+import { resolveRepick } from '../src/commands/record';
+import { interactiveRepick } from '../src/repick';
 import { tempDir, testIo } from './helpers';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
@@ -211,14 +213,6 @@ describe('summary with tables', () => {
 });
 
 describe('multi-table fences', () => {
-  it('refuses record --edit of a multi-table recipe before the browser opens', async () => {
-    const dir = await home();
-    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
-    expect(await main(['record', '--edit', 'results'], io)).toBe(ExitCode.Error);
-    expect(io.err()).toContain('the recorder does not edit multi-table recipes yet');
-    expect(io.browserCreated()).toBe(0);
-  });
-
   it('refuses export of a multi-table recipe', async () => {
     const dir = await home();
     const io = testIo({ env: { WEBSCOOP_HOME: dir } });
@@ -238,5 +232,109 @@ describe('multi-table fences', () => {
     for (const render of [renderTs, renderPy]) {
       expect(render(buildPlan(loadRecipe(results([products]))), opts)).toBe(render(buildPlan(loadRecipe(shorthand)), opts));
     }
+  });
+});
+
+async function sessionOf(browser: FakeBrowser): Promise<FakeInteractiveSession> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const s = browser.sessions[0];
+    if (s && s.exposed.size > 0 && browser.visited.length > 0) return s;
+    if (Date.now() > deadline) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+type ReadyState = { state: { draft: { tables: { name: string; fields: { name: string }[] }[]; activeTable: number }; repickContext: { table: string; field: string } | null } };
+
+/** Tables `page` and `products` both with a `title` field, and `questions` with its own. */
+function shared(): RecipeInput {
+  return results([
+    { name: 'page', fields: [TITLE, { name: 'heading', type: 'text', selectors: [css('h1')] }] },
+    { name: 'products', item: { selectors: [css('div.card')] }, fields: [TITLE, { name: 'link', type: 'url', selectors: [css('a')] }] },
+    { name: 'questions', item: { selectors: [css('div.q')] }, fields: [{ name: 'question', type: 'text', selectors: [css('h3')] }] },
+  ]);
+}
+
+describe('record with tables', () => {
+  it('opens a multi-table recipe with --edit with every table and the first active', async () => {
+    const dir = await home();
+    const browser = new FakeBrowser({ [PAGE]: shopPage(3) });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['record', '--edit', 'results'], io);
+    const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
+    const reply = (await session.callHost({ kind: 'session.ready', url: PAGE })) as ReadyState;
+    expect(reply.state.draft.tables.map((t) => t.name)).toEqual(['page', 'products']);
+    expect(reply.state.draft.activeTable).toBe(0);
+    await session.userClose();
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('recording results (edit)');
+  });
+
+  it('resolves --repick by table.field and by a bare name one table has', () => {
+    const recipe = loadRecipe(shared());
+    expect(resolveRepick(recipe, 'products.title')).toEqual({ table: 'products', fieldIndex: 0 });
+    expect(resolveRepick(recipe, 'page.heading')).toEqual({ table: 'page', fieldIndex: 1 });
+    expect(resolveRepick(recipe, 'link')).toEqual({ table: 'products', fieldIndex: 1 });
+    expect(resolveRepick(recipe, 'question')).toEqual({ table: 'questions', fieldIndex: 0 });
+    expect(resolveRepick(loadRecipe(results()), 'heading')).toEqual({ table: 'page', fieldIndex: 0 });
+  });
+
+  it('exits 1 for an unknown table, an unknown field, and an ambiguous name, naming them', async () => {
+    const dir = await home([shared()]);
+    const cases: [string, string[]][] = [
+      ['title', ['field "title" is in several tables of recipe "results" (page, products)', 'products.title']],
+      ['nope.title', ['has no table named "nope"', 'tables: page, products, questions']],
+      ['products.price', ['table "products" of recipe "results" has no field named "price"', 'fields: title, link']],
+      ['price', ['has no field named "price"', 'page.title, page.heading, products.title']],
+    ];
+    for (const [spec, texts] of cases) {
+      const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+      expect(await main(['record', '--edit', 'results', '--repick', spec], io)).toBe(ExitCode.Error);
+      for (const text of texts) expect(io.err()).toContain(text);
+      expect(io.browserCreated()).toBe(0);
+    }
+  });
+
+  it('passes the table to the session for --repick table.field', async () => {
+    const dir = await home([shared()]);
+    const browser = new FakeBrowser({ [PAGE]: shopPage(3) });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['record', '--edit', 'results', '--repick', 'products.title'], io);
+    const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
+    const reply = (await session.callHost({ kind: 'session.ready', url: PAGE })) as ReadyState;
+    expect(reply.state.draft.activeTable).toBe(1);
+    expect(reply.state.repickContext).toMatchObject({ table: 'products', field: 'title' });
+    await session.callHost({ kind: 'repick.abort' });
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('the recipe is unchanged');
+  });
+
+  it("passes the event's table in a run's interactive re-pick", async () => {
+    const recipe = loadRecipe(shared());
+    const browser = new FakeBrowser({ [PAGE]: shopPage(3) });
+    const session = await browser.open('/profile');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    const io = testIo({});
+    const handler = interactiveRepick(io, { storage: { list: async () => [], load: async () => recipe, save: async () => {} }, bundle: '', vars: {}, timeoutMs: 1000 });
+    const title = tablesOf(recipe)[1]!.fields[0]!;
+    const outcome = handler({
+      page: 1,
+      target: { kind: 'field', index: 0, table: 'products', name: 'title', scope: 'item', optional: false, selectors: title.selectors },
+      name: 'title',
+      oldSelector: title.selectors[0]!,
+      fingerprint: null,
+      sample: null,
+      session,
+      recipe,
+    });
+    const fake = session as FakeInteractiveSession;
+    const deadline = Date.now() + 5000;
+    while (fake.exposed.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    const reply = (await fake.callHost({ kind: 'session.ready', url: PAGE })) as ReadyState;
+    expect(reply.state.draft.activeTable).toBe(1);
+    expect(reply.state.repickContext).toMatchObject({ table: 'products', field: 'title' });
+    await fake.callHost({ kind: 'repick.skip' });
+    expect(await outcome).toEqual({ kind: 'skip' });
   });
 });

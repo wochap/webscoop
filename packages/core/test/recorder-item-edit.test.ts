@@ -20,7 +20,7 @@ async function confirmed(snapshot = tier0Snapshot()): Promise<Harness> {
   const price = byClass(t.page, 'product-price', 0);
   await t.pick(price, cardPath(price));
   await t.send({ kind: 'draft.addField', patch: { name: 'price' } });
-  expect(t.controller.draft.fields.map((f) => [f.name, f.count])).toEqual([
+  expect(t.controller.draft.tables[0]!.fields.map((f) => [f.name, f.count])).toEqual([
     ['title', 24],
     ['price', 24],
   ]);
@@ -30,7 +30,7 @@ async function confirmed(snapshot = tier0Snapshot()): Promise<Harness> {
 describe('editing the confirmed item container', () => {
   it('reopens the proposal seeded from the confirmed item', async () => {
     const t = await confirmed();
-    const before = t.controller.draft.item!;
+    const before = t.controller.draft.tables[0]!.item!;
     await t.send({ kind: 'draft.editItem' });
     expect(t.controller.state.error).toBeNull();
     const p = proposal(t);
@@ -43,8 +43,8 @@ describe('editing the confirmed item container', () => {
     expect(p.broader).toMatchObject({ tag: 'li', count: 24 });
     expect(p.exclude).toEqual([]);
     // The draft does not change until the update.
-    expect(t.controller.draft.item).toEqual(before);
-    expect(t.controller.draft.fields).toHaveLength(2);
+    expect(t.controller.draft.tables[0]!.item).toEqual(before);
+    expect(t.controller.draft.tables[0]!.fields).toHaveLength(2);
   });
 
   it('updates to the broader level, keeps the fields, and refreshes their counts', async () => {
@@ -54,16 +54,16 @@ describe('editing the confirmed item container', () => {
     expect(t.controller.state.proposal).toBeNull();
     expect(t.controller.state.selected).toBeNull();
     const { draft } = t.controller;
-    expect(draft.item).toMatchObject({ count: 24, total: 24, fingerprint: { tag: 'li' } });
-    expect(draft.item!.selectors[0]!.value).toBe('listitem');
-    expect(draft.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
-    expect(draft.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
+    expect(draft.tables[0]!.item).toMatchObject({ count: 24, total: 24, fingerprint: { tag: 'li' } });
+    expect(draft.tables[0]!.item!.selectors[0]!.value).toBe('listitem');
+    expect(draft.tables[0]!.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
+    expect(draft.tables[0]!.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
       ['title', 'item', 24],
       ['price', 'item', 24],
     ]);
-    expect(draft.fields[0]!.sample).toBe(dataset[0]!.title);
+    expect(draft.tables[0]!.fields[0]!.sample).toBe(dataset[0]!.title);
     const results = await t.controller.testRun();
-    expect(results.rowCount).toBe(24);
+    expect(results.tables[0]!.rowCount).toBe(24);
   });
 
   it('keeps a field that the new level breaks, with a zero count', async () => {
@@ -74,9 +74,9 @@ describe('editing the confirmed item container', () => {
     expect(proposal(t).proposed.count).toBe(24);
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
     const { draft } = t.controller;
-    expect(draft.item!.count).toBe(24);
-    expect(draft.fields.map((f) => f.name)).toEqual(['title', 'price']);
-    expect(draft.fields[1]).toMatchObject({ name: 'price', count: 0, sample: null });
+    expect(draft.tables[0]!.item!.count).toBe(24);
+    expect(draft.tables[0]!.fields.map((f) => f.name)).toEqual(['title', 'price']);
+    expect(draft.tables[0]!.fields[1]).toMatchObject({ name: 'price', count: 0, sample: null });
   });
 
   it('leaves the item unchanged on cancel', async () => {
@@ -88,23 +88,23 @@ describe('editing the confirmed item container', () => {
     await t.send({ kind: 'draft.cancelItems' });
     expect(t.controller.state.proposal).toBeNull();
     expect(t.controller.state.selected).toBeNull();
-    expect(t.controller.draft.item).toEqual(before.item);
-    expect(t.controller.draft.fields).toEqual(before.fields);
+    expect(t.controller.draft.tables[0]!.item).toEqual(before.tables[0]!.item);
+    expect(t.controller.draft.tables[0]!.fields).toEqual(before.tables[0]!.fields);
   });
 
   it('seeds the exclusions and keeps them on update', async () => {
     const t = await confirmed(tier0Snapshot({ sponsored: 2 }));
     await t.send({ kind: 'draft.addExclusion', selector: '.sponsored' });
-    expect(t.controller.draft.item).toMatchObject({ count: 22, total: 24 });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 22, total: 24 });
     await t.send({ kind: 'draft.editItem' });
     expect(proposal(t).exclude).toMatchObject([{ value: '.sponsored' }]);
     expect(proposal(t).proposed).toMatchObject({ count: 22, total: 24 });
     // Exclusions added while editing go to the proposal, not the draft.
     await t.send({ kind: 'draft.addExclusion', selector: '#product-1' });
-    expect(t.controller.draft.item!.exclude).toHaveLength(1);
+    expect(t.controller.draft.tables[0]!.item!.exclude).toHaveLength(1);
     await t.send({ kind: 'draft.removeExclusion', index: 1 });
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
   });
 
   it('includes all siblings on the mixed catalog after confirming the product cards', async () => {
@@ -112,14 +112,14 @@ describe('editing the confirmed item container', () => {
     await t.pick(byClass(t.page, 'product-title', 1));
     expect(proposal(t).skipped).toBe(6);
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item!.count).toBe(24);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(24);
     await t.send({ kind: 'draft.editItem' });
     expect(proposal(t)).toMatchObject({ skipped: 6, includeAll: false, editing: true });
     await t.send({ kind: 'draft.toggleIncludeAll' });
     expect(proposal(t)).toMatchObject({ skipped: 0, includeAll: true });
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item!.count).toBe(30);
-    expect(t.controller.draft.fields).toHaveLength(1);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(30);
+    expect(t.controller.draft.tables[0]!.fields).toHaveLength(1);
   });
 
   it('re-picks both levels while editing', async () => {
@@ -133,10 +133,10 @@ describe('editing the confirmed item container', () => {
     expect(proposal(t).editing).toBe(true);
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
     expect(proposal(t).within).toBeNull();
-    expect(t.controller.draft.item!.fingerprint!.tag).toBe('article');
+    expect(t.controller.draft.tables[0]!.item!.fingerprint!.tag).toBe('article');
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item!.within).toBeUndefined();
-    expect(t.controller.draft.item).toMatchObject({ count: 24, fingerprint: { tag: 'li' } });
+    expect(t.controller.draft.tables[0]!.item!.within).toBeUndefined();
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 24, fingerprint: { tag: 'li' } });
   });
 
   it('refuses item and field edits while editing the items', async () => {
@@ -155,7 +155,7 @@ describe('editing the confirmed item container', () => {
     const t = await harness(page, newDraft());
     await t.pick(byClass(t.page, 'only'));
     await t.send({ kind: 'draft.setItem' });
-    expect(t.controller.draft.item!.count).toBe(1);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(1);
     await t.send({ kind: 'draft.editItem' });
     expect(t.controller.state.error).toBeNull();
     expect(proposal(t)).toMatchObject({ editing: true, skipped: 0, broader: null, narrower: null });
@@ -168,7 +168,7 @@ describe('editing the confirmed item container', () => {
     t.browser.setPage(other, h('html', {}, h('body', {}, h('p', {}, 'About us'))));
     await t.session.goto(other, { timeoutMs: 1000 });
     await t.controller.recount();
-    expect(t.controller.draft.item!.count).toBe(0);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(0);
     await t.send({ kind: 'draft.editItem' });
     expect(t.controller.state.error).toMatch(/matches nothing on this page/);
     expect(t.controller.state.proposal).toBeNull();

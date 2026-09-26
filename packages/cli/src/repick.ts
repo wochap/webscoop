@@ -26,7 +26,7 @@ export function interactiveRepick(
       storage: opts.storage,
       bundle: opts.bundle,
       draft: draftFromRecipe(request.recipe, opts.vars),
-      mode: { kind: 'repick', fieldIndex: target.index, reason: 'run', sample: request.sample },
+      mode: { kind: 'repick', fieldIndex: target.index, reason: 'run', sample: request.sample, table: target.table },
       timeoutMs: opts.timeoutMs,
     });
     log(io, `field ${request.name} could not be healed; pick its new location in the browser window (S skips, Esc aborts)`);

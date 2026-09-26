@@ -8,7 +8,7 @@ import { tier0Snapshot } from '../../core/test/snapshot';
 import { pathOfElement } from '../src/dom';
 import { Overlay } from '../src/overlay';
 import { Runtime } from '../src/runtime';
-import { baseState, renderPanel } from './panel';
+import { baseState, renderPanel, withTable } from './panel';
 
 afterEach(cleanup);
 
@@ -43,7 +43,7 @@ describe('field options form', () => {
     fireEvent.click(p.q('form-optional')!);
     fireEvent.click(p.q('form-key')!);
     fireEvent.click(p.q('add-field')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', scope: 'item', attr: null, optional: true, key: true } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', scope: 'item', attr: null, optional: true, key: true, table: 0 } });
   });
 
   it('follows the type with the attribute and refuses a duplicate name', async () => {
@@ -51,7 +51,7 @@ describe('field options form', () => {
     const p = renderPanel(state);
     fireEvent.change(p.q('form-type')!, { target: { value: 'url' } });
     expect((p.q('form-attr') as HTMLInputElement).value).toBe('href');
-    fireEvent.change(p.q('form-name')!, { target: { value: state.draft.fields[0]!.name } });
+    fireEvent.change(p.q('form-name')!, { target: { value: state.draft.tables[0]!.fields[0]!.name } });
     expect(p.q('form-name-error')!.textContent).toMatch(/already named/);
     expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(true);
   });
@@ -80,7 +80,7 @@ describe('typed selection selector', () => {
     const selected = state.selected!;
     const partial: RecorderState = {
       ...state,
-      draft: { ...state.draft, item: { ...state.draft.item!, count: 10 } },
+      draft: withTable(state.draft, { item: { ...state.draft.tables[0]!.item!, count: 10 } }),
       selected: { ...selected, selection: { ...selected.selection, candidates: [{ strategy: 'css', value: '.badge', stability: 'medium', count: 7, items: 7 }] } },
     };
     const p = renderPanel(partial);

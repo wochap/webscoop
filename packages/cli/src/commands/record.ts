@@ -77,6 +77,39 @@ export function proposeName(url: string): string {
   return slug || 'recipe';
 }
 
+/**
+ * The field `--repick` names: `table.field`, or a bare field name that exactly
+ * one table has. An unknown table or field, or a bare name several tables
+ * share, is an error naming it.
+ */
+export function resolveRepick(recipe: Recipe, spec: string): { table: string; fieldIndex: number } {
+  const tables = tablesOf(recipe);
+  const dot = spec.indexOf('.');
+  if (dot !== -1) {
+    const tableName = spec.slice(0, dot);
+    const fieldName = spec.slice(dot + 1);
+    const table = tables.find((t) => t.name === tableName);
+    if (!table) throw new CliError(`recipe "${recipe.name}" has no table named "${tableName}" (tables: ${tables.map((t) => t.name).join(', ')})`);
+    const fieldIndex = table.fields.findIndex((f) => f.name === fieldName);
+    if (fieldIndex === -1) {
+      throw new CliError(`table "${tableName}" of recipe "${recipe.name}" has no field named "${fieldName}" (fields: ${table.fields.map((f) => f.name).join(', ')})`);
+    }
+    return { table: table.name, fieldIndex };
+  }
+  const found = tables.flatMap((t) => {
+    const fieldIndex = t.fields.findIndex((f) => f.name === spec);
+    return fieldIndex === -1 ? [] : [{ table: t.name, fieldIndex }];
+  });
+  if (found.length > 1) {
+    throw new CliError(`field "${spec}" is in several tables of recipe "${recipe.name}" (${found.map((f) => f.table).join(', ')}); pass one of ${found.map((f) => `${f.table}.${spec}`).join(', ')}`);
+  }
+  if (found.length === 0) {
+    const all = tables.length > 1 ? tables.flatMap((t) => t.fields.map((f) => `${t.name}.${f.name}`)) : tables[0]!.fields.map((f) => f.name);
+    throw new CliError(`recipe "${recipe.name}" has no field named "${spec}" (fields: ${all.join(', ')})`);
+  }
+  return found[0]!;
+}
+
 /** Values for every template variable: `--var` first, then the recipe default, then a terminal prompt. */
 async function resolveValues(io: CliIo, template: string, given: Record<string, string>, recipe: Recipe | undefined): Promise<Record<string, string>> {
   const values: Record<string, string> = {};
@@ -119,22 +152,12 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   if (opts.edit) {
     if (template) throw new CliError('pass either a URL template or --edit <recipe>, not both');
     recipe = await storage.load(opts.edit);
-    const tables = tablesOf(recipe);
-    if (tables.length > 1) {
-      throw new CliError(
-        `recipe "${recipe.name}" has ${tables.length} tables (${tables.map((t) => t.name).join(', ')}); the recorder does not edit multi-table recipes yet`,
-      );
-    }
     template = recipe.url;
   }
   let mode: RecorderMode = { kind: 'full' };
   if (opts.repick !== undefined && recipe) {
-    const { fields } = tablesOf(recipe)[0]!;
-    const fieldIndex = fields.findIndex((f) => f.name === opts.repick);
-    if (fieldIndex === -1) {
-      throw new CliError(`recipe "${recipe.name}" has no field named "${opts.repick}" (fields: ${fields.map((f) => f.name).join(', ')})`);
-    }
-    mode = { kind: 'repick', fieldIndex, reason: 'cli' };
+    const { table, fieldIndex } = resolveRepick(recipe, opts.repick);
+    mode = { kind: 'repick', fieldIndex, reason: 'cli', table };
   }
   if (!template) throw new CliError('a URL template is required (or --edit <recipe>)');
   checkTemplate(template);

@@ -36,6 +36,7 @@ describe('recorder re-pick mode', () => {
     const t = await setup('run');
     expect(t.controller.state.repick).toBe(PRICE);
     expect(t.controller.state.repickContext).toEqual({
+      table: 'items',
       field: 'price',
       index: PRICE,
       oldSelector: css('.gone'),

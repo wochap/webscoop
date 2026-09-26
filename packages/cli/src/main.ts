@@ -171,7 +171,7 @@ working selector first (unless --no-save).`,
     .option('--var <name=value>', 'set a URL template variable (repeatable); missing ones are asked for', collect, [])
     .option('--profile <name>', 'browser profile name (default: the recipe name)')
     .option('--edit <recipe>', 'edit an existing recipe, by name or path, instead of starting from a URL')
-    .option('--repick <field>', 'with --edit: pick a new location for one field, save, and exit')
+    .option('--repick <field>', 'with --edit: pick a new location for one field (table.field, or a name one table has), save, and exit')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .addHelpText(

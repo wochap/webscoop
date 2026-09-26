@@ -155,8 +155,8 @@ describe('webscoop record', () => {
     const run = main(['record', '--edit', 'playground-catalog'], io);
     const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
     expect(browser.visited).toEqual([PAGE]);
-    const reply = (await session.callHost({ kind: 'session.ready', url: PAGE })) as { state: { draft: { fields: unknown[] } } };
-    expect(reply.state.draft.fields).toHaveLength(6);
+    const reply = (await session.callHost({ kind: 'session.ready', url: PAGE })) as { state: { draft: { tables: { fields: unknown[] }[] } } };
+    expect(reply.state.draft.tables[0]!.fields).toHaveLength(6);
     await session.userClose();
     expect(await run).toBe(ExitCode.Ok);
     expect(io.err()).toContain('recording playground-catalog (edit)');

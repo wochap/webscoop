@@ -13,11 +13,12 @@ afterEach(cleanup);
 
 function repickState(extra: Partial<RepickContext> = {}): RecorderState {
   const draft = draftFromRecipe(fingerprintedRecipe());
-  const price = draft.fields[1]!;
+  const price = draft.tables[0]!.fields[1]!;
   return {
     ...baseState(draft),
     repick: 1,
     repickContext: {
+      table: 'items',
       field: 'price',
       index: 1,
       oldSelector: { strategy: 'testid', value: 'price', stability: 'stable' },

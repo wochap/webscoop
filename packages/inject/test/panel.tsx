@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { emptyDraft, type Draft, type PageMessage, type Path, type RecorderState } from '@webscoop/core';
+import { emptyDraft, type Draft, type DraftTable, type PageMessage, type Path, type RecorderState } from '@webscoop/core';
 import { byClass, harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
 import { Store, type Actions, type UiState } from '../src/store';
@@ -10,6 +10,11 @@ import { RecorderProvider } from '../src/ui/context';
 
 export function newDraft(): Draft {
   return emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?cat={category}&tier={tier}', vars: [{ name: 'category', value: 'shoes' }, { name: 'tier', value: '0' }] });
+}
+
+/** The draft with its active table's fields or item replaced. */
+export function withTable(draft: Draft, patch: Partial<DraftTable>): Draft {
+  return { ...draft, tables: draft.tables.map((t, i) => (i === draft.activeTable ? { ...t, ...patch } : t)) };
 }
 
 export function baseState(draft: Draft = newDraft()): RecorderState {

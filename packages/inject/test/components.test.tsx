@@ -4,7 +4,7 @@ import { dataset } from '@webscoop/playground';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MODE_TONE, ModePill } from '../src/ui/shell';
 import { AncestorBreadcrumb } from '../src/ui/picking';
-import { baseState, hostStates, newDraft, renderPanel } from './panel';
+import { baseState, hostStates, newDraft, renderPanel, withTable } from './panel';
 import type { Mode } from '../src/store';
 
 afterEach(cleanup);
@@ -92,7 +92,7 @@ describe('inspector and candidates', () => {
     expect(p.qa('candidate')[2]!.dataset.primary).toBe('true');
     fireEvent.click(p.q('add-field')!);
     const { defaults, scope } = proposed.selected!;
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, scope, attr: defaults.attr ?? null, optional: false, key: false } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, scope, attr: defaults.attr ?? null, optional: false, key: false, table: 0 } });
   });
 });
 
@@ -173,7 +173,7 @@ describe('item detection', () => {
       count: 24,
       total: 24,
     };
-    const p = renderPanel({ ...proposed, proposal: null, draft: { ...proposed.draft, item } });
+    const p = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item }) });
     expect(p.q('within-selector')!.textContent).toBe('role=list');
     expect(p.q('within-count')!.textContent).toBe('1');
     fireEvent.click(p.q('within-repick')!);
@@ -182,7 +182,7 @@ describe('item detection', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
 
     const { within: _w, withinCount: _c, ...bare } = item;
-    const none = renderPanel({ ...proposed, proposal: null, draft: { ...proposed.draft, item: bare } });
+    const none = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item: bare }) });
     expect(none.qa('within-selector').at(-1)!.textContent).toBe('none');
     expect(none.qa('within-clear')).toHaveLength(0);
     expect(none.qa('within-repick').at(-1)!.textContent).toBe('Pick');
@@ -210,7 +210,7 @@ const field = (name: string, extra: object = {}) => ({
 
 describe('fields', () => {
   it('reorders with Alt+Up and Alt+Down and by drag', () => {
-    const draft = { ...newDraft(), fields: [field('title'), field('price'), field('url')] };
+    const draft = withTable(newDraft(), { fields: [field('title'), field('price'), field('url')] });
     const p = renderPanel(baseState(draft));
     const rows = p.qa('field');
     expect(rows.map((r) => r.dataset.name)).toEqual(['title', 'price', 'url']);
@@ -229,10 +229,7 @@ describe('fields', () => {
   });
 
   it('shows the duplicate-name error inline and a zero-match warning', () => {
-    const draft = {
-      ...newDraft(),
-      fields: [field('price'), field('price', { error: 'duplicate field name "price" (first declared at $.fields[0])' }), field('badge', { count: 0, sample: null })],
-    };
+    const draft = withTable(newDraft(), { fields: [field('price'), field('price', { error: 'duplicate field name "price" (first declared at $.fields[0])' }), field('badge', { count: 0, sample: null })] });
     const p = renderPanel(baseState(draft));
     const names = p.qa('field-name') as HTMLInputElement[];
     expect(names[1]!.getAttribute('aria-invalid')).toBe('true');
@@ -315,10 +312,7 @@ describe('results drawer', () => {
   it('shows the rows dropped for missing required fields next to the row count', () => {
     const rows = Array.from({ length: 22 }, (_, i) => ({ _page: 1, _index: i, url: `/p/${i}` }));
     const test = {
-      rows,
-      rowCount: 22,
-      dropped: { count: 2, fields: ['url'] },
-      fields: [{ name: 'url', status: 'partial' as const }],
+      tables: [{ name: 'items', rows, rowCount: 22, dropped: { count: 2, fields: ['url'] }, fields: [{ name: 'url', status: 'partial' as const }] }],
       durationMs: 5,
       warnings: ['dropped 2 rows on page 1: required field "url" missing on rows 3, 9'],
     };

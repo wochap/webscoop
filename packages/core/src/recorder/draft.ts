@@ -1,7 +1,7 @@
 import { parseNumber } from '../convert';
 import { templateVariables } from '../template';
 import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
-import { tablesOf } from '../recipe/tables';
+import { SHORTHAND_TABLE, tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import type {
   Draft,
@@ -9,12 +9,14 @@ import type {
   DraftItem,
   DraftPagination,
   DraftStep,
+  DraftTable,
   FieldPatch,
   PaginationPatch,
   ProtocolCandidate,
   StepPatch,
   VarValue,
 } from './protocol';
+import { currentTable } from './protocol';
 
 /** Strip host-only data (match counts) from a candidate. */
 export function bare(candidate: ProtocolCandidate): SelectorCandidate {
@@ -96,8 +98,9 @@ export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }
     name: opts.name,
     url: opts.url,
     vars: opts.vars,
-    item: null,
-    fields: [],
+    tables: [{ name: SHORTHAND_TABLE, item: null, fields: [] }],
+    activeTable: 0,
+    form: 'shorthand',
     steps: [],
     pagination: null,
     dirty: false,
@@ -112,9 +115,43 @@ export const DEFAULT_PAGINATION: DraftPagination = {
   delayMs: 0,
 };
 
+/**
+ * Whether the draft is written in the shorthand form: one table named
+ * `items` that was not loaded from the `tables` form. Any other draft is
+ * written with `tables`.
+ */
+export function isShorthand(draft: Pick<Draft, 'tables' | 'form'>): boolean {
+  return draft.form === 'shorthand' && draft.tables.length === 1 && draft.tables[0]!.name === SHORTHAND_TABLE;
+}
+
+function recipeItem(item: DraftItem) {
+  return {
+    selectors: item.selectors.map(bare),
+    ...(item.within && item.within.length > 0 ? { within: item.within.map(bare) } : {}),
+    ...(item.within && item.withinFingerprint ? { withinFingerprint: item.withinFingerprint } : {}),
+    exclude: item.exclude.map(bare),
+    ...(item.fingerprint ? { fingerprint: item.fingerprint } : {}),
+  };
+}
+
+function recipeField(f: DraftField) {
+  return {
+    name: f.name,
+    type: f.type,
+    scope: f.scope,
+    selectors: f.selectors.map(bare),
+    ...(f.attr ? { attr: f.attr } : {}),
+    optional: f.optional,
+    ...(f.key ? { key: true } : {}),
+    ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
+  };
+}
+
 /** Build the recipe document the draft describes, before validation. */
 export function draftToRecipe(draft: Draft): RecipeInput {
   const declared = draftVariables(draft);
+  const shorthand = isShorthand(draft);
+  const first = draft.tables[0]!;
   const recipe: RecipeInput = {
     schemaVersion: 1,
     name: draft.name,
@@ -122,16 +159,9 @@ export function draftToRecipe(draft: Draft): RecipeInput {
     vars: draft.vars
       .filter((v) => declared.includes(v.name))
       .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}) })),
-    fields: draft.fields.map((f) => ({
-      name: f.name,
-      type: f.type,
-      scope: f.scope,
-      selectors: f.selectors.map(bare),
-      ...(f.attr ? { attr: f.attr } : {}),
-      optional: f.optional,
-      ...(f.key ? { key: true } : {}),
-      ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
-    })),
+    ...(shorthand
+      ? { fields: first.fields.map(recipeField) }
+      : { tables: draft.tables.map((t) => ({ name: t.name, ...(t.item ? { item: recipeItem(t.item) } : {}), fields: t.fields.map(recipeField) })) }),
   };
   if (draft.steps.length > 0) {
     recipe.steps = draft.steps.map((s) => ({
@@ -143,15 +173,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
       ...(s.label ? { label: s.label } : {}),
     }));
   }
-  if (draft.item) {
-    recipe.item = {
-      selectors: draft.item.selectors.map(bare),
-      ...(draft.item.within && draft.item.within.length > 0 ? { within: draft.item.within.map(bare) } : {}),
-      ...(draft.item.within && draft.item.withinFingerprint ? { withinFingerprint: draft.item.withinFingerprint } : {}),
-      exclude: draft.item.exclude.map(bare),
-      ...(draft.item.fingerprint ? { fingerprint: draft.item.fingerprint } : {}),
-    };
-  }
+  if (shorthand && first.item) recipe.item = recipeItem(first.item);
   const p = draft.pagination ?? DEFAULT_PAGINATION;
   recipe.pagination = {
     kind: p.kind,
@@ -166,29 +188,51 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   return recipe;
 }
 
-/** Recompute per-field, name, and global validation errors. */
+/**
+ * Where a validation error belongs: `$.tables[t].fields[i]` and, in the
+ * shorthand form, `$.fields[i]` name a field of a table; any other path
+ * under `$.tables[t]` names the table.
+ */
+export function errorTarget(path: string): { table: number; index?: number } | null {
+  const field = /^\$\.tables\[(\d+)\]\.fields\[(\d+)\]/.exec(path);
+  if (field) return { table: Number(field[1]), index: Number(field[2]) };
+  const shorthand = /^\$\.fields\[(\d+)\]/.exec(path);
+  if (shorthand) return { table: 0, index: Number(shorthand[1]) };
+  const table = /^\$\.tables\[(\d+)\]/.exec(path);
+  return table ? { table: Number(table[1]) } : null;
+}
+
+/** Recompute per-field, per-table, name, and global validation errors. */
 export function validateDraft(draft: Draft): Draft {
   const result = validateRecipe(draftToRecipe(draft));
-  const fieldErrors = new Map<number, string>();
+  const fieldErrors = new Map<string, string>();
+  const tableErrors = new Map<number, string>();
   const stepErrors = new Map<number, string>();
   let nameError: string | undefined;
   const errors: Draft['errors'] = [];
   for (const error of result.errors) {
-    const field = /^\$\.fields\[(\d+)\]/.exec(error.path);
+    const target = errorTarget(error.path);
     const step = /^\$\.steps\[(\d+)\]/.exec(error.path);
-    if (field) {
-      const index = Number(field[1]);
-      if (!fieldErrors.has(index)) fieldErrors.set(index, error.message);
+    if (target?.index !== undefined) {
+      const key = `${target.table}:${target.index}`;
+      if (!fieldErrors.has(key)) fieldErrors.set(key, error.message);
+    } else if (target) {
+      if (!tableErrors.has(target.table)) tableErrors.set(target.table, error.message);
     } else if (step) {
       const index = Number(step[1]);
       if (!stepErrors.has(index)) stepErrors.set(index, error.message);
     } else if (error.path === '$.name') nameError ??= error.message;
     else errors.push(error);
   }
-  const fields = draft.fields.map((f, i) => {
-    const { error: _old, ...rest } = f;
-    const error = fieldErrors.get(i);
-    return error ? { ...rest, error } : rest;
+  const tables = draft.tables.map((table, t) => {
+    const { error: _old, ...restTable } = table;
+    const fields = table.fields.map((f, i) => {
+      const { error: _old, ...rest } = f;
+      const error = fieldErrors.get(`${t}:${i}`);
+      return error ? { ...rest, error } : rest;
+    });
+    const error = tableErrors.get(t);
+    return { ...restTable, fields, ...(error ? { error } : {}) };
   });
   const steps = draft.steps.map((s, i) => {
     const { error: _old, ...rest } = s;
@@ -196,13 +240,11 @@ export function validateDraft(draft: Draft): Draft {
     return error ? { ...rest, error } : rest;
   });
   const { nameError: _oldName, ...rest } = draft;
-  return { ...rest, ...(nameError ? { nameError } : {}), fields, steps, errors };
+  return { ...rest, ...(nameError ? { nameError } : {}), tables, steps, errors };
 }
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
 export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
-  // The recorder edits one table; multi-table recipes are refused before a session starts.
-  const table = tablesOf(recipe)[0]!;
   const steps: DraftStep[] = recipe.steps.map((s) => ({
     kind: s.kind,
     ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
@@ -216,29 +258,34 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     name,
     value: values[name] ?? recipe.vars.find((v) => v.name === name)?.default ?? '',
   }));
-  const fields: DraftField[] = table.fields.map((f) => ({
-    name: f.name,
-    type: f.type,
-    scope: f.scope,
-    selectors: f.selectors.map(bare),
-    ...(f.attr ? { attr: f.attr } : {}),
-    optional: f.optional,
-    key: f.key ?? false,
-    ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
-    count: null,
-    sample: null,
-  }));
-  const item: DraftItem | null = table.item
-    ? {
-        selectors: table.item.selectors.map(bare),
-        ...(table.item.within ? { within: table.item.within.map(bare), withinCount: null } : {}),
-        ...(table.item.withinFingerprint ? { withinFingerprint: table.item.withinFingerprint } : {}),
-        exclude: (table.item.exclude ?? []).map(bare),
-        ...(table.item.fingerprint ? { fingerprint: table.item.fingerprint } : {}),
+  const tables: DraftTable[] = tablesOf(recipe).map((table) => ({
+    name: table.name,
+    item: table.item
+      ? {
+          selectors: table.item.selectors.map(bare),
+          ...(table.item.within ? { within: table.item.within.map(bare), withinCount: null } : {}),
+          ...(table.item.withinFingerprint ? { withinFingerprint: table.item.withinFingerprint } : {}),
+          exclude: (table.item.exclude ?? []).map(bare),
+          ...(table.item.fingerprint ? { fingerprint: table.item.fingerprint } : {}),
+          count: null,
+          total: null,
+        }
+      : null,
+    fields: table.fields.map(
+      (f): DraftField => ({
+        name: f.name,
+        type: f.type,
+        scope: f.scope,
+        selectors: f.selectors.map(bare),
+        ...(f.attr ? { attr: f.attr } : {}),
+        optional: f.optional,
+        key: f.key ?? false,
+        ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
         count: null,
-        total: null,
-      }
-    : null;
+        sample: null,
+      }),
+    ),
+  }));
   const p = recipe.pagination;
   const pagination: DraftPagination | null =
     p.kind === 'none' && !p.target && !p.param && p.limit === 1 && p.stopRules.length === 0 && p.delayMs === 0
@@ -255,23 +302,32 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     name: recipe.name,
     url: recipe.url,
     vars,
-    item,
-    fields,
+    tables,
+    activeTable: 0,
+    form: recipe.tables ? 'tables' : 'shorthand',
     steps,
     pagination,
     guards: recipe.guards,
     healing: recipe.healing,
-    ...(recipe.tables ? { table: table.name } : {}),
     dirty: false,
     errors: [],
   });
 }
 
-/** The validated recipe in the form the draft was loaded in: one entry `tables` when it came that way, else the shorthand. */
-export function inDraftForm(draft: Pick<Draft, 'table'>, recipe: Recipe): Recipe {
-  if (draft.table === undefined || recipe.tables) return recipe;
-  const { item, fields, ...rest } = recipe;
-  return { ...rest, tables: [{ name: draft.table, ...(item ? { item } : {}), fields: fields ?? [] }] };
+const TABLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Why a table name cannot be used, or null: it must be kebab-case and unique among the other tables. */
+export function tableNameError(draft: Pick<Draft, 'tables'>, name: string, except?: number): string | null {
+  if (!TABLE_NAME.test(name)) return 'table names must be kebab-case';
+  if (draft.tables.some((t, i) => i !== except && t.name === name)) return `a table named "${name}" already exists`;
+  return null;
+}
+
+/** Name for a new table: `page` when every table has an item container, else the first free `table-N`. */
+export function defaultTableName(draft: Pick<Draft, 'tables'>): string {
+  const taken = draft.tables.map((t) => t.name);
+  if (draft.tables.every((t) => t.item !== null) && !taken.includes('page')) return 'page';
+  for (let n = draft.tables.length + 1; ; n++) if (!taken.includes(`table-${n}`)) return `table-${n}`;
 }
 
 export interface NewField {
@@ -296,7 +352,14 @@ export interface NewDraftStep {
   count?: number | null;
 }
 
+/** Field and item actions act on the active table; count actions may name another. */
 export type DraftAction =
+  | { type: 'addTable'; name: string }
+  /** Rename the active table; an invalid or taken name leaves the draft unchanged. */
+  | { type: 'renameTable'; name: string }
+  /** Remove the active table; the last table stays. */
+  | { type: 'removeTable' }
+  | { type: 'selectTable'; index: number }
   | { type: 'addField'; field: NewField }
   | { type: 'updateField'; index: number; patch: FieldPatch }
   /** Replace the field at `index` in place: options, selectors, fingerprint, and counts. */
@@ -307,10 +370,10 @@ export type DraftAction =
   | { type: 'setItem'; item: DraftItem | null }
   | { type: 'addExclusion'; candidate: ProtocolCandidate }
   | { type: 'removeExclusion'; index: number }
-  | { type: 'setItemCounts'; count: number | null; total: number | null; withinCount?: number | null }
+  | { type: 'setItemCounts'; count: number | null; total: number | null; withinCount?: number | null; table?: number }
   /** Set or clear (null) the item container's list parent. */
   | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint'] }
-  | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[] }
+  | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[]; table?: number }
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
   | { type: 'addStep'; step: NewDraftStep }
@@ -324,7 +387,7 @@ export type DraftAction =
   | { type: 'markSaved' };
 
 /** Actions that only refresh live data and do not make the draft dirty. */
-const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved']);
+const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved', 'selectTable']);
 
 /** Primary selector as a key, to tell whether two steps act on the same element. */
 const targetKey = (step: { target?: { selectors: ProtocolCandidate[] } }) => {
@@ -379,34 +442,60 @@ function toDraftField(f: NewField): DraftField {
   };
 }
 
+/** The draft with table `index` replaced. */
+function withTable(draft: Draft, index: number, table: DraftTable): Draft {
+  return { ...draft, tables: draft.tables.map((t, i) => (i === index ? table : t)) };
+}
+
 /** The pure draft state machine. Every result is re-validated. */
 export function reduceDraft(draft: Draft, action: DraftAction): Draft {
   let next: Draft = draft;
+  const at = draft.activeTable;
+  const table = currentTable(draft);
+  const setActive = (patch: Partial<DraftTable>) => withTable(draft, at, { ...table, ...patch });
   switch (action.type) {
+    case 'addTable':
+      if (tableNameError(draft, action.name)) return draft;
+      next = { ...draft, tables: [...draft.tables, { name: action.name, item: null, fields: [] }], activeTable: draft.tables.length };
+      break;
+    case 'renameTable':
+      if (tableNameError(draft, action.name, at)) return draft;
+      if (action.name === table.name) return draft;
+      next = setActive({ name: action.name });
+      break;
+    case 'removeTable': {
+      if (draft.tables.length < 2) return draft;
+      const tables = draft.tables.filter((_, i) => i !== at);
+      next = { ...draft, tables, activeTable: Math.min(at, tables.length - 1) };
+      break;
+    }
+    case 'selectTable':
+      if (!draft.tables[action.index] || action.index === at) return draft;
+      next = { ...draft, activeTable: action.index };
+      break;
     case 'addField': {
       const field = toDraftField(action.field);
-      let fields = [...draft.fields, field];
+      let fields = [...table.fields, field];
       if (field.key) fields = fields.map((other, i) => (i === fields.length - 1 ? other : { ...other, key: false }));
-      next = { ...draft, fields };
+      next = setActive({ fields });
       break;
     }
     case 'replaceField': {
-      if (!draft.fields[action.index]) return draft;
+      if (!table.fields[action.index]) return draft;
       const field = toDraftField(action.field);
-      const fields = draft.fields.map((f, i) => (i === action.index ? field : field.key ? { ...f, key: false } : f));
-      next = { ...draft, fields };
+      const fields = table.fields.map((f, i) => (i === action.index ? field : field.key ? { ...f, key: false } : f));
+      next = setActive({ fields });
       break;
     }
     case 'updateField': {
-      let fields = draft.fields.map((f, i) => (i === action.index ? applyFieldPatch(f, action.patch) : f));
+      let fields = table.fields.map((f, i) => (i === action.index ? applyFieldPatch(f, action.patch) : f));
       if (action.patch.key) fields = fields.map((f, i) => (i === action.index ? f : { ...f, key: false }));
-      next = { ...draft, fields };
+      next = setActive({ fields });
       break;
     }
     case 'replaceSelectors':
-      next = {
-        ...draft,
-        fields: draft.fields.map((f, i) => {
+      next = setActive({
+        fields: table.fields.map((f, i) => {
           if (i !== action.index) return f;
           const { fingerprint: _fp, ...rest } = f;
           return {
@@ -417,53 +506,55 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
             sample: action.sample,
           };
         }),
-      };
+      });
       break;
     case 'removeField':
-      next = { ...draft, fields: draft.fields.filter((_, i) => i !== action.index) };
+      next = setActive({ fields: table.fields.filter((_, i) => i !== action.index) });
       break;
     case 'moveField':
-      next = { ...draft, fields: move(draft.fields, action.from, action.to) };
+      next = setActive({ fields: move(table.fields, action.from, action.to) });
       break;
     case 'setItem':
-      next = {
-        ...draft,
+      next = setActive({
         item: action.item,
-        fields: action.item ? draft.fields : draft.fields.map((f) => (f.scope === 'item' ? { ...f, scope: 'page' as const } : f)),
-      };
+        fields: action.item ? table.fields : table.fields.map((f) => (f.scope === 'item' ? { ...f, scope: 'page' as const } : f)),
+      });
       break;
     case 'addExclusion':
-      if (!draft.item) return draft;
-      next = { ...draft, item: { ...draft.item, exclude: [...draft.item.exclude, action.candidate] } };
+      if (!table.item) return draft;
+      next = setActive({ item: { ...table.item, exclude: [...table.item.exclude, action.candidate] } });
       break;
     case 'removeExclusion':
-      if (!draft.item) return draft;
-      next = { ...draft, item: { ...draft.item, exclude: draft.item.exclude.filter((_, i) => i !== action.index) } };
+      if (!table.item) return draft;
+      next = setActive({ item: { ...table.item, exclude: table.item.exclude.filter((_, i) => i !== action.index) } });
       break;
-    case 'setItemCounts':
-      if (!draft.item) return draft;
-      next = {
-        ...draft,
-        item: { ...draft.item, count: action.count, total: action.total, ...(action.withinCount !== undefined && draft.item.within ? { withinCount: action.withinCount } : {}) },
-      };
+    case 'setItemCounts': {
+      const t = action.table ?? at;
+      const target = draft.tables[t];
+      if (!target?.item) return draft;
+      next = withTable(draft, t, {
+        ...target,
+        item: { ...target.item, count: action.count, total: action.total, ...(action.withinCount !== undefined && target.item.within ? { withinCount: action.withinCount } : {}) },
+      });
       break;
+    }
     case 'setWithin': {
-      if (!draft.item) return draft;
-      const { within: _w, withinFingerprint: _f, withinCount: _c, ...rest } = draft.item;
-      next = {
-        ...draft,
+      if (!table.item) return draft;
+      const { within: _w, withinFingerprint: _f, withinCount: _c, ...rest } = table.item;
+      next = setActive({
         item: action.within && action.within.length > 0
           ? { ...rest, within: action.within, ...(action.fingerprint ? { withinFingerprint: action.fingerprint } : {}), withinCount: action.within[0]!.count ?? null }
           : rest,
-      };
+      });
       break;
     }
-    case 'setFieldCounts':
-      next = {
-        ...draft,
-        fields: draft.fields.map((f, i) => (action.counts[i] ? { ...f, ...action.counts[i] } : f)),
-      };
+    case 'setFieldCounts': {
+      const t = action.table ?? at;
+      const target = draft.tables[t];
+      if (!target) return draft;
+      next = withTable(draft, t, { ...target, fields: target.fields.map((f, i) => (action.counts[i] ? { ...f, ...action.counts[i] } : f)) });
       break;
+    }
     case 'setPagination':
       next = { ...draft, pagination: action.pagination };
       break;
@@ -522,10 +613,13 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
   return validateDraft(syncVars(next));
 }
 
-/** Whether the draft can be saved: it validates with the recipe schema. */
-export function draftErrors(draft: Draft): { path: string; message: string }[] {
+/** Whether the draft can be saved: it validates with the recipe schema. Errors under a table name it, and the field when there is one. */
+export function draftErrors(draft: Draft): { path: string; message: string; table?: number; index?: number }[] {
   const result = validateRecipe(draftToRecipe(draft));
-  return result.errors;
+  return result.errors.map((e) => {
+    const target = errorTarget(e.path);
+    return target ? { ...e, table: target.table, ...(target.index !== undefined ? { index: target.index } : {}) } : e;
+  });
 }
 
 export interface PaginationTarget {

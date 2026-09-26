@@ -76,6 +76,8 @@ describe('protocol', () => {
     { kind: 'picker.cancel' },
     { kind: 'selection.clear' },
     { kind: 'selection.setSelector', selector: 'css=h3', scope: 'item', snapshot: h('html') },
+    { kind: 'selection.retarget', table: 1 },
+    { kind: 'selection.retarget', table: null },
     { kind: 'inspect.count', candidate, scope: 'item' },
     { kind: 'inspect.primary', index: 1 },
     { kind: 'draft.confirmItems', level: 'broader' },
@@ -96,6 +98,8 @@ describe('protocol', () => {
     { kind: 'draft.updateField', index: 0, patch: { attr: null, key: true } },
     { kind: 'draft.removeField', index: 0 },
     { kind: 'draft.editField', index: 1 },
+    { kind: 'draft.editField', index: 0, table: 1 },
+    { kind: 'draft.addField', patch: { table: { new: 'page' } } },
     { kind: 'draft.updateEditedField', patch: { name: 'amount', type: 'number', scope: 'item', attr: null, optional: true, key: false } },
     { kind: 'draft.cancelEdit' },
     { kind: 'draft.moveField', from: 0, to: 2 },
@@ -108,6 +112,11 @@ describe('protocol', () => {
     { kind: 'draft.markPagination' },
     { kind: 'draft.updatePagination', patch: { limit: 3, stopRules: ['no-new-items'] } },
     { kind: 'draft.clearPagination' },
+    { kind: 'draft.addTable', name: 'page' },
+    { kind: 'draft.addTable' },
+    { kind: 'draft.renameTable', name: 'questions' },
+    { kind: 'draft.removeTable' },
+    { kind: 'draft.selectTable', index: 1 },
     { kind: 'draft.setName', name: 'shop' },
     { kind: 'draft.setVar', name: 'tier', value: '1' },
     { kind: 'draft.reopen' },
@@ -125,7 +134,7 @@ describe('protocol', () => {
     { kind: 'inspect.countResult', count: 24 },
     {
       kind: 'test.results',
-      results: { rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'title', status: 'ok' }], durationMs: 12, warnings: [] },
+      results: { tables: [{ name: 'items', rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'title', status: 'ok' }] }], durationMs: 12, warnings: [] },
       state: sampleState,
     },
     { kind: 'save.result', ok: false, errors: [{ path: '$.fields', message: 'a recipe needs at least one field' }], state: sampleState },
@@ -137,7 +146,7 @@ describe('protocol', () => {
       state: {
         ...sampleState,
         repick: 0,
-        repickContext: { field: 'price', index: 0, oldSelector: candidate, fingerprint: fp, sample: '$1', threshold: 0.7, reason: 'run', picked: { score: 0.91, sample: '$2', selector: candidate } },
+        repickContext: { table: 'items', field: 'price', index: 0, oldSelector: candidate, fingerprint: fp, sample: '$1', threshold: 0.7, reason: 'run', picked: { score: 0.91, sample: '$2', selector: candidate } },
       },
     },
     {
@@ -162,7 +171,7 @@ describe('protocol', () => {
       kind: 'draft.state',
       state: {
         ...sampleState,
-        selected: { selection: { ...selection, candidates: [{ ...candidate, count: 7, items: 7 }] }, scope: 'item', defaults: { name: 'price', type: 'number' }, primary: 0 },
+        selected: { selection: { ...selection, candidates: [{ ...candidate, count: 7, items: 7 }] }, scope: 'item', defaults: { name: 'price', type: 'number', table: 0 }, primary: 0, table: 0 },
         editing: { index: 0, options: { name: 'price', type: 'number', scope: 'item', optional: true, key: false }, candidates: [{ ...candidate, count: 0, items: 0 }], primary: 0 },
         pendingSelect: { path: [1, 0, 2] },
         selectorError: '"css=.nope" matches nothing',
@@ -256,18 +265,18 @@ describe('draft reducer', () => {
   it('reports a duplicate name on the field and blocks nothing else', () => {
     let draft = reduceDraft(newDraft(), { type: 'addField', field: field('price') });
     draft = reduceDraft(draft, { type: 'addField', field: field('title') });
-    expect(draft.fields.every((f) => f.error === undefined)).toBe(true);
+    expect(draft.tables[0]!.fields.every((f) => f.error === undefined)).toBe(true);
     expect(draft.dirty).toBe(true);
     draft = reduceDraft(draft, { type: 'updateField', index: 1, patch: { name: 'price' } });
-    expect(draft.fields[1]!.error).toMatch(/duplicate field name "price"/);
-    expect(draft.fields[0]!.error).toBeUndefined();
+    expect(draft.tables[0]!.fields[1]!.error).toMatch(/duplicate field name "price"/);
+    expect(draft.tables[0]!.fields[0]!.error).toBeUndefined();
     draft = reduceDraft(draft, { type: 'updateField', index: 1, patch: { name: 'title' } });
-    expect(draft.fields[1]!.error).toBeUndefined();
+    expect(draft.tables[0]!.fields[1]!.error).toBeUndefined();
   });
 
   it('surfaces schema errors per field and on the name', () => {
     let draft = reduceDraft(newDraft(), { type: 'addField', field: field('bad name') });
-    expect(draft.fields[0]!.error).toMatch(/identifiers/);
+    expect(draft.tables[0]!.fields[0]!.error).toMatch(/identifiers/);
     draft = reduceDraft(draft, { type: 'setName', name: 'Not Kebab' });
     expect(draft.nameError).toMatch(/kebab-case/);
     expect(newDraft().errors.map((e) => e.message)).toContain('a recipe needs at least one field');
@@ -281,7 +290,7 @@ describe('draft reducer', () => {
     draft = reduceDraft(draft, { type: 'setItemCounts', count: 24, total: 24 });
     draft = reduceDraft(draft, { type: 'addExclusion', candidate: { strategy: 'css', value: '.sponsored', stability: 'medium' } });
     draft = reduceDraft({ ...draft, dirty: false }, { type: 'setItemCounts', count: 22, total: 24 });
-    expect(draft.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
+    expect(draft.tables[0]!.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
     expect(draft.dirty).toBe(false);
   });
 
@@ -289,10 +298,10 @@ describe('draft reducer', () => {
     let draft = newDraft();
     for (const name of ['a', 'b', 'c']) draft = reduceDraft(draft, { type: 'addField', field: field(name) });
     draft = reduceDraft(draft, { type: 'moveField', from: 2, to: 0 });
-    expect(draft.fields.map((f) => f.name)).toEqual(['c', 'a', 'b']);
+    expect(draft.tables[0]!.fields.map((f) => f.name)).toEqual(['c', 'a', 'b']);
     draft = reduceDraft(draft, { type: 'updateField', index: 0, patch: { key: true } });
     draft = reduceDraft(draft, { type: 'updateField', index: 2, patch: { key: true } });
-    expect(draft.fields.map((f) => f.key)).toEqual([false, false, true]);
+    expect(draft.tables[0]!.fields.map((f) => f.key)).toEqual([false, false, true]);
   });
 });
 
@@ -350,45 +359,45 @@ describe('RecorderController', () => {
     await t.pick(title);
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
     const { draft } = t.controller;
-    expect(draft.item).toMatchObject({ count: 24, total: 24 });
-    expect(draft.item!.selectors.slice(0, 2).map((c) => c.value)).toEqual(['article', 'product-card']);
-    expect(draft.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
-    expect(draft.fields).toHaveLength(1);
-    expect(draft.fields[0]).toMatchObject({ name: 'wireless_mouse', type: 'text', scope: 'item', count: 24, sample: dataset[0]!.title });
-    expect(draft.fields[0]!.selectors[0]).toMatchObject({ strategy: 'role', value: 'heading', count: 24 });
+    expect(draft.tables[0]!.item).toMatchObject({ count: 24, total: 24 });
+    expect(draft.tables[0]!.item!.selectors.slice(0, 2).map((c) => c.value)).toEqual(['article', 'product-card']);
+    expect(draft.tables[0]!.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
+    expect(draft.tables[0]!.fields).toHaveLength(1);
+    expect(draft.tables[0]!.fields[0]).toMatchObject({ name: 'wireless_mouse', type: 'text', scope: 'item', count: 24, sample: dataset[0]!.title });
+    expect(draft.tables[0]!.fields[0]!.selectors[0]).toMatchObject({ strategy: 'role', value: 'heading', count: 24 });
 
     // A later pick inside a card is item scoped and relative.
     const price = byClass(t.page, 'product-price', 3);
     await t.pick(price, cardPath(price));
     expect(t.controller.state.selected!.scope).toBe('item');
-    expect(t.controller.state.selected!.defaults).toEqual({ name: 'f_1_299_00', type: 'number' });
+    expect(t.controller.state.selected!.defaults).toEqual({ name: 'f_1_299_00', type: 'number', table: 0 });
     await t.send({ kind: 'draft.addField', patch: { name: 'price' } });
     await t.send({ kind: 'draft.updateField', index: 0, patch: { name: 'title' } });
-    expect(t.controller.draft.fields.map((f) => [f.name, f.count, f.sample])).toEqual([
+    expect(t.controller.draft.tables[0]!.fields.map((f) => [f.name, f.count, f.sample])).toEqual([
       ['title', 24, dataset[0]!.title],
       ['price', 24, String(dataset[0]!.price)],
     ]);
 
     const reply = (await t.send({ kind: 'test.run' })) as HostMessage & { kind: 'test.results' };
-    expect(reply.results.rowCount).toBe(24);
-    expect(reply.results.fields).toEqual([
+    expect(reply.results.tables[0]!.rowCount).toBe(24);
+    expect(reply.results.tables[0]!.fields).toEqual([
       { name: 'title', status: 'ok' },
       { name: 'price', status: 'ok' },
     ]);
-    expect(reply.results.rows.map((r) => r.title)).toEqual(dataset.map((p) => p.title));
+    expect(reply.results.tables[0]!.rows.map((r) => r.title)).toEqual(dataset.map((p) => p.title));
   });
 
   it('excludes sponsored cards from the item count', async () => {
     const t = await harness(tier0Snapshot({ sponsored: 2 }), newDraft());
     await t.pick(byClass(t.page, 'product-title', 5));
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item).toMatchObject({ count: 24, total: 24 });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 24, total: 24 });
     await t.send({ kind: 'draft.addExclusion', selector: '.sponsored' });
-    expect(t.controller.draft.item).toMatchObject({ count: 22, total: 24, exclude: [{ strategy: 'css', value: '.sponsored', count: 2 }] });
-    expect(t.controller.draft.fields[0]!.count).toBe(22);
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 22, total: 24, exclude: [{ strategy: 'css', value: '.sponsored', count: 2 }] });
+    expect(t.controller.draft.tables[0]!.fields[0]!.count).toBe(22);
     const results = await t.controller.testRun();
-    expect(results.rowCount).toBe(22);
-    expect(results.rows[0]!.wireless_mouse ?? results.rows[0]![t.controller.draft.fields[0]!.name]).toBe(dataset[2]!.title);
+    expect(results.tables[0]!.rowCount).toBe(22);
+    expect(results.tables[0]!.rows[0]!.wireless_mouse ?? results.tables[0]!.rows[0]![t.controller.draft.tables[0]!.fields[0]!.name]).toBe(dataset[2]!.title);
   });
 
   it('applies exclusions added while the proposal is shown', async () => {
@@ -398,7 +407,7 @@ describe('RecorderController', () => {
     expect(t.controller.state.proposal!.proposed).toMatchObject({ count: 22, total: 24 });
     expect(t.controller.state.proposal!.exclude).toEqual([{ strategy: 'css', value: '.sponsored', stability: 'medium', count: 2 }]);
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 22, total: 24, exclude: [{ value: '.sponsored' }] });
   });
 
   it('offers a page field when nothing repeats', async () => {
@@ -407,7 +416,7 @@ describe('RecorderController', () => {
     expect(t.controller.state.proposal).toBeNull();
     expect(t.controller.state.selected!.scope).toBe('page');
     await t.send({ kind: 'draft.addField', patch: {} });
-    expect(t.controller.draft.fields[0]).toMatchObject({ name: 'electronics', scope: 'page', count: 1, sample: 'Electronics' });
+    expect(t.controller.draft.tables[0]!.fields[0]).toMatchObject({ name: 'electronics', scope: 'page', count: 1, sample: 'Electronics' });
   });
 
   it('proposes url pagination for a numeric page link', async () => {
@@ -428,9 +437,9 @@ describe('RecorderController', () => {
   it('runs the reference recipe on the current page', async () => {
     const t = await harness(tier0Snapshot(), draftFromRecipe(referenceRecipe()));
     const results = await t.controller.testRun();
-    expect(results.rowCount).toBe(24);
-    expect(results.rows).toHaveLength(24);
-    expect(results.fields.map((f) => f.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(results.tables[0]!.rowCount).toBe(24);
+    expect(results.tables[0]!.rows).toHaveLength(24);
+    expect(results.tables[0]!.fields.map((f) => f.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
     expect(results.durationMs).toBeGreaterThan(0);
     expect(t.events.at(-1)).toEqual({ name: 'recorder.testRun', payload: { rows: 24, durationMs: results.durationMs } });
   });
@@ -445,10 +454,10 @@ describe('RecorderController', () => {
     };
     const t = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(r));
     const results = await t.controller.testRun();
-    expect(results.rowCount).toBe(24);
-    expect(results.rows.every((row) => typeof row.url === 'string')).toBe(true);
-    expect(results.dropped).toEqual({ count: 6, fields: ['url'] });
-    expect(results.fields.find((f) => f.name === 'url')?.status).toBe('partial');
+    expect(results.tables[0]!.rowCount).toBe(24);
+    expect(results.tables[0]!.rows.every((row) => typeof row.url === 'string')).toBe(true);
+    expect(results.tables[0]!.dropped).toEqual({ count: 6, fields: ['url'] });
+    expect(results.tables[0]!.fields.find((f) => f.name === 'url')?.status).toBe('partial');
     expect(results.warnings[0]).toMatch(/^dropped 6 rows on page 1: required field "url" missing on rows /);
     expect(results.error).toBeUndefined();
   });
@@ -479,12 +488,12 @@ describe('RecorderController', () => {
   it('loads a recipe for editing and requests counts when the page is ready', async () => {
     const reference = referenceRecipe();
     const t = await harness(tier0Snapshot(), draftFromRecipe(reference));
-    expect(t.controller.draft.fields.map((f) => f.count)).toEqual([null, null, null, null, null, null]);
+    expect(t.controller.draft.tables[0]!.fields.map((f) => f.count)).toEqual([null, null, null, null, null, null]);
     const reply = (await t.send({ kind: 'session.ready', url: CATALOG })) as HostMessage & { kind: 'draft.state' };
-    expect(reply.state.draft.fields).toHaveLength(6);
+    expect(reply.state.draft.tables[0]!.fields).toHaveLength(6);
     await t.controller.idle();
-    expect(t.controller.draft.fields.map((f) => f.count)).toEqual([24, 24, 24, 24, 24, 1]);
-    expect(t.controller.draft.item).toMatchObject({ count: 24, total: 24 });
+    expect(t.controller.draft.tables[0]!.fields.map((f) => f.count)).toEqual([24, 24, 24, 24, 24, 1]);
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 24, total: 24 });
     expect(t.session.dispatchedOf('draft.state')).toHaveLength(1);
     expect(t.controller.draft.dirty).toBe(false);
     // Saving unchanged writes the same recipe.
@@ -567,9 +576,9 @@ describe('RecorderController proposal fields', () => {
     expect(proposal(t).error).toEqual({ level: 'item', message: '".no-such-card" matches nothing inside the list parent' });
     expect(proposal(t).proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem', count: 24 });
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(t.controller.draft.item!.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
-    expect(t.controller.draft.item!.count).toBe(24);
-    expect(t.controller.draft.fields[0]).toMatchObject({ scope: 'item', count: 24 });
+    expect(t.controller.draft.tables[0]!.item!.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(24);
+    expect(t.controller.draft.tables[0]!.fields[0]).toMatchObject({ scope: 'item', count: 24 });
   });
 
   it('picks the item level inside the list parent only', async () => {
@@ -596,7 +605,7 @@ describe('RecorderController proposal fields', () => {
     const withinCss = proposal(t).within!.selectors.findIndex((c) => c.strategy === 'css');
     await t.send({ kind: 'draft.setPrimary', level: 'within', index: withinCss });
     await t.send({ kind: 'draft.confirmItems', level: 'broader' });
-    const item = t.controller.draft.item!;
+    const item = t.controller.draft.tables[0]!.item!;
     expect(item.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
     expect(item.within![0]).toMatchObject({ strategy: 'css', value: 'ul.product-list' });
     expect(item.withinFingerprint?.tag).toBe('ul');
@@ -613,7 +622,7 @@ describe('RecorderController proposal fields', () => {
     expect(proposal(cleared).within).toBeNull();
     expect(proposal(cleared).proposed.count).toBe(24);
     await cleared.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    expect(cleared.controller.draft.item!.within).toBeUndefined();
+    expect(cleared.controller.draft.tables[0]!.item!.within).toBeUndefined();
     await cleared.send({ kind: 'save.request' });
     expect(loadRecipe(cleared.storage.files.get('shop-catalog')!).item).not.toHaveProperty('within');
   });
@@ -622,18 +631,18 @@ describe('RecorderController proposal fields', () => {
     const t = await harness(tier0Snapshot(), newDraft());
     await t.pick(title(t, 0));
     await t.send({ kind: 'draft.setItem' });
-    expect(t.controller.draft.item!.within).toBeUndefined();
+    expect(t.controller.draft.tables[0]!.item!.within).toBeUndefined();
     await t.send({ kind: 'draft.pickLevel', level: 'within' });
     expect(t.controller.state.levelPick).toMatchObject({ level: 'within', ofContainers: true });
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')), snapshot: t.snapshot });
-    expect(t.controller.draft.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
-    expect(t.controller.draft.item).toMatchObject({ withinCount: 1 });
+    expect(t.controller.draft.tables[0]!.item!.within![0]).toMatchObject({ strategy: 'role', value: 'list' });
+    expect(t.controller.draft.tables[0]!.item).toMatchObject({ withinCount: 1 });
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'category-heading')), snapshot: t.snapshot });
     expect(t.controller.state.error).toContain('outside the list');
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
-    expect(t.controller.draft.item!.within).toBeUndefined();
+    expect(t.controller.draft.tables[0]!.item!.within).toBeUndefined();
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'selector', selector: 'css=ul.product-list' });
-    expect(t.controller.draft.item!.within![0]).toMatchObject({ strategy: 'css', value: 'ul.product-list', count: 1 });
+    expect(t.controller.draft.tables[0]!.item!.within![0]).toMatchObject({ strategy: 'css', value: 'ul.product-list', count: 1 });
   });
 
   it('relativizes item fields at a bare div container', async () => {
@@ -646,7 +655,7 @@ describe('RecorderController proposal fields', () => {
     expect(proposal(t).proposed.count).toBe(5);
     expect(proposal(t).within!.label).toBe('main.results');
     await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    const field = t.controller.draft.fields[0]!;
+    const field = t.controller.draft.tables[0]!.fields[0]!;
     expect(field.selectors[0]).toMatchObject({ strategy: 'css', value: 'span.price', count: 5 });
     expect(field.selectors.map((c) => [c.strategy, c.value])).toContainEqual(['class', 'span.price.kXeqYt']);
     expect(field.selectors.map((c) => [c.strategy, c.value])).toContainEqual(['xpath', './div[1]/div[2]/span[1]']);
