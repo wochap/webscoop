@@ -84,7 +84,11 @@ export class Runtime implements Actions {
       return;
     }
     try {
-      this.apply(parseHostMessage(await fn(this.withSnapshot(msg))));
+      const before = this.store.get().host?.error;
+      const reply = parseHostMessage(await fn(this.withSnapshot(msg)));
+      this.apply(reply);
+      // The same failure again: state did not change, so setHost stays quiet; say it again.
+      if (reply.kind === 'draft.state' && reply.state.error && reply.state.error === before) this.toast('danger', reply.state.error);
     } catch (error) {
       this.toast('danger', error instanceof Error ? error.message : String(error));
     }
