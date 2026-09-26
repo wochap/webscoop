@@ -286,7 +286,7 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 - **THEN** the window is hidden
 
 ### Requirement: `export` command
-`webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. A recipe with more than one table SHALL exit 1 with a message saying export does not support multi-table recipes yet. The command SHALL NOT open a browser and SHALL NOT require a display.
+`webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. Recipes with any number of tables SHALL be accepted. The command SHALL NOT open a browser and SHALL NOT require a display.
 
 #### Scenario: Export to stdout
 - **WHEN** `webscoop export playground-catalog` is executed
@@ -302,4 +302,4 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 
 #### Scenario: Export a multi-table recipe
 - **WHEN** `webscoop export results` is executed and `results` declares two tables
-- **THEN** stderr says export does not support multi-table recipes yet and the exit code is 1
+- **THEN** stdout holds a script that declares both tables and the exit code is 0
