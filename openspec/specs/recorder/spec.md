@@ -326,3 +326,40 @@ The panel SHALL offer an edit action on each field in the list, by clicking the 
 #### Scenario: Field not on the page
 - **WHEN** the user edits a field whose selectors match nothing on the current page
 - **THEN** the panel shows the field's saved values and candidates with 0 matches, a zero-match notice, and no selected element
+
+### Requirement: Edit the item container
+The confirmed item card SHALL offer an Edit action. Editing SHALL reopen the item proposal block seeded from the confirmed item: the saved list parent and item container as the prefilled fields with their candidates and current match counts, the saved exclusions, the number of siblings skipped as dissimilar, the first three matched items' text as samples, and the broader and narrower levels around the confirmed container when they exist. While editing, the same edits SHALL be available as during the first inference: pick or type the list parent and the item container, choose a primary candidate, choose a broader or narrower level, include all siblings, and add or remove exclusions. Every match SHALL be highlighted and the list parent outlined.
+
+"Update items" SHALL replace the draft's item container, list parent, and exclusions with the edited values, refresh the item fingerprint, and keep every field with its name, scope, and options. Field match counts SHALL be refreshed against the new containers, and a field that no longer matches SHALL show the zero-match warning. Updating SHALL NOT add a field. "Cancel" SHALL leave the item unchanged. Both SHALL close the proposal block and return the panel to the empty state.
+
+When the confirmed item container matches nothing on the current page, the card SHALL say so and SHALL NOT offer Edit; Remove and the list parent re-pick SHALL stay available.
+
+Selection actions that would change the item (use as item container) and field editing SHALL be unavailable while the item is being edited.
+
+#### Scenario: Open the confirmed item for editing
+- **WHEN** 24 product cards are confirmed with the product list as list parent and the user clicks Edit on the item card
+- **THEN** the proposal block shows the list parent and the card container prefilled with 24 matches, all 24 cards highlighted, and Update items and Cancel actions
+
+#### Scenario: Move to the broader level and update
+- **WHEN** the user edits the items, chooses the broader level with 12 matches, and clicks Update items
+- **THEN** the draft's item container is the broader element with 12 matches, the field list is unchanged in names and count, and each field shows its refreshed match count
+
+#### Scenario: Include all siblings after confirming
+- **WHEN** 8 results were confirmed with 1 sibling skipped as dissimilar, the user edits the items and turns on include all siblings, then updates
+- **THEN** the item container matches 9 elements and no sibling is reported as skipped
+
+#### Scenario: Re-pick the item container while editing
+- **WHEN** the user edits the items and picks a different element that holds the first item
+- **THEN** the proposal shows that element as the item container with its match count, and the draft is unchanged until Update items
+
+#### Scenario: Update breaks a field
+- **WHEN** the user updates the items to a level under which the `price` field's selector matches nothing
+- **THEN** `price` stays in the field list with the zero-match warning offering re-pick or mark optional
+
+#### Scenario: Cancel keeps the item
+- **WHEN** the user edits the items, changes the item selector, and clicks Cancel
+- **THEN** the item container, list parent, exclusions, and fields are as they were before Edit
+
+#### Scenario: Item not on this page
+- **WHEN** the confirmed item container matches nothing after a navigation
+- **THEN** the item card shows a zero-match notice, Edit is absent, and Remove is available
