@@ -451,3 +451,88 @@ test('results link: walking up from the heading offers role=link with its long n
   expect(field.selectors.find((c) => c.strategy === 'role')).toMatchObject({ value: 'link' });
   expect((await r.closeWindow()).code).toBe(0);
 });
+
+/** Record the twins catalog with the titles confirmed as items. */
+async function twinsRecording(scoop: { record(args: string[]): Promise<Recording>; playground: { port: number } }, name: string): Promise<Recording> {
+  const r = await scoop.record([template(scoop.playground.port, '&twins=1'), '--var', 'tier=0', '--name', name]);
+  await pickTitlesAsItems(r);
+  return r;
+}
+
+const STRICT_SELLER = 'p.product-note:nth-of-type(4) > span';
+
+test('twins=1: the Sold by pick preselects a verified hit, tests 24 sellers, and the recipe runs at tier 0 and tier 1', async ({ scoop }) => {
+  const r = await twinsRecording(scoop, 'twins');
+  // The second `p.product-note span` on the page is the first card's seller.
+  const picked = await r.pick('p.product-note span', 1);
+  const candidates = picked.host!.selected!.selection.candidates;
+  expect(picked.host!.selected!.scope).toBe('item');
+  expect(candidates[0]).toMatchObject({ strategy: 'css', value: STRICT_SELLER, hit: true, count: 24 });
+  expect(candidates.every((c) => c.hit === true)).toBe(true);
+  expect(await r.count('[data-ws="candidate-miss"]')).toBe(0);
+  expect((await r.query('[data-ws="candidate"]'))!.attrs['data-hit']).toBe('true');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host!.draft.tables[0]!.fields.length === 2);
+  await renameLast(r, 'seller');
+  expect((await r.state()).host!.draft.tables[0]!.fields[1]).toMatchObject({ count: 24, sample: `Sold by ${dataset[0]!.seller}` });
+
+  await r.clickPanel('[data-ws="test-run"]');
+  const results = await r.until((s) => s.host?.test);
+  expect(results.tables[0]!.rowCount).toBe(24);
+  expect(results.tables[0]!.rows.every((row) => String(row.seller).startsWith('Sold by'))).toBe(true);
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.fields![1]!.selectors[0]).toEqual({ strategy: 'css', value: STRICT_SELLER, stability: 'fragile' });
+  const sellers = dataset.map((p) => `Sold by ${p.seller}`);
+  for (const tier of ['0', '1']) {
+    const run = await scoop.run(['run', 'twins', '--var', `tier=${tier}`, '--no-save']);
+    expect(run.code, run.stderr).toBe(0);
+    expect((JSON.parse(run.stdout) as { seller: string }[]).map((row) => row.seller), `tier ${tier}`).toEqual(sellers);
+  }
+});
+
+test('twins=1: clicking the p.product-note crumb verifies the second paragraph and marks p.product-note a miss', async ({ scoop }) => {
+  const r = await twinsRecording(scoop, 'twins-crumb');
+  const picked = await r.pick('p.product-note span', 1);
+  const path = picked.host!.selected!.selection.path.slice(0, -1);
+  await r.clickPanel(`[data-ws="crumb"][data-path="${path.join('.')}"]`);
+  const selected = await r.until((s) => (s.host?.selected?.selection.tag === 'p' ? s.host.selected : undefined));
+  expect(selected.selection.path).toEqual(path);
+  expect(selected.selection.candidates[0]).toMatchObject({ value: 'p.product-note:nth-of-type(4)', hit: true, count: 24 });
+  const miss = selected.selection.candidates.findIndex((c) => c.strategy === 'class' && c.value === 'p.product-note');
+  expect(selected.selection.candidates[miss]).toMatchObject({ count: 48, hit: false });
+  const badge = await r.query('[data-ws="candidate"]', miss);
+  expect(badge!.attrs['data-hit']).toBe('false');
+  expect(await r.count('[data-ws="candidate-miss"]')).toBeGreaterThanOrEqual(1);
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
+test('gate=cookie: after a reload behind the gate, a zero match field offers to replay the steps and counts 24 again', async ({ scoop }) => {
+  const recipe = structuredClone(scoop.recipe);
+  recipe.name = 'cookie-replay';
+  recipe.url = `${recipe.url}&gate=cookie`;
+  await scoop.writeRecipe(recipe);
+  const r = await scoop.record(['--edit', 'cookie-replay']);
+  await r.until((s) => s.host?.draft.tables[0]!.fields.every((f) => f.count !== null));
+  await r.browse();
+  await r.click('#consent-accept');
+  await r.until((s) => s.host?.draft.steps.length === 1);
+  await r.key('b');
+  await r.until((s) => !s.ui.browsing);
+  await expect.poll(() => r.page.locator('article').count()).toBe(24);
+
+  // Forget the consent so the reload shows the gate again.
+  await r.page.evaluate(() => localStorage.clear());
+  await r.page.reload();
+  await r.until((s) => s.host?.draft.steps.length === 1 && s.host.draft.tables[0]!.fields[0]!.count === 0);
+  expect(await r.page.locator('article').count()).toBe(0);
+  expect(await r.count('[data-ws="replay-steps"]')).toBeGreaterThan(0);
+  expect((await r.query('[data-ws="zero-match"]'))!.text).toContain('may appear only after the recorded steps');
+  await r.clickPanel('[data-ws="replay-steps"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields[0]!.count === 24);
+  await expect.poll(() => r.page.locator('article').count()).toBe(24);
+  expect(await r.count('[data-ws="replay-steps"]')).toBe(0);
+  expect((await r.closeWindow()).code).toBe(0);
+});

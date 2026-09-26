@@ -6,8 +6,9 @@ export interface RankOptions {
 }
 
 /**
- * Order candidates: ones that match something first, then (for item scoped
- * fields) ones whose count equals the item count, then by stability, then by
+ * Order candidates: ones that match something first, then hits and
+ * unverified ones before misses, then (for item scoped fields) ones whose
+ * count equals the item count, then by stability, then by
  * strategy order, then unique matches before non-unique ones. Stable for ties.
  */
 export function rank<T extends Candidate>(candidates: readonly T[], opts: RankOptions = {}): T[] {
@@ -15,6 +16,7 @@ export function rank<T extends Candidate>(candidates: readonly T[], opts: RankOp
     const known = c.count !== undefined;
     return [
       known && c.count === 0 ? 1 : 0,
+      c.hit === false ? 1 : 0,
       opts.itemCount !== undefined && known ? (c.count === opts.itemCount ? 0 : 1) : 0,
       STABILITY_ORDER.indexOf(c.stability),
       STRATEGY_ORDER.indexOf(c.strategy),

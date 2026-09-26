@@ -88,6 +88,39 @@ describe('steps list', () => {
     expect(p.store.get().ui.picking).toBe(true);
   });
 
+  it('offers to replay the steps for a field that matches nothing only when the draft has steps', () => {
+    const zero = { ...field, count: 0, sample: null };
+    const none = renderPanel(baseState(withTable(newDraft(), { fields: [zero] })));
+    expect(none.q('zero-match')).not.toBeNull();
+    expect(none.q('replay-steps')).toBeNull();
+    none.unmount();
+
+    const p = renderPanel(baseState({ ...withTable(newDraft(), { fields: [zero] }), steps: [step('click'), step('click')] }));
+    expect(p.q('zero-match')!.textContent).toContain('may appear only after the recorded steps');
+    expect(p.q('replay-steps')).not.toBeNull();
+  });
+
+  it('replays the steps in order, one after the other', async () => {
+    const zero = { ...field, count: 0, sample: null };
+    const p = renderPanel(baseState({ ...withTable(newDraft(), { fields: [zero] }), steps: [step('click'), step('click'), step('click')] }));
+    const pending: (() => void)[] = [];
+    p.actions.send = (msg) => {
+      p.sent.push(msg);
+      return new Promise<void>((resolve) => pending.push(resolve));
+    };
+    fireEvent.click(p.q('replay-steps')!);
+    const replays = () => p.sent.filter((m) => m.kind === 'draft.replayStep');
+    expect(replays()).toEqual([{ kind: 'draft.replayStep', index: 0 }]);
+    await act(async () => pending.shift()!());
+    expect(replays()).toEqual([
+      { kind: 'draft.replayStep', index: 0 },
+      { kind: 'draft.replayStep', index: 1 },
+    ]);
+    await act(async () => pending.shift()!());
+    await act(async () => pending.shift()!());
+    expect(replays().map((m) => (m as { index: number }).index)).toEqual([0, 1, 2]);
+  });
+
   it('toggles browse mode from the list and with b', () => {
     const p = renderPanel(withSteps([]));
     fireEvent.click(p.q('browse')!);

@@ -35,6 +35,8 @@ export const CandidateSchema = z.extend(SelectorSchema, {
   count: z.optional(count()),
   /** For an item scoped candidate: how many item containers hold at least one match. */
   items: z.optional(count()),
+  /** Whether the first match is the element picked by hand; absent when not verified. */
+  hit: z.optional(z.boolean()),
 });
 export const PathSchema = z.array(index());
 export const BBoxSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() });

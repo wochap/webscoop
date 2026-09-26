@@ -6,6 +6,11 @@ import { classifyToken, classTokens, isStableId, stableClasses } from './tokens'
 /** A selector candidate, optionally with its live match count as verified by the host. */
 export interface Candidate extends SelectorCandidate {
   count?: number;
+  /**
+   * Whether the first match is the element picked by hand, as verified by the
+   * host: true a hit, false a miss, absent unknown. Never saved.
+   */
+  hit?: boolean;
 }
 
 export interface GenerateContext {
@@ -21,6 +26,12 @@ export interface GenerateContext {
    * `role` candidate carries the role alone, without an accessible name.
    */
   level?: boolean;
+  /**
+   * Add a second `css` candidate with `:nth-of-type(k)` on every segment
+   * whose element has a sibling of the same tag, rated `fragile`. Used when
+   * no candidate without positional segments reads the picked element.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -97,6 +108,27 @@ function cssCandidate(node: AnnotatedNode, positional: boolean): Candidate {
     },
     nodes,
   );
+}
+
+/**
+ * The CSS candidate's path from the same anchor, each segment pinned with
+ * `:nth-of-type(k)` when its element has a same-tag sibling.
+ */
+function strictCandidate(node: AnnotatedNode): Candidate {
+  const segment = (n: AnnotatedNode) => {
+    const sameTag = siblingsOf(n).filter((s) => s.tag === n.tag);
+    return sameTag.length > 1 ? `${compoundOf(n)}:nth-of-type(${sameTag.indexOf(n) + 1})` : compoundOf(n);
+  };
+  const segments = [segment(node)];
+  const nodes = [node];
+  if (!anchored(node) && !TOP.has(node.tag)) {
+    for (let cur = node.parent; cur && !TOP.has(cur.tag); cur = cur.parent) {
+      segments.unshift(segment(cur));
+      nodes.unshift(cur);
+      if (anchored(cur)) break;
+    }
+  }
+  return withSegments({ strategy: 'css', value: segments.join(' > '), stability: 'fragile' }, nodes);
 }
 
 /** A class token as a CSS identifier, escaping characters that are not allowed bare. */
@@ -183,6 +215,10 @@ export function generate(node: AnnotatedNode, ctx: GenerateContext = {}): Candid
   if (text && text.length <= max) out.push({ strategy: 'text', value: text, stability: 'fragile' });
   const css = cssCandidate(node, ctx.positional ?? true);
   out.push(css);
+  if (ctx.strict) {
+    const strict = strictCandidate(node);
+    if (strict.value !== css.value) out.push(strict);
+  }
   const cls = classCandidate(node);
   if (cls && cls.value !== css.value) out.push(cls);
   out.push(xpathCandidate(node));

@@ -38,6 +38,7 @@ export function SelectorRow({
       data-ws="candidate"
       data-strategy={candidate.strategy}
       data-primary={primary}
+      data-hit={candidate.hit === undefined ? undefined : String(candidate.hit)}
     >
       <span className="ws-strategy">{candidate.strategy}</span>
       <span className="ws-mono-sm ws-ellipsis ws-spacer" title={candidate.value}>
@@ -49,6 +50,11 @@ export function SelectorRow({
       {candidate.items !== undefined && containers !== null && (
         <span className="ws-meta" data-ws="candidate-items" title="Item containers holding a match">
           {candidate.items}/{containers}
+        </span>
+      )}
+      {candidate.hit === false && (
+        <span className="ws-badge ws-tone-warn" data-ws="candidate-miss" title="Its first match is not the element you picked">
+          reads another element
         </span>
       )}
       <StabilityBadge stability={candidate.stability} />

@@ -139,6 +139,8 @@ function toFront<T>(list: readonly T[], index: number): T[] {
 
 const samePath = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((v, i) => b[i] === v);
 const sameSelector = (a: Candidate, b: Candidate) => a.strategy === b.strategy && a.value === b.value;
+/** An XPath with step indexes, or CSS with `:nth-child` or `:nth-of-type`. */
+const isPositional = (c: Candidate) => (c.strategy === 'xpath' ? /\[\d+\]/.test(c.value) : /:nth-(?:child|of-type)\(/.test(c.value));
 
 /** Primary candidate first, then the rest in ranked order, without candidates that match nothing. */
 function orderForSave(candidates: readonly ProtocolCandidate[], primary: number): ProtocolCandidate[] {
@@ -171,6 +173,8 @@ export class RecorderController {
   private typed: { candidate: ProtocolCandidate; scope: FieldScope } | null = null;
   /** The edited field's saved candidates, counted, waiting for the page to select the field's element. */
   private editSeed: ProtocolCandidate[] | null = null;
+  /** The selected element was chosen by hand (a pick or crumb click), not by a typed selector or an opened edit. */
+  private handPicked = false;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly unsubscribe: (() => void)[] = [];
   private closedResolve!: (reason: 'closed' | 'ended') => void;
@@ -751,6 +755,9 @@ export class RecorderController {
     this.editSeed = null;
     const editing = this.current.editing;
 
+    // Only an element chosen by hand (a pick or a crumb click) is verified.
+    this.handPicked = !typed && !seed;
+
     const base = dedupe(selection.candidates.length > 0 ? selection.candidates : generate(node));
     const containerNode = this.table().item && selection.containerPath ? nodeAt(root, selection.containerPath) : null;
     let scope: FieldScope = 'page';
@@ -759,13 +766,16 @@ export class RecorderController {
       scope = 'item';
       const containers = await this.containers();
       const relative = this.relativeTo(node, containerNode, base);
-      candidates = rank(await this.withCounts(relative, 'item', containers, true), { itemCount: containers.length });
-      if (candidates.length === 0) {
+      candidates = await this.withCounts(relative, 'item', containers, true);
+      if (candidates.length > 0) {
+        if (this.handPicked) candidates = await this.verified(candidates, 'item', node, containerNode, containers);
+        candidates = rank(candidates, { itemCount: containers.length });
+      } else {
         scope = 'page';
-        candidates = rank(await this.withCounts(base, 'page', []));
+        candidates = await this.pageCandidates(base, node);
       }
     } else {
-      candidates = rank(await this.withCounts(base, 'page', []));
+      candidates = await this.pageCandidates(base, node);
     }
     if (typed) {
       // The typed candidate comes first as primary; generated ones of another scope do not apply.
@@ -845,6 +855,91 @@ export class RecorderController {
     }
   }
 
+  /** Page scoped candidates, counted, verified when picked by hand, and ranked. */
+  private async pageCandidates(base: readonly Candidate[], node: AnnotatedNode): Promise<ProtocolCandidate[]> {
+    const counted = await this.withCounts(base, 'page', []);
+    return rank(this.handPicked ? await this.verified(counted, 'page', node, null, []) : counted);
+  }
+
+  /**
+   * Verify counted candidates against the picked element. When none without
+   * positional segments is a hit, the strict positional `css` candidate is
+   * added (relative to the container for item scope), counted, and verified,
+   * ahead of the others so it wins ties with a `:nth-child` one.
+   */
+  private async verified(
+    candidates: readonly ProtocolCandidate[],
+    scope: FieldScope,
+    node: AnnotatedNode,
+    containerNode: AnnotatedNode | null,
+    containers: readonly ElementRef[],
+  ): Promise<ProtocolCandidate[]> {
+    const checked = await this.verify(candidates, scope, node, containerNode, containers);
+    const known = checked.every((c) => c.hit !== undefined);
+    if (!known || checked.some((c) => c.hit && !isPositional(c))) return checked;
+    // With `strict`, the second `css` candidate is the strict one.
+    const strict = generate(node, { strict: true }).filter((c) => c.strategy === 'css')[1];
+    const relative = strict && (scope === 'item' && containerNode ? relativize(strict, containerNode) : strict);
+    if (!relative || checked.some((c) => sameSelector(c, relative))) return checked;
+    const counted = await this.withCounts([relative], scope, containers, scope === 'item');
+    const [extra] = await this.verify(counted, scope, node, containerNode, containers);
+    return extra ? [extra, ...checked] : checked;
+  }
+
+  /**
+   * Mark each candidate a hit when its first match (inside the container
+   * holding the picked element for item scope, else on the document) is the
+   * picked element, else a miss. The picked element and its container are
+   * found by their positional XPath. Every candidate stays unknown when they
+   * cannot be found or the session cannot compare elements.
+   */
+  private async verify<T extends Candidate>(
+    candidates: readonly T[],
+    scope: FieldScope,
+    pickedNode: AnnotatedNode,
+    containerNode: AnnotatedNode | null,
+    containers: readonly ElementRef[],
+  ): Promise<T[]> {
+    const unknown = () => candidates.map(({ hit: _hit, ...rest }) => rest as T);
+    try {
+      const picked = await this.refByXPath(pickedNode);
+      if (!picked) return unknown();
+      let within: ElementRef | undefined;
+      if (scope === 'item') {
+        const holder = containerNode ? await this.refByXPath(containerNode) : null;
+        if (!holder) return unknown();
+        for (const c of containers) {
+          if (await this.session.same(c, holder)) {
+            within = c;
+            break;
+          }
+        }
+        if (!within) return unknown();
+      }
+      const out: T[] = [];
+      for (const c of candidates) {
+        let first: ElementRef | undefined;
+        try {
+          [first] = await this.session.resolve(bare(c), within);
+        } catch {
+          // An invalid selector matches nothing: a miss.
+        }
+        out.push({ ...c, hit: first ? await this.session.same(first, picked) : false });
+      }
+      return out;
+    } catch {
+      return unknown();
+    }
+  }
+
+  /** The live element for a snapshot node through its positional XPath, when that matches exactly one element. */
+  private async refByXPath(node: AnnotatedNode): Promise<ElementRef | null> {
+    const xpath = generate(node).find((c) => c.strategy === 'xpath');
+    if (!xpath) return null;
+    const refs = await this.session.resolve(bare(xpath));
+    return refs.length === 1 ? refs[0]! : null;
+  }
+
   /**
    * Candidates for a pick inside an item container, relative to the
    * container element. Candidates generated here carry the element each
@@ -917,6 +1012,7 @@ export class RecorderController {
     this.root = null;
     this.typed = null;
     this.editSeed = null;
+    this.handPicked = false;
     this.dropProposal();
     this.current = { ...this.current, selected: null, editing: null, pendingSelect: null, selectorError: null };
   }
@@ -1508,8 +1604,10 @@ export class RecorderController {
     if (!selected || !node || !isInside(node, containerNode) || node === containerNode) return;
     const containers = await this.containers();
     const relative = this.relativeTo(node, containerNode, selected.selection.candidates);
-    const candidates = rank(await this.withCounts(relative, 'item', containers, true), { itemCount: containers.length });
+    let candidates = await this.withCounts(relative, 'item', containers, true);
     if (candidates.length === 0) return;
+    if (this.handPicked) candidates = await this.verified(candidates, 'item', node, containerNode, containers);
+    candidates = rank(candidates, { itemCount: containers.length });
     this.current = {
       ...this.current,
       selected: {
@@ -1526,7 +1624,10 @@ export class RecorderController {
   private async setItemFromSelection(): Promise<void> {
     const selected = this.current.selected;
     if (!selected || !this.node) throw new Error('select an element first');
-    const selectors = orderForSave(selected.selection.candidates, selected.primary);
+    // Container candidates should match every item, not only the pick: rank them unverified. A chosen primary stays first.
+    const unverified = rank(selected.selection.candidates.map(({ hit: _hit, ...c }) => c));
+    const chosen = selected.primary === 0 ? undefined : selected.selection.candidates[selected.primary];
+    const selectors = orderForSave(unverified, chosen ? Math.max(0, unverified.findIndex((c) => sameSelector(c, chosen))) : 0);
     this.apply({ type: 'setItem', item: { selectors, exclude: [], fingerprint: selected.selection.fingerprint, count: null, total: null } });
     this.dropProposal();
     await this.recount();
@@ -1689,6 +1790,8 @@ export class RecorderController {
         message = `step ${index + 1} failed: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
+    // A step can reveal content without a navigation, such as a consent click: count again.
+    if (ok) await this.recount();
     this.emitter.emit('recorder.stepReplayed', { index, kind: step.kind, ok, message });
     return { kind: 'step.replayResult', index, ok, message, state: this.current };
   }

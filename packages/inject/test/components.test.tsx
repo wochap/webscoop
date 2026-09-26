@@ -96,6 +96,24 @@ describe('inspector and candidates', () => {
   });
 });
 
+describe('candidate verification', () => {
+  it('shows the miss badge only on a candidate verified as a miss', async () => {
+    const { proposed } = await hostStates();
+    const selection = proposed.selected!.selection;
+    const marks = [true, false, undefined];
+    const candidates = selection.candidates.slice(0, 3).map((c, i) => {
+      const { hit: _hit, ...rest } = c;
+      return marks[i] === undefined ? rest : { ...rest, hit: marks[i] };
+    });
+    const p = renderPanel({ ...proposed, proposal: null, selected: { ...proposed.selected!, selection: { ...selection, candidates } } });
+    const rows = p.qa('candidate');
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.querySelector('[data-ws="candidate-miss"]') !== null)).toEqual([false, true, false]);
+    expect(p.qa('candidate-miss')[0]!.textContent).toBe('reads another element');
+    expect(rows.map((r) => r.dataset.hit)).toEqual(['true', 'false', undefined]);
+  });
+});
+
 describe('item detection', () => {
   it('confirms with Enter and updates the count on exclusion', async () => {
     const { proposed } = await hostStates({ sponsored: 2 });

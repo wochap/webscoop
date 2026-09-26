@@ -1,6 +1,6 @@
 import { useEffect, useState, type HTMLAttributes } from 'react';
 import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
-import { useActions } from './context';
+import { useActions, useSnapshot } from './context';
 import { Toggle } from './items';
 
 type FieldType = DraftField['type'];
@@ -34,10 +34,28 @@ export function DedupKeyToggle({ on, onChange, testId = 'field-key' }: { on: boo
   );
 }
 
-export function ZeroMatchWarning({ onRepick, onOptional, optional }: { onRepick: () => void; onOptional: () => void; optional: boolean }) {
+export function ZeroMatchWarning({
+  onRepick,
+  onOptional,
+  optional,
+  onReplay,
+}: {
+  onRepick: () => void;
+  onOptional: () => void;
+  optional: boolean;
+  /** Replay the draft's steps in order; given when the draft has steps. */
+  onReplay?: () => void;
+}) {
   return (
     <div className="ws-warning" role="alert" data-ws="zero-match">
-      <span className="ws-spacer">Matches nothing on this page.</span>
+      <span className="ws-spacer">
+        Matches nothing on this page.{onReplay && ' It may appear only after the recorded steps.'}
+      </span>
+      {onReplay && (
+        <button type="button" className="ws-btn ws-btn-sm" onClick={onReplay} data-ws="replay-steps" title="Run the recorded steps on this page, in order">
+          Replay steps
+        </button>
+      )}
       <button type="button" className="ws-btn ws-btn-sm" onClick={onRepick} data-ws="repick">
         Re-pick
       </button>
@@ -182,8 +200,13 @@ export function FieldRow({
   dragProps: Omit<HTMLAttributes<HTMLDivElement>, 'className'>;
 }) {
   const actions = useActions();
+  const steps = useSnapshot().host?.draft.steps.length ?? 0;
   const update = (patch: FieldPatch) => void actions.send({ kind: 'draft.updateField', index, patch });
   const primary = field.selectors[0]!;
+  // One step at a time: each send resolves after the host answers with the step's result.
+  const replay = async () => {
+    for (let i = 0; i < steps; i++) await actions.send({ kind: 'draft.replayStep', index: i });
+  };
   return (
     <div
       {...dragProps}
@@ -254,6 +277,7 @@ export function FieldRow({
             actions.startPicking();
           }}
           onOptional={() => update({ optional: true })}
+          {...(steps > 0 ? { onReplay: () => void replay() } : {})}
         />
       )}
     </div>

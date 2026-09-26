@@ -230,6 +230,53 @@ describe('rank', () => {
   });
 });
 
+describe('strict positional candidate', () => {
+  const twin = () => {
+    const root = annotate(tier0Snapshot({ twins: true }));
+    const note = byClass(root, 'product-note', 1);
+    return elementChildren(note)[0]!;
+  };
+
+  it('pins the second twin with nth-of-type only on request', () => {
+    const span = twin();
+    const plain = generate(span).filter((c) => c.strategy === 'css');
+    expect(plain.map((c) => c.value)).toEqual(['p.product-note:nth-child(6) > span']);
+    const css = generate(span, { strict: true }).filter((c) => c.strategy === 'css');
+    expect(css).toHaveLength(2);
+    expect(css[1]).toEqual({ strategy: 'css', value: 'p.product-note:nth-of-type(4) > span', stability: 'fragile' });
+  });
+
+  it('relativizes the strict candidate at the card by its segment nodes', () => {
+    const span = twin();
+    let card = span;
+    while (card.attrs['data-testid'] !== 'product-card') card = card.parent!;
+    const strict = generate(span, { strict: true }).filter((c) => c.strategy === 'css')[1]!;
+    expect(relativize(strict, card)).toMatchObject({ value: 'p.product-note:nth-of-type(4) > span', stability: 'fragile' });
+  });
+
+  it('is left out when it equals the css candidate', () => {
+    const root = annotate(tier0Snapshot());
+    const title = byClass(root, 'product-title', 0);
+    expect(generate(title, { strict: true }).filter((c) => c.strategy === 'css')).toHaveLength(1);
+  });
+});
+
+describe('rank with verification', () => {
+  it('puts a medium miss below a fragile hit and above a zero count candidate', () => {
+    const miss: Candidate = { strategy: 'class', value: 'p.product-note', stability: 'medium', count: 48, hit: false };
+    const hit: Candidate = { strategy: 'css', value: 'p.product-note:nth-of-type(4)', stability: 'fragile', count: 24, hit: true };
+    const none: Candidate = { strategy: 'testid', value: 'gone', stability: 'stable', count: 0 };
+    expect(rank([none, miss, hit], { itemCount: 24 })).toEqual([hit, miss, none]);
+    expect(rank([none, miss, hit])).toEqual([hit, miss, none]);
+  });
+
+  it('ranks unknown like a hit', () => {
+    const testid: Candidate = { strategy: 'testid', value: 't', stability: 'stable', count: 24 };
+    const css: Candidate = { strategy: 'css', value: 'h2.t', stability: 'medium', count: 24, hit: true };
+    expect(rank([css, testid], { itemCount: 24 })).toEqual([testid, css]);
+  });
+});
+
 describe('rank with class candidates', () => {
   it('ranks css before class at equal counts and a class candidate with the item count above a mismatched css one', () => {
     const css24: Candidate = { strategy: 'css', value: 'div > div:nth-child(2)', stability: 'fragile', count: 24 };
