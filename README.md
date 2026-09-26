@@ -104,8 +104,9 @@ environment.systemPackages = [ inputs.webscoop.packages.x86_64-linux.default ];
 ```
 
 Try it without installing: `nix run . -- doctor`. After changing
-dependencies, update the `npmDeps` hash in `flake.nix` (build once, copy the
-`got:` hash from the error).
+dependencies, update the `npmDeps` hash in `flake.nix`: set `hash` to
+`lib.fakeHash`, run `nix build .#default`, then copy the `got:` hash from the
+`hash mismatch` error into `flake.nix`.
 
 ## Usage
 
