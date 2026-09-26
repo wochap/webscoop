@@ -46,6 +46,7 @@ export class MemoryStorage implements StoragePort {
 
 export interface Harness {
   controller: RecorderController;
+  browser: FakeBrowser;
   session: FakeInteractiveSession;
   storage: MemoryStorage;
   emitter: RecorderEmitter;
@@ -80,6 +81,7 @@ export async function harness(dom: SerializedElement, draft: Draft, url = CATALO
   const send = (msg: unknown) => session.callHost(msg);
   return {
     controller,
+    browser,
     session,
     storage,
     emitter,

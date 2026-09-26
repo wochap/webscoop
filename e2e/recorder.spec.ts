@@ -295,6 +295,47 @@ test('rows=4: one title proposes 24 cards under the product list, saved and run'
   expect((JSON.parse(run.stdout) as { title: string }[]).map((row) => row.title)).toEqual(dataset.map((p) => p.title));
 });
 
+test('edit items: move the confirmed cards to the broader level, update, cancel a second edit, save, and run', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'edit-items']);
+  await pickTitlesAsItems(r);
+  await addField(r, '[data-testid="price"]', 'price');
+  expect((await r.state()).host!.draft.item!.fingerprint!.tag).toBe('article');
+
+  await r.clickPanel('[data-ws="edit-item"]');
+  const editing = await r.until((s) => (s.host?.proposal?.editing ? s.host.proposal : null));
+  expect(editing.proposed.count).toBe(24);
+  expect(editing.broader).toMatchObject({ tag: 'li', count: 24 });
+  expect((await r.query('[data-ws="confirm-items"]'))!.text).toContain('Update items');
+  await r.clickPanel('[data-ws="level-broader"]');
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => !s.host?.proposal && s.host?.draft.item?.fingerprint?.tag === 'li');
+  const updated = (await r.state()).host!.draft;
+  expect(updated.item!.count).toBe(24);
+  expect(updated.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
+    ['title', 'item', 24],
+    ['price', 'item', 24],
+  ]);
+
+  await r.clickPanel('[data-ws="edit-item"]');
+  await r.until((s) => s.host?.proposal?.editing);
+  await r.clickPanel('[data-ws="cancel-items"]');
+  await r.until((s) => !s.host?.proposal);
+  const after = (await r.state()).host!.draft;
+  expect(after.item).toEqual(updated.item);
+  expect(after.fields.map((f) => f.name)).toEqual(['title', 'price']);
+
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+  const recipe = loadRecipe(await readFile(path, 'utf8'));
+  expect(recipe.item!.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
+  expect(recipe.item!.fingerprint!.tag).toBe('li');
+  const run = await scoop.run(['run', 'edit-items']);
+  expect(run.code, run.stderr).toBe(0);
+  const rows = JSON.parse(run.stdout) as { title: string; price: number }[];
+  expect(rows.map((row) => row.title)).toEqual(dataset.map((p) => p.title));
+  expect(rows.map((row) => row.price)).toEqual(dataset.map((p) => p.price));
+});
+
 test('mixed=1: 24 cards with 6 skipped, include all shows 30, and the saved recipe runs 24 rows', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port, '&mixed=1'), '--var', 'tier=0', '--name', 'mixed']);
   await r.pick('h2.product-title', 2);

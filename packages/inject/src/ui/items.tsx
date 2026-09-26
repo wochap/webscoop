@@ -240,7 +240,7 @@ export function ItemDetectCard({
   return (
     <section className="ws-card ws-card-accent" data-ws="items-card">
       <div className="ws-row ws-row-between">
-        <span className="ws-caps">Repeating items found</span>
+        <span className="ws-caps">{proposal.editing ? 'Edit items' : 'Repeating items found'}</span>
         <span className="ws-row">
           <span className="ws-meta">Highlight</span>
           <Toggle on={highlight} onChange={onHighlight} label="Highlight matches" testId="highlight-toggle" />
@@ -276,10 +276,10 @@ export function ItemDetectCard({
       <ExclusionInput exclude={proposal.exclude} />
       <div className="ws-row">
         <button type="button" className="ws-btn ws-btn-primary ws-spacer" onClick={() => void actions.send({ kind: 'draft.confirmItems', level })} data-ws="confirm-items">
-          Use these {chosen.count ?? ''} items <Kbd>Enter</Kbd>
+          {proposal.editing ? 'Update items' : `Use these ${chosen.count ?? ''} items`} <Kbd>Enter</Kbd>
         </button>
         <button type="button" className="ws-btn ws-btn-ghost" onClick={() => void actions.send({ kind: 'draft.cancelItems' })} data-ws="cancel-items">
-          Not a list
+          {proposal.editing ? 'Cancel' : 'Not a list'}
         </button>
       </div>
     </section>
@@ -327,9 +327,16 @@ export function ItemSummary({ item }: { item: DraftItem }) {
     <section className="ws-card" data-ws="item-summary">
       <div className="ws-row ws-row-between">
         <span className="ws-caps">Items</span>
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="clear-item">
-          Remove
-        </button>
+        <span className="ws-row">
+          {item.count !== null && item.count > 0 && (
+            <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.editItem' })} data-ws="edit-item">
+              Edit
+            </button>
+          )}
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="clear-item">
+            Remove
+          </button>
+        </span>
       </div>
       <div className="ws-row">
         <span className="ws-count" data-ws="item-count">
@@ -340,6 +347,11 @@ export function ItemSummary({ item }: { item: DraftItem }) {
           {item.total !== null && item.total !== item.count && <span className="ws-meta">{item.total} before exclusions</span>}
         </div>
       </div>
+      {item.count === 0 && (
+        <span className="ws-error" data-ws="item-zero">
+          The item container matches nothing on this page.
+        </span>
+      )}
       <WithinSummary item={item} />
       <SelectorChain chain={selectorChain([item.within?.[0], primary])} />
       <ExclusionInput exclude={item.exclude} />

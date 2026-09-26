@@ -108,6 +108,8 @@ export const ProposalSchema = z.object({
   error: z._default(z.nullable(z.object({ level: z.enum(LEVEL_KINDS), message: z.string() })), null),
   /** Exclusions added before confirming; they move to the item on confirm. */
   exclude: z._default(z.array(CandidateSchema), []),
+  /** Set when the proposal edits the confirmed item: confirming replaces it and adds no field. */
+  editing: z._default(z.boolean(), false),
 });
 
 export const VarValueSchema = z.object({
@@ -351,6 +353,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('inspect.primary', { index: index() }),
   msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
   msg('draft.cancelItems', {}),
+  /** Reopen the confirmed item as a proposal, seeded from its list parent, container, and exclusions. */
+  msg('draft.editItem', {}),
   /**
    * Set the list parent or the item container: from an element picked on the
    * page (with a fresh snapshot when no proposal is shown), from typed

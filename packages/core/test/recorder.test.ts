@@ -79,6 +79,7 @@ describe('protocol', () => {
     { kind: 'inspect.primary', index: 1 },
     { kind: 'draft.confirmItems', level: 'broader' },
     { kind: 'draft.cancelItems' },
+    { kind: 'draft.editItem' },
     { kind: 'draft.setLevel', level: 'within', by: 'pick', path: [1, 0, 1] },
     { kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'role=listitem' },
     { kind: 'draft.setLevel', level: 'within', by: 'clear', snapshot: h('html') },
@@ -152,6 +153,7 @@ describe('protocol', () => {
           includeAll: false,
           error: { level: 'item', message: 'matches nothing' },
           exclude: [],
+          editing: true,
         },
       },
     },
@@ -180,6 +182,14 @@ describe('protocol', () => {
     }
     for (const message of page) expect(parsePageMessage(JSON.parse(JSON.stringify(message)))).toEqual(message);
     for (const message of host) expect(parseHostMessage(JSON.parse(JSON.stringify(message)))).toEqual(message);
+  });
+
+  it('defaults the proposal editing flag to false', () => {
+    const view = (host.find((m) => m.kind === 'draft.state' && m.state.proposal) as HostMessage & { kind: 'draft.state' }).state.proposal!;
+    const { editing: _editing, ...rest } = view;
+    const parsed = parseHostMessage(JSON.parse(JSON.stringify({ kind: 'draft.state', state: { ...sampleState, proposal: rest } })));
+    expect(parsed.kind === 'draft.state' && parsed.state.proposal!.editing).toBe(false);
+    expect(parsePageMessage({ kind: 'draft.editItem' })).toEqual({ kind: 'draft.editItem' });
   });
 
   it('rejects malformed messages', () => {

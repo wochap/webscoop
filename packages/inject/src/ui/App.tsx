@@ -207,6 +207,7 @@ export function ScoopRoot() {
           focused={ui.focusedField}
           repick={host.repick}
           editing={host.editing?.index ?? null}
+          editLocked={Boolean(proposal?.editing)}
           onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })}
           onEdit={(index) => {
             if (ui.picking) actions.cancelPicking();

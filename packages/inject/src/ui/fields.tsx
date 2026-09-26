@@ -162,6 +162,7 @@ export function FieldRow({
   focused,
   repicking,
   editing,
+  editLocked = false,
   onFocus,
   onEdit,
   dragging,
@@ -173,6 +174,8 @@ export function FieldRow({
   repicking: boolean;
   /** The field is open in the selection panel. */
   editing: boolean;
+  /** Field edits are unavailable, such as while the item container is being edited. */
+  editLocked?: boolean;
   onFocus: () => void;
   onEdit: () => void;
   dragging: boolean;
@@ -208,7 +211,8 @@ export function FieldRow({
           className="ws-btn ws-btn-ghost ws-btn-sm"
           aria-label={`Edit field ${field.name}`}
           aria-pressed={editing}
-          title="Open in the selection panel to change its selectors and options"
+          disabled={editLocked}
+          title={editLocked ? 'Finish editing the items first' : 'Open in the selection panel to change its selectors and options'}
           onClick={(e) => {
             e.stopPropagation();
             onEdit();
@@ -226,7 +230,7 @@ export function FieldRow({
           {field.error}
         </span>
       )}
-      <div className="ws-row ws-clickable" data-ws="field-summary" title="Edit this field" onClick={onEdit}>
+      <div className={`ws-row${editLocked ? '' : ' ws-clickable'}`} data-ws="field-summary" title={editLocked ? undefined : 'Edit this field'} onClick={editLocked ? undefined : onEdit}>
         <span className="ws-mono-sm ws-faint ws-ellipsis ws-spacer" title={`${primary.strategy}=${primary.value}`}>
           {primary.strategy}={primary.value}
         </span>
@@ -262,6 +266,7 @@ export function FieldList({
   focused,
   repick,
   editing = null,
+  editLocked = false,
   onFocus,
   onEdit = () => {},
 }: {
@@ -270,6 +275,8 @@ export function FieldList({
   repick: number | null;
   /** Index of the field open in the selection panel. */
   editing?: number | null;
+  /** Disable every field's Edit action. */
+  editLocked?: boolean;
   onFocus: (index: number | null) => void;
   onEdit?: (index: number) => void;
 }) {
@@ -294,6 +301,7 @@ export function FieldList({
           focused={focused === index}
           repicking={repick === index}
           editing={editing === index}
+          editLocked={editLocked}
           onFocus={() => onFocus(index)}
           onEdit={() => onEdit(index)}
           dragging={dragging === index}

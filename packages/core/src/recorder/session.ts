@@ -402,8 +402,12 @@ export class RecorderController {
       case 'draft.confirmItems':
         return void (await this.confirmItems(msg.level));
       case 'draft.cancelItems':
-        this.dropProposal();
+        // Cancelling an edit of the confirmed item returns to the empty state; the item stays.
+        if (this.current.proposal?.editing) this.clearSelection();
+        else this.dropProposal();
         return;
+      case 'draft.editItem':
+        return void (await this.editItem());
       case 'draft.setLevel':
         return void (await this.setLevel(msg.level, msg.by, msg));
       case 'draft.pickLevel':
@@ -417,6 +421,7 @@ export class RecorderController {
         return void (await this.setPrimary(msg.level, msg.index, msg.rung ?? 'proposed'));
       case 'draft.setItem':
         this.notEditing();
+        this.notEditingItem();
         return void (await this.setItemFromSelection());
       case 'draft.clearItem':
         this.apply({ type: 'setItem', item: null });
@@ -430,6 +435,7 @@ export class RecorderController {
         this.notEditing();
         return void (await this.addField(msg.patch ?? {}));
       case 'draft.editField':
+        this.notEditingItem();
         return void (await this.editField(msg.index, msg.snapshot));
       case 'draft.updateEditedField':
         return void (await this.updateEditedField(msg.patch));
@@ -812,6 +818,60 @@ export class RecorderController {
     if (this.current.editing) throw new Error('finish editing the field first: update or cancel it');
   }
 
+  private notEditingItem(): void {
+    if (this.current.proposal?.editing) throw new Error('finish editing the items first: update or cancel');
+  }
+
+  /**
+   * Reopen the confirmed item as a proposal on a fresh snapshot: the list
+   * parent and the first container resolved on the page, inferred again with
+   * both fixed, seeded with the item's exclusions. The pick stands in as the
+   * first item field's element in that container, else the container itself.
+   */
+  private async editItem(): Promise<void> {
+    this.notEditing();
+    const item = this.draft.item;
+    if (!item) throw new Error('no item container to edit');
+    this.clearSelection();
+    const root = annotate((await this.session.snapshot()) as SerializedElement);
+    const parentRef = await listParent(this.session, item.within?.map(bare));
+    const [containerRef] = parentRef === null ? [] : await this.containers();
+    const [containerNode] = containerRef ? await this.nodesFor([containerRef], root) : [];
+    if (!containerRef || !containerNode) throw new Error('the item container matches nothing on this page: remove it and pick again');
+    const [withinNode] = parentRef ? await this.nodesFor([parentRef], root) : [];
+    const listRoot = withinNode ?? root.children.find((c): c is AnnotatedNode => c.type === 'element' && c.tag === 'body') ?? root;
+
+    let seed: AnnotatedNode = containerNode;
+    const field = this.draft.fields.find((f) => f.scope === 'item');
+    if (field) {
+      try {
+        const [ref] = await this.session.resolve(bare(field.selectors[0]!), containerRef);
+        const [node] = ref ? await this.nodesFor([ref], containerNode) : [];
+        if (node && isInside(node, containerNode)) seed = node;
+      } catch {
+        // An invalid saved selector: the container stands in for the pick.
+      }
+    }
+
+    const inferred = isInside(containerNode, listRoot) && containerNode !== listRoot ? inferItems(seed, { within: listRoot, item: containerNode }) : null;
+    this.proposal = inferred ?? {
+      container: containerNode,
+      siblings: [containerNode],
+      all: [containerNode],
+      skipped: [],
+      within: withinNode ?? null,
+      broader: null,
+      narrower: null,
+    };
+    this.node = seed;
+    this.root = root;
+    this.resetEdits();
+    await this.showProposal();
+    let view: ProposalView = { ...this.current.proposal!, editing: true, exclude: item.exclude };
+    if (view.exclude.length > 0) view = await this.recountProposal(view);
+    this.current = { ...this.current, proposal: view };
+  }
+
   /**
    * Resolve a candidate by scope: inside each item container for `item`,
    * else on the page. Throws for an invalid selector.
@@ -985,6 +1045,7 @@ export class RecorderController {
           ? { level: 'item', message: 'no item container selector matches inside the list parent; showing selectors for the whole page' }
           : null),
       exclude: previous?.exclude ?? [],
+      editing: previous?.editing ?? false,
     };
     if (view.exclude.length > 0) view = await this.recountProposal(view);
     this.current = { ...this.current, proposal: view };
@@ -1315,6 +1376,7 @@ export class RecorderController {
     const selectors = orderForSave(view.selectors, view.primary);
     const exclude = proposal.exclude;
     const withinNode = this.proposalWithin();
+    const editing = proposal.editing;
     const within = proposal.within && withinNode ? orderForSave(proposal.within.selectors, proposal.within.primary) : [];
     this.apply({
       type: 'setItem',
@@ -1330,6 +1392,8 @@ export class RecorderController {
     this.dropProposal();
     await this.recount();
     this.emitter.emit('recorder.itemsConfirmed', { count: this.draft.item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
+    // An edit of the confirmed item keeps the fields as they are; the recount marks the broken ones.
+    if (editing) return this.clearSelection();
 
     // The original pick becomes an item scoped field.
     const selected = this.current.selected;
@@ -1371,20 +1435,20 @@ export class RecorderController {
     } catch (error) {
       throw new Error(`invalid exclusion selector "${selector}": ${(error as Error).message.split('\n')[0]}`, { cause: error });
     }
-    if (this.draft.item) {
+    if (!proposal) {
       this.apply({ type: 'addExclusion', candidate });
       await this.recount();
       this.emitter.emit('recorder.excluded', { selector: candidate.value, count: this.draft.item!.count });
       return;
     }
-    const exclude = [...proposal!.exclude, { ...candidate, count: matches }];
-    this.current = { ...this.current, proposal: await this.recountProposal({ ...proposal!, exclude }) };
+    const exclude = [...proposal.exclude, { ...candidate, count: matches }];
+    this.current = { ...this.current, proposal: await this.recountProposal({ ...proposal, exclude }) };
     this.emitter.emit('recorder.excluded', { selector: candidate.value, count: this.current.proposal!.proposed.count });
   }
 
   private async removeExclusion(index: number): Promise<void> {
     const proposal = this.current.proposal;
-    if (this.draft.item || !proposal) {
+    if (!proposal) {
       this.apply({ type: 'removeExclusion', index });
       await this.recount();
       return;
