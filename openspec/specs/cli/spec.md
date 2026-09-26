@@ -39,7 +39,7 @@ A cron job SHALL be able to treat `2` as "retry later" and `3` as "alert a human
 - **THEN** rows are emitted with `null` for those fields and the exit code is 0
 
 ### Requirement: Output streams
-Extracted data SHALL go to stdout only. Logs, progress, and errors SHALL go to stderr only. Default stdout format SHALL be a single JSON array of row objects. With `--jsonl`, stdout SHALL carry one JSON object per line, written as soon as each row is available. With `--out <path>`, the same content SHALL be written to that file instead of stdout.
+Extracted data SHALL go to stdout only. Logs, progress, and errors SHALL go to stderr only. For a recipe with one table, the default stdout format SHALL be a single JSON array of row objects, and with `--jsonl` stdout SHALL carry one JSON object per line, written as soon as each row is available. For a recipe with several tables, the default stdout format SHALL be a single JSON object with one key per table name, in recipe order, each holding that table's array of rows; with `--jsonl` each line SHALL be one row carrying `_table` with its table name, written as soon as the row is available. `--table <name>` SHALL restrict the output to that table in the single table shapes and SHALL exit 1 naming the table when the recipe has none by that name. With `--out <path>`, the same content SHALL be written to that file instead of stdout; when `<path>` is an existing directory or ends with a path separator, one file per table named `<table>.json` (or `<table>.jsonl` with `--jsonl`) SHALL be written into it, each in the single table shape.
 
 #### Scenario: Piping into jq
 - **WHEN** `webscoop run shop | jq length` is executed
@@ -49,8 +49,24 @@ Extracted data SHALL go to stdout only. Logs, progress, and errors SHALL go to s
 - **WHEN** `webscoop run shop --jsonl` is executed
 - **THEN** each row appears on stdout as its own line, and stderr carries the log
 
+#### Scenario: Two tables as JSON
+- **WHEN** `webscoop run results` is executed for a recipe with tables `page` and `products`
+- **THEN** stdout is one JSON object with keys `page` and `products`, each an array of rows
+
+#### Scenario: Two tables as JSONL
+- **WHEN** `webscoop run results --jsonl` is executed for the same recipe
+- **THEN** every line carries `_table` set to `page` or `products`
+
+#### Scenario: One table of many
+- **WHEN** `webscoop run results --table products | jq length` is executed
+- **THEN** jq receives only the `products` array and prints its row count
+
+#### Scenario: Directory output
+- **WHEN** `webscoop run results --out ./data/` is executed
+- **THEN** `./data/page.json` and `./data/products.json` exist, each a JSON array, and stdout is empty
+
 ### Requirement: Row shape
-Each emitted row SHALL contain one key per recipe field, plus `_page` (1-based page number) and `_index` (0-based index within the page). Values SHALL be converted per field type: `number` parses the first numeric token in the text and yields `null` when none is found; `url` and `image` resolve relative URLs against the page URL; `date` yields an ISO 8601 string when parseable, else the raw text; `html` yields inner HTML; `text` yields trimmed, whitespace-collapsed text.
+Each emitted row SHALL contain one key per field of its table, plus `_page` (1-based page number) and `_index` (0-based index within the page and table). In JSONL output of a recipe with several tables, each row SHALL also carry `_table`. Values SHALL be converted per field type: `number` parses the first numeric token in the text and yields `null` when none is found; `url` and `image` resolve relative URLs against the page URL; `date` yields an ISO 8601 string when parseable, else the raw text; `html` yields inner HTML; `text` yields trimmed, whitespace-collapsed text.
 
 #### Scenario: Number parsing
 - **WHEN** a `number` field's text is `$1,299.00`
@@ -60,8 +76,12 @@ Each emitted row SHALL contain one key per recipe field, plus `_page` (1-based p
 - **WHEN** a `url` field reads `href="/p/42"` on `https://shop.test/c/shoes`
 - **THEN** the row value is `https://shop.test/p/42`
 
+#### Scenario: Page table row
+- **WHEN** the table `page` has a `heading` field and the run extracts 2 pages
+- **THEN** `page` yields two rows with `_page` 1 and 2, both with `_index` 0
+
 ### Requirement: `run` command
-`webscoop run <recipe> [--var name=value]... [--jsonl] [--out path] [--profile name] [--timeout ms]` SHALL load the named recipe, substitute variables from `--var` and declared defaults, fail with exit 1 when a variable has no value, execute the recipe, and emit rows. `<recipe>` SHALL be either a recipe name in the recipes directory or a path to a recipe file.
+`webscoop run <recipe> [--var name=value]... [--jsonl] [--out path] [--table name] [--profile name] [--timeout ms]` SHALL load the named recipe, substitute variables from `--var` and declared defaults, fail with exit 1 when a variable has no value, execute the recipe, and emit rows. `<recipe>` SHALL be either a recipe name in the recipes directory or a path to a recipe file.
 
 #### Scenario: Missing variable value
 - **WHEN** the recipe declares `category` without a default and `--var category=...` is not given
@@ -70,6 +90,10 @@ Each emitted row SHALL contain one key per recipe field, plus `_page` (1-based p
 #### Scenario: Run by path
 - **WHEN** `webscoop run ./my.json` is executed
 - **THEN** the recipe at that path is used without consulting the recipes directory
+
+#### Scenario: Unknown table
+- **WHEN** `webscoop run results --table ads` is executed and the recipe has no table `ads`
+- **THEN** stderr names `ads` and the declared table names, and the exit code is 1
 
 ### Requirement: `recipes` command
 `webscoop recipes` SHALL list the recipes in the recipes directory with name, URL template, field count, and last modified time. With `--json` it SHALL print the same as a JSON array.
@@ -108,7 +132,7 @@ Every command that opens a browser SHALL check for a display first and exit 1 wi
 - **THEN** stderr explains that a display is required and the exit code is 1
 
 ### Requirement: `record` command
-`webscoop record <url-template> [--name <recipe>] [--var name=value]... [--profile <name>] [--timeout <ms>]` SHALL start a recording session for the given URL template. `webscoop record --edit <recipe>` SHALL start a session for an existing recipe by name or path. The command SHALL require a display, take the profile lock like `run`, and hold the process open until the session ends. When `--name` is omitted, the session SHALL propose a name derived from the URL host and path and let the user change it before saving.
+`webscoop record <url-template> [--name <recipe>] [--var name=value]... [--profile <name>] [--timeout <ms>]` SHALL start a recording session for the given URL template. `webscoop record --edit <recipe>` SHALL start a session for an existing recipe by name or path. The command SHALL require a display, take the profile lock like `run`, and hold the process open until the session ends. When `--name` is omitted, the session SHALL propose a name derived from the URL host and path and let the user change it before saving. `--edit` of a recipe with more than one table SHALL exit 1 with a message saying the recorder does not edit multi-table recipes yet.
 
 #### Scenario: Record with a template variable
 - **WHEN** `webscoop record "http://127.0.0.1:4777/catalog?cat={category}"` is executed
@@ -121,6 +145,10 @@ Every command that opens a browser SHALL check for a display first and exit 1 wi
 #### Scenario: Variable given on the command line
 - **WHEN** `--var category=shoes` is passed
 - **THEN** the session does not prompt for `category`
+
+#### Scenario: Edit a multi-table recipe
+- **WHEN** `webscoop record --edit results` is executed and `results` declares two tables
+- **THEN** stderr says the recorder does not edit multi-table recipes yet and the exit code is 1
 
 ### Requirement: `record` exit behavior
 The `record` command SHALL exit 0 when the session ends after a save or with no unsaved changes, exit 0 with a stderr warning naming the recipe when the session ends with unsaved changes, and exit 1 on error (invalid URL template, invalid recipe under `--edit`, display or browser failure). Ctrl+C SHALL end the session cleanly, releasing the profile lock.
@@ -250,7 +278,7 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 - **THEN** the window is hidden
 
 ### Requirement: `export` command
-`webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. The command SHALL NOT open a browser and SHALL NOT require a display.
+`webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. A recipe with more than one table SHALL exit 1 with a message saying export does not support multi-table recipes yet. The command SHALL NOT open a browser and SHALL NOT require a display.
 
 #### Scenario: Export to stdout
 - **WHEN** `webscoop export playground-catalog` is executed
@@ -263,3 +291,7 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: No display needed
 - **WHEN** `webscoop export playground-catalog` runs without `WAYLAND_DISPLAY` or `DISPLAY`
 - **THEN** it succeeds
+
+#### Scenario: Export a multi-table recipe
+- **WHEN** `webscoop export results` is executed and `results` declares two tables
+- **THEN** stderr says export does not support multi-table recipes yet and the exit code is 1

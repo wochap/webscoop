@@ -7,7 +7,7 @@ Defines the standalone script produced from a recipe: which recipe behavior it r
 ## Requirements
 
 ### Requirement: Targets and invocation
-The export SHALL produce either a TypeScript script for Node using the `playwright` package, runnable with `npx tsx <file>`, or a Python script using the `playwright` sync API, runnable with `python3 <file>`. Both SHALL accept variables as `--var name=value` arguments and as environment variables named `WEBSCOOP_VAR_<NAME>` (uppercased), with arguments taking precedence and recipe defaults as the fallback, and SHALL exit 1 naming any variable without a value. Both SHALL accept `--jsonl`, `--out <path>`, `--pages <1|N|all>`, and `--headless`.
+The export SHALL produce either a TypeScript script for Node using the `playwright` package, runnable with `npx tsx <file>`, or a Python script using the `playwright` sync API, runnable with `python3 <file>`. Both SHALL accept variables as `--var name=value` arguments and as environment variables named `WEBSCOOP_VAR_<NAME>` (uppercased), with arguments taking precedence and recipe defaults as the fallback, and SHALL exit 1 naming any variable without a value. Both SHALL accept `--jsonl`, `--out <path>`, `--pages <1|N|all>`, and `--headless`. Export SHALL accept recipes with one table, in either the shorthand or the `tables` form, and SHALL refuse recipes with more than one table with exit 1 until export supports them.
 
 #### Scenario: Variable from the environment
 - **WHEN** the exported script runs with `WEBSCOOP_VAR_CATEGORY=shoes` and no `--var`
@@ -16,6 +16,10 @@ The export SHALL produce either a TypeScript script for Node using the `playwrig
 #### Scenario: Missing variable
 - **WHEN** a variable has no argument, environment value, or default
 - **THEN** the script exits 1 and names the variable
+
+#### Scenario: Single table in tables form
+- **WHEN** a recipe declares `tables` with one entry
+- **THEN** export renders the same script it renders for the shorthand form
 
 ### Requirement: Header and declared limits
 The script SHALL start with a comment naming the recipe, the export timestamp, the webscoop version, and a fixed list of behaviors it does not include: fingerprint healing, model healing, guards, notifications, window hiding, recipe write-back. It SHALL advise re-exporting after re-recording rather than editing selectors in place.

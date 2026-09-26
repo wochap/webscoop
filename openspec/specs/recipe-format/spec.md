@@ -28,39 +28,70 @@ A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a
 - **WHEN** the url is `https://example.com/c/{category}` and `vars` declares nothing
 - **THEN** validation fails and the error names `category`
 
+### Requirement: Tables
+A recipe MAY declare `tables`: a non-empty list of tables, each with a `name` (kebab-case, unique within the recipe), an optional `item` block, and a non-empty `fields` list. A table with an `item` block yields one row per matched container on each page; a table without one yields exactly one row per page. A recipe SHALL declare either `tables` or the top level `item` and `fields`, not both. The top level form SHALL be the shorthand for a single table named `items` and SHALL validate and run exactly as before. A recipe MAY declare `tables` with a single entry. Within a table, a field `scope` of `item` SHALL require the table's `item` block, and at most one field per table MAY set `key: true`.
+
+#### Scenario: Page table and list table
+- **WHEN** a recipe declares a table `page` with a `heading` field and no `item`, and a table `products` with an `item` block matching 24 cards and a `title` field
+- **THEN** validation succeeds, `page` yields 1 row per page, and `products` yields 24 rows
+
+#### Scenario: Shorthand still validates
+- **WHEN** a recipe declares top level `item` and `fields` and no `tables`
+- **THEN** validation succeeds and the recipe behaves as one table named `items`
+
+#### Scenario: Both forms are rejected
+- **WHEN** a recipe declares `tables` and a top level `fields`
+- **THEN** validation fails and the error names both
+
+#### Scenario: Duplicate table names are rejected
+- **WHEN** two tables are both named `results`
+- **THEN** validation fails and the error names `results`
+
+#### Scenario: Item field in a table without item
+- **WHEN** a table without an `item` block has a field with scope `item`
+- **THEN** validation fails and the error names the table and the field
+
 ### Requirement: Item container
-A recipe MAY declare an `item` block with `selectors` (a ranked list of selector candidates), an optional `within` list of selector candidates naming the list parent, and an optional `exclude` list of selectors. When `within` is present, containers SHALL be resolved inside the first element that the first resolving `within` candidate matches; when `within` is absent, containers SHALL be resolved against the whole document. When `item` is present, fields with scope `item` SHALL be resolved relative to each matched container, after removing any container that also matches an `exclude` selector. When `item` is absent, every field SHALL have scope `page` and the recipe yields exactly one row.
+A table MAY declare an `item` block with `selectors` (a ranked list of selector candidates), an optional `within` list of selector candidates naming the list parent, and an optional `exclude` list of selectors. When `within` is present, containers SHALL be resolved inside the first element that the first resolving `within` candidate matches; when `within` is absent, containers SHALL be resolved against the whole document. When `item` is present, fields with scope `item` SHALL be resolved relative to each matched container, after removing any container that also matches an `exclude` selector. When `item` is absent, every field of the table SHALL have scope `page` and the table yields exactly one row per page. The shorthand recipe's top level `item` is the `item` block of its single table.
 
 #### Scenario: Item scoped recipe
 - **WHEN** `item.selectors` matches 24 elements and no `exclude` is set
-- **THEN** the recipe yields 24 rows
+- **THEN** the table yields 24 rows
 
 #### Scenario: Excluded containers are dropped
 - **WHEN** `item.selectors` matches 24 elements and `exclude` matches 2 of them
-- **THEN** the recipe yields 22 rows
+- **THEN** the table yields 22 rows
 
 #### Scenario: Containers limited to the list parent
 - **WHEN** `item.within` is `role=list`, the page has a main list of 24 `listitem` elements and a sidebar list of 4, and `item.selectors` is `role=listitem`
-- **THEN** the recipe yields 24 rows
+- **THEN** the table yields 24 rows
 
 #### Scenario: List parent absent
 - **WHEN** no `within` candidate resolves on the page
 - **THEN** the item container is treated as unresolved and healing applies to `within` before the container
 
 #### Scenario: Item field without container is rejected
-- **WHEN** a field has scope `item` and the recipe has no `item` block
+- **WHEN** a field has scope `item` and its table has no `item` block
 - **THEN** validation fails and the error names the field
 
 ### Requirement: Fields
-A recipe SHALL declare at least one field under `fields`. Each field SHALL have a `name` (unique within the recipe), a `type` among `text`, `number`, `url`, `image`, `date`, `html`, a `scope` of `item` or `page`, a ranked non-empty `selectors` list, an optional `attr` naming the attribute to read instead of text content, an `optional` boolean defaulting to false, and an optional `fingerprint` object. At most one field MAY set `key: true` to mark it as the dedup key.
+Every table SHALL declare at least one field under `fields`. Each field SHALL have a `name` (unique within its table), a `type` among `text`, `number`, `url`, `image`, `date`, `html`, an optional `scope` of `item` or `page` defaulting to `item` when the table has an `item` block and to `page` otherwise, a ranked non-empty `selectors` list, an optional `attr` naming the attribute to read instead of text content, an `optional` boolean defaulting to false, and an optional `fingerprint` object. At most one field per table MAY set `key: true` to mark it as the table's dedup key.
 
 #### Scenario: Duplicate field names are rejected
-- **WHEN** two fields share the name `price`
+- **WHEN** two fields of one table share the name `price`
 - **THEN** validation fails and the error names `price`
 
+#### Scenario: Same field name in two tables
+- **WHEN** table `page` and table `products` both have a field named `title`
+- **THEN** validation succeeds
+
 #### Scenario: Two dedup keys are rejected
-- **WHEN** two fields both set `key: true`
+- **WHEN** two fields of one table both set `key: true`
 - **THEN** validation fails
+
+#### Scenario: Scope defaults from the table
+- **WHEN** a field in a table with an `item` block omits `scope`
+- **THEN** the field has scope `item`
 
 ### Requirement: Selector candidates
 Each selector candidate SHALL have a `strategy` among `role`, `testid`, `id`, `text`, `css`, `class`, `xpath`, a `value` string, and a `stability` among `stable`, `medium`, `fragile`. The order of the list is the order of preference. Candidates SHALL be self-describing so that a runner can try them without any other context. A `class` candidate's value SHALL be a CSS selector.

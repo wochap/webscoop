@@ -133,11 +133,15 @@ Saving SHALL validate the draft with the recipe schema, write it to the recipes 
 - **THEN** `shop-catalog.json` exists in the recipes directory and loads with the recipe schema
 
 ### Requirement: Edit an existing recipe
-Starting a session with an existing recipe SHALL open its URL (prompting for variables), load its fields, container, and pagination into the panel, and show each field's match count on the current page.
+Starting a session with an existing recipe SHALL open its URL (prompting for variables), load its fields, container, and pagination into the panel, and show each field's match count on the current page. A recipe with one table in the `tables` form SHALL load like the shorthand form, and saving SHALL keep the form it was loaded in. A recipe with more than one table SHALL be refused before the browser opens, with a message saying the recorder does not edit multi-table recipes yet.
 
 #### Scenario: Reopen and see counts
 - **WHEN** a session is started for a saved recipe with three fields
 - **THEN** the panel lists the three fields with their current match counts
+
+#### Scenario: Multi-table recipe refused
+- **WHEN** a session is started for a recipe with tables `page` and `products`
+- **THEN** no browser opens and the error says the recorder does not edit multi-table recipes yet
 
 ### Requirement: Isolation from the host page
 The recorder UI SHALL render inside a shadow root with all inherited styles reset, use its own embedded fonts, force its own color scheme, and sit above every host element. Host page styles, fonts, `z-index`, and fixed headers SHALL NOT change the panel's appearance. The overlay highlight SHALL remain legible on dark, light, and saturated host backgrounds.
