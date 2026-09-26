@@ -1008,7 +1008,7 @@ export class RecorderController {
   ): Promise<{ selectors: Candidate[]; fellBack: boolean }> {
     const generated = generate(node, { positional: false, level: true });
     if (!parent) return { selectors: rank(await this.countWithin(generated, undefined), { itemCount }), fellBack: false };
-    const relative = dedupe(generated.map((c) => relativize(c, parent.node)).filter((c): c is Candidate => c !== null));
+    const relative = dedupe(generated.map((c) => relativize(c, parent.node, { anchor: true })).filter((c): c is Candidate => c !== null));
     const ranked = rank(await this.countWithin(relative, parent.ref), { itemCount });
     if (ranked.some((c) => (c.count ?? 0) > 0)) return { selectors: ranked, fellBack: false };
     return { selectors: rank(await this.countWithin(generated, undefined), { itemCount }), fellBack: true };
@@ -1264,7 +1264,7 @@ export class RecorderController {
     const { selectors: ranked, fellBack } = await this.itemCandidates(first.node, parent, current.length);
     if (fellBack) throw new Error('no item container selector matches inside that element');
     const old = item.selectors[0]!;
-    const relative = parent ? relativize(old, parent.node) : bare(old);
+    const relative = parent ? relativize(old, parent.node, { anchor: true }) : bare(old);
     if (relative && !ranked.some((c) => c.strategy === relative.strategy && c.value === relative.value)) {
       let refs: ElementRef[] = [];
       try {

@@ -275,8 +275,8 @@ The list parent and item fields SHALL list their candidates like a field does, i
 Where the panel shows an item container or an item scoped field, it SHALL also show the composed selector chain from the primary selectors: list parent, then item container, then field, separated by `»`, omitting the levels that are not set. The chain SHALL be display only; the recipe SHALL keep one scoped selector list per level.
 
 #### Scenario: Chain for an item field
-- **WHEN** the list parent is `id=rso`, the item container is `css=div > div`, and the selected element is an item scoped `h3`
-- **THEN** the panel shows `id=rso » css=div > div » css=h3`
+- **WHEN** the list parent is `id=rso`, the item container is `css=:scope > div > div`, and the selected element is an item scoped `h3`
+- **THEN** the panel shows `id=rso » css=:scope > div > div » css=h3`
 
 #### Scenario: Chain without a list parent
 - **WHEN** the confirmed item container has no list parent

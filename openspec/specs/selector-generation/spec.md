@@ -57,7 +57,7 @@ Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`
 ### Requirement: Generalizing item scoped selectors
 When a field is inside an item container, its candidates SHALL be expressed relative to the container element, with positional segments (`:nth-child`, xpath indices) that differ between siblings removed. The cut point SHALL be the container element itself, identified by its position in the snapshot, not by matching the container's selector text against the candidate. A generalized candidate SHALL match exactly one element in every container where the field exists.
 
-In the same way, when an item container level has a list parent, the item container's candidates SHALL be expressed relative to the list parent element, cut at the list parent itself. Segments above the list parent (anchored ancestors, `id` anchors, the document root) SHALL NOT appear in them. An `xpath` candidate SHALL become a relative path starting with `./`. Strategies with no relative form SHALL be kept only when they still match inside the list parent. Without a list parent, item container candidates SHALL stay relative to the document.
+In the same way, when an item container level has a list parent, the item container's candidates SHALL be expressed relative to the list parent element, cut at the list parent itself. Segments above the list parent (anchored ancestors, `id` anchors, the document root) SHALL NOT appear in them. A `css` candidate whose first kept segment is a direct child of the list parent SHALL start with `:scope > `, so it keeps the item's depth below the list parent. An `xpath` candidate SHALL become a relative path starting with `./`. Strategies with no relative form SHALL be kept only when they still match inside the list parent. Without a list parent, item container candidates SHALL stay relative to the document.
 
 #### Scenario: Title inside card
 - **WHEN** the picked title is `article:nth-child(2) > a > h3` and the container is `article`
@@ -69,7 +69,7 @@ In the same way, when an item container level has a list parent, the item contai
 
 #### Scenario: Item container below an id anchored list parent
 - **WHEN** the list parent is `div#rso` inside `div.main > div`, and each item is a `div` two levels below it
-- **THEN** the item container's `css` candidate starts below `div#rso` (for example `div > div`), its `xpath` candidate starts with `./`, and neither contains `div.main` or `@id='rso'`
+- **THEN** the item container's `css` candidate starts below `div#rso` and is anchored at it with `:scope` (for example `:scope > div > div`), so it matches only elements at the item's depth; its `xpath` candidate starts with `./`, and neither contains `div.main` or `@id='rso'`
 
 #### Scenario: No list parent
 - **WHEN** the item container level has no list parent

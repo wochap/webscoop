@@ -156,6 +156,10 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
       [c('css', 'div#rso > div'), 0],
       [c('css', 'div > div.Mjj4Yd'), 8],
       [c('class', 'div.Mjj4Yd'), 8],
+      // `:scope` anchors a combinator at the scope element itself.
+      [c('css', ':scope > div > div'), 9],
+      [c('css', 'div > div'), 29],
+      [c('css', ':scope > div'), 3],
       // A leading `//` becomes `.//`: it searches below the scope, never from the document root.
       [c('xpath', "//div[@id='rso']/div[1]/div[1]"), 0],
       [c('xpath', "//div[@class='Mjj4Yd']"), 8],

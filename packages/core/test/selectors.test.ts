@@ -242,6 +242,17 @@ describe('rank with class candidates', () => {
 });
 
 describe('relativize', () => {
+  it('anchors a css candidate below its container with :scope when asked', () => {
+    const root = annotate(
+      h('html', {}, h('body', {}, h('div', { class: 'main' }, h('div', { id: 'rso' }, h('div', {}, h('div', { class: 'Mjj4Yd' }, h('h3', {}, 'A'))), h('div', {}, h('div', { class: 'Mjj4Yd' }, h('h3', {}, 'B'))))))),
+    );
+    const rso = descendantsOf(root).find((n) => n.attrs.id === 'rso')!;
+    const item = rso.children.filter((c): c is AnnotatedNode => c.type === 'element')[0]!.children.find((c): c is AnnotatedNode => c.type === 'element')!;
+    const css = generate(item, { positional: false, level: true }).find((c) => c.strategy === 'css')!;
+    expect(relativize(css, rso, { anchor: true })?.value).toMatch(/^:scope > /);
+    expect(relativize(css, rso)?.value).not.toMatch(/:scope/);
+  });
+
   it('drops the container and its position', () => {
     const candidate: Candidate = { strategy: 'css', value: 'article:nth-child(2) > a > h3', stability: 'fragile' };
     expect(relativize(candidate, 'article')).toEqual({ strategy: 'css', value: 'a > h3', stability: 'medium' });

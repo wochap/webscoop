@@ -94,13 +94,15 @@ function cutAt(nodes: readonly AnnotatedNode[], container: AnnotatedNode): numbe
 }
 
 /** Cut a CSS candidate by its segment nodes; combinators come from the text. */
-function cutCss<T extends Candidate>(out: T, candidate: Candidate, nodes: readonly AnnotatedNode[], container: AnnotatedNode): T | null {
+function cutCss<T extends Candidate>(out: T, candidate: Candidate, nodes: readonly AnnotatedNode[], container: AnnotatedNode, anchor = false): T | null {
   const split = splitCss(candidate.value);
   if (!split || split.segments.length !== nodes.length) return null;
   const cut = cutAt(nodes, container);
   if (cut === 'self') return null;
   if (cut === null) return out;
-  let value = split.segments[cut]!;
+  // A child combinator right below the container keeps its depth through `:scope`.
+  const scoped = anchor && nodes[cut - 1] === container && split.combinators[cut - 1] === ' > ';
+  let value = (scoped ? ':scope > ' : '') + split.segments[cut]!;
   for (let i = cut + 1; i < split.segments.length; i++) value += split.combinators[i - 1]! + split.segments[i]!;
   if (candidate.strategy === 'class') return { ...out, value };
   const positional = split.segments.slice(cut).some((s) => HAS_POSITIONAL.test(s));
@@ -119,6 +121,16 @@ function cutXPath<T extends Candidate>(out: T, candidate: Candidate, nodes: read
   return { ...out, value: `./${steps.slice(cut).join('/')}` };
 }
 
+export interface RelativizeOptions {
+  /**
+   * Keep a CSS candidate's depth below the container: when its first kept
+   * segment is a direct child of the container, prefix `:scope > `. Without
+   * it, `div > div` inside a list parent matches every such pair at any depth.
+   * Used for item containers relative to their list parent.
+   */
+  anchor?: boolean;
+}
+
 /**
  * Express a candidate relative to an item container. Given the container
  * element, candidates made by `generate` are cut at that element itself:
@@ -129,13 +141,13 @@ function cutXPath<T extends Candidate>(out: T, candidate: Candidate, nodes: read
  * Item-specific strategies (`id`, `text`) have no relative form and yield
  * null; a `role` candidate keeps its role and drops the item-specific name.
  */
-export function relativize<T extends Candidate>(candidate: T, container: AnnotatedNode | string): T | null {
+export function relativize<T extends Candidate>(candidate: T, container: AnnotatedNode | string, opts: RelativizeOptions = {}): T | null {
   const { count: _count, ...rest } = candidate;
   const out = rest as T;
   const nodes = typeof container === 'string' ? undefined : segmentNodesOf(candidate);
   if (nodes && typeof container !== 'string') {
     if (candidate.strategy === 'css' || candidate.strategy === 'class') {
-      const cut = cutCss(out, candidate, nodes, container);
+      const cut = cutCss(out, candidate, nodes, container, opts.anchor);
       if (cut !== null || cutAt(nodes, container) === 'self') return cut;
     } else if (candidate.strategy === 'xpath') {
       const cut = cutXPath(out, candidate, nodes, container);

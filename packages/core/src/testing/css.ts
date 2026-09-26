@@ -21,6 +21,8 @@ interface Compound {
   nthChild: number | null;
   firstChild: boolean;
   lastChild: boolean;
+  /** `:scope`: the scope element, or the root element without one. */
+  scope: boolean;
 }
 
 interface Step {
@@ -67,7 +69,7 @@ class Parser {
   }
 
   compound(): Compound {
-    const c: Compound = { tag: null, ids: [], classes: [], attrs: [], nthOfType: null, nthChild: null, firstChild: false, lastChild: false };
+    const c: Compound = { tag: null, ids: [], classes: [], attrs: [], nthOfType: null, nthChild: null, firstChild: false, lastChild: false, scope: false };
     let any = false;
     if (this.peek() === '*') {
       this.pos++;
@@ -106,6 +108,7 @@ class Parser {
         const pseudo = this.ident();
         if (pseudo === 'first-child') c.firstChild = true;
         else if (pseudo === 'last-child') c.lastChild = true;
+        else if (pseudo === 'scope') c.scope = true;
         else if ((pseudo === 'nth-of-type' || pseudo === 'nth-child') && this.peek() === '(') {
           const end = this.src.indexOf(')', this.pos);
           const n = Number(this.src.slice(this.pos + 1, end).trim());
@@ -170,7 +173,8 @@ function matchesAttr(value: string | undefined, test: AttrTest): boolean {
   }
 }
 
-function matchesCompound(node: DomNode, c: Compound): boolean {
+function matchesCompound(node: DomNode, c: Compound, scope: DomNode | null): boolean {
+  if (c.scope && node !== (scope ?? rootOf(node))) return false;
   const { tag, attrs } = node.el;
   if (c.tag && c.tag !== tag) return false;
   for (const id of c.ids) if (attrs.id !== id) return false;
@@ -190,11 +194,19 @@ function matchesCompound(node: DomNode, c: Compound): boolean {
   return true;
 }
 
+function rootOf(node: DomNode): DomNode {
+  let cur = node;
+  while (cur.parent) cur = cur.parent;
+  return cur;
+}
+
 function matchesComplex(node: DomNode, steps: Step[], i: number, scope: DomNode | null): boolean {
   const step = steps[i]!;
-  if (!matchesCompound(node, step.compound)) return false;
+  if (!matchesCompound(node, step.compound, scope)) return false;
   if (i === 0) return true;
-  const isInScope = (n: DomNode | null): n is DomNode => n !== null && n !== scope;
+  // Combinators stay strictly inside the scope, except to reach `:scope` itself.
+  const reachesScope = steps[i - 1]!.compound.scope;
+  const isInScope = (n: DomNode | null): n is DomNode => n !== null && (n !== scope || reachesScope);
   if (step.combinator === '>') {
     return isInScope(node.parent) && matchesComplex(node.parent, steps, i - 1, scope);
   }

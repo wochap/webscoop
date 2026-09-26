@@ -34,6 +34,16 @@ describe('item containers relative to the list parent', () => {
     expect(p.proposed.selectors.find((c) => c.strategy === 'xpath')?.value).toMatch(/^\.\//);
   });
 
+  it('anchors css item candidates at the list parent, so they keep the item depth', async () => {
+    const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await t.pick(byClass(t.page, 'LC20lb', 2));
+    const css = proposal(t).proposed.selectors.find((c) => c.strategy === 'css')!;
+    // Unanchored, `div > div` would also match every result's own inner divs.
+    expect(css.value).toBe(':scope > div > div');
+    // The 8 results plus the dissimilar block at the same depth.
+    expect(css.count).toBe(9);
+  });
+
   it('falls back to document relative candidates with an item level error when none matches inside the list parent', async () => {
     const card = (i: number) => h('div', { class: 'card' }, h('h3', {}, `Card ${i}`), h('p', {}, `About ${i}`));
     const cards = Array.from({ length: 4 }, (_, i) => card(i + 1));
