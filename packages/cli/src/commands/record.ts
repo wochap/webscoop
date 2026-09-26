@@ -128,6 +128,7 @@ async function resolveValues(io: CliIo, template: string, given: Record<string, 
 
 function logEvents(io: CliIo, emitter: RecorderEmitter): void {
   emitter.on('recorder.ready', (e) => log(io, `recorder ready on ${e.url}`));
+  emitter.on('recorder.navigated', (e) => log(io, `navigated to ${e.url}`));
   emitter.on('recorder.selected', (e) => log(io, `selected <${e.tag}>: ${e.candidates.length} selector candidates, scope ${e.scope}`));
   emitter.on('recorder.itemsProposed', (e) =>
     log(io, `found ${e.count ?? '?'} repeating items (${e.container}${e.within ? ` in ${e.within}` : ''})${e.skipped > 0 ? `, ${e.skipped} skipped as dissimilar` : ''}`),
