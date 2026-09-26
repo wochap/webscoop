@@ -223,6 +223,7 @@ export class Runner {
       fields: [],
       pagination: null,
       duplicateCount: 0,
+      droppedCount: 0,
       stopReason: null,
       pages: [],
       warnings: [],
@@ -507,6 +508,15 @@ export class Runner {
               names,
             );
           }
+          if (extraction.containerCount > 0 && extraction.rows.length === 0) {
+            const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
+            const names = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
+            throw new RunFailure(
+              'missing-required',
+              `every row on page ${page} was dropped for missing required field${names.length > 1 ? 's' : ''} ${names.join(', ')}`,
+              names,
+            );
+          }
           resolved = extraction.resolved;
         } else {
           // A later page with no items is the end of the list, not a failure; a field gone from every item is.
@@ -525,8 +535,8 @@ export class Runner {
         const summary: PageSummary = {
           page,
           url: info.url,
-          firstKey: extraction.rows[0] ? dedup.keyOf(extraction.rows[0]) : null,
-          raw: extraction.rows.length,
+          firstKey: extraction.firstRow ? dedup.keyOf(extraction.firstRow) : null,
+          raw: extraction.containerCount,
           kept: fresh.kept.length,
         };
         const verdict = evaluateStop({ current: summary, previous, kind: strategy.kind, stopRules: recipe.pagination.stopRules, limit, cap });
@@ -540,7 +550,8 @@ export class Runner {
           report.pageCount = page;
           report.rowCount = rows.length;
           report.duplicateCount = dedup.duplicates;
-          report.pages.push({ page, url: info.url, rows: fresh.kept.length });
+          report.droppedCount += extraction.dropped.length;
+          report.pages.push({ page, url: info.url, rows: fresh.kept.length, dropped: extraction.dropped.length });
           this.emitter.emit('page.done', { page, rows: fresh.kept.length });
         }
         if (verdict.reason) {

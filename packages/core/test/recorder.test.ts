@@ -18,6 +18,7 @@ import {
   reduceDraft,
   slugName,
   type Draft,
+  type Recipe,
   type HostMessage,
   type PageMessage,
   type AnnotatedNode,
@@ -124,7 +125,7 @@ describe('protocol', () => {
     { kind: 'inspect.countResult', count: 24 },
     {
       kind: 'test.results',
-      results: { rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, fields: [{ name: 'title', status: 'ok' }], durationMs: 12, warnings: [] },
+      results: { rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'title', status: 'ok' }], durationMs: 12, warnings: [] },
       state: sampleState,
     },
     { kind: 'save.result', ok: false, errors: [{ path: '$.fields', message: 'a recipe needs at least one field' }], state: sampleState },
@@ -432,6 +433,24 @@ describe('RecorderController', () => {
     expect(results.fields.map((f) => f.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
     expect(results.durationMs).toBeGreaterThan(0);
     expect(t.events.at(-1)).toEqual({ name: 'recorder.testRun', payload: { rows: 24, durationMs: results.durationMs } });
+  });
+
+  it('drops rows missing a required field and reports them', async () => {
+    const reference = referenceRecipe();
+    // Every article, questions blocks included; only the link is required.
+    const r: Recipe = {
+      ...reference,
+      item: { ...reference.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] },
+      fields: reference.fields.map((f) => ({ ...f, optional: f.name !== 'url' })),
+    };
+    const t = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(r));
+    const results = await t.controller.testRun();
+    expect(results.rowCount).toBe(24);
+    expect(results.rows.every((row) => typeof row.url === 'string')).toBe(true);
+    expect(results.dropped).toEqual({ count: 6, fields: ['url'] });
+    expect(results.fields.find((f) => f.name === 'url')?.status).toBe('partial');
+    expect(results.warnings[0]).toMatch(/^dropped 6 rows on page 1: required field "url" missing on rows /);
+    expect(results.error).toBeUndefined();
   });
 
   it('saves a draft that loads back with loadRecipe', async () => {

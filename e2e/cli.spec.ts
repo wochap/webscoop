@@ -112,6 +112,24 @@ test('an optional field missing yields null and exit 0', async ({ scoop }) => {
   expect(rows.every((row) => row.badge === null)).toBe(true);
 });
 
+test('a required link field on the mixed catalog keeps only product rows and reports the drops', async ({ scoop }) => {
+  const name = await scoop.writeRecipe(
+    variant(scoop, 'mixed-catalog', (r) => {
+      r.url = `${r.url}&mixed=1`;
+      // Every article, the "People also ask" blocks included; those have no product link.
+      r.item = { ...r.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] };
+      r.fields = r.fields.map((f) => ({ ...f, optional: f.name !== 'url' }));
+    }),
+  );
+  const result = await scoop.run(['run', name]);
+  expect(result.code, result.stderr).toBe(0);
+  const rows = JSON.parse(result.stdout) as Record<string, unknown>[];
+  expect(rows.map((row) => row.title)).toEqual(dataset.map((p) => p.title));
+  expect(rows.map((row) => row._index)).toEqual([...Array(24).keys()]);
+  expect(result.stderr).toMatch(/warning: dropped 6 rows on page 1: required field "url" missing on rows /);
+  expect(result.stderr).toMatch(/24 rows from 1 page, 6 rows dropped for missing fields in \d+\.\d+s/);
+});
+
 test('a cookie persists across two runs on one profile', async ({ scoop }) => {
   const catalogCookies = () =>
     scoop.playground.requests.filter((r) => r.path === '/catalog').map((r) => r.cookie);

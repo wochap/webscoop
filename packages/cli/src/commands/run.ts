@@ -126,9 +126,10 @@ export function summary(report: RunReport): string {
   const cleared = report.guards.filter((g) => g.cleared).length;
   const guards = cleared > 0 ? `, ${cleared} guard${cleared === 1 ? '' : 's'} cleared` : '';
   const duplicates = report.duplicateCount > 0 ? `, ${report.duplicateCount} duplicate${report.duplicateCount === 1 ? '' : 's'} dropped` : '';
+  const dropped = report.droppedCount > 0 ? `, ${report.droppedCount} row${report.droppedCount === 1 ? '' : 's'} dropped for missing fields` : '';
   const skippedSteps = report.steps.filter((s) => s.outcome === 'skipped').length;
   const skipped = skippedSteps > 0 ? `, ${skippedSteps} step${skippedSteps === 1 ? '' : 's'} skipped` : '';
-  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates}${skipped} in ${seconds}s (${report.recipe})`;
+  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');

@@ -7,6 +7,8 @@ export interface CardSpec {
   title: string;
   price?: string;
   ad?: boolean;
+  /** Leave out the product link. */
+  noLink?: boolean;
 }
 
 export function card(spec: CardSpec, index: number) {
@@ -15,7 +17,7 @@ export function card(spec: CardSpec, index: number) {
     { class: `product-card${spec.ad ? ' ad' : ''}`, 'data-testid': 'product-card', id: `p${index}` },
     h('h2', { class: 'product-title' }, spec.title),
     spec.price !== undefined && h('span', { class: 'product-price', 'data-testid': 'price' }, spec.price),
-    h('a', { class: 'product-link', href: `/p/${index}` }, 'View details'),
+    !spec.noLink && h('a', { class: 'product-link', href: `/p/${index}` }, 'View details'),
   );
 }
 

@@ -1610,6 +1610,7 @@ export class RecorderController {
       results = {
         rows: [],
         rowCount: 0,
+        dropped: { count: 0, fields: [] },
         fields: [],
         durationMs: 0,
         warnings: [],
@@ -1617,9 +1618,12 @@ export class RecorderController {
       };
     } else {
       const extraction = await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 });
+      const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
+      const droppedFields = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
       results = {
         rows: extraction.rows.slice(0, MAX_TEST_ROWS),
         rowCount: extraction.rows.length,
+        dropped: { count: extraction.dropped.length, fields: droppedFields },
         fields: extraction.fields.map((f) => ({ name: f.name, status: f.status })),
         durationMs: Math.max(0, this.now().getTime() - started.getTime()),
         warnings: extraction.warnings,
@@ -1633,7 +1637,9 @@ export class RecorderController {
                     : `field${extraction.missingRequired.length > 1 ? 's' : ''} ${extraction.missingRequired.join(', ')}`
               } matched no element`,
             }
-          : {}),
+          : extraction.containerCount > 0 && extraction.rows.length === 0
+            ? { error: `every row was dropped for missing required field${droppedFields.length > 1 ? 's' : ''} ${droppedFields.join(', ')}` }
+            : {}),
       };
     }
     this.current = { ...this.current, test: results };

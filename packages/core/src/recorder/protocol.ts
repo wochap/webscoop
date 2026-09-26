@@ -227,6 +227,8 @@ export const EditingSchema = z.object({
 export const TestResultsSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())),
   rowCount: count(),
+  /** Rows left out because a required field resolved nothing, and the fields that caused it. */
+  dropped: z.object({ count: count(), fields: z.array(z.string()) }),
   fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'healed', 'partial', 'missing']) })),
   durationMs: z.number().check(z.nonnegative()),
   warnings: z.array(z.string()),

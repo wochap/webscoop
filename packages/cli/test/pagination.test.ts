@@ -137,6 +137,7 @@ describe('summary', () => {
     fields: [],
     pagination: null,
     duplicateCount: 0,
+    droppedCount: 0,
     stopReason: 'limit',
     pages: [],
     warnings: [],
@@ -151,5 +152,12 @@ describe('summary', () => {
     expect(summary(report({}))).toBe('24 rows from 1 page in 1.50s (shop)');
     expect(summary(report({ pageCount: 3, duplicateCount: 2 }))).toBe('24 rows from 3 pages, 2 duplicates dropped in 1.50s (shop)');
     expect(summary(report({ pageCount: 3, healed: 1, duplicateCount: 1 }))).toBe('24 rows from 3 pages, 1 healed, 1 duplicate dropped in 1.50s (shop)');
+  });
+
+  it('counts rows dropped for missing fields only when non-zero', () => {
+    expect(summary(report({ droppedCount: 6 }))).toBe('24 rows from 1 page, 6 rows dropped for missing fields in 1.50s (shop)');
+    expect(summary(report({ droppedCount: 1, duplicateCount: 2 }))).toBe(
+      '24 rows from 1 page, 2 duplicates dropped, 1 row dropped for missing fields in 1.50s (shop)',
+    );
   });
 });

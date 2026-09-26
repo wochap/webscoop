@@ -213,7 +213,7 @@ describe('next strategy', () => {
     expect(r.ok).toBe(true);
     expect(r.rows).toHaveLength(24);
     expect(r.report).toMatchObject({ pageCount: 4, stopReason: 'loop', duplicateCount: 8 });
-    expect(r.report.pages[3]).toEqual({ page: 4, url: `${BASE}?p=3`, rows: 0 });
+    expect(r.report.pages[3]).toEqual({ page: 4, url: `${BASE}?p=3`, rows: 0, dropped: 0 });
   });
 
   it('prefers the loop guard over first-item-repeats on the same URL', async () => {
@@ -347,6 +347,35 @@ describe('dedup and stop rules', () => {
     expect(titles(r.rows)).toEqual(range(1, 14));
     expect(r.report).toMatchObject({ duplicateCount: 2, pages: [{ rows: 8 }, { rows: 6 }] });
     expect(r.rows.filter((row) => row._page === 2).map((row) => row._index)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  /** Page 2 of a three page site whose rows all lack a required field: `url` on even containers, `price` on odd ones. */
+  const droppedPage2 = () =>
+    urlSite(3, (p) => (p === 2 ? slice(2).map(({ spec, index }) => ({ spec: index % 2 === 0 ? { ...spec, noLink: true } : { ...spec, price: undefined }, index })) : slice(p)));
+
+  it('advances past a page whose rows were all dropped when no rule is set', async () => {
+    const r = await run(pagedRecipe(URL_PAGINATION), droppedPage2()).result;
+    expect(r.ok).toBe(true);
+    expect(titles(r.rows)).toEqual([...range(1, 8), ...range(17, 24)]);
+    expect(r.report).toMatchObject({
+      pageCount: 3,
+      stopReason: 'limit',
+      droppedCount: 8,
+      pages: [{ rows: 8, dropped: 0 }, { rows: 0, dropped: 8 }, { rows: 8, dropped: 0 }],
+    });
+  });
+
+  it('stops with no-new-items on a page whose rows were all dropped when the rule is on', async () => {
+    const r = await run(pagedRecipe({ ...URL_PAGINATION, stopRules: ['no-new-items'] }), droppedPage2()).result;
+    expect(r.ok).toBe(true);
+    expect(titles(r.rows)).toEqual(range(1, 8));
+    expect(r.report).toMatchObject({ pageCount: 2, stopReason: 'no-new-items', droppedCount: 8 });
+  });
+
+  it('numbers kept rows after a drop from 0', async () => {
+    const browser = urlSite(1, () => slice(1).map(({ spec, index }) => ({ spec: index === 1 ? { ...spec, price: undefined } : spec, index })));
+    const r = await run(pagedRecipe({ ...URL_PAGINATION, limit: 1 }), browser).result;
+    expect(r.rows.map((row) => [row.title, row._index])).toEqual(range(1, 8).filter((t) => t !== 'Product 2').map((t, i) => [t, i]));
   });
 
   it('dedups by all field values without a key, and never within page 1', () => {

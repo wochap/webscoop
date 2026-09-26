@@ -32,7 +32,14 @@ export async function resolveFirst(
 }
 
 export interface PageExtraction {
+  /** Rows kept after dropping those with a missing required field, `_index` renumbered. */
   rows: Row[];
+  /** Containers extracted (one without an item block), before dropping. */
+  containerCount: number;
+  /** The first extracted row, before dropping, or null when there were none. */
+  firstRow: Row | null;
+  /** Rows left out because a required field resolved nothing: container index and the fields that were missing. */
+  dropped: DroppedRow[];
   item: RunReport['item'];
   fields: FieldReport[];
   /** Required fields that resolved on no row at all (or the item container, when nothing matched). */
@@ -42,6 +49,11 @@ export interface PageExtraction {
   promotions: Promotion[];
   /** Selectors each target resolved with, for later pages to reuse without the ladder. */
   resolved: ResolvedSelectors;
+}
+
+export interface DroppedRow {
+  index: number;
+  fields: string[];
 }
 
 /** The selectors page 1 settled on, so later pages skip the healing ladder. */
@@ -468,7 +480,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     states.push({ field, settled, missingRows: [] });
   }
 
-  const rows: Row[] = [];
+  const extracted: Row[] = [];
   for (const [index, container] of containers.slice(opts.fromIndex ?? 0).entries()) {
     const row: Row = { _page: opts.page, _index: index };
     for (const state of states) {
@@ -482,13 +494,23 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       if (!result.found) state.missingRows.push(index);
       row[state.field.name] = result.value;
     }
-    rows.push(row);
+    extracted.push(row);
+  }
+  const containerCount = extracted.length;
+
+  // Drop rows on which a required field resolved nothing.
+  const dropped: DroppedRow[] = [];
+  const rows: Row[] = [];
+  for (const [index, row] of extracted.entries()) {
+    const fields = states.filter((s) => !s.field.optional && s.missingRows.includes(index)).map((s) => s.field.name);
+    if (fields.length > 0) dropped.push({ index, fields });
+    else rows.push({ ...row, _index: rows.length });
   }
 
   const fields: FieldReport[] = states.map(({ field, settled, missingRows }) => {
     const outcome = settled?.resolution.outcome ?? UNRESOLVED;
     const status: FieldReport['status'] =
-      rows.length === 0 || missingRows.length === rows.length
+      containerCount === 0 || missingRows.length === containerCount
         ? 'missing'
         : missingRows.length > 0
           ? 'partial'
@@ -514,13 +536,14 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     if (withinMissing) missingRequired.push('within');
     else warnings.push(`list parent (item.within) missing on page ${opts.page}; item containers were found in the whole document`);
   }
-  if (recipe.item && rows.length === 0) missingRequired.push('item');
+  if (recipe.item && containerCount === 0) missingRequired.push('item');
   for (const report of fields) {
     if (report.optional) continue;
-    if (report.status === 'missing' && rows.length > 0) missingRequired.push(report.name);
+    if (report.status === 'missing' && containerCount > 0) missingRequired.push(report.name);
     if (report.status === 'partial') {
+      const n = report.missingRows.length;
       warnings.push(
-        `required field "${report.name}" missing on page ${opts.page} row${report.missingRows.length > 1 ? 's' : ''} ${report.missingRows.join(', ')}`,
+        `dropped ${n} row${n > 1 ? 's' : ''} on page ${opts.page}: required field "${report.name}" missing on row${n > 1 ? 's' : ''} ${report.missingRows.join(', ')}`,
       );
     }
   }
@@ -530,5 +553,5 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     ...(recipe.item?.within ? { within: withinSelectors } : {}),
     fields: states.map((s) => s.settled?.selectors ?? null),
   };
-  return { rows, item, fields, missingRequired, warnings, promotions, resolved };
+  return { rows, containerCount, firstRow: extracted[0] ?? null, dropped, item, fields, missingRequired, warnings, promotions, resolved };
 }

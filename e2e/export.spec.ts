@@ -91,6 +91,30 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       expect(dead.stderr).toMatch(/required field price matched no element/);
     });
 
+    test('rows missing the required url on the mixed catalog are dropped, and exit 3 when url matches nothing', async ({ scoop }) => {
+      const recipe = structuredClone(scoop.recipe);
+      recipe.name = 'mixed-catalog';
+      recipe.url = `${recipe.url}&mixed=1`;
+      // Every article, the "People also ask" blocks included; those have no product link.
+      recipe.item = { ...recipe.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] };
+      recipe.fields = recipe.fields.map((f) => ({ ...f, optional: f.name !== 'url' }));
+      await scoop.writeRecipe(recipe);
+      const mixed = await exportAndRun(scoop, 'mixed-catalog', format);
+      expect(mixed.code, mixed.stderr).toBe(0);
+      expect(mixed.rows).toHaveLength(24);
+      expect(mixed.rows.every((row) => typeof row.url === 'string')).toBe(true);
+      expect(mixed.rows.map((row) => row._index)).toEqual([...Array(24).keys()]);
+      expect(mixed.stderr).toMatch(/dropped 6 rows on page 1: required field "url" missing on rows /);
+
+      recipe.name = 'mixed-no-url';
+      recipe.fields = recipe.fields.map((f) => (f.name === 'url' ? { ...f, selectors: [{ strategy: 'css', value: 'a.no-such-link', stability: 'medium' }] } : f));
+      await scoop.writeRecipe(recipe);
+      const none = await exportAndRun(scoop, 'mixed-no-url', format);
+      expect(none.code, none.stderr).toBe(3);
+      expect(none.stdout).toBe('');
+      expect(none.stderr).toMatch(/required field url matched no element/);
+    });
+
     test('--jsonl prints one JSON object per row and nothing else', async ({ scoop }) => {
       const jsonl = await exportAndRun(scoop, 'playground-catalog', format, ['--jsonl', '--var', 'tier=0']);
       expect(jsonl.code, jsonl.stderr).toBe(0);

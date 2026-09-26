@@ -609,7 +609,10 @@ def settle_selectors(selectors, scopes):
 def extract_page(page, page_number, page_url, resolved, from_index):
     """
     Every row of the current page, from item container from_index on (a page
-    that grew). Returns (rows, missing_required, warnings, resolved selectors).
+    that grew). Returns a dict: rows kept after dropping those with a missing
+    required field, container_count and first_row before dropping, the
+    dropped_fields that caused a drop, missing_required, warnings, and the
+    resolved selectors.
     """
     # List parent, then the item container inside it.
     containers = [None]
@@ -641,7 +644,7 @@ def extract_page(page, page_number, page_url, resolved, from_index):
             state["page_value"] = (read_value(page, field, found.locator.nth(0), page_url), True) if found else (None, False)
         states.append(state)
 
-    rows = []
+    extracted = []
     for index, container in enumerate(containers[from_index:]):
         row = {"_page": page_number, "_index": index}
         for state in states:
@@ -652,27 +655,46 @@ def extract_page(page, page_number, page_url, resolved, from_index):
             if not result[1]:
                 state["missing_rows"].append(index)
             row[state["field"]["name"]] = result[0]
-        rows.append(row)
+        extracted.append(row)
+    container_count = len(extracted)
+
+    # Drop rows on which a required field resolved nothing.
+    required = [s for s in states if not s["field"]["optional"]]
+    rows = []
+    for index, row in enumerate(extracted):
+        if not any(index in s["missing_rows"] for s in required):
+            rows.append({**row, "_index": len(rows)})
 
     missing_required = []
     warnings = []
+    dropped_fields = []
     if within_missing:
         missing_required.append("within")
-    if ITEM and not rows:
+    if ITEM and container_count == 0:
         missing_required.append("item")
-    for state in states:
+    for state in required:
         field, missing_rows = state["field"], state["missing_rows"]
-        if field["optional"]:
-            continue
-        missing = not rows or len(missing_rows) == len(rows)
-        if missing and rows:
+        n = len(missing_rows)
+        if n:
+            dropped_fields.append(field["name"])
+        missing = container_count == 0 or n == container_count
+        if missing and container_count:
             missing_required.append(field["name"])
-        if not missing and missing_rows:
+        if not missing and n:
             warnings.append(
-                'required field "' + field["name"] + '" missing on page ' + str(page_number)
-                + " row" + ("s " if len(missing_rows) > 1 else " ") + ", ".join(str(i) for i in missing_rows)
+                "dropped " + str(n) + " row" + ("s" if n > 1 else "") + " on page " + str(page_number)
+                + ': required field "' + field["name"] + '" missing on row' + ("s " if n > 1 else " ")
+                + ", ".join(str(i) for i in missing_rows)
             )
-    return rows, missing_required, warnings, {"item": item_selectors, "within": within_selectors, "fields": [s["selectors"] for s in states]}
+    return {
+        "rows": rows,
+        "container_count": container_count,
+        "first_row": extracted[0] if extracted else None,
+        "dropped_fields": dropped_fields,
+        "missing_required": missing_required,
+        "warnings": warnings,
+        "resolved": {"item": item_selectors, "within": within_selectors, "fields": [s["selectors"] for s in states]},
+    }
 
 
 def list_parent(page, resolved):
@@ -933,7 +955,9 @@ def run_pages(session, opts, values, start, limit):
         if navigated:
             replay_steps(session, page_number, values, step_cache)
             url = page.url
-        rows, missing_required, warnings, resolved = extract_page(page, page_number, url, pager.resolved, from_index)
+        extraction = extract_page(page, page_number, url, pager.resolved, from_index)
+        rows = extraction["rows"]
+        missing_required = extraction["missing_required"]
         names = [n for n in missing_required if n not in ("item", "within")] if pager.resolved else missing_required
         if names:
             if "within" in names:
@@ -944,13 +968,18 @@ def run_pages(session, opts, values, start, limit):
                 message = ("required field" + ("s " if len(names) > 1 else " ") + ", ".join(names) + " matched no element"
                            + (" on page " + str(page_number) if pager.resolved else ""))
             raise Failure(message, EXIT_UNRESOLVED)
+        if pager.resolved is None and extraction["container_count"] and not rows:
+            fields = extraction["dropped_fields"]
+            raise Failure("every row on page " + str(page_number) + " was dropped for missing required field"
+                          + ("s " if len(fields) > 1 else " ") + ", ".join(fields), EXIT_UNRESOLVED)
         if pager.resolved is None:
-            pager.resolved = resolved
-        for warning in warnings:
+            pager.resolved = extraction["resolved"]
+        for warning in extraction["warnings"]:
             log("warning: " + warning)
 
         kept, keys = dedup_rows(rows, page_number, seen)
-        summary = {"page": page_number, "url": url, "first_key": keys[0] if keys else None, "raw": len(rows), "kept": len(kept)}
+        first_key = key_of(extraction["first_row"]) if extraction["first_row"] is not None else None
+        summary = {"page": page_number, "url": url, "first_key": first_key, "raw": extraction["container_count"], "kept": len(kept)}
         reason, discard = evaluate_stop(summary, previous, limit)
         if not discard:
             seen.update(keys)

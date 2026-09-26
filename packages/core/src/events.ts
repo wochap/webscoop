@@ -32,7 +32,7 @@ export interface FieldReport {
   /** Which rung of the healing ladder resolved the field. */
   outcome: HealOutcome;
   status: FieldStatus;
-  /** Rows (0-based `_index`) where the field resolved nothing. */
+  /** Containers (0-based, in extraction order before dropping) where the field resolved nothing. */
   missingRows: number[];
   /** Why healing rungs declined the field, such as the model's reason for picking nothing. */
   notes?: string[];
@@ -70,6 +70,8 @@ export interface RunReport {
   } | null;
   /** Rows dropped because an earlier page already had them. */
   duplicateCount: number;
+  /** Rows dropped because a required field resolved nothing on them. */
+  droppedCount: number;
   /** Why the page loop ended, or null when the run failed before it did. */
   stopReason: StopReason | null;
   /** Every extracted page: its URL and the rows it contributed after dedup. */
@@ -89,6 +91,8 @@ export interface PageReport {
   page: number;
   url: string;
   rows: number;
+  /** Rows dropped on this page because a required field resolved nothing on them. */
+  dropped: number;
 }
 
 /** What a re-pick asks the user about. */

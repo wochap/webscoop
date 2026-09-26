@@ -83,15 +83,49 @@ describe('missing fields', () => {
     expect(out.fields.find((f) => f.name === 'price')?.status).toBe('missing');
   });
 
-  it('yields null and a warning naming the row when missing on some rows', async () => {
+  it('drops the row and warns naming the row when missing on some rows', async () => {
     const s = await session(catalog(cards(24, (i) => (i === 7 ? { price: undefined } : {}))));
     const out = await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 });
     expect(out.missingRequired).toEqual([]);
-    expect(out.rows[7]!.price).toBeNull();
+    expect(out.rows).toHaveLength(23);
+    expect(out.rows.some((row) => row.price === null)).toBe(false);
+    expect(out.rows.some((row) => row.title === 'Product 8')).toBe(false);
+    expect(out.rows.map((row) => row._index)).toEqual([...Array(23).keys()]);
+    expect(out.containerCount).toBe(24);
+    expect(out.firstRow?.title).toBe('Product 1');
+    expect(out.dropped).toEqual([{ index: 7, fields: ['price'] }]);
     expect(out.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'partial', missingRows: [7] });
-    expect(out.warnings).toHaveLength(1);
-    expect(out.warnings[0]).toContain('price');
-    expect(out.warnings[0]).toContain('7');
+    expect(out.warnings).toEqual(['dropped 1 row on page 1: required field "price" missing on row 7']);
+  });
+
+  it('keeps the first row before dropping', async () => {
+    const s = await session(catalog(cards(3, (i) => (i === 0 ? { noLink: true } : {}))));
+    const out = await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 });
+    expect(out.rows.map((row) => row.title)).toEqual(['Product 2', 'Product 3']);
+    expect(out.firstRow).toMatchObject({ _index: 0, title: 'Product 1', url: null });
+  });
+
+  it('leaves no rows when two required fields are missing on disjoint halves', async () => {
+    const s = await session(catalog(cards(24, (i) => (i < 12 ? { noLink: true } : { price: undefined }))));
+    const out = await extractPage(s, loadRecipe(recipe()), { pageUrl: PAGE, page: 1 });
+    expect(out.rows).toEqual([]);
+    expect(out.containerCount).toBe(24);
+    expect(out.missingRequired).toEqual([]);
+    expect(out.dropped).toHaveLength(24);
+    expect(out.dropped[0]).toEqual({ index: 0, fields: ['url'] });
+    expect(out.dropped[23]).toEqual({ index: 23, fields: ['price'] });
+    expect(out.fields.filter((f) => f.status === 'partial').map((f) => f.name)).toEqual(['price', 'url']);
+  });
+
+  it('yields null for an optional field missing on one row', async () => {
+    const s = await session(catalog(cards(24, (i) => (i === 3 ? { price: undefined } : {}))));
+    const base = recipe();
+    base.fields = base.fields.map((f) => (f.name === 'price' ? { ...f, optional: true } : f));
+    const out = await extractPage(s, loadRecipe(base), { pageUrl: PAGE, page: 1 });
+    expect(out.rows).toHaveLength(24);
+    expect(out.rows[3]!.price).toBeNull();
+    expect(out.dropped).toEqual([]);
+    expect(out.warnings).toEqual([]);
   });
 
   it('yields null without failure for optional fields', async () => {

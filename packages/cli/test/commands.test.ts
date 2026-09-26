@@ -156,8 +156,11 @@ describe('webscoop run', () => {
       browser: new FakeBrowser({ [PAGE]: shopPage(3, (i) => i !== 1) }),
     });
     expect(await main(['run', 'shop'], io)).toBe(ExitCode.Ok);
-    expect(JSON.parse(io.out())[1].price).toBeNull();
-    expect(io.err()).toMatch(/warning: .*price.*row 1/);
+    const rows = JSON.parse(io.out());
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row: { price: unknown }) => row.price !== null)).toBe(true);
+    expect(io.err()).toMatch(/warning: dropped 1 row on page 1: .*price.*row 1/);
+    expect(io.err()).toContain('1 row dropped for missing fields');
   });
 
   it('prints the full report with --report', async () => {

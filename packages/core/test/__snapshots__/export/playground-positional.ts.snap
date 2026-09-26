@@ -605,7 +605,14 @@ interface Resolved {
 }
 
 interface Extraction {
+  /** Rows kept after dropping those with a missing required field. */
   rows: Row[];
+  /** Containers extracted, before dropping. */
+  containerCount: number;
+  /** The first extracted row, before dropping. */
+  firstRow: Row | null;
+  /** Required fields that caused a drop, in recipe order. */
+  droppedFields: string[];
   /** Required fields that matched on no row, "item" when no container matched, and "within" when the list parent did not. */
   missingRequired: string[];
   warnings: string[];
@@ -670,7 +677,7 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
     states.push(state);
   }
 
-  const rows: Row[] = [];
+  const extracted: Row[] = [];
   for (const [index, container] of containers.slice(fromIndex).entries()) {
     const row: Row = { _page: pageNumber, _index: index };
     for (const state of states) {
@@ -682,24 +689,42 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
       if (!result.found) state.missingRows.push(index);
       row[state.field.name] = result.value;
     }
-    rows.push(row);
+    extracted.push(row);
+  }
+  const containerCount = extracted.length;
+
+  // Drop rows on which a required field resolved nothing.
+  const required = states.filter((s) => !s.field.optional);
+  const rows: Row[] = [];
+  for (const [index, row] of extracted.entries()) {
+    if (!required.some((s) => s.missingRows.includes(index))) rows.push({ ...row, _index: rows.length });
   }
 
   const missingRequired: string[] = [];
   const warnings: string[] = [];
+  const droppedFields: string[] = [];
   if (withinMissing) missingRequired.push('within');
-  if (ITEM && rows.length === 0) missingRequired.push('item');
-  for (const { field, missingRows } of states) {
-    if (field.optional) continue;
-    const missing = rows.length === 0 || missingRows.length === rows.length;
-    if (missing && rows.length > 0) missingRequired.push(field.name);
-    if (!missing && missingRows.length > 0) {
+  if (ITEM && containerCount === 0) missingRequired.push('item');
+  for (const { field, missingRows } of required) {
+    const n = missingRows.length;
+    if (n > 0) droppedFields.push(field.name);
+    const missing = containerCount === 0 || n === containerCount;
+    if (missing && containerCount > 0) missingRequired.push(field.name);
+    if (!missing && n > 0) {
       warnings.push(
-        'required field "' + field.name + '" missing on page ' + pageNumber + ' row' + (missingRows.length > 1 ? 's ' : ' ') + missingRows.join(', '),
+        'dropped ' + n + ' row' + (n > 1 ? 's' : '') + ' on page ' + pageNumber + ': required field "' + field.name + '" missing on row' + (n > 1 ? 's ' : ' ') + missingRows.join(', '),
       );
     }
   }
-  return { rows, missingRequired, warnings, resolved: { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) } };
+  return {
+    rows,
+    containerCount,
+    firstRow: extracted[0] ?? null,
+    droppedFields,
+    missingRequired,
+    warnings,
+    resolved: { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) },
+  };
 }
 
 /** Where item containers are searched: inside the list parent's first match, else the page. */
@@ -954,11 +979,19 @@ async function scrape(opts: Options): Promise<number> {
           : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element' + (resolved ? ' on page ' + pageNumber : '');
         throw new Failure(message, EXIT_UNRESOLVED);
       }
+      if (!resolved && extraction.containerCount > 0 && extraction.rows.length === 0) {
+        const fields = extraction.droppedFields;
+        throw new Failure(
+          'every row on page ' + pageNumber + ' was dropped for missing required field' + (fields.length > 1 ? 's ' : ' ') + fields.join(', '),
+          EXIT_UNRESOLVED,
+        );
+      }
       resolved ??= extraction.resolved;
       for (const warning of extraction.warnings) log('warning: ' + warning);
 
       const { kept, keys } = dedupRows(extraction.rows, pageNumber, seen);
-      const summary: PageSummary = { page: pageNumber, url, firstKey: keys[0] ?? null, raw: extraction.rows.length, kept: kept.length };
+      const firstKey = extraction.firstRow ? keyOf(extraction.firstRow) : null;
+      const summary: PageSummary = { page: pageNumber, url, firstKey, raw: extraction.containerCount, kept: kept.length };
       const verdict = evaluateStop(summary, previous, limit);
       if (!verdict.discard) {
         for (const key of keys) seen.add(key);

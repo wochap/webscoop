@@ -40,12 +40,23 @@ describe('Runner', () => {
     expect(browser.openSessions).toBe(0);
   });
 
-  it('reports partial fields as warnings on success', async () => {
+  it('drops rows missing a required field and warns on success', async () => {
     const { browser } = setup(catalog(cards(24, (i) => (i === 0 ? { price: undefined } : {}))));
     const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p' });
     expect(result.ok).toBe(true);
-    expect(result.rows).toHaveLength(24);
+    expect(result.rows).toHaveLength(23);
+    expect(result.rows.every((row) => row.price !== null)).toBe(true);
+    expect(result.rows.map((row) => row._index)).toEqual([...Array(23).keys()]);
     expect(result.report.warnings[0]).toContain('price');
+    expect(result.report).toMatchObject({ rowCount: 23, droppedCount: 1, pages: [{ page: 1, rows: 23, dropped: 1 }] });
+    expect(result.report.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'partial', missingRows: [0] });
+  });
+
+  it('fails with missing-required when every row on the first page is dropped', async () => {
+    const { browser } = setup(catalog(cards(24, (i) => (i < 12 ? { noLink: true } : { price: undefined }))));
+    const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p' });
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['price', 'url'] });
+    expect(result.rows).toEqual([]);
   });
 
   it('fails before opening the browser when a variable has no value', async () => {

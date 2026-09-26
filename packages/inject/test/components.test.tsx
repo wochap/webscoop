@@ -309,5 +309,23 @@ describe('results drawer', () => {
     expect(JSON.parse(p.q('results-json')!.textContent!)).toHaveLength(24);
     fireEvent.click(p.q('drawer-close')!);
     expect(p.q('drawer')).toBeNull();
+    expect(p.q('test-dropped')).toBeNull();
+  });
+
+  it('shows the rows dropped for missing required fields next to the row count', () => {
+    const rows = Array.from({ length: 22 }, (_, i) => ({ _page: 1, _index: i, url: `/p/${i}` }));
+    const test = {
+      rows,
+      rowCount: 22,
+      dropped: { count: 2, fields: ['url'] },
+      fields: [{ name: 'url', status: 'partial' as const }],
+      durationMs: 5,
+      warnings: ['dropped 2 rows on page 1: required field "url" missing on rows 3, 9'],
+    };
+    const p = renderPanel({ ...baseState(), test }, { drawerOpen: true });
+    expect(p.q('test-rows')!.textContent).toBe('22 rows');
+    expect(p.q('test-dropped')!.textContent).toBe('2 rows dropped: url');
+    expect(p.qa('field-status-item').map((el) => el.dataset.status)).toEqual(['partial']);
+    expect(p.q('run-log')!.textContent).toContain('missing on rows 3, 9');
   });
 });

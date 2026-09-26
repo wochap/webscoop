@@ -8,6 +8,11 @@ export function TestRunSummary({ results }: { results: TestResults }) {
       <span className="ws-title" data-ws="test-rows">
         {results.rowCount} row{results.rowCount === 1 ? '' : 's'}
       </span>
+      {results.dropped.count > 0 && (
+        <span className="ws-badge ws-medium" data-ws="test-dropped">
+          {results.dropped.count} row{results.dropped.count === 1 ? '' : 's'} dropped: {results.dropped.fields.join(', ')}
+        </span>
+      )}
       <span className="ws-meta">in {results.durationMs} ms · page 1 only</span>
     </span>
   );
