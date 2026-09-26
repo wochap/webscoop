@@ -61,11 +61,15 @@ The script SHALL implement the recipe's pagination kind (`url`, `next`, `more`, 
 - **THEN** the script emits 24 rows across 3 pages equal to `webscoop run --pages all`
 
 ### Requirement: Missing field policy
-The script SHALL apply the runner's missing field policy: a required field missing on every row exits 3 with no rows, a required field missing on some rows yields `null` with a warning on stderr, optional fields yield `null`.
+The script SHALL apply the runner's missing field policy: a required field missing on every row exits 3 with no rows, a row on which a required field is missing is dropped with a warning on stderr naming the field and the container index, a first page with no rows left after dropping exits 3, and optional fields yield `null`.
 
 #### Scenario: Required field missing everywhere
 - **WHEN** no container resolves the `price` field
 - **THEN** the script prints nothing to stdout and exits 3
+
+#### Scenario: Required field missing on some rows
+- **WHEN** 2 of 24 containers lack the required `url` field
+- **THEN** the script prints 22 rows, none with a `null` `url`, and exits 0
 
 ### Requirement: Output contract
 Rows SHALL go to stdout as a JSON array, or one JSON object per line with `--jsonl`, or to the `--out` file; logs to stderr; exit codes 0, 1, and 3 with the CLI's meanings.

@@ -42,7 +42,7 @@ The runner SHALL advance pages according to `pagination.kind`:
 - **THEN** 2 pages are extracted and stderr warns that the cap was hit
 
 ### Requirement: Stop rules
-The runner SHALL always stop when the limit is reached and, for `next` and `more`, when the target cannot be resolved or is disabled (`disabled` attribute, `aria-disabled="true"`, or an anchor without `href`). Additionally, each enabled rule in `pagination.stopRules` SHALL stop the run: `no-new-items` when a page yields zero rows after dedup; `first-item-repeats` when the first row of a page equals the first row of the previous page on the key field; `target-missing` is implied for `next` and `more` and SHALL be a no-op for other kinds. A page that yields zero rows before dedup SHALL always stop the run. A page whose URL and first row both equal the previous page's SHALL always stop the run, as a loop guard.
+The runner SHALL always stop when the limit is reached and, for `next` and `more`, when the target cannot be resolved or is disabled (`disabled` attribute, `aria-disabled="true"`, or an anchor without `href`). Additionally, each enabled rule in `pagination.stopRules` SHALL stop the run: `no-new-items` when a page yields zero rows after dropping rows with missing required fields and after dedup; `first-item-repeats` when the first extracted row of a page, before dropping, equals the first row of the previous page on the key field; `target-missing` is implied for `next` and `more` and SHALL be a no-op for other kinds. A page that resolves zero item containers SHALL always stop the run. A page whose containers were all dropped for missing required fields SHALL NOT count as such an empty page. A page whose URL and first row both equal the previous page's SHALL always stop the run, as a loop guard.
 
 #### Scenario: Last page repeats
 - **WHEN** the site serves page 3 again for every page beyond 3 and `first-item-repeats` is enabled
@@ -52,6 +52,10 @@ The runner SHALL always stop when the limit is reached and, for `next` and `more
 - **WHEN** no stop rules are enabled, limit is `all`, and page 4 has the same URL and first row as page 3
 - **THEN** the run stops after page 4 with reason `loop`
 
+#### Scenario: Page with only dropped rows
+- **WHEN** no stop rule is set and page 2 has 8 containers whose rows were all dropped for missing required fields, with no required field missing on every container
+- **THEN** the run advances to page 3
+
 ### Requirement: Dedup across pages
 Rows SHALL be deduplicated across pages by the field marked `key`; when no key is set, by a hash of all field values. A row whose key was already emitted SHALL be dropped and counted. Dedup SHALL NOT drop rows within the first page.
 
@@ -60,11 +64,15 @@ Rows SHALL be deduplicated across pages by the field marked `key`; when no key i
 - **THEN** those 2 rows are dropped and the report counts 2 duplicates
 
 ### Requirement: Page numbering and streaming
-Rows SHALL carry `_page` as the 1-based page number in extraction order and `_index` as the 0-based position within that page after dedup. Rows of a page SHALL be emitted as soon as that page is extracted, before the runner advances, so streaming output survives a later failure.
+Rows SHALL carry `_page` as the 1-based page number in extraction order and `_index` as the 0-based position within that page after dropping rows with missing required fields and after dedup. Rows of a page SHALL be emitted as soon as that page is extracted, before the runner advances, so streaming output survives a later failure.
 
 #### Scenario: Failure on a later page
 - **WHEN** page 3 times out during a JSONL run
 - **THEN** stdout already contains every row from pages 1 and 2 and the exit code is 1
+
+#### Scenario: Index after a drop
+- **WHEN** page 1 has 4 containers and container 1 is dropped for a missing required field
+- **THEN** the emitted rows carry `_index` 0, 1, and 2
 
 ### Requirement: Delay between pages
 The runner SHALL wait `pagination.delayMs` between finishing a page and advancing, overridable per run. The delay SHALL NOT apply before the first page.

@@ -65,7 +65,7 @@ When the recipe has an `item` block, the runner SHALL resolve the list parent fr
 - **THEN** the run report marks the item container missing and names `within`
 
 ### Requirement: Missing fields
-A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing`. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field was missing on every row, the run SHALL fail with exit 3. On later pages a required field missing on every row SHALL fail the run with exit 3 after emitting the earlier pages. If a required field is missing on some rows only, those rows SHALL carry `null` and the run SHALL succeed with a warning on stderr. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once.
+A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing` and the row SHALL be dropped: it SHALL NOT be emitted and SHALL NOT count toward the row count. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field was missing on every row, or no row is left after dropping, the run SHALL fail with exit 3 and name the fields. On later pages a required field missing on every row SHALL fail the run with exit 3 after emitting the earlier pages; a later page with no row left after dropping SHALL NOT fail the run. When a required field is missing on some rows only, those rows SHALL be dropped, the run SHALL succeed, and a warning on stderr SHALL name the field, the page, and the container indexes dropped. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once. A page scoped required field that resolves nothing SHALL count as missing on every row.
 
 #### Scenario: Required field absent everywhere
 - **WHEN** `price` is required and no rung of the ladder resolves it
@@ -73,14 +73,26 @@ A required field that resolves no element for a given row, after the healing lad
 
 #### Scenario: Required field absent on one row
 - **WHEN** `price` is required and one of 24 containers lacks it
-- **THEN** 24 rows are emitted, one with `price: null`, and a warning names the row index
+- **THEN** 23 rows are emitted, none with `price: null`, and a warning names `price` and the container index dropped
+
+#### Scenario: Optional field absent on one row
+- **WHEN** `price` is optional and one of 24 containers lacks it
+- **THEN** 24 rows are emitted, one with `price: null`, and the exit code is 0
+
+#### Scenario: Every row dropped on the first page
+- **WHEN** `url` is required and missing on containers 0 to 11 and `price` is required and missing on containers 12 to 23
+- **THEN** no rows are emitted and the exit code is 3 naming `url` and `price`
 
 #### Scenario: Required field vanishes on page 2
 - **WHEN** `price` resolves on page 1 and no container on page 2 has it
 - **THEN** page 1 rows were emitted, the run fails with exit 3, and stderr names page 2
 
+#### Scenario: Every row dropped on page 2
+- **WHEN** page 2 has 8 containers, 4 lack the required `url` and the other 4 lack the required `price`, so no required field is missing on every container
+- **THEN** page 2 contributes no rows, the run continues to the stop rules, and the exit code is 0
+
 ### Requirement: Run report
-The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, duplicate count, stop reason, per page URL and row count, and per field the candidate used, the healing outcome, and a status among `ok`, `healed`, `partial`, `missing`. The report SHALL state whether the recipe was written back and to which path. The CLI SHALL print a one-line summary to stderr including the page count, the number of healed fields, and the number of dropped duplicates when non-zero, and the full report with `--report`.
+The runner SHALL produce a run report available to the CLI with: start and end time, final URL, page count, row count, duplicate count, dropped count, stop reason, per page URL, row count, and dropped count, and per field the candidate used, the healing outcome, a status among `ok`, `healed`, `partial`, `missing`, and the container indexes on which it was missing. The report SHALL state whether the recipe was written back and to which path. The CLI SHALL print a one-line summary to stderr including the page count, the number of healed fields, the number of dropped duplicates, and the number of rows dropped for missing required fields when non-zero, and the full report with `--report`.
 
 #### Scenario: Report after success
 - **WHEN** a run extracts 24 rows with all fields ok
@@ -93,6 +105,10 @@ The runner SHALL produce a run report available to the CLI with: start and end t
 #### Scenario: Report after pages
 - **WHEN** a run extracts 3 pages with 2 duplicates dropped
 - **THEN** the summary line contains the page count 3 and the duplicate count 2
+
+#### Scenario: Report after dropped rows
+- **WHEN** a run drops 6 rows because `url` was missing on them
+- **THEN** the summary line says 6 rows were dropped for missing fields, the report's dropped count is 6, and `url` has status `partial` with the 6 container indexes
 
 ### Requirement: Run events
 The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `step.replayed`, `step.skipped`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`.

@@ -115,11 +115,15 @@ The user SHALL be able to mark a selection as the pagination target. The recorde
 - **THEN** the panel proposes kind `url` with parameter `page`, start 1, step 1
 
 ### Requirement: Test run from the panel
-The panel SHALL offer a test run that executes the draft recipe on the current page using the same extraction behavior as `webscoop run`, without pagination, and shows a results drawer with the first rows as a table, a JSON view, per-field status (`ok`, `partial`, `missing`), row count, and duration. The drawer SHALL NOT overlap the panel.
+The panel SHALL offer a test run that executes the draft recipe on the current page using the same extraction behavior as `webscoop run`, without pagination, and shows a results drawer with the first rows as a table, a JSON view, per-field status (`ok`, `partial`, `missing`), row count, the number of rows dropped for missing required fields with the fields that caused them, and duration. The drawer SHALL NOT overlap the panel.
 
 #### Scenario: Test run on the catalog
 - **WHEN** the draft has title and price fields and the user runs a test
 - **THEN** the drawer shows 24 rows, both fields `ok`, and the JSON view matches the table
+
+#### Scenario: Test run with dropped rows
+- **WHEN** the draft has a required `url` field that 2 of 24 containers lack
+- **THEN** the drawer shows 22 rows, `url` as `partial`, and a notice that 2 rows were dropped for `url`
 
 ### Requirement: Save
 Saving SHALL validate the draft with the recipe schema, write it to the recipes directory under the chosen name, and confirm in the panel. Validation errors SHALL be shown in the panel next to the offending field. Saving SHALL NOT close the session; the user MAY keep editing and save again.

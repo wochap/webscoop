@@ -30,6 +30,10 @@ A cron job SHALL be able to treat `2` as "retry later" and `3` as "alert a human
 - **WHEN** a required field resolves no element on the page
 - **THEN** the exit code is 3
 
+#### Scenario: Required field missing on some rows
+- **WHEN** a required field resolves on some containers of the page and not on others
+- **THEN** the rows without it are not in the output, stderr names the field and the dropped rows, and the exit code is 0
+
 #### Scenario: Optional field missing
 - **WHEN** only optional fields fail to resolve
 - **THEN** rows are emitted with `null` for those fields and the exit code is 0
