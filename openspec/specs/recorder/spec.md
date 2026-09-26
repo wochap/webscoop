@@ -7,11 +7,15 @@ Defines the interactive recording session in which a user opens a page, picks el
 ## Requirements
 
 ### Requirement: Recording session opens the page with recorder UI
-Starting a recording session SHALL open the target URL in a headed persistent browser profile, wait for the page to load, and inject the recorder UI: a picker overlay and a sidebar panel of fixed width 400 CSS pixels docked on the right. The page content SHALL be pushed left by the panel width, not covered. The UI SHALL be injected again after every navigation within the session, restoring the draft recipe state.
+Starting a recording session SHALL open the target URL in a headed persistent browser profile, wait for the page to load, and inject the recorder UI: a picker overlay and a sidebar panel of fixed width 400 CSS pixels docked on the right. The page SHALL count as loaded when its `load` event has fired; the session MAY wait a bounded time for network activity to go idle after that, and a page that never goes idle SHALL NOT fail or end the session. The page content SHALL be pushed left by the panel width, not covered. The UI SHALL be injected again after every navigation within the session, restoring the draft recipe state.
 
 #### Scenario: Panel visible after load
 - **WHEN** a recording session opens the playground catalog
 - **THEN** the sidebar panel is visible on the right and the catalog remains fully visible to its left
+
+#### Scenario: Page that never goes idle
+- **WHEN** the target page keeps a request in flight indefinitely after `load`
+- **THEN** the recorder is ready, the session is still open a minute later, and fields can be added and tested
 
 #### Scenario: Navigation keeps the draft
 - **WHEN** the user has two fields in the draft and follows a link within the page
@@ -438,3 +442,14 @@ The panel SHALL show a table strip listing every table of the draft with its nam
 #### Scenario: Activate by clicking a field
 - **WHEN** `page` is active and the user clicks the `title` field under the `products` tab
 - **THEN** `products` becomes active and `title` opens in the selection panel for editing
+
+### Requirement: Host snapshots on deep pages
+When the host needs the page's DOM snapshot without a pick, such as when the confirmed item container is edited, the snapshot SHALL succeed regardless of the document's nesting depth. The page SHALL attach its own snapshot to the item edit message, and a snapshot the host requests directly from the browser SHALL be transported in a form that does not depend on nesting depth.
+
+#### Scenario: Edit items on a deeply nested page
+- **WHEN** the confirmed item container sits inside a page nested more than 200 elements deep and the user clicks Edit on the Items card
+- **THEN** the proposal reopens seeded from the confirmed container with no error
+
+#### Scenario: Host snapshot of a deep document
+- **WHEN** the host requests a snapshot of a document nested more than 200 elements deep
+- **THEN** the snapshot is returned with every element present
