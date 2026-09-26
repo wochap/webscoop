@@ -132,7 +132,7 @@ Every command that opens a browser SHALL check for a display first and exit 1 wi
 - **THEN** stderr explains that a display is required and the exit code is 1
 
 ### Requirement: `record` command
-`webscoop record <url-template> [--name <recipe>] [--var name=value]... [--profile <name>] [--timeout <ms>]` SHALL start a recording session for the given URL template. `webscoop record --edit <recipe>` SHALL start a session for an existing recipe by name or path. The command SHALL require a display, take the profile lock like `run`, and hold the process open until the session ends. When `--name` is omitted, the session SHALL propose a name derived from the URL host and path and let the user change it before saving. `--edit` of a recipe with more than one table SHALL exit 1 with a message saying the recorder does not edit multi-table recipes yet.
+`webscoop record <url-template> [--name <recipe>] [--var name=value]... [--profile <name>] [--timeout <ms>]` SHALL start a recording session for the given URL template. `webscoop record --edit <recipe>` SHALL start a session for an existing recipe by name or path, whatever its number of tables. The command SHALL require a display, take the profile lock like `run`, and hold the process open until the session ends. When `--name` is omitted, the session SHALL propose a name derived from the URL host and path and let the user change it before saving.
 
 #### Scenario: Record with a template variable
 - **WHEN** `webscoop record "http://127.0.0.1:4777/catalog?cat={category}"` is executed
@@ -148,7 +148,7 @@ Every command that opens a browser SHALL check for a display first and exit 1 wi
 
 #### Scenario: Edit a multi-table recipe
 - **WHEN** `webscoop record --edit results` is executed and `results` declares two tables
-- **THEN** stderr says the recorder does not edit multi-table recipes yet and the exit code is 1
+- **THEN** the session opens with both tables in the panel
 
 ### Requirement: `record` exit behavior
 The `record` command SHALL exit 0 when the session ends after a save or with no unsaved changes, exit 0 with a stderr warning naming the recipe when the session ends with unsaved changes, and exit 1 on error (invalid URL template, invalid recipe under `--edit`, display or browser failure). Ctrl+C SHALL end the session cleanly, releasing the profile lock.
@@ -188,11 +188,19 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 - **THEN** its row shows `missing` and the exit code is 3
 
 ### Requirement: Re-pick from the command line
-`webscoop record --edit <recipe> --repick <field>` SHALL open the recipe's page in the recorder's re-pick mode focused on that field, save the new selection into the recipe on confirmation, and exit 0. An unknown field name SHALL exit 1 naming the field.
+`webscoop record --edit <recipe> --repick <field>` SHALL open the recipe's page in the recorder's re-pick mode focused on that field, save the new selection into the recipe on confirmation, and exit 0. `<field>` SHALL be either `table.field` or a bare field name; a bare name SHALL be accepted when exactly one table has a field by that name. An unknown field, an unknown table, or an ambiguous bare name SHALL exit 1 naming it and, for an ambiguous name, the tables that have it.
 
 #### Scenario: Re-pick a field
 - **WHEN** `webscoop record --edit shop --repick price` is executed and the user picks the new price element
 - **THEN** the recipe's `price` selectors and fingerprint are replaced and the exit code is 0
+
+#### Scenario: Re-pick by table
+- **WHEN** `webscoop record --edit results --repick questions.title` is executed and the user confirms a pick
+- **THEN** only the `title` field of table `questions` is replaced
+
+#### Scenario: Ambiguous bare name
+- **WHEN** `webscoop record --edit results --repick title` is executed and both `page` and `products` have `title`
+- **THEN** stderr names `title`, `page`, and `products`, and the exit code is 1
 
 ### Requirement: `--no-llm` flag
 `webscoop run` and `webscoop test` SHALL accept `--no-llm`, which disables the model rung for that invocation regardless of config and recipe.

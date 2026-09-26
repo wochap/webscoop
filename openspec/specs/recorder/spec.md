@@ -50,7 +50,7 @@ For the selected element the panel SHALL list every generated selector candidate
 - **THEN** the list shows a `testid` candidate with match count 24 and a `stable` badge
 
 ### Requirement: Item inference from one pick
-When a selection is made and no item container is set, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the item container with `within` from the list parent field and make the original selection an item scoped field.
+When a selection is made and the active table has no item container, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the active table's item container with `within` from the list parent field and make the original selection an item scoped field of the active table. When the active table already has an item container, no proposal SHALL be shown; the user adds a table to record a second list.
 
 The item container candidates of every level (proposed, broader, narrower) SHALL be relative to the list parent when one is set, and their match counts SHALL be counted inside the list parent. The stated number of matches SHALL agree with the item set the samples come from.
 
@@ -74,6 +74,10 @@ The item container candidates of every level (proposed, broader, narrower) SHALL
 - **WHEN** the user picks a result title on a page where the results sit under `div#rso` inside anchored wrappers, with hashed classes on each result
 - **THEN** the proposal's list parent is `id` `rso`, the item container's top candidate matches every result inside it, and the count is greater than 0 and equal to the number of samples' item set
 
+#### Scenario: Second list in a new table
+- **WHEN** `products` has 24 containers, the user adds a table `questions` and picks a heading inside one `mixed-questions` block
+- **THEN** the panel proposes the questions blocks as containers of `questions`, and confirming leaves `products` unchanged
+
 ### Requirement: Exclusions
 While the item container is proposed or set, the user SHALL be able to add an exclusion selector. Containers matching it SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list.
 
@@ -82,19 +86,31 @@ While the item container is proposed or set, the user SHALL be able to add an ex
 - **THEN** the count shows 22 and those 2 cards lose their highlight
 
 ### Requirement: Add as field
-The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within the draft), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), scope (`item` when the element is inside the container, else `page`), optional flag, and dedup key flag. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed in the panel with name, type, scope, sample value, and match count, and SHALL be reorderable by drag or Alt+Up and Alt+Down.
+The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), a target table, scope (`item` when the element is inside the target table's container, else `page`), optional flag, and dedup key flag. The target table SHALL default to the active table, except when the element is outside every container of the active table and a table without an item container exists, in which case that table SHALL be the default. The form SHALL also offer to create a new table for the field, named inline. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values and activate the target table. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, scope, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down.
 
 #### Scenario: Link becomes url field
 - **WHEN** the user adds a product link as a field
 - **THEN** the field defaults to type `url`, attribute `href`, and scope `item`
 
 #### Scenario: Duplicate name is rejected inline
-- **WHEN** the user names a second field `price`
+- **WHEN** the user names a second field `price` in the same table
 - **THEN** the panel shows an error on the name and does not save until it is unique
+
+#### Scenario: Same name in another table
+- **WHEN** `products` has a `title` field and the user adds a `title` field to `page`
+- **THEN** the field is added without error
 
 #### Scenario: Options chosen before adding
 - **WHEN** the user selects a price, sets the name to `amount`, the type to `number`, and turns on optional, then adds the field
 - **THEN** the field list shows `amount` as a `number` field marked optional
+
+#### Scenario: Pick outside the list goes to the page table
+- **WHEN** `products` is active with 24 containers, a table `page` without item exists, and the user picks the category heading
+- **THEN** the form's table defaults to `page` with scope `page`, and adding puts the field under `page`
+
+#### Scenario: Pick outside the list with no page table
+- **WHEN** `products` is the only table and the user picks the category heading
+- **THEN** the form's table defaults to `products` with scope `page` and offers to create a new table instead
 
 #### Scenario: Adding returns to the empty state
 - **WHEN** the user adds the selection as a field
@@ -115,7 +131,7 @@ The user SHALL be able to mark a selection as the pagination target. The recorde
 - **THEN** the panel proposes kind `url` with parameter `page`, start 1, step 1
 
 ### Requirement: Test run from the panel
-The panel SHALL offer a test run that executes the draft recipe on the current page using the same extraction behavior as `webscoop run`, without pagination, and shows a results drawer with the first rows as a table, a JSON view, per-field status (`ok`, `partial`, `missing`), row count, the number of rows dropped for missing required fields with the fields that caused them, and duration. The drawer SHALL NOT overlap the panel.
+The panel SHALL offer a test run that executes the draft recipe on the current page using the same extraction behavior as `webscoop run`, without pagination, and shows a results drawer with one tab per table, opened on the active table, each showing the first rows as a table, a JSON view, per-field status (`ok`, `partial`, `missing`), row count, the number of rows dropped for missing required fields with the fields that caused them, and the run's duration. The drawer SHALL NOT overlap the panel.
 
 #### Scenario: Test run on the catalog
 - **WHEN** the draft has title and price fields and the user runs a test
@@ -125,15 +141,23 @@ The panel SHALL offer a test run that executes the draft recipe on the current p
 - **WHEN** the draft has a required `url` field that 2 of 24 containers lack
 - **THEN** the drawer shows 22 rows, `url` as `partial`, and a notice that 2 rows were dropped for `url`
 
+#### Scenario: Test run with two tables
+- **WHEN** the draft has tables `page` (1 field) and `products` (24 containers) and the user runs a test
+- **THEN** the drawer shows a `page` tab with 1 row and a `products` tab with 24 rows
+
 ### Requirement: Save
-Saving SHALL validate the draft with the recipe schema, write it to the recipes directory under the chosen name, and confirm in the panel. Validation errors SHALL be shown in the panel next to the offending field. Saving SHALL NOT close the session; the user MAY keep editing and save again.
+Saving SHALL validate the draft with the recipe schema, write it to the recipes directory under the chosen name, and confirm in the panel. A draft with one table named `items` that was not loaded from the `tables` form SHALL be written in the shorthand form; any other draft SHALL be written with `tables`. Validation errors SHALL be shown in the panel next to the offending field or table. Saving SHALL NOT close the session; the user MAY keep editing and save again.
 
 #### Scenario: Save writes the file
 - **WHEN** the user saves a draft named `shop-catalog`
 - **THEN** `shop-catalog.json` exists in the recipes directory and loads with the recipe schema
 
+#### Scenario: Save two tables
+- **WHEN** the user saves a draft with tables `page` and `products`
+- **THEN** the file declares `tables` with both entries in strip order and no top level `fields`
+
 ### Requirement: Edit an existing recipe
-Starting a session with an existing recipe SHALL open its URL (prompting for variables), load its fields, container, and pagination into the panel, and show each field's match count on the current page. A recipe with one table in the `tables` form SHALL load like the shorthand form, and saving SHALL keep the form it was loaded in. A recipe with more than one table SHALL be refused before the browser opens, with a message saying the recorder does not edit multi-table recipes yet.
+Starting a session with an existing recipe SHALL open its URL (prompting for variables), load its tables with their fields and item containers, and its pagination into the panel, activate the first table, and show each field's match count on the current page. A recipe with one table in the `tables` form SHALL load like the shorthand form, and saving SHALL keep the form it was loaded in.
 
 #### Scenario: Reopen and see counts
 - **WHEN** a session is started for a saved recipe with three fields
@@ -141,7 +165,7 @@ Starting a session with an existing recipe SHALL open its URL (prompting for var
 
 #### Scenario: Multi-table recipe refused
 - **WHEN** a session is started for a recipe with tables `page` and `products`
-- **THEN** no browser opens and the error says the recorder does not edit multi-table recipes yet
+- **THEN** the recipe is no longer refused: the browser opens, the strip shows both tables, `page` is active, and each table's fields show their match counts
 
 ### Requirement: Isolation from the host page
 The recorder UI SHALL render inside a shadow root with all inherited styles reset, use its own embedded fonts, force its own color scheme, and sit above every host element. Host page styles, fonts, `z-index`, and fixed headers SHALL NOT change the panel's appearance. The overlay highlight SHALL remain legible on dark, light, and saturated host backgrounds.
@@ -173,7 +197,7 @@ Closing the browser window or pressing Ctrl+C SHALL end the session. If the draf
 - **THEN** stderr warns that the draft was not saved and the exit code is 0
 
 ### Requirement: Re-pick mode
-The recorder SHALL support a focused re-pick mode for one field. The panel SHALL replace its body with the field's name, its old primary selector, its last known sample value, and its stored fingerprint summary, and prompt the user to click the new location. While hovering, the overlay tag SHALL show the fingerprint similarity score of the hovered element, and the panel SHALL mark scores at or above the recipe threshold as likely. Confirming SHALL replace the field's selectors with freshly generated candidates for the picked element, the picked element's selector first, and refresh the fingerprint. The mode SHALL offer skip and abort. In a run, confirming resumes the run; from `record --repick`, confirming saves the recipe.
+The recorder SHALL support a focused re-pick mode for one field of one table. The panel SHALL activate that table and replace its body with the table and field names, the field's old primary selector, its last known sample value, and its stored fingerprint summary, and prompt the user to click the new location. While hovering, the overlay tag SHALL show the fingerprint similarity score of the hovered element, and the panel SHALL mark scores at or above the recipe threshold as likely. Confirming SHALL replace the field's selectors with freshly generated candidates for the picked element, the picked element's selector first, and refresh the fingerprint. The mode SHALL offer skip and abort. In a run, confirming resumes the run; from `record --repick`, confirming saves the recipe.
 
 #### Scenario: Score shown on hover
 - **WHEN** re-pick is active for `price` and the user hovers the new price element
@@ -186,6 +210,10 @@ The recorder SHALL support a focused re-pick mode for one field. The panel SHALL
 #### Scenario: Skip in a run
 - **WHEN** the user skips during an interactive run
 - **THEN** the run continues and treats the field as missing
+
+#### Scenario: Re-pick in the second table
+- **WHEN** a run requests a re-pick of `title` in table `questions`
+- **THEN** the panel activates `questions` and names `questions` and `title`, and confirming replaces only that field
 
 ### Requirement: Guard banner
 During an interactive run, when a guard is raised the recorder bundle SHALL render a banner across the top of the page, above host content and outside the sidebar, showing the guard kind, a one-line reason, a countdown to the guard timeout, and Continue and Abort buttons. The countdown SHALL switch to the warning tone with under 90 seconds remaining. The banner SHALL be removed when the guard clears or the run ends.
@@ -371,3 +399,22 @@ Selection actions that would change the item (use as item container) and field e
 #### Scenario: Item not on this page
 - **WHEN** the confirmed item container matches nothing after a navigation
 - **THEN** the item card shows a zero-match notice, Edit is absent, and Remove is available
+
+### Requirement: Tables in the panel
+The panel SHALL show a table strip listing every table of the draft with its name and, when known, its row count on the current page, and SHALL mark one table as active. A new draft SHALL start with one table named `items`. The strip SHALL offer to add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`), rename the active table, and remove the active table when the draft has more than one. Removing a table SHALL remove its item container and fields. The active table SHALL receive picks, item inference, added fields, field edits, and item edits. The item card and the field list of tables other than the active one SHALL be collapsed under their tab and SHALL expand and activate on click. Clicking a field of another table SHALL activate that table and open the field for editing.
+
+#### Scenario: Add a page table
+- **WHEN** the draft has the table `products` with 24 containers and the user adds a table
+- **THEN** the strip shows `products` and a new active table named `page` with no item container and no fields
+
+#### Scenario: Rename rejects duplicates
+- **WHEN** the user renames the active table to `products` while a table `products` exists
+- **THEN** the panel shows an error on the name and keeps the previous name
+
+#### Scenario: Remove a table
+- **WHEN** the draft has tables `page` and `products` and the user removes `page`
+- **THEN** only `products` remains, it is active, and the draft has no `page` fields
+
+#### Scenario: Activate by clicking a field
+- **WHEN** `page` is active and the user clicks the `title` field under the `products` tab
+- **THEN** `products` becomes active and `title` opens in the selection panel for editing
