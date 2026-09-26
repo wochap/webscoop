@@ -7,7 +7,7 @@ Defines the local fixture site used by end-to-end tests and manual QA: a fake pr
 ## Requirements
 
 ### Requirement: Dataset is the ground truth
-The playground SHALL render from a single JSON dataset of 24 products, each with `id`, `title`, `price`, `url`, `image`, `rating`, and `category`. The dataset file SHALL be importable by tests so assertions compare extracted rows against it directly.
+The playground SHALL render from a single JSON dataset of 24 products, each with `id`, `title`, `price`, `url`, `image`, `rating`, `category`, and `seller`. The dataset file SHALL be importable by tests so assertions compare extracted rows against it directly.
 
 #### Scenario: Extracted rows match dataset
 - **WHEN** a recipe recorded against tier 0 is run against the catalog page
@@ -217,3 +217,18 @@ With `gate=tabs`, `/catalog` SHALL render two tabs, `About` (active by default, 
 #### Scenario: Six rows of four
 - **WHEN** `/catalog?rows=4` is requested
 - **THEN** the list holds 6 `product-row` elements each holding 4 product cards, 24 in total
+
+### Requirement: Twin paragraphs
+`/catalog` SHALL accept `twins=1`. When set, every product card SHALL render, after the rating and before the product link, two sibling `p` elements with class `product-note`, each holding exactly one `span` child and no other content. The first `span` SHALL read `Ships in N days` where N is 1 plus the product's dataset index modulo 5. The second `span` SHALL read `Sold by <seller>` with the product's `seller` from the dataset. The two `p` elements SHALL carry identical attributes, so nothing but their position tells them apart. Tier churn SHALL apply to them like to the rest of the card: at tier 1 both carry the same hashed class token, and at tier 2 and above they sit inside the card's wrappers with the other content. The parameter SHALL combine with `tier`, `seed`, `paginate`, `mixed`, `rows`, and `sponsored`. Without the parameter no `product-note` element SHALL be rendered.
+
+#### Scenario: Twins on every card
+- **WHEN** `/catalog?twins=1` is requested
+- **THEN** each of the 24 cards holds exactly two `p.product-note` elements, the second one's `span` reads `Sold by <seller>` for that card's product, and the first one's `span` reads `Ships in 1 days` for p01 and `Ships in 5 days` for p05
+
+#### Scenario: Twins at tier 1
+- **WHEN** `/catalog?twins=1&tier=1&seed=3` is requested
+- **THEN** each card holds two `p` elements sharing one hashed class token, no `product-note` class is present, and their texts equal tier 0's
+
+#### Scenario: Default has no twins
+- **WHEN** `/catalog` is requested without `twins`
+- **THEN** the page contains no `product-note` element and no `Sold by` text
