@@ -43,11 +43,23 @@ After selection the panel SHALL show: tag name, role and accessible name when pr
 - **THEN** the selection moves to the grandparent and the highlight box surrounds it
 
 ### Requirement: Selector candidates shown and chosen
-For the selected element the panel SHALL list every generated selector candidate with its strategy, value, stability badge, and the number of elements it matches on the current page, ranked as defined by the selector-generation capability. The top candidate SHALL be preselected. The user MAY change which candidate is primary; the saved field SHALL list the chosen candidate first and keep the others in ranked order.
+For the selected element the panel SHALL list every generated selector candidate with its strategy, value, stability badge, and the number of elements it matches on the current page, ranked as defined by the selector-generation capability. When the element was chosen by hand in this session, by a pick on the page or a click on a breadcrumb crumb, the candidates SHALL be verified against it as defined by the selector-generation capability, and a candidate verified as a miss SHALL carry a badge stating that it reads another element. Candidates shown for a typed selector or for a saved field opened for editing SHALL NOT be verified until the user picks or clicks a crumb. The top candidate SHALL be preselected. The user MAY change which candidate is primary; the saved field SHALL list the chosen candidate first and keep the others in ranked order, hits before misses.
 
 #### Scenario: Candidate list for a testid element
 - **WHEN** the selected element has `data-testid="product-title"` shared by 24 elements
 - **THEN** the list shows a `testid` candidate with match count 24 and a `stable` badge
+
+#### Scenario: Second twin picked
+- **WHEN** the catalog is rendered with `twins=1`, `products` has 24 containers, and the user picks the `Sold by` span in one card
+- **THEN** the preselected candidate is a hit ending in `p.product-note:nth-of-type(4) > span`, and the added field's sample reads `Sold by Acme` and its test run yields 24 rows whose values all start with `Sold by`
+
+#### Scenario: Crumb click verifies the crumb
+- **WHEN** the user picks the `Sold by` span and clicks the `p.product-note` crumb
+- **THEN** the candidates belong to the second `p.product-note`, the preselected one is a hit for it, and the `p.product-note` candidate shows the miss badge below it
+
+#### Scenario: Edit shows saved candidates unverified
+- **WHEN** the user opens a saved field for editing without picking
+- **THEN** the saved candidates are listed in saved order with no miss badge
 
 ### Requirement: Item inference from one pick
 When a selection is made and the active table has no item container, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the active table's item container with `within` from the list parent field and make the original selection an item scoped field of the active table. When the active table already has an item container, no proposal SHALL be shown; the user adds a table to record a second list.
@@ -117,11 +129,15 @@ The user SHALL be able to turn the selection into a field with a name (defaultin
 - **THEN** the inspector, the candidate list, and the selected element highlight are gone, and the pick strip offers a new pick
 
 ### Requirement: Zero match fields
-A field whose primary selector matches nothing on the current page SHALL be marked with a warning in the field list and offer to re-pick or mark optional.
+A field whose primary selector matches nothing on the current page SHALL be marked with a warning in the field list and offer to re-pick or mark optional. When the draft has recorded steps, the warning SHALL also say that the element may appear only after the steps and offer to replay them in order.
 
 #### Scenario: Field breaks after navigation
 - **WHEN** a field matched 24 elements on page one and matches 0 after navigating to another page
 - **THEN** the field row shows the warning with the two actions
+
+#### Scenario: Field behind a gate
+- **WHEN** the draft has a consent click step, the page was reloaded, and a field matches 0
+- **THEN** the warning offers to replay the steps, and after replaying the field's count is 24 again
 
 ### Requirement: Pagination target
 The user SHALL be able to mark a selection as the pagination target. The recorder SHALL detect the likely kind: `url` when the target is a link whose `href` differs from the current URL only by a numeric query parameter or path segment, `next` for any other link, `more` for a button. The user MAY override the kind, and MAY choose `scroll` without a target. The panel SHALL let the user choose the limit (first page only, first N pages, all pages) and toggle stop rules. The result SHALL be saved in the recipe's `pagination` block. Pagination SHALL NOT be executed by the recorder in this change.

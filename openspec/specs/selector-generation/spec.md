@@ -9,6 +9,8 @@ Defines how selector candidates, their stability ratings, and fingerprints are d
 ### Requirement: Candidate strategies generated per element
 For a picked element the generator SHALL produce at most one candidate per strategy, in this order of consideration: `role` (accessible role plus accessible name when both exist; for elements generated as a container or list level, the role alone when the element has an explicit or implicit ARIA role other than `generic`, `presentation`, or `none`), `testid` (`data-testid`), `id`, `text` (exact trimmed text, at most 80 characters, only for elements whose text is a single text node), `css` (shortest path of tag and stable class tokens from the nearest stable ancestor), `class` (the element's tag plus every one of its own class tokens, hashed ones included, joined to the nearest anchored ancestor with a descendant combinator), `xpath` (positional path from the nearest ancestor with an `id` or `data-testid`, else from the document root). A strategy that does not apply SHALL be omitted, not emitted empty. The `class` strategy SHALL be emitted only when the element has at least one class token and its value differs from the `css` candidate.
 
+On request the generator SHALL additionally produce one strict positional `css` candidate: the element's path of tag and stable class compounds from the same anchor as the `css` candidate, with `:nth-of-type(k)` appended to every segment whose element has a sibling of the same tag, rated `fragile`. It SHALL be emitted only when its value differs from the `css` candidate.
+
 #### Scenario: Element with testid and heading role
 - **WHEN** the element is `<h3 data-testid="product-title">Wireless Mouse</h3>`
 - **THEN** candidates include `role` `heading|Wireless Mouse`, `testid` `product-title`, `text` `Wireless Mouse`, a `css` candidate, and an `xpath` candidate, and no `id` candidate
@@ -20,6 +22,10 @@ For a picked element the generator SHALL produce at most one candidate per strat
 #### Scenario: Class candidate keeps hashed tokens
 - **WHEN** the element is `<div class="price kXeqYt">` inside `<div class="asEBEc">` and the picked element has no stable class
 - **THEN** the `css` candidate is `div.asEBEc > div.price` when `price` is stable, and a `class` candidate `div.price.kXeqYt` exists rated `fragile`
+
+#### Scenario: Strict positional candidate for the second twin
+- **WHEN** the element is the `span` inside the second of two sibling `<p class="product-note">` elements in a card, and the strict candidate is requested
+- **THEN** a second `css` candidate exists whose last two segments are `p.product-note:nth-of-type(4) > span`, rated `fragile`
 
 ### Requirement: Hashed class detection
 Class tokens SHALL be classified as hashed when they match generated patterns: tokens containing a run of 5 or more mixed letters and digits, tokens with a `css-`, `sc-`, `jsx-`, or `emotion-` prefix, tokens ending in a hyphen followed by 4 or more hex or base64 characters, or tokens of 5 to 8 characters made only of letters with at least two upper-case letters after the first character and no hyphen or underscore. Hashed tokens SHALL NOT appear in `css` candidates but SHALL appear in `class` candidates. Attributes whose value looks hashed by the same rules SHALL be flagged hashed in the inspector.
@@ -44,7 +50,7 @@ Each candidate SHALL carry a stability: `role` and `testid` are `stable`; `id` i
 - **THEN** the `class` candidate is rated `fragile`
 
 ### Requirement: Ranking
-Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`), then by the strategy order above. When a candidate is intended to match one element per item, candidates whose match count on the current page equals the item count SHALL rank above those that do not. Uniqueness on the page SHALL break remaining ties.
+Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`), then by the strategy order above. When a candidate is intended to match one element per item, candidates whose match count on the current page equals the item count SHALL rank above those that do not. Candidates verified as a miss SHALL rank below every candidate verified as a hit or not verified, and above candidates that match nothing. Uniqueness on the page SHALL break remaining ties.
 
 #### Scenario: Testid outranks css
 - **WHEN** an element has a `testid` candidate matching 24 and a `css` candidate matching 24
@@ -53,6 +59,29 @@ Candidates SHALL be ranked by stability (`stable`, then `medium`, then `fragile`
 #### Scenario: Class candidate outranks positional css
 - **WHEN** a field has a `css` candidate `div > div:nth-child(2)` matching 24 and a `class` candidate `div.price.kXeqYt` matching 24, both `fragile`
 - **THEN** the `css` candidate ranks first by strategy order, and the `class` candidate ranks above any candidate whose count differs from 24
+
+#### Scenario: Miss ranks below a fragile hit
+- **WHEN** a `class` candidate rated `medium` matching 48 is a miss and a strict positional `css` candidate rated `fragile` matching 24 is a hit
+- **THEN** the `css` candidate ranks first and the `class` candidate ranks above candidates matching nothing
+
+### Requirement: Verification against the picked element
+When the recorder has an element chosen by hand, each of its candidates SHALL be verified: the candidate is resolved the way a run resolves it, inside the item container that holds the picked element for item scoped candidates and on the document for page scoped ones, and its first match is compared with the picked element by identity. A candidate whose first match is the picked element is a hit; one whose first match is another element, or that matches nothing there, is a miss. A candidate that was not verified is unknown. The result SHALL be exposed with the candidate to the ranking and the panel and SHALL NOT be written to the recipe. When no hit exists among candidates without positional segments, the strict positional candidate SHALL be generated, expressed relative to the container like the others, and verified too.
+
+#### Scenario: Second twin picked
+- **WHEN** the user picks the `span` in the second `p.product-note` of a card with 24 containers
+- **THEN** no candidate without positional segments is a hit, the strict positional candidate ending in `p.product-note:nth-of-type(4) > span` (the fourth `p` of the card) is a hit, and it ranks first
+
+#### Scenario: Second twin paragraph picked
+- **WHEN** the user picks the second `p.product-note` of a card with 24 containers
+- **THEN** the `class` candidate `p.product-note` matching 48 is a miss, and the strict positional candidate `p.product-note:nth-of-type(4)` is a hit and ranks first
+
+#### Scenario: Unique element stays as today
+- **WHEN** the user picks a product title whose `testid` candidate matches once per container
+- **THEN** the `testid` candidate is a hit and the ranking equals the ranking without verification
+
+#### Scenario: Page scoped candidate
+- **WHEN** the user picks the second of two `h2` headings outside the list and a `css` candidate `h2` matches 2
+- **THEN** that candidate is a miss and a candidate whose first match is the picked heading is a hit
 
 ### Requirement: Generalizing item scoped selectors
 When a field is inside an item container, its candidates SHALL be expressed relative to the container element, with positional segments (`:nth-child`, xpath indices) that differ between siblings removed. The cut point SHALL be the container element itself, identified by its position in the snapshot, not by matching the container's selector text against the candidate. A generalized candidate SHALL match exactly one element in every container where the field exists.
