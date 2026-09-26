@@ -201,8 +201,10 @@ With --repick: click the field's new location, then "Use and save"; S skips, Esc
       'after',
       `
 The script takes --var name=value (or WEBSCOOP_VAR_<NAME>), --jsonl, --out,
---pages <1|N|all>, --headless, --headed, and --profile <dir>, prints rows like
-webscoop run, and exits 0, 1, or 3 like it. It tries the stored selector
+--table <name>, --pages <1|N|all>, --headless, --headed, and --profile <dir>,
+prints rows like webscoop run (a recipe with several tables prints one JSON
+object keyed by table name, JSONL rows carry _table, and --out ./dir/ writes
+one file per table), and exits 0, 1, or 3 like it. It tries the stored selector
 candidates in order and nothing more: no fingerprint or model healing, no
 guards, no notifications, no window hiding, no recipe write-back. Re-record
 and export again when the site changes. Needs no display.`,

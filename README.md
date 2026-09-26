@@ -546,7 +546,9 @@ webscoop, for another project, a CI job, or a language you already use. It
 reads the recipe only: no browser, no display, no profile lock. The script
 navigates, replays the steps, extracts rows with the same value conversion,
 walks the pagination with the same limit, stop rules, and dedup, and prints
-rows like `webscoop run` does on a healthy site.
+rows like `webscoop run` does on a healthy site. Recipes with several tables
+export too: the script extracts every table on each page, dedups each item
+table on its own, and drives pagination from the primary table.
 
 Run the TypeScript script with `npx tsx shop.ts` in a directory where the
 `playwright` package is installed (`npm install playwright`, then
@@ -557,8 +559,9 @@ later with Playwright for Python (`pip install playwright`, then
 | Flag | Meaning |
 | ---- | ------- |
 | `--var name=value` | a recipe variable (repeatable); `WEBSCOOP_VAR_<NAME>` (uppercased) works too, `--var` wins, recipe defaults fill the rest |
-| `--jsonl` | one JSON object per line instead of a JSON array |
-| `--out <path>` | rows to a file instead of stdout |
+| `--jsonl` | one JSON object per line instead of a JSON array (rows carry `_table` when several tables share the output) |
+| `--out <path>` | rows to a file instead of stdout; a directory (existing, or ending with `/`) gets one `<table>.json` (or `.jsonl`) per table |
+| `--table <name>` | only this table of a multi-table recipe, as a plain array (or plain JSONL rows) |
 | `--pages <1\|N\|all>` | pages to walk, replacing the recipe limit (`all` stops at 500) |
 | `--headless` / `--headed` | run without or with a browser window (default: headed, or headless when exported with `--headless`) |
 | `--profile <dir>` | keep the browser profile in this directory; without it each run uses a temporary profile removed at exit |

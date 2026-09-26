@@ -213,16 +213,22 @@ describe('summary with tables', () => {
 });
 
 describe('multi-table fences', () => {
-  it('refuses export of a multi-table recipe', async () => {
+  it('exports a two table recipe declaring both tables', async () => {
     const dir = await home();
-    const io = testIo({ env: { WEBSCOOP_HOME: dir } });
-    expect(await main(['export', 'results'], io)).toBe(ExitCode.Error);
-    expect(io.err()).toContain('export does not support multi-table recipes yet');
-    expect(io.out()).toBe('');
+    for (const format of ['ts', 'py']) {
+      const io = testIo({ env: { WEBSCOOP_HOME: dir } });
+      expect(await main(['export', 'results', '--format', format], io)).toBe(ExitCode.Ok);
+      const script = io.out();
+      expect(script).toMatch(format === 'ts' ? /^const TABLES: Table\[\] = \[$/m : /^TABLES = \[$/m);
+      expect(script).toContain('"name": "page"');
+      expect(script).toContain('"name": "products"');
+      expect(io.err()).toBe('');
+    }
   });
 
   it('exports a one entry tables recipe exactly like its shorthand', async () => {
-    const products = { name: 'products', item: { selectors: [css('div.card')] }, fields: [{ ...TITLE, scope: 'item' as const }] };
+    // Named like the shorthand's table: the name is kept in the script, for --table and the --out directory files.
+    const products = { name: 'items', item: { selectors: [css('div.card')] }, fields: [{ ...TITLE, scope: 'item' as const }] };
     const { tables: _tables, ...rest } = results([products]);
     const shorthand: RecipeInput = { ...rest, item: products.item, fields: products.fields };
     const dir = await home([results([products])]);

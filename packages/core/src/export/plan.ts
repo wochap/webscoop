@@ -1,7 +1,7 @@
 import { defaultAttr } from '../convert';
 import { DEFAULT_PAGE_CAP } from '../pagination/types';
 import type { FieldScope, FieldType, PaginationKind, Recipe, SelectorCandidate, StepKind, StepWhen } from '../recipe/schema';
-import { tablesOf } from '../recipe/tables';
+import { primaryTableIndex, tablesOf } from '../recipe/tables';
 import { WAIT_POLL_MS } from '../steps/replay';
 import { templateVariables } from '../template';
 
@@ -86,17 +86,26 @@ export interface PlanTimings {
   growthPollMs: number;
 }
 
+/** One table of the recipe: what the script extracts on every page. */
+export interface PlanTable {
+  name: string;
+  /** Item container; `within` is the list parent, present only when the recipe has one. Null for a table that yields one row per page. */
+  item: { selectors: PlanSelector[]; within?: PlanSelector[]; exclude: PlanSelector[] } | null;
+  fields: PlanField[];
+  /** Name of the dedup key field, or null to dedup by all field values. */
+  key: string | null;
+}
+
 /** A recipe as a language-neutral list of what the exported script does, with every schema default resolved. */
 export interface ExportPlan {
   recipe: string;
   url: string;
   vars: PlanVar[];
   steps: PlanStep[];
-  /** Item container; `within` is the list parent, present only when the recipe has one. */
-  item: { selectors: PlanSelector[]; within?: PlanSelector[]; exclude: PlanSelector[] } | null;
-  fields: PlanField[];
-  /** Name of the dedup key field, or null to dedup by all field values. */
-  key: string | null;
+  /** Every table, in recipe order; the shorthand form is one table named `items`. */
+  tables: PlanTable[];
+  /** Index of the primary table (the first with an item block), which drives item counts and the stop rules; -1 when none has one. */
+  primary: number;
   pagination: PlanPagination;
   timings: PlanTimings;
 }
@@ -121,8 +130,7 @@ function readMode(type: FieldType, attr: string | undefined): ReadMode {
 /** Turn a validated recipe into the plan both renderers share. */
 export function buildPlan(recipe: Recipe): ExportPlan {
   const { pagination } = recipe;
-  // Export renders one table; multi-table recipes are refused before this point.
-  const table = tablesOf(recipe)[0]!;
+  const recipeTables = tablesOf(recipe);
   const pageParam = pagination.kind === 'url' ? (pagination.param ?? null) : null;
 
   // Variables the run needs before the browser opens; the page variable has its own start value.
@@ -155,24 +163,8 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     return { index, kind: step.kind, name: step.label ?? `step:${index}`, when: step.when, optional: step.optional, target, action };
   });
 
-  const fields: PlanField[] = table.fields.map((field) => {
-    const attr = field.attr ?? defaultAttr(field.type);
-    return {
-      name: field.name,
-      type: field.type,
-      scope: field.scope,
-      optional: field.optional,
-      selectors: selectors(field.selectors),
-      read: readMode(field.type, attr),
-      attr: attr ?? null,
-    };
-  });
-
-  return {
-    recipe: recipe.name,
-    url: recipe.url,
-    vars,
-    steps,
+  const tables: PlanTable[] = recipeTables.map((table) => ({
+    name: table.name,
     item: table.item
       ? {
           selectors: selectors(table.item.selectors),
@@ -180,8 +172,28 @@ export function buildPlan(recipe: Recipe): ExportPlan {
           exclude: selectors(table.item.exclude ?? []),
         }
       : null,
-    fields,
+    fields: table.fields.map((field): PlanField => {
+      const attr = field.attr ?? defaultAttr(field.type);
+      return {
+        name: field.name,
+        type: field.type,
+        scope: field.scope,
+        optional: field.optional,
+        selectors: selectors(field.selectors),
+        read: readMode(field.type, attr),
+        attr: attr ?? null,
+      };
+    }),
     key: table.fields.find((f) => f.key)?.name ?? null,
+  }));
+
+  return {
+    recipe: recipe.name,
+    url: recipe.url,
+    vars,
+    steps,
+    tables,
+    primary: primaryTableIndex(recipeTables),
     pagination: {
       kind: pagination.kind,
       param: pageParam ? { name: pageParam.name, start: pageParam.start, step: pageParam.step } : null,

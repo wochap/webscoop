@@ -1,4 +1,4 @@
-// Standalone Playwright script exported from the webscoop recipe "playground-paged".
+// Standalone Playwright script exported from the webscoop recipe "playground-tables".
 // Exported at 2026-01-02T03:04:05.000Z by webscoop 0.0.0-test.
 //
 // It navigates, replays the recipe steps, extracts rows, and paginates like
@@ -1187,7 +1187,7 @@ async function main(argv: readonly string[]): Promise<number> {
 // Recipe
 // ---------------------------------------------------------------------------
 
-const RECIPE_NAME = "playground-paged";
+const RECIPE_NAME = "playground-tables";
 /** Run without a window unless --headed is given. */
 const DEFAULT_HEADLESS = false;
 
@@ -1207,18 +1207,35 @@ const GROWTH_POLL_MS = 200;
 const DEFAULT_PAGE_CAP = 500;
 
 /** Page URL; {name} marks a variable. */
-const URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?paginate={mode}&tier={tier}&page={page}";
+const URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?mixed=1&tier={tier}";
 const VARS: Var[] = [
   { "name": "port", "default": "4777", "required": true },
-  { "name": "tier", "default": "0", "required": true },
-  { "name": "mode", "default": "url", "required": true },
-  { "name": "page", "default": "1", "required": false }
+  { "name": "tier", "default": "0", "required": true }
 ];
 const STEPS: Step[] = [];
 /** Tables in recipe order; the first with an item container drives item counts and the stop rules. */
 const TABLES: Table[] = [
   {
-    "name": "items",
+    "name": "page",
+    "item": null,
+    "fields": [
+      {
+        "name": "heading",
+        "type": "text",
+        "scope": "page",
+        "optional": false,
+        "selectors": [
+          { "strategy": "testid", "value": "category" },
+          { "strategy": "css", "value": "h1.category-heading" }
+        ],
+        "read": "text",
+        "attr": null
+      }
+    ],
+    "key": null
+  },
+  {
+    "name": "products",
     "item": {
       "selectors": [
         { "strategy": "testid", "value": "product-card" },
@@ -1232,23 +1249,7 @@ const TABLES: Table[] = [
         "type": "text",
         "scope": "item",
         "optional": false,
-        "selectors": [
-          { "strategy": "role", "value": "heading" },
-          { "strategy": "css", "value": "h2.product-title" },
-          { "strategy": "xpath", "value": ".//h2" }
-        ],
-        "read": "text",
-        "attr": null
-      },
-      {
-        "name": "price",
-        "type": "number",
-        "scope": "item",
-        "optional": false,
-        "selectors": [
-          { "strategy": "testid", "value": "price" },
-          { "strategy": "css", "value": ".product-price" }
-        ],
+        "selectors": [{ "strategy": "css", "value": "h2.product-title" }],
         "read": "text",
         "attr": null
       },
@@ -1257,57 +1258,49 @@ const TABLES: Table[] = [
         "type": "url",
         "scope": "item",
         "optional": false,
-        "selectors": [
-          { "strategy": "css", "value": "a.product-link" },
-          { "strategy": "role", "value": "link|View details" }
-        ],
+        "selectors": [{ "strategy": "css", "value": "a.product-link" }],
         "read": "attr",
         "attr": "href"
-      },
+      }
+    ],
+    "key": "url"
+  },
+  {
+    "name": "questions",
+    "item": {
+      "selectors": [{ "strategy": "css", "value": "article.mixed-questions" }],
+      "exclude": []
+    },
+    "fields": [
       {
-        "name": "image",
-        "type": "image",
+        "name": "title",
+        "type": "text",
         "scope": "item",
         "optional": false,
-        "selectors": [{ "strategy": "css", "value": "img.product-image" }],
-        "read": "attr",
-        "attr": "src"
-      },
-      {
-        "name": "rating",
-        "type": "number",
-        "scope": "item",
-        "optional": false,
-        "selectors": [
-          { "strategy": "testid", "value": "rating" },
-          { "strategy": "css", "value": ".product-rating" }
-        ],
+        "selectors": [{ "strategy": "css", "value": "h3.questions-title" }],
         "read": "text",
         "attr": null
       },
       {
-        "name": "category",
+        "name": "first_option",
         "type": "text",
-        "scope": "page",
+        "scope": "item",
         "optional": false,
-        "selectors": [
-          { "strategy": "testid", "value": "category" },
-          { "strategy": "css", "value": "h1.category-heading" }
-        ],
+        "selectors": [{ "strategy": "css", "value": "button.questions-option" }],
         "read": "text",
         "attr": null
       }
     ],
-    "key": "url"
+    "key": null
   }
 ];
 const PAGINATION: Pagination = {
-  "kind": "url",
-  "param": { "name": "page", "start": 1, "step": 1 },
-  "paramInTemplate": true,
+  "kind": "none",
+  "param": null,
+  "paramInTemplate": false,
   "target": null,
-  "limit": "all",
-  "stopRules": ["no-new-items", "target-missing"],
+  "limit": 1,
+  "stopRules": [],
   "delayMs": 0
 };
 

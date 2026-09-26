@@ -1,6 +1,9 @@
 import { existsSync } from 'node:fs';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { exportAndRun, hasPythonPlaywright, PYTHON, type ExportFormat } from './export-fixture';
-import { expect, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, TABLES_RECIPE, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'webscoop run, the reference for the rows, needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -113,6 +116,29 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       expect(none.code, none.stderr).toBe(3);
       expect(none.stdout).toBe('');
       expect(none.stderr).toMatch(/required field url matched no element/);
+    });
+
+    test('the three table recipe on the mixed catalog emits every table like webscoop run --table', async ({ scoop }) => {
+      await scoop.writeRecipe(referenceRecipe(scoop.playground.port, TABLES_RECIPE));
+      const all = await exportAndRun(scoop, 'playground-tables', format);
+      expect(all.code, all.stderr).toBe(0);
+      const tables = JSON.parse(all.stdout) as Record<string, unknown[]>;
+      expect(Object.keys(tables)).toEqual(['page', 'products', 'questions']);
+      expect(tables.page).toHaveLength(1);
+      expect(tables.products).toHaveLength(24);
+      expect(tables.questions).toHaveLength(6);
+      for (const name of Object.keys(tables)) expect(tables[name], name).toEqual(await runRows(scoop, 'playground-tables', ['--table', name]));
+
+      const dir = await mkdtemp(join(tmpdir(), 'ws-export-tables-'));
+      try {
+        const files = await exportAndRun(scoop, 'playground-tables', format, ['--out', `${dir}/`]);
+        expect(files.code, files.stderr).toBe(0);
+        expect(files.stdout).toBe('');
+        expect((await readdir(dir)).sort()).toEqual(['page.json', 'products.json', 'questions.json']);
+        for (const name of Object.keys(tables)) expect(JSON.parse(await readFile(join(dir, `${name}.json`), 'utf8')), name).toEqual(tables[name]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
 
     test('--jsonl prints one JSON object per row and nothing else', async ({ scoop }) => {

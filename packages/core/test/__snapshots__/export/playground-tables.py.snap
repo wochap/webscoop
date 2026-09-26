@@ -1,4 +1,4 @@
-# Standalone Playwright script exported from the webscoop recipe "playground-positional".
+# Standalone Playwright script exported from the webscoop recipe "playground-tables".
 # Exported at 2026-01-02T03:04:05.000Z by webscoop 0.0.0-test.
 #
 # It navigates, replays the recipe steps, extracts rows, and paginates like
@@ -1128,7 +1128,7 @@ def main(argv):
 # Recipe
 # ---------------------------------------------------------------------------
 
-RECIPE_NAME = "playground-positional"
+RECIPE_NAME = "playground-tables"
 # Run without a window unless --headed is given.
 DEFAULT_HEADLESS = False
 
@@ -1148,7 +1148,7 @@ GROWTH_POLL_MS = 200
 DEFAULT_PAGE_CAP = 500
 
 # Page URL; {name} marks a variable.
-URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?tier={tier}"
+URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?mixed=1&tier={tier}"
 VARS = [
     {"name": "port", "default": "4777", "required": True},
     {"name": "tier", "default": "0", "required": True},
@@ -1157,24 +1157,40 @@ STEPS = []
 # Tables in recipe order; the first with an item container drives item counts and the stop rules.
 TABLES = [
     {
-        "name": "items",
-        "item": {"selectors": [{"strategy": "xpath", "value": "//ul/li/article"}], "exclude": []},
+        "name": "page",
+        "item": None,
+        "fields": [
+            {
+                "name": "heading",
+                "type": "text",
+                "scope": "page",
+                "optional": False,
+                "selectors": [
+                    {"strategy": "testid", "value": "category"},
+                    {"strategy": "css", "value": "h1.category-heading"},
+                ],
+                "read": "text",
+                "attr": None,
+            },
+        ],
+        "key": None,
+    },
+    {
+        "name": "products",
+        "item": {
+            "selectors": [
+                {"strategy": "testid", "value": "product-card"},
+                {"strategy": "css", "value": "article.product-card"},
+            ],
+            "exclude": [],
+        },
         "fields": [
             {
                 "name": "title",
                 "type": "text",
                 "scope": "item",
                 "optional": False,
-                "selectors": [{"strategy": "xpath", "value": "./h2[1]"}],
-                "read": "text",
-                "attr": None,
-            },
-            {
-                "name": "price",
-                "type": "number",
-                "scope": "item",
-                "optional": False,
-                "selectors": [{"strategy": "xpath", "value": "./p[1]"}],
+                "selectors": [{"strategy": "css", "value": "h2.product-title"}],
                 "read": "text",
                 "attr": None,
             },
@@ -1183,12 +1199,40 @@ TABLES = [
                 "type": "url",
                 "scope": "item",
                 "optional": False,
-                "selectors": [{"strategy": "xpath", "value": "./a[1]"}],
+                "selectors": [{"strategy": "css", "value": "a.product-link"}],
                 "read": "attr",
                 "attr": "href",
             },
         ],
         "key": "url",
+    },
+    {
+        "name": "questions",
+        "item": {
+            "selectors": [{"strategy": "css", "value": "article.mixed-questions"}],
+            "exclude": [],
+        },
+        "fields": [
+            {
+                "name": "title",
+                "type": "text",
+                "scope": "item",
+                "optional": False,
+                "selectors": [{"strategy": "css", "value": "h3.questions-title"}],
+                "read": "text",
+                "attr": None,
+            },
+            {
+                "name": "first_option",
+                "type": "text",
+                "scope": "item",
+                "optional": False,
+                "selectors": [{"strategy": "css", "value": "button.questions-option"}],
+                "read": "text",
+                "attr": None,
+            },
+        ],
+        "key": None,
     },
 ]
 PAGINATION = {

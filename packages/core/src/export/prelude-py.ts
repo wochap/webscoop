@@ -85,7 +85,10 @@ def parse_args(argv):
     parser.add_argument("--var", action="append", default=[], metavar="NAME=VALUE",
                         help="set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too")
     parser.add_argument("--jsonl", action="store_true", help="print one JSON object per line instead of a JSON array")
-    parser.add_argument("--out", metavar="PATH", help="write the rows to a file instead of stdout")
+    parser.add_argument("--out", metavar="PATH",
+                        help="write the rows to a file instead of stdout; a directory (existing, or ending with a separator)"
+                        " gets one <table>.json or <table>.jsonl per table")
+    parser.add_argument("--table", metavar="NAME", help="print only this table, as a plain array (or plain JSONL rows)")
     parser.add_argument("--pages", type=parse_pages, metavar="1|N|all", help="pages to walk, replacing the recipe limit")
     parser.add_argument("--headless", dest="headless", action="store_true", default=DEFAULT_HEADLESS,
                         help="run the browser without a window")
@@ -99,6 +102,10 @@ def parse_args(argv):
             raise Failure('invalid --var "' + pair + '", expected name=value', EXIT_ERROR)
         given[pair[:at]] = pair[at + 1:]
     opts.vars = given
+    names = [table["name"] for table in TABLES]
+    if opts.table is not None and opts.table not in names:
+        raise Failure('recipe "' + RECIPE_NAME + '" has no table "' + opts.table + '" (tables: ' + ", ".join(names) + ")", EXIT_ERROR)
+    opts.out_dir = bool(opts.out) and (opts.out.endswith("/") or opts.out.endswith(os.sep) or os.path.isdir(opts.out))
     return opts
 
 
@@ -479,10 +486,9 @@ def resolve_first(root, selectors):
     return None
 
 
-def kept_containers(page, found):
+def kept_containers(page, found, exclude):
     """Item containers the candidates found, minus those an exclusion candidate matches anywhere in the document."""
     containers = [found.locator.nth(i) for i in range(found.count)]
-    exclude = ITEM["exclude"] if ITEM else []
     if not exclude:
         return containers
     excluded = []
@@ -606,35 +612,43 @@ def settle_selectors(selectors, scopes):
     return None
 
 
-def extract_page(page, page_number, page_url, resolved, from_index):
+def primary_index():
+    """Index of the primary table: the first with an item container; it drives item counts and the stop rules. -1 when none has one."""
+    return next((index for index, table in enumerate(TABLES) if table["item"]), -1)
+
+
+def extract_table(page, table, page_number, page_url, resolved, from_index):
     """
-    Every row of the current page, from item container from_index on (a page
-    that grew). Returns a dict: rows kept after dropping those with a missing
-    required field, container_count and first_row before dropping, the
-    dropped_fields that caused a drop, missing_required, warnings, and the
-    resolved selectors.
+    Every row of one table on the current page, from item container
+    from_index on (a page that grew). Returns a dict: the table name, rows
+    kept after dropping those with a missing required field, container_count
+    and first_row before dropping, the dropped_fields that caused a drop,
+    missing_required, warnings, and the resolved selectors later pages reuse
+    (None for an item table that matched nothing, so a later page resolves it
+    afresh).
     """
+    item = table["item"]
     # List parent, then the item container inside it.
     containers = [None]
     item_selectors = None
     within_selectors = None
     within_missing = False
-    if ITEM:
-        root, within_selectors, within_missing = list_parent(page, resolved)
-        selectors = resolved["item"] if resolved else ITEM["selectors"]
+    if item:
+        root, within_selectors, within_missing = list_parent(page, item, resolved)
+        selectors = resolved["item"] if resolved else item["selectors"]
         found = resolve_first(root, selectors) if selectors and not within_missing else None
-        containers = kept_containers(page, found) if found else []
-        item_selectors = resolved["item"] if resolved else (ITEM["selectors"][found.index:] if found else None)
+        containers = kept_containers(page, found, item["exclude"]) if found else []
+        item_selectors = resolved["item"] if resolved else (item["selectors"][found.index:] if found else None)
     real = [c for c in containers if c is not None]
 
     # Fields: settle each once, then read every row.
     states = []
-    for index, field in enumerate(FIELDS):
+    for index, field in enumerate(table["fields"]):
         if resolved:
             selectors = resolved["fields"][index]
         elif field["scope"] == "page":
             selectors = settle_selectors(field["selectors"], [page])
-        elif ITEM and not real:
+        elif item and not real:
             selectors = None
         else:
             selectors = settle_selectors(field["selectors"], real or [page])
@@ -665,12 +679,13 @@ def extract_page(page, page_number, page_url, resolved, from_index):
         if not any(index in s["missing_rows"] for s in required):
             rows.append({**row, "_index": len(rows)})
 
+    prefix = 'table "' + table["name"] + '": ' if len(TABLES) > 1 else ""
     missing_required = []
     warnings = []
     dropped_fields = []
     if within_missing:
         missing_required.append("within")
-    if ITEM and container_count == 0:
+    if item and container_count == 0:
         missing_required.append("item")
     for state in required:
         field, missing_rows = state["field"], state["missing_rows"]
@@ -682,27 +697,45 @@ def extract_page(page, page_number, page_url, resolved, from_index):
             missing_required.append(field["name"])
         if not missing and n:
             warnings.append(
-                "dropped " + str(n) + " row" + ("s" if n > 1 else "") + " on page " + str(page_number)
+                prefix + "dropped " + str(n) + " row" + ("s" if n > 1 else "") + " on page " + str(page_number)
                 + ': required field "' + field["name"] + '" missing on row' + ("s " if n > 1 else " ")
                 + ", ".join(str(i) for i in missing_rows)
             )
+    settled = None if item and container_count == 0 and not resolved else {
+        "item": item_selectors,
+        "within": within_selectors,
+        "fields": [s["selectors"] for s in states],
+    }
     return {
+        "name": table["name"],
         "rows": rows,
         "container_count": container_count,
         "first_row": extracted[0] if extracted else None,
         "dropped_fields": dropped_fields,
         "missing_required": missing_required,
         "warnings": warnings,
-        "resolved": {"item": item_selectors, "within": within_selectors, "fields": [s["selectors"] for s in states]},
+        "resolved": settled,
     }
 
 
-def list_parent(page, resolved):
+def extract_page(page, page_number, page_url, resolved, from_index):
+    """
+    Every table on the current page, in recipe order. from_index applies to
+    the primary table only; the others are read in full and left to dedup.
+    """
+    primary = primary_index()
+    return [
+        extract_table(page, table, page_number, page_url, resolved[index] if resolved else None, from_index if index == primary else 0)
+        for index, table in enumerate(TABLES)
+    ]
+
+
+def list_parent(page, item, resolved):
     """
     Where item containers are searched: inside the list parent's first match,
     else the page. Returns (root, settled selectors, missing).
     """
-    within = ITEM.get("within") if ITEM else None
+    within = item.get("within")
     if not within:
         return page, None, False
     selectors = resolved["within"] if resolved else within
@@ -722,14 +755,15 @@ def to_json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def key_of(row):
-    """A row's identity: the key field's value, or all field values in recipe order."""
-    return to_json(row[KEY_FIELD] if KEY_FIELD is not None else [row[f["name"]] for f in FIELDS])
+def key_of(table, row):
+    """A row's identity: the table's key field value, or all of its field values in recipe order. Keys never cross tables."""
+    key = table["key"]
+    return to_json(row[key] if key is not None else [row[f["name"]] for f in table["fields"]])
 
 
-def dedup_rows(rows, page_number, seen):
-    """Rows not seen on an earlier page (nor earlier on this one); page 1 keeps every row."""
-    keys = [key_of(row) for row in rows]
+def dedup_rows(table, rows, page_number, seen):
+    """Rows of one table not seen on an earlier page (nor earlier on this one); page 1 keeps every row."""
+    keys = [key_of(table, row) for row in rows]
     kept = []
     fresh = set()
     for row, key in zip(rows, keys):
@@ -776,19 +810,25 @@ class Pager:
         self.start = start
         # Selectors the pagination target settled on the first time it was found.
         self.target_selectors = None
-        # The selectors page 1 settled on, once known.
+        # Per table, what the first page it matched on settled; None before page 1 is extracted.
         self.resolved = None
 
     def count(self):
-        """Item containers on the page now, with page 1's selectors."""
-        if not ITEM or not self.resolved or not self.resolved["item"]:
+        """Primary table item containers on the page now, with the selectors it settled on."""
+        primary = primary_index()
+        # Without an item table every page counts as one item.
+        if primary < 0:
+            return 1
+        item = TABLES[primary]["item"]
+        settled = self.resolved[primary] if self.resolved else None
+        if not settled or not settled["item"]:
             return 0
         page = self.session.page
-        root, _, missing = list_parent(page, self.resolved)
+        root, _, missing = list_parent(page, item, settled)
         if missing:
             return 0
-        found = resolve_first(root, self.resolved["item"])
-        return len(kept_containers(page, found)) if found else 0
+        found = resolve_first(root, settled["item"])
+        return len(kept_containers(page, found, item["exclude"])) if found else 0
 
     def usable_target(self):
         """The pagination target, or None when it is missing or disabled."""
@@ -853,37 +893,57 @@ class Pager:
 
 
 class RowSink:
-    """Where rows go: stdout or --out, a JSON array at the end or one JSON object per line as pages complete."""
+    """
+    Where rows go: stdout, --out, or one file per table; a JSON document at the
+    end or one JSON object per line as pages complete. One table (or --table,
+    or a directory) keeps the single table shapes: a JSON array, or plain JSONL
+    rows. Several tables to one target give a JSON object keyed by table name,
+    or JSONL rows carrying _table.
+    """
 
-    def __init__(self, jsonl, out):
+    def __init__(self, jsonl, out, out_dir, only):
         self.jsonl = jsonl
         self.out = out
-        self.rows = []
-        self.opened = False
+        self.out_dir = out_dir
+        # Tables written, in recipe order.
+        self.selected = [only] if only is not None else [table["name"] for table in TABLES]
+        # Several tables share one target.
+        self.combined = not out_dir and len(self.selected) > 1
+        self.buffered = {}
+        self.opened = set()
 
-    def write(self, chunk):
-        if not self.out:
+    def write(self, table, chunk):
+        path = os.path.join(self.out, table + (".jsonl" if self.jsonl else ".json")) if self.out and self.out_dir else self.out
+        if not path:
             sys.stdout.write(chunk)
             sys.stdout.flush()
             return
-        mode = "a" if self.opened else "w"
-        if not self.opened:
-            os.makedirs(os.path.dirname(self.out) or ".", exist_ok=True)
-            self.opened = True
-        with open(self.out, mode, encoding="utf-8") as file:
+        mode = "a" if path in self.opened else "w"
+        if path not in self.opened:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            self.opened.add(path)
+        with open(path, mode, encoding="utf-8") as file:
             file.write(chunk)
 
-    def row(self, row):
+    def row(self, table, row):
+        if table not in self.selected:
+            return
         if self.jsonl:
-            self.write(to_json(row) + "\n")
+            self.write(table, to_json({"_table": table, **row} if self.combined else row) + "\n")
         else:
-            self.rows.append(row)
+            self.buffered.setdefault(table, []).append(row)
 
     def finish(self):
-        if not self.jsonl:
-            self.write(json.dumps(self.rows, ensure_ascii=False, indent=2) + "\n")
+        if self.jsonl:
+            # Files exist even for a table without rows.
+            for table in self.selected:
+                self.write(table, "")
+        elif self.combined:
+            document = {table: self.buffered.get(table, []) for table in self.selected}
+            self.write("", json.dumps(document, ensure_ascii=False, indent=2) + "\n")
         else:
-            self.write("")
+            for table in self.selected:
+                self.write(table, json.dumps(self.buffered.get(table, []), ensure_ascii=False, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -937,9 +997,11 @@ def scrape(opts):
 def run_pages(session, opts, values, start, limit):
     page = session.page
     first_url = url_for(page, values, start, 1)
-    sink = RowSink(opts.jsonl, os.path.abspath(opts.out) if opts.out else None)
+    sink = RowSink(opts.jsonl, os.path.abspath(opts.out) if opts.out else None, opts.out_dir, opts.table)
     step_cache = {}
-    seen = set()
+    primary = primary_index()
+    # Keys seen so far, per table; tables without an item container are never deduplicated.
+    seen = [set() for _ in TABLES]
     pager = Pager(session, values, start)
 
     log("running " + RECIPE_NAME + ": " + first_url)
@@ -955,38 +1017,66 @@ def run_pages(session, opts, values, start, limit):
         if navigated:
             replay_steps(session, page_number, values, step_cache)
             url = page.url
-        extraction = extract_page(page, page_number, url, pager.resolved, from_index)
-        rows = extraction["rows"]
-        missing_required = extraction["missing_required"]
-        names = [n for n in missing_required if n not in ("item", "within")] if pager.resolved else missing_required
-        if names:
-            if "within" in names:
-                message = "the list parent (item.within) matched no element, so the item container is unresolved"
-            elif "item" in names:
-                message = "the item container matched no element"
+        extractions = extract_page(page, page_number, url, pager.resolved, from_index)
+        first_page = pager.resolved is None
+        settled = pager.resolved or [None for _ in TABLES]
+        for index, found in enumerate(extractions):
+            at = 'table "' + found["name"] + '": ' if len(TABLES) > 1 else ""
+            names = found["missing_required"]
+            if first_page and index != primary and ("item" in names or "within" in names):
+                # A secondary list absent from the page is normal: no rows for it, not a failure.
+                log("warning: " + at + "the item container matched no element on page " + str(page_number) + "; the table yields no rows")
+                names = [n for n in names if n not in ("item", "within")]
+            if first_page:
+                if names:
+                    if "within" in names:
+                        message = "the list parent (item.within) matched no element, so the item container is unresolved"
+                    elif "item" in names:
+                        message = "the item container matched no element"
+                    else:
+                        message = "required field" + ("s " if len(names) > 1 else " ") + ", ".join(names) + " matched no element"
+                    raise Failure(at + message, EXIT_UNRESOLVED)
+                if found["container_count"] and not found["rows"]:
+                    fields = found["dropped_fields"]
+                    raise Failure(at + "every row on page " + str(page_number) + " was dropped for missing required field"
+                                  + ("s " if len(fields) > 1 else " ") + ", ".join(fields), EXIT_UNRESOLVED)
             else:
-                message = ("required field" + ("s " if len(names) > 1 else " ") + ", ".join(names) + " matched no element"
-                           + (" on page " + str(page_number) if pager.resolved else ""))
-            raise Failure(message, EXIT_UNRESOLVED)
-        if pager.resolved is None and extraction["container_count"] and not rows:
-            fields = extraction["dropped_fields"]
-            raise Failure("every row on page " + str(page_number) + " was dropped for missing required field"
-                          + ("s " if len(fields) > 1 else " ") + ", ".join(fields), EXIT_UNRESOLVED)
-        if pager.resolved is None:
-            pager.resolved = extraction["resolved"]
-        for warning in extraction["warnings"]:
-            log("warning: " + warning)
+                # A later page with no items is the end of the list, not a failure; a field gone from every item is.
+                gone = [n for n in names if n not in ("item", "within")]
+                if gone:
+                    raise Failure(at + "required field" + ("s " if len(gone) > 1 else " ") + ", ".join(gone)
+                                  + " matched no element on page " + str(page_number), EXIT_UNRESOLVED)
+            if settled[index] is None:
+                settled[index] = found["resolved"]
+            for warning in found["warnings"]:
+                log("warning: " + warning)
+        pager.resolved = settled
 
-        kept, keys = dedup_rows(rows, page_number, seen)
-        first_key = key_of(extraction["first_row"]) if extraction["first_row"] is not None else None
-        summary = {"page": page_number, "url": url, "first_key": first_key, "raw": extraction["container_count"], "kept": len(kept)}
+        fresh = [
+            dedup_rows(TABLES[index], found["rows"], page_number, seen[index]) if TABLES[index]["item"] else (found["rows"], [])
+            for index, found in enumerate(extractions)
+        ]
+        if primary >= 0:
+            lead = extractions[primary]
+            summary = {
+                "page": page_number,
+                "url": url,
+                "first_key": key_of(TABLES[primary], lead["first_row"]) if lead["first_row"] is not None else None,
+                "raw": lead["container_count"],
+                "kept": len(fresh[primary][0]),
+            }
+        else:
+            # Without an item table every page counts as one item, so only the limit, the cap, or a missing target stop the run.
+            summary = {"page": page_number, "url": url, "first_key": None, "raw": 1, "kept": 1}
         reason, discard = evaluate_stop(summary, previous, limit)
         if not discard:
-            seen.update(keys)
-            for index, row in enumerate(kept):
-                row["_index"] = index
-                sink.row(row)
-            row_count += len(kept)
+            for index, found in enumerate(extractions):
+                kept, keys = fresh[index]
+                seen[index].update(keys)
+                for at, row in enumerate(kept):
+                    row["_index"] = at
+                    sink.row(found["name"], row)
+                row_count += len(kept)
             page_count = page_number
         if reason:
             break

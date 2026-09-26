@@ -14,9 +14,9 @@
 // When the site changes, re-record the recipe with webscoop and export it
 // again rather than editing selectors here; the recipe is the source of truth.
 
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { chromium, errors, type Locator, type Page } from 'playwright';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +65,14 @@ interface Field {
   read: 'attr' | 'html' | 'text';
   attr: string | null;
 }
+interface Table {
+  name: string;
+  /** Item container, or null for a table that yields one row per page. */
+  item: Item | null;
+  fields: Field[];
+  /** Field that identifies a row across pages, or null to compare all field values. */
+  key: string | null;
+}
 interface Pagination {
   kind: 'none' | 'url' | 'next' | 'more' | 'scroll';
   param: { name: string; start: number; step: number } | null;
@@ -110,6 +118,10 @@ interface Options {
   vars: Record<string, string>;
   jsonl: boolean;
   out: string | null;
+  /** --out names a directory: one file per table goes into it. */
+  outDir: boolean;
+  /** --table: only this table, in the single table shapes. */
+  table: string | null;
   pages: number | 'all' | null;
   headless: boolean;
   profile: string | null;
@@ -121,7 +133,9 @@ const USAGE = [
   'options:',
   '  --var <name=value>  set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too',
   '  --jsonl             print one JSON object per line instead of a JSON array',
-  '  --out <path>        write the rows to a file instead of stdout',
+  '  --out <path>        write the rows to a file instead of stdout; a directory (existing, or ending',
+  '                      with a separator) gets one <table>.json or <table>.jsonl per table',
+  '  --table <name>      print only this table, as a plain array (or plain JSONL rows)',
   '  --pages <1|N|all>   pages to walk, replacing the recipe limit',
   '  --headless          run the browser without a window',
   '  --headed            show the browser window',
@@ -140,7 +154,7 @@ function parsePages(value: string): number | 'all' {
 }
 
 function parseArgs(argv: readonly string[]): Options {
-  const opts: Options = { vars: {}, jsonl: false, out: null, pages: null, headless: DEFAULT_HEADLESS, profile: null };
+  const opts: Options = { vars: {}, jsonl: false, out: null, outDir: false, table: null, pages: null, headless: DEFAULT_HEADLESS, profile: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
@@ -163,8 +177,14 @@ function parseArgs(argv: readonly string[]): Options {
       case '--jsonl':
         opts.jsonl = true;
         break;
-      case '--out':
-        opts.out = resolve(value());
+      case '--out': {
+        const out = value();
+        opts.out = resolve(out);
+        opts.outDir = out.endsWith('/') || out.endsWith(sep) || isDirectory(opts.out);
+        break;
+      }
+      case '--table':
+        opts.table = value();
         break;
       case '--pages':
         opts.pages = parsePages(value());
@@ -185,7 +205,18 @@ function parseArgs(argv: readonly string[]): Options {
         throw new Failure('unknown option "' + arg + '"\n' + USAGE, EXIT_ERROR);
     }
   }
+  if (opts.table !== null && !TABLES.some((t) => t.name === opts.table)) {
+    throw new Failure('recipe "' + RECIPE_NAME + '" has no table "' + opts.table + '" (tables: ' + TABLES.map((t) => t.name).join(', ') + ')', EXIT_ERROR);
+  }
   return opts;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -492,9 +523,8 @@ async function resolveFirst(root: Root, selectors: readonly Selector[]): Promise
 }
 
 /** Item containers the candidates found, minus those an exclusion candidate matches anywhere in the document. */
-async function keptContainers(page: Page, found: Found): Promise<Locator[]> {
+async function keptContainers(page: Page, found: Found, exclude: readonly Selector[]): Promise<Locator[]> {
   const all = Array.from({ length: found.count }, (_, i) => found.locator.nth(i));
-  const exclude = ITEM?.exclude ?? [];
   if (exclude.length === 0) return all;
   const excluded = [];
   for (const selector of exclude) excluded.push(...(await locate(page, selector).elementHandles()));
@@ -597,7 +627,7 @@ async function replaySteps(session: Session, page: number, values: Record<string
 // Extraction and the missing field policy (core extract.ts)
 // ---------------------------------------------------------------------------
 
-/** The selectors page 1 settled on; later pages use them as they are. */
+/** The selectors a table settled on the first page it matched; later pages use them as they are. */
 interface Resolved {
   item: Selector[] | null;
   within: Selector[] | null;
@@ -605,6 +635,7 @@ interface Resolved {
 }
 
 interface Extraction {
+  name: string;
   /** Rows kept after dropping those with a missing required field. */
   rows: Row[];
   /** Containers extracted, before dropping. */
@@ -616,7 +647,13 @@ interface Extraction {
   /** Required fields that matched on no row, "item" when no container matched, and "within" when the list parent did not. */
   missingRequired: string[];
   warnings: string[];
-  resolved: Resolved;
+  /** What later pages reuse; null for an item table that matched nothing, so a later page resolves it afresh. */
+  resolved: Resolved | null;
+}
+
+/** Index of the primary table: the first with an item container; it drives item counts and the stop rules. -1 when none has one. */
+function primaryIndex(): number {
+  return TABLES.findIndex((t) => t.item !== null);
 }
 
 async function readValue(field: Field, element: Locator, pageUrl: string): Promise<Value> {
@@ -637,21 +674,29 @@ async function settleSelectors(selectors: readonly Selector[], scopes: readonly 
   return null;
 }
 
-/** Every row of the current page, from item container fromIndex on (a page that grew). */
-async function extractPage(page: Page, pageNumber: number, pageUrl: string, resolved: Resolved | null, fromIndex: number): Promise<Extraction> {
+/** Every row of one table on the current page, from item container fromIndex on (a page that grew). */
+async function extractTable(
+  page: Page,
+  table: Table,
+  pageNumber: number,
+  pageUrl: string,
+  resolved: Resolved | null,
+  fromIndex: number,
+): Promise<Extraction> {
+  const { item } = table;
   // List parent, then the item container inside it.
   let containers: (Locator | undefined)[] = [undefined];
   let itemSelectors: Selector[] | null = null;
   let withinSelectors: Selector[] | null = null;
   let withinMissing = false;
-  if (ITEM) {
-    const parent = await listParent(page, resolved);
+  if (item) {
+    const parent = await listParent(page, item, resolved);
     withinSelectors = parent.selectors;
     withinMissing = parent.missing;
-    const selectors = resolved ? resolved.item : ITEM.selectors;
+    const selectors = resolved ? resolved.item : item.selectors;
     const found = selectors && !withinMissing ? await resolveFirst(parent.root, selectors) : null;
-    containers = found ? await keptContainers(page, found) : [];
-    itemSelectors = resolved ? resolved.item : found ? ITEM.selectors.slice(found.index) : null;
+    containers = found ? await keptContainers(page, found, item.exclude) : [];
+    itemSelectors = resolved ? resolved.item : found ? item.selectors.slice(found.index) : null;
   }
   const real = containers.filter((c): c is Locator => c !== undefined);
 
@@ -663,11 +708,11 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
     missingRows: number[];
   }
   const states: State[] = [];
-  for (const [index, field] of FIELDS.entries()) {
+  for (const [index, field] of table.fields.entries()) {
     let selectors: Selector[] | null;
     if (resolved) selectors = resolved.fields[index] ?? null;
     else if (field.scope === 'page') selectors = await settleSelectors(field.selectors, [page]);
-    else if (ITEM && real.length === 0) selectors = null;
+    else if (item && real.length === 0) selectors = null;
     else selectors = await settleSelectors(field.selectors, real.length > 0 ? real : [page]);
     const state: State = { field, selectors, missingRows: [] };
     if (field.scope === 'page') {
@@ -700,54 +745,71 @@ async function extractPage(page: Page, pageNumber: number, pageUrl: string, reso
     if (!required.some((s) => s.missingRows.includes(index))) rows.push({ ...row, _index: rows.length });
   }
 
+  const prefix = TABLES.length > 1 ? 'table "' + table.name + '": ' : '';
   const missingRequired: string[] = [];
   const warnings: string[] = [];
   const droppedFields: string[] = [];
   if (withinMissing) missingRequired.push('within');
-  if (ITEM && containerCount === 0) missingRequired.push('item');
+  if (item && containerCount === 0) missingRequired.push('item');
   for (const { field, missingRows } of required) {
     const n = missingRows.length;
     if (n > 0) droppedFields.push(field.name);
     const missing = containerCount === 0 || n === containerCount;
     if (missing && containerCount > 0) missingRequired.push(field.name);
     if (!missing && n > 0) {
-      warnings.push(
-        'dropped ' + n + ' row' + (n > 1 ? 's' : '') + ' on page ' + pageNumber + ': required field "' + field.name + '" missing on row' + (n > 1 ? 's ' : ' ') + missingRows.join(', '),
-      );
+      const rowsText = 'row' + (n > 1 ? 's ' : ' ') + missingRows.join(', ');
+      warnings.push(prefix + 'dropped ' + n + ' row' + (n > 1 ? 's' : '') + ' on page ' + pageNumber + ': required field "' + field.name + '" missing on ' + rowsText);
     }
   }
   return {
+    name: table.name,
     rows,
     containerCount,
     firstRow: extracted[0] ?? null,
     droppedFields,
     missingRequired,
     warnings,
-    resolved: { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) },
+    resolved: item && containerCount === 0 && !resolved ? null : { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) },
   };
 }
 
+/** Every table on the current page, in recipe order; fromIndex applies to the primary table only, the others are read in full and left to dedup. */
+async function extractPage(
+  page: Page,
+  pageNumber: number,
+  pageUrl: string,
+  resolved: readonly (Resolved | null)[] | null,
+  fromIndex: number,
+): Promise<Extraction[]> {
+  const primary = primaryIndex();
+  const out: Extraction[] = [];
+  for (const [index, table] of TABLES.entries()) {
+    out.push(await extractTable(page, table, pageNumber, pageUrl, resolved?.[index] ?? null, index === primary ? fromIndex : 0));
+  }
+  return out;
+}
+
 /** Where item containers are searched: inside the list parent's first match, else the page. */
-async function listParent(page: Page, resolved: Resolved | null): Promise<{ root: Root; selectors: Selector[] | null; missing: boolean }> {
-  if (!ITEM?.within) return { root: page, selectors: null, missing: false };
-  const selectors = resolved ? resolved.within : ITEM.within;
+async function listParent(page: Page, item: Item, resolved: Resolved | null): Promise<{ root: Root; selectors: Selector[] | null; missing: boolean }> {
+  if (!item.within) return { root: page, selectors: null, missing: false };
+  const selectors = resolved ? resolved.within : item.within;
   const found = selectors ? await resolveFirst(page, selectors) : null;
   if (!found) return { root: page, selectors: null, missing: true };
-  return { root: found.locator.nth(0), selectors: resolved ? resolved.within : ITEM.within.slice(found.index), missing: false };
+  return { root: found.locator.nth(0), selectors: resolved ? resolved.within : item.within.slice(found.index), missing: false };
 }
 
 // ---------------------------------------------------------------------------
 // Dedup and stop rules (core pagination/dedup.ts)
 // ---------------------------------------------------------------------------
 
-/** A row's identity: the key field's value, or all field values in recipe order. */
-function keyOf(row: Row): string {
-  return JSON.stringify(KEY_FIELD !== null ? row[KEY_FIELD] : FIELDS.map((f) => row[f.name]));
+/** A row's identity: the table's key field value, or all of its field values in recipe order. Keys never cross tables. */
+function keyOf(table: Table, row: Row): string {
+  return JSON.stringify(table.key !== null ? row[table.key] : table.fields.map((f) => row[f.name]));
 }
 
-/** Rows not seen on an earlier page (nor earlier on this one); page 1 keeps every row. */
-function dedupRows(rows: readonly Row[], page: number, seen: ReadonlySet<string>): { kept: Row[]; keys: string[] } {
-  const keys = rows.map(keyOf);
+/** Rows of one table not seen on an earlier page (nor earlier on this one); page 1 keeps every row. */
+function dedupRows(table: Table, rows: readonly Row[], page: number, seen: ReadonlySet<string>): { kept: Row[]; keys: string[] } {
+  const keys = rows.map((row) => keyOf(table, row));
   const kept: Row[] = [];
   const fresh = new Set<string>();
   rows.forEach((row, i) => {
@@ -800,7 +862,7 @@ interface Pager {
   start: number;
   /** Selectors the pagination target settled on the first time it was found. */
   targetSelectors: Selector[] | null;
-  /** Item containers on the page now, with page 1's selectors. */
+  /** Primary table item containers on the page now, with the selectors it settled on. */
   count(): Promise<number>;
 }
 
@@ -875,37 +937,64 @@ async function nextPage(pager: Pager, page: number): Promise<Advance> {
 // Output
 // ---------------------------------------------------------------------------
 
-/** Where rows go: stdout or --out, a JSON array at the end or one JSON object per line as pages complete. */
+/**
+ * Where rows go: stdout, --out, or one file per table; a JSON document at the
+ * end or one JSON object per line as pages complete. One table (or --table,
+ * or a directory) keeps the single table shapes: a JSON array, or plain JSONL
+ * rows. Several tables to one target give a JSON object keyed by table name,
+ * or JSONL rows carrying _table.
+ */
 class RowSink {
-  private readonly rows: Row[] = [];
-  private opened = false;
+  private readonly buffered = new Map<string, Row[]>();
+  private readonly opened = new Set<string>();
+  /** Tables written, in recipe order. */
+  private readonly selected: readonly string[];
 
   constructor(
     private readonly jsonl: boolean,
     private readonly out: string | null,
-  ) {}
+    private readonly outDir: boolean,
+    only: string | null,
+  ) {
+    this.selected = only !== null ? [only] : TABLES.map((t) => t.name);
+  }
 
-  private write(chunk: string): void {
-    if (!this.out) {
+  /** Several tables share one target. */
+  private get combined(): boolean {
+    return !this.outDir && this.selected.length > 1;
+  }
+
+  private write(table: string, chunk: string): void {
+    const path = this.out && this.outDir ? join(this.out, table + (this.jsonl ? '.jsonl' : '.json')) : this.out;
+    if (!path) {
       process.stdout.write(chunk);
       return;
     }
-    if (!this.opened) {
-      mkdirSync(dirname(this.out), { recursive: true });
-      writeFileSync(this.out, '');
-      this.opened = true;
+    if (!this.opened.has(path)) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, '');
+      this.opened.add(path);
     }
-    appendFileSync(this.out, chunk);
+    appendFileSync(path, chunk);
   }
 
-  row(row: Row): void {
-    if (this.jsonl) this.write(JSON.stringify(row) + '\n');
-    else this.rows.push(row);
+  row(table: string, row: Row): void {
+    if (!this.selected.includes(table)) return;
+    if (this.jsonl) {
+      this.write(table, JSON.stringify(this.combined ? { _table: table, ...row } : row) + '\n');
+      return;
+    }
+    const rows = this.buffered.get(table) ?? [];
+    rows.push(row);
+    this.buffered.set(table, rows);
   }
 
   finish(): void {
-    if (!this.jsonl) this.write(JSON.stringify(this.rows, null, 2) + '\n');
-    else this.write('');
+    const rowsOf = (table: string) => this.buffered.get(table) ?? [];
+    // With JSONL, files exist even for a table without rows.
+    if (this.jsonl) for (const table of this.selected) this.write(table, '');
+    else if (this.combined) this.write('', JSON.stringify(Object.fromEntries(this.selected.map((table) => [table, rowsOf(table)])), null, 2) + '\n');
+    else for (const table of this.selected) this.write(table, JSON.stringify(rowsOf(table), null, 2) + '\n');
   }
 }
 
@@ -936,21 +1025,28 @@ async function scrape(opts: Options): Promise<number> {
     context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const session = new Session(context.pages()[0] ?? (await context.newPage()));
     const page = session.page;
-    const sink = new RowSink(opts.jsonl, opts.out);
+    const sink = new RowSink(opts.jsonl, opts.out, opts.outDir, opts.table);
     const stepCache: StepCache = new Map();
-    const seen = new Set<string>();
-    let resolved: Resolved | null = null;
+    const primary = primaryIndex();
+    /** Keys seen so far, per table; tables without an item container are never deduplicated. */
+    const seen = TABLES.map(() => new Set<string>());
+    /** Per table, what the first page it matched on settled; null before page 1 is extracted. */
+    let resolved: (Resolved | null)[] | null = null;
     const pager: Pager = {
       session,
       values,
       start,
       targetSelectors: null,
       async count() {
-        if (!ITEM || !resolved?.item) return 0;
-        const parent = await listParent(page, resolved);
+        // Without an item table every page counts as one item.
+        if (primary < 0) return 1;
+        const item = TABLES[primary]!.item!;
+        const settled = resolved?.[primary];
+        if (!settled?.item) return 0;
+        const parent = await listParent(page, item, settled);
         if (parent.missing) return 0;
-        const found = await resolveFirst(parent.root, resolved.item);
-        return found ? (await keptContainers(page, found)).length : 0;
+        const found = await resolveFirst(parent.root, settled.item);
+        return found ? (await keptContainers(page, found, item.exclude)).length : 0;
       },
     };
 
@@ -969,37 +1065,71 @@ async function scrape(opts: Options): Promise<number> {
         await replaySteps(session, pageNumber, values, stepCache);
         url = page.url();
       }
-      const extraction = await extractPage(page, pageNumber, url, resolved, fromIndex);
-      const names = resolved ? extraction.missingRequired.filter((name) => name !== 'item' && name !== 'within') : extraction.missingRequired;
-      if (names.length > 0) {
-        const message = names.includes('within')
-          ? 'the list parent (item.within) matched no element, so the item container is unresolved'
-          : names.includes('item')
-          ? 'the item container matched no element'
-          : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element' + (resolved ? ' on page ' + pageNumber : '');
-        throw new Failure(message, EXIT_UNRESOLVED);
+      const extractions = await extractPage(page, pageNumber, url, resolved, fromIndex);
+      const firstPage = resolved === null;
+      const settled: (Resolved | null)[] = resolved ?? TABLES.map(() => null);
+      for (const [index, found] of extractions.entries()) {
+        const at = TABLES.length > 1 ? 'table "' + found.name + '": ' : '';
+        let names = found.missingRequired;
+        if (firstPage && index !== primary && (names.includes('item') || names.includes('within'))) {
+          // A secondary list absent from the page is normal: no rows for it, not a failure.
+          log('warning: ' + at + 'the item container matched no element on page ' + pageNumber + '; the table yields no rows');
+          names = names.filter((name) => name !== 'item' && name !== 'within');
+        }
+        if (firstPage) {
+          if (names.length > 0) {
+            const message = names.includes('within')
+              ? 'the list parent (item.within) matched no element, so the item container is unresolved'
+              : names.includes('item')
+              ? 'the item container matched no element'
+              : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element';
+            throw new Failure(at + message, EXIT_UNRESOLVED);
+          }
+          if (found.containerCount > 0 && found.rows.length === 0) {
+            const fields = found.droppedFields;
+            throw new Failure(
+              at + 'every row on page ' + pageNumber + ' was dropped for missing required field' + (fields.length > 1 ? 's ' : ' ') + fields.join(', '),
+              EXIT_UNRESOLVED,
+            );
+          }
+        } else {
+          // A later page with no items is the end of the list, not a failure; a field gone from every item is.
+          const gone = names.filter((name) => name !== 'item' && name !== 'within');
+          if (gone.length > 0) {
+            throw new Failure(at + 'required field' + (gone.length > 1 ? 's ' : ' ') + gone.join(', ') + ' matched no element on page ' + pageNumber, EXIT_UNRESOLVED);
+          }
+        }
+        settled[index] ??= found.resolved;
+        for (const warning of found.warnings) log('warning: ' + warning);
       }
-      if (!resolved && extraction.containerCount > 0 && extraction.rows.length === 0) {
-        const fields = extraction.droppedFields;
-        throw new Failure(
-          'every row on page ' + pageNumber + ' was dropped for missing required field' + (fields.length > 1 ? 's ' : ' ') + fields.join(', '),
-          EXIT_UNRESOLVED,
-        );
-      }
-      resolved ??= extraction.resolved;
-      for (const warning of extraction.warnings) log('warning: ' + warning);
+      resolved = settled;
 
-      const { kept, keys } = dedupRows(extraction.rows, pageNumber, seen);
-      const firstKey = extraction.firstRow ? keyOf(extraction.firstRow) : null;
-      const summary: PageSummary = { page: pageNumber, url, firstKey, raw: extraction.containerCount, kept: kept.length };
+      const fresh = extractions.map((found, index) => {
+        const table = TABLES[index]!;
+        return table.item ? dedupRows(table, found.rows, pageNumber, seen[index]!) : { kept: found.rows, keys: [] };
+      });
+      const lead = primary >= 0 ? extractions[primary]! : null;
+      // Without an item table every page counts as one item, so only the limit, the cap, or a missing target stop the run.
+      const summary: PageSummary = lead
+        ? {
+            page: pageNumber,
+            url,
+            firstKey: lead.firstRow ? keyOf(TABLES[primary]!, lead.firstRow) : null,
+            raw: lead.containerCount,
+            kept: fresh[primary]!.kept.length,
+          }
+        : { page: pageNumber, url, firstKey: null, raw: 1, kept: 1 };
       const verdict = evaluateStop(summary, previous, limit);
       if (!verdict.discard) {
-        for (const key of keys) seen.add(key);
-        kept.forEach((row, index) => {
-          row._index = index;
-          sink.row(row);
-        });
-        rowCount += kept.length;
+        for (const [index, found] of extractions.entries()) {
+          const { kept, keys } = fresh[index]!;
+          for (const key of keys) seen[index]!.add(key);
+          kept.forEach((row, at) => {
+            row._index = at;
+            sink.row(found.name, row);
+          });
+          rowCount += kept.length;
+        }
         pageCount = pageNumber;
       }
       if (verdict.reason) {
@@ -1115,87 +1245,92 @@ const STEPS: Step[] = [
     "action": { "kind": "sleep", "ms": 100 }
   }
 ];
-const ITEM: Item | null = {
-  "selectors": [
-    { "strategy": "testid", "value": "product-card" },
-    { "strategy": "css", "value": "article.product-card" }
-  ],
-  "exclude": []
-};
-const FIELDS: Field[] = [
+/** Tables in recipe order; the first with an item container drives item counts and the stop rules. */
+const TABLES: Table[] = [
   {
-    "name": "title",
-    "type": "text",
-    "scope": "item",
-    "optional": false,
-    "selectors": [
-      { "strategy": "role", "value": "heading" },
-      { "strategy": "css", "value": "h2.product-title" },
-      { "strategy": "xpath", "value": ".//h2" }
+    "name": "items",
+    "item": {
+      "selectors": [
+        { "strategy": "testid", "value": "product-card" },
+        { "strategy": "css", "value": "article.product-card" }
+      ],
+      "exclude": []
+    },
+    "fields": [
+      {
+        "name": "title",
+        "type": "text",
+        "scope": "item",
+        "optional": false,
+        "selectors": [
+          { "strategy": "role", "value": "heading" },
+          { "strategy": "css", "value": "h2.product-title" },
+          { "strategy": "xpath", "value": ".//h2" }
+        ],
+        "read": "text",
+        "attr": null
+      },
+      {
+        "name": "price",
+        "type": "number",
+        "scope": "item",
+        "optional": false,
+        "selectors": [
+          { "strategy": "testid", "value": "price" },
+          { "strategy": "css", "value": ".product-price" }
+        ],
+        "read": "text",
+        "attr": null
+      },
+      {
+        "name": "url",
+        "type": "url",
+        "scope": "item",
+        "optional": false,
+        "selectors": [
+          { "strategy": "css", "value": "a.product-link" },
+          { "strategy": "role", "value": "link|View details" }
+        ],
+        "read": "attr",
+        "attr": "href"
+      },
+      {
+        "name": "image",
+        "type": "image",
+        "scope": "item",
+        "optional": false,
+        "selectors": [{ "strategy": "css", "value": "img.product-image" }],
+        "read": "attr",
+        "attr": "src"
+      },
+      {
+        "name": "rating",
+        "type": "number",
+        "scope": "item",
+        "optional": false,
+        "selectors": [
+          { "strategy": "testid", "value": "rating" },
+          { "strategy": "css", "value": ".product-rating" }
+        ],
+        "read": "text",
+        "attr": null
+      },
+      {
+        "name": "category",
+        "type": "text",
+        "scope": "page",
+        "optional": false,
+        "selectors": [
+          { "strategy": "testid", "value": "category" },
+          { "strategy": "css", "value": "h1.category-heading" }
+        ],
+        "read": "text",
+        "attr": null
+      }
     ],
-    "read": "text",
-    "attr": null
-  },
-  {
-    "name": "price",
-    "type": "number",
-    "scope": "item",
-    "optional": false,
-    "selectors": [
-      { "strategy": "testid", "value": "price" },
-      { "strategy": "css", "value": ".product-price" }
-    ],
-    "read": "text",
-    "attr": null
-  },
-  {
-    "name": "url",
-    "type": "url",
-    "scope": "item",
-    "optional": false,
-    "selectors": [
-      { "strategy": "css", "value": "a.product-link" },
-      { "strategy": "role", "value": "link|View details" }
-    ],
-    "read": "attr",
-    "attr": "href"
-  },
-  {
-    "name": "image",
-    "type": "image",
-    "scope": "item",
-    "optional": false,
-    "selectors": [{ "strategy": "css", "value": "img.product-image" }],
-    "read": "attr",
-    "attr": "src"
-  },
-  {
-    "name": "rating",
-    "type": "number",
-    "scope": "item",
-    "optional": false,
-    "selectors": [
-      { "strategy": "testid", "value": "rating" },
-      { "strategy": "css", "value": ".product-rating" }
-    ],
-    "read": "text",
-    "attr": null
-  },
-  {
-    "name": "category",
-    "type": "text",
-    "scope": "page",
-    "optional": false,
-    "selectors": [
-      { "strategy": "testid", "value": "category" },
-      { "strategy": "css", "value": "h1.category-heading" }
-    ],
-    "read": "text",
-    "attr": null
+    "key": "url"
   }
 ];
-/** Field that identifies a row across pages, or null to compare all field values. */
-const KEY_FIELD: string | null = "url";
 const PAGINATION: Pagination = {
   "kind": "none",
   "param": null,
