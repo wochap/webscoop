@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Recipe } from './schema';
+import { SCHEMA_VERSION, type Recipe, type RecipeField } from './schema';
 import { validateRecipe, type ValidationError } from './validate';
 
 export class RecipeError extends Error {
@@ -52,8 +52,20 @@ export function loadRecipe(json: string | unknown, source = '<recipe>'): Recipe 
   return result.recipe;
 }
 
-/** Serialize a recipe as stable, human editable JSON. An empty `steps` list is left out, so recipes without steps keep their shape. */
+/** A field as written: `fallback` is left out when false. */
+function savedField(field: RecipeField): RecipeField | Omit<RecipeField, 'fallback'> {
+  if (field.fallback) return field;
+  const { fallback: _, ...rest } = field;
+  return rest;
+}
+
+/** Serialize a recipe as stable, human editable JSON. An empty `steps` list and false `fallback` flags are left out, so recipes keep their shape. */
 export function saveRecipe(recipe: Recipe): string {
   const { steps, ...rest } = recipe;
-  return `${JSON.stringify(steps.length > 0 ? recipe : rest, null, 2)}\n`;
+  const out = {
+    ...(steps.length > 0 ? recipe : rest),
+    ...(recipe.fields ? { fields: recipe.fields.map(savedField) } : {}),
+    ...(recipe.tables ? { tables: recipe.tables.map((t) => ({ ...t, fields: t.fields.map(savedField) })) } : {}),
+  };
+  return `${JSON.stringify(out, null, 2)}\n`;
 }

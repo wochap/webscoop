@@ -26,6 +26,7 @@ import {
 } from '../src';
 import { FakeBrowser, h } from '../src/testing';
 import { byClass, CATALOG, cardPath, harness, referenceRecipe } from './recorder-helpers';
+import { cards, catalog, recipe } from './helpers';
 import { snapshotFromHtml, tier0Snapshot } from './snapshot';
 
 const candidate = { strategy: 'testid', value: 'price', stability: 'stable' } as const;
@@ -460,6 +461,53 @@ describe('RecorderController', () => {
     expect(results.tables[0]!.fields.find((f) => f.name === 'url')?.status).toBe('partial');
     expect(results.warnings[0]).toMatch(/^dropped 6 rows on page 1: required field "url" missing on rows /);
     expect(results.error).toBeUndefined();
+  });
+
+  it('honors the fallback flag in test runs when toggled on a field', async () => {
+    const reference = referenceRecipe();
+    // Every article, questions blocks included; the title's second candidate matches only in the questions blocks.
+    const r: Recipe = {
+      ...reference,
+      item: { ...reference.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] },
+      fields: [
+        {
+          name: 'title',
+          type: 'text',
+          scope: 'item',
+          selectors: [
+            { strategy: 'css', value: 'h2.product-title', stability: 'medium' },
+            { strategy: 'css', value: 'h3.questions-title', stability: 'medium' },
+          ],
+          optional: false,
+          fallback: false,
+        },
+      ],
+    };
+    const t = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(r));
+    const off = await t.controller.testRun();
+    expect(off.tables[0]!.rowCount).toBe(24);
+    expect(off.tables[0]!.dropped).toEqual({ count: 6, fields: ['title'] });
+    await t.send({ kind: 'draft.updateField', index: 0, patch: { fallback: true } });
+    expect(t.controller.draft.tables[0]!.fields[0]!.fallback).toBe(true);
+    const on = await t.controller.testRun();
+    expect(on.tables[0]!.rowCount).toBe(30);
+    expect(on.tables[0]!.rows.filter((row) => row.title === 'People also ask')).toHaveLength(6);
+    const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(saved.ok).toBe(true);
+    expect(JSON.parse(t.storage.files.get(r.name)!).fields[0].fallback).toBe(true);
+  });
+
+  it('counts the containers each item field matches in', async () => {
+    const dom = catalog(cards(11, (i) => (i >= 9 ? { noLink: true } : {})));
+    const t = await harness(dom, draftFromRecipe(loadRecipe(recipe({ url: CATALOG }))));
+    await t.send({ kind: 'session.ready', url: CATALOG });
+    await t.controller.idle();
+    const fields = t.controller.draft.tables[0]!.fields;
+    expect(fields.find((f) => f.name === 'url')!.coverage).toEqual({ matched: 9, total: 11 });
+    expect(fields.find((f) => f.name === 'title')!.coverage).toEqual({ matched: 11, total: 11 });
+    expect(fields.find((f) => f.name === 'category')!.coverage).toBeNull();
+    const state = t.session.dispatchedOf('draft.state').at(-1) as { state: RecorderState } | undefined;
+    expect(state?.state.draft.tables[0]!.fields.find((f) => f.name === 'url')!.coverage).toEqual({ matched: 9, total: 11 });
   });
 
   it('drops a row whose required field reads empty and reports it', async () => {

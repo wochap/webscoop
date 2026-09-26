@@ -215,6 +215,7 @@ export function ScoopRoot() {
         {table.item && !proposal && <ItemSummary item={table.item} />}
         <FieldList
           fields={table.fields}
+          item={table.item}
           focused={ui.focusedField}
           repick={host.repick}
           editing={host.editing?.index ?? null}

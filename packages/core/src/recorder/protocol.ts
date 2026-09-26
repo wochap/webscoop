@@ -127,9 +127,13 @@ export const DraftFieldSchema = z.object({
   attr: z.optional(z.string()),
   optional: z.boolean(),
   key: z.boolean(),
+  /** Walk the candidates per row instead of using only the settled primary; absent means false. */
+  fallback: z.optional(z.boolean()),
   fingerprint: z.optional(ProtocolFingerprintSchema),
   /** Matches of the primary selector on the current page, null until counted. */
   count: z.nullable(count()),
+  /** Item scoped fields: containers in which the primary selector matches, out of the container count. */
+  coverage: z.optional(z.nullable(z.object({ matched: count(), total: count() }))),
   sample: z.nullable(z.string()),
   error: z.optional(z.string()),
 });
@@ -349,6 +353,7 @@ const FieldPatchSchema = z.object({
   attr: z.optional(z.nullable(z.string())),
   optional: z.optional(z.boolean()),
   key: z.optional(z.boolean()),
+  fallback: z.optional(z.boolean()),
   /** Table for a new field: an index, or a new table by name. The table becomes active. */
   table: z.optional(z.union([index(), z.object({ new: z.string() })])),
 });

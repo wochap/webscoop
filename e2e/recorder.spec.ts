@@ -403,7 +403,8 @@ test('results under div#rso: the proposal counts every result, and the saved rec
   expect(proposal.within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
   for (const c of proposal.proposed.selectors) expect(c.value).not.toMatch(/main|rso|GyAeWb|s6JM6d|center_col|dURPMd/);
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('8');
-  expect((await r.query('[data-ws="selector-chain-text"]'))!.text).toMatch(/^id=rso » /);
+  expect((await r.query('[data-ws="selector-chain-path"]'))!.attrs['data-chain']).toMatch(/^id=rso » /);
+  expect((await r.query('[data-ws="selector-chain-path"] [data-ws="path-chip"]'))!.text).toBe('id=rso');
   await r.key('Enter');
   await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
@@ -535,4 +536,60 @@ test('gate=cookie: after a reload behind the gate, a zero match field offers to 
   await expect.poll(() => r.page.locator('article').count()).toBe(24);
   expect(await r.count('[data-ws="replay-steps"]')).toBe(0);
   expect((await r.closeWindow()).code).toBe(0);
+});
+
+test('results with a questions block among the containers: it is highlighted, and the test run drops its row with fallback off and keeps it with fallback on', async ({ scoop }) => {
+  await scoop.writeRecipe({
+    schemaVersion: 1,
+    name: 'serp-fallback',
+    url: `http://127.0.0.1:${scoop.playground.port}/results`,
+    item: {
+      within: [{ strategy: 'id', value: 'rso', stability: 'stable' }],
+      selectors: [{ strategy: 'css', value: ':scope > div > div', stability: 'fragile' }],
+    },
+    fields: [
+      {
+        name: 'title',
+        type: 'text',
+        scope: 'item',
+        // The second candidate matches only the questions block's label in rows where the heading is missing.
+        selectors: [
+          { strategy: 'css', value: 'h3.LC20lb', stability: 'medium' },
+          { strategy: 'css', value: 'span', stability: 'fragile' },
+        ],
+      },
+    ],
+  });
+  const r = await scoop.record(['--edit', 'serp-fallback']);
+  const counted = await r.until((s) => (s.host?.draft.tables[0]!.fields[0]!.coverage ? s : undefined));
+  expect(counted.host!.draft.tables[0]!.item!.count).toBe(9);
+  expect(counted.host!.draft.tables[0]!.fields[0]!.coverage).toEqual({ matched: 8, total: 9 });
+  expect((await r.query('[data-ws="field-coverage"]'))!.text).toBe('8 / 9 items');
+  expect(await r.count('[data-ws="field-path"] [data-ws="path-chip"]')).toBe(3);
+
+  // Every container the runner resolves is highlighted, the questions block included.
+  const highlight = () =>
+    r.page.evaluate(() => {
+      const boxes = (window as unknown as { __webscoopTest: { boxes(): { variant: string; rect: { x: number; y: number; w: number; h: number } }[] } }).__webscoopTest
+        .boxes()
+        .filter((b) => b.variant === 'container');
+      const q = document.querySelector('#rso .Wt5Tfe')!.getBoundingClientRect();
+      return { count: boxes.length, questions: boxes.some((b) => b.rect.x === q.x && b.rect.y === q.y && b.rect.w === q.width && b.rect.h === q.height) };
+    });
+  await expect.poll(highlight).toEqual({ count: 9, questions: true });
+
+  await r.clickPanel('[data-ws="test-run"]');
+  const off = await r.until((s) => s.host?.test);
+  expect(off.tables[0]!.rowCount).toBe(8);
+  expect(off.tables[0]!.dropped).toEqual({ count: 1, fields: ['title'] });
+
+  await r.clickPanel('[data-ws="field-fallback"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields[0]!.fallback === true);
+  await r.clickPanel('[data-ws="test-run"]');
+  const on = await r.until((s) => (s.host?.test?.tables[0]!.rowCount === 9 ? s.host.test : undefined));
+  expect(on.tables[0]!.rows.map((row) => row.title)).toContain('People also ask');
+
+  const path = await save(r);
+  expect((await r.closeWindow()).code).toBe(0);
+  expect(JSON.parse(await readFile(path, 'utf8')).fields[0].fallback).toBe(true);
 });

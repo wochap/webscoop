@@ -67,6 +67,8 @@ export const FieldSchema = z.object({
   selectors: z.array(SelectorCandidateSchema).min(1),
   attr: z.string().min(1).optional(),
   optional: z.boolean().default(false),
+  /** Walk the settled candidates per row instead of using only the settled primary; omitted on save when false. */
+  fallback: z.boolean().default(false),
   key: z.boolean().optional(),
   fingerprint: FingerprintSchema.optional(),
 });

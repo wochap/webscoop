@@ -61,6 +61,7 @@ interface Field {
   type: FieldType;
   scope: 'item' | 'page';
   optional: boolean;
+  fallback: boolean;
   selectors: Selector[];
   read: 'attr' | 'html' | 'text';
   attr: string | null;
@@ -734,7 +735,9 @@ async function extractTable(
     for (const state of states) {
       let result = state.pageValue;
       if (!result) {
-        const found = state.selectors ? await resolveFirst(container ?? page, state.selectors) : null;
+        // Only the settled primary per row, unless the field falls back to later candidates.
+        const selectors = state.selectors && !state.field.fallback ? state.selectors.slice(0, 1) : state.selectors;
+        const found = selectors ? await resolveFirst(container ?? page, selectors) : null;
         result = await fieldValue(state.field, found ? found.locator.nth(0) : null, pageUrl);
       }
       if (!result.found) state.missingRows.push(index);
@@ -1268,6 +1271,7 @@ const TABLES: Table[] = [
         "type": "text",
         "scope": "item",
         "optional": false,
+        "fallback": false,
         "selectors": [
           { "strategy": "role", "value": "heading" },
           { "strategy": "css", "value": "h2.product-title" },
@@ -1281,6 +1285,7 @@ const TABLES: Table[] = [
         "type": "number",
         "scope": "item",
         "optional": false,
+        "fallback": false,
         "selectors": [
           { "strategy": "testid", "value": "price" },
           { "strategy": "css", "value": ".product-price" }
@@ -1293,6 +1298,7 @@ const TABLES: Table[] = [
         "type": "url",
         "scope": "item",
         "optional": false,
+        "fallback": false,
         "selectors": [
           { "strategy": "css", "value": "a.product-link" },
           { "strategy": "role", "value": "link|View details" }
@@ -1305,6 +1311,7 @@ const TABLES: Table[] = [
         "type": "image",
         "scope": "item",
         "optional": false,
+        "fallback": false,
         "selectors": [{ "strategy": "css", "value": "img.product-image" }],
         "read": "attr",
         "attr": "src"
@@ -1314,6 +1321,7 @@ const TABLES: Table[] = [
         "type": "number",
         "scope": "item",
         "optional": false,
+        "fallback": false,
         "selectors": [
           { "strategy": "testid", "value": "rating" },
           { "strategy": "css", "value": ".product-rating" }
@@ -1326,6 +1334,7 @@ const TABLES: Table[] = [
         "type": "text",
         "scope": "page",
         "optional": false,
+        "fallback": false,
         "selectors": [
           { "strategy": "testid", "value": "category" },
           { "strategy": "css", "value": "h1.category-heading" }

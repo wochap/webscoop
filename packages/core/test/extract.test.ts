@@ -75,6 +75,50 @@ describe('item scoped extraction', () => {
   });
 });
 
+describe('per-row candidate fallback', () => {
+  const withLink = (extra: Record<string, unknown> = {}) =>
+    recipe({
+      fields: [
+        { name: 'title', type: 'text', scope: 'item', selectors: [css('h2')] },
+        { name: 'link', type: 'text', scope: 'item', selectors: [css('a.product-link'), css('h2')], ...extra },
+      ],
+    });
+  const tenthWithoutLink = () => catalog(cards(10, (i) => (i === 9 ? { noLink: true } : {})));
+
+  it('drops the row when the primary misses a required field, without trying later candidates', async () => {
+    const s = await session(tenthWithoutLink());
+    const out = (await extractPage(s, loadRecipe(withLink()), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(9);
+    expect(out.rows.every((row) => row.link === 'View details')).toBe(true);
+    expect(out.dropped).toEqual([{ index: 9, fields: ['link'] }]);
+    expect(out.firstRow?.link).toBe('View details');
+  });
+
+  it('keeps the row with an empty value for an optional field', async () => {
+    const s = await session(tenthWithoutLink());
+    const out = (await extractPage(s, loadRecipe(withLink({ optional: true })), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(10);
+    expect(out.rows[9]!.link).toBeNull();
+    expect(out.dropped).toEqual([]);
+  });
+
+  it('takes the second candidate in that container with fallback on', async () => {
+    const s = await session(tenthWithoutLink());
+    const out = (await extractPage(s, loadRecipe(withLink({ fallback: true })), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toHaveLength(10);
+    expect(out.rows[9]!.link).toBe('Product 10');
+    expect(out.dropped).toEqual([]);
+  });
+
+  it('uses the settled primary on later pages too', async () => {
+    const s = await session(tenthWithoutLink());
+    const r = loadRecipe(withLink());
+    const first = await extractPage(s, r, { pageUrl: PAGE, page: 1 });
+    const again = (await extractPage(s, r, { pageUrl: PAGE, page: 2, resolved: first.resolved })).tables[0]!;
+    expect(again.dropped).toEqual([{ index: 9, fields: ['link'] }]);
+  });
+});
+
 describe('missing fields', () => {
   it('flags a required field missing on every row', async () => {
     const s = await session(catalog(cards(3, () => ({ price: undefined }))));

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DraftItem, LevelKind, LevelView, ProposalView, ProtocolCandidate } from '@webscoop/core/page';
-import { selectorChain } from '../chain';
+import { CHAIN_LABELS, chainLevels, type ChainLevel } from '../chain';
+import { SelectorPath } from './selector-path';
 import { SelectorRow } from './candidates';
 import { useActions } from './context';
 import { Kbd } from './shell';
@@ -111,14 +112,12 @@ export function LevelField({
 }
 
 /** The composed chain of primary selectors, from the list parent down; display only. */
-export function SelectorChain({ chain }: { chain: string }) {
-  if (!chain) return null;
+export function SelectorChain({ levels }: { levels: readonly ChainLevel[] }) {
+  if (levels.length === 0) return null;
   return (
     <div className="ws-row" data-ws="selector-chain">
       <span className="ws-caps">Chain</span>
-      <span className="ws-mono-sm ws-ellipsis ws-spacer" title={chain} data-ws="selector-chain-text">
-        {chain}
-      </span>
+      <SelectorPath levels={levels} testId="selector-chain-path" className="ws-spacer" />
     </div>
   );
 }
@@ -266,7 +265,7 @@ export function ItemDetectCard({
         onClear={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
       />
       <LevelField level="item" label="Item" view={chosen} error={error('item')} rung={level} />
-      <SelectorChain chain={selectorChain([proposal.within?.selectors[proposal.within.primary], chosen.selectors[chosen.primary]])} />
+      <SelectorChain levels={chainLevels([proposal.within?.selectors[proposal.within.primary], chosen.selectors[chosen.primary]], CHAIN_LABELS)} />
       <div className="ws-row">
         <span className="ws-meta ws-spacer">Include all siblings</span>
         <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="include-all" />
@@ -353,7 +352,7 @@ export function ItemSummary({ item }: { item: DraftItem }) {
         </span>
       )}
       <WithinSummary item={item} />
-      <SelectorChain chain={selectorChain([item.within?.[0], primary])} />
+      <SelectorChain levels={chainLevels([item.within?.[0], primary], CHAIN_LABELS)} />
       <ExclusionInput exclude={item.exclude} />
     </section>
   );

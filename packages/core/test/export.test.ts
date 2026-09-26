@@ -164,6 +164,20 @@ describe('buildPlan', () => {
     ]);
   });
 
+  it('carries each field fallback flag, false unless set', () => {
+    const recipe = fixture('playground-catalog');
+    const fields = recipe.fields!.map((f) => (f.name === 'price' ? { ...f, fallback: true } : f));
+    const plan = buildPlan({ ...recipe, fields });
+    expect(plan.tables[0]!.fields.map((f) => [f.name, f.fallback])).toEqual([
+      ['title', false],
+      ['price', true],
+      ['url', false],
+      ['image', false],
+      ['rating', false],
+      ['category', false],
+    ]);
+  });
+
   it('resolves url pagination: the page variable is not required and sits in the template', () => {
     const plan = buildPlan(fixture('playground-paged'));
     expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false });
@@ -636,13 +650,30 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
         const recipe = fixture('playground-catalog');
         // The first card resolves its image, which holds no text; the other cards resolve their title.
         const xpath = ".//img[contains(@class, 'product-image')][not(ancestor::li[1]/preceding-sibling::li)] | .//h2";
-        const desc = { name: 'desc', type: 'text' as const, scope: 'item' as const, selectors: [{ strategy: 'xpath' as const, value: xpath, stability: 'fragile' as const }], optional: false };
+        const desc = { name: 'desc', type: 'text' as const, scope: 'item' as const, selectors: [{ strategy: 'xpath' as const, value: xpath, stability: 'fragile' as const }], optional: false, fallback: false };
         const out = await runScript(format, { ...recipe, name: 'empty-desc', fields: [...recipe.fields!, desc] });
         expect(out.code, out.stderr).toBe(0);
         const rows = JSON.parse(out.stdout) as Rows;
         expect(rows).toHaveLength(23);
         expect(rows.every((row) => typeof row.desc === 'string' && row.desc !== '')).toBe(true);
         expect(out.stderr).toMatch(/dropped 1 row on page 1: required field "desc" missing on row 0/);
+      }, 60_000);
+
+      it('uses only the settled primary per row unless the field falls back', async () => {
+        const recipe = fixture('playground-catalog');
+        // The primary misses in the last card only; the second candidate matches in every card.
+        const selectors = [
+          { strategy: 'xpath' as const, value: './/h2[ancestor::li[1]/following-sibling::li]', stability: 'fragile' as const },
+          { strategy: 'xpath' as const, value: './/h2', stability: 'fragile' as const },
+        ];
+        const head = { name: 'head', type: 'text' as const, scope: 'item' as const, selectors, optional: false, fallback: false };
+        const off = await runScript(format, { ...recipe, name: 'head-off', fields: [...recipe.fields!, head] });
+        expect(off.code, off.stderr).toBe(0);
+        expect(JSON.parse(off.stdout) as Rows).toHaveLength(23);
+        expect(off.stderr).toMatch(/dropped 1 row on page 1: required field "head" missing on row 23/);
+        const on = await runScript(format, { ...recipe, name: 'head-on', fields: [...recipe.fields!, { ...head, fallback: true }] });
+        expect(on.code, on.stderr).toBe(0);
+        expect(JSON.parse(on.stdout) as Rows).toHaveLength(24);
       }, 60_000);
 
       it('exits 3 naming the table when a required field of a secondary table matches nothing', async () => {

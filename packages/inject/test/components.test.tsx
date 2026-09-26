@@ -263,6 +263,55 @@ describe('fields', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.repickTarget', target: 'field', index: 2 });
     expect(p.store.get().ui.picking).toBe(true);
   });
+
+  it('shows the chain as chips, the container coverage, and a fallback toggle on item fields', () => {
+    const longClass = 'div.VwiC3b.yXK7lf.p4wth.r025kc.hJNv6b';
+    const item = {
+      selectors: [{ strategy: 'css' as const, value: ':scope > div > div', stability: 'medium' as const }],
+      within: [{ strategy: 'id' as const, value: 'rso', stability: 'stable' as const }],
+      exclude: [],
+      count: 11,
+      total: 11,
+    };
+    const draft = withTable(newDraft(), {
+      item,
+      fields: [
+        field('desc', { selectors: [{ strategy: 'class', value: longClass, stability: 'medium' }], coverage: { matched: 9, total: 11 } }),
+        field('heading', { scope: 'page', coverage: null }),
+      ],
+    });
+    const p = renderPanel(baseState(draft));
+    const [desc, heading] = p.qa('field');
+    const chips = Array.from(desc!.querySelectorAll('[data-ws="field-path"] [data-ws="path-chip"]'));
+    expect(chips.map((c) => c.textContent)).toEqual(['id=rso', 'css=:scope > div > div', `class=${longClass}`]);
+    expect(chips.map((c) => c.getAttribute('title'))).toEqual(['list parent', 'item', 'field']);
+    // Whole values, wrapped, never ellipsized; chips are not focusable controls.
+    for (const chip of chips) {
+      expect(chip.className).not.toContain('ws-ellipsis');
+      expect(chip.tagName).toBe('SPAN');
+      expect(chip.hasAttribute('tabindex')).toBe(false);
+    }
+    expect(desc!.querySelector('[data-ws="field-coverage"]')!.textContent).toBe('9 / 11 items');
+    expect(heading!.querySelector('[data-ws="field-coverage"]')).toBeNull();
+    expect(Array.from(heading!.querySelectorAll('[data-ws="path-chip"]')).map((c) => c.textContent)).toEqual(['css=.heading']);
+
+    const toggle = desc!.querySelector('[data-ws="field-fallback"]')!;
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateField', index: 0, patch: { fallback: true } });
+  });
+
+  it('does nothing on a chip click beyond what clicking the field row does', () => {
+    const draft = withTable(newDraft(), { fields: [field('title')] });
+    const p = renderPanel(baseState(draft));
+    fireEvent.click(p.q('field-summary')!);
+    const row = { sent: [...p.sent], ui: p.store.get().ui };
+    cleanup();
+    const q = renderPanel(baseState(draft));
+    fireEvent.click(q.q('path-chip')!);
+    expect(q.sent).toEqual(row.sent);
+    expect(q.store.get().ui).toEqual(row.ui);
+  });
 });
 
 describe('pagination', () => {

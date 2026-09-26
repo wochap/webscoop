@@ -154,6 +154,27 @@ describe('fields', () => {
     expect(recipe.fields![0]!.optional).toBe(false);
   });
 
+  it('defaults fallback to false and leaves it out on save', () => {
+    const recipe = loadRecipe(base());
+    expect(recipe.fields![0]!.fallback).toBe(false);
+    const saved = JSON.parse(saveRecipe(recipe));
+    expect(saved.fields[0]).not.toHaveProperty('fallback');
+    expect(loadRecipe(saved).fields![0]!.fallback).toBe(false);
+  });
+
+  it('keeps fallback true through a round-trip', () => {
+    const recipe = loadRecipe(base({ fields: [field('a', { fallback: true })] as RecipeInput['fields'] }));
+    expect(recipe.fields![0]!.fallback).toBe(true);
+    const once = saveRecipe(recipe);
+    expect(JSON.parse(once).fields[0].fallback).toBe(true);
+    expect(saveRecipe(loadRecipe(once))).toBe(once);
+  });
+
+  it('leaves false fallback out of table fields on save', () => {
+    const saved = JSON.parse(saveRecipe(loadRecipe(tablesRecipe())));
+    for (const table of saved.tables) for (const f of table.fields) expect(f).not.toHaveProperty('fallback');
+  });
+
   it('rejects duplicate field names, naming the field', () => {
     const errors = errorsOf(base({ fields: [field('price'), field('price')] as RecipeInput['fields'] }));
     expect(errors).toHaveLength(1);

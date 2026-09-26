@@ -49,6 +49,8 @@ export interface PlanField {
   type: FieldType;
   scope: FieldScope;
   optional: boolean;
+  /** Per row, walk the settled candidates instead of using only the settled primary. */
+  fallback: boolean;
   selectors: PlanSelector[];
   read: ReadMode;
   /** Attribute read when `read` is `attr`, else null. */
@@ -179,6 +181,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
         type: field.type,
         scope: field.scope,
         optional: field.optional,
+        fallback: field.fallback,
         selectors: selectors(field.selectors),
         read: readMode(field.type, attr),
         attr: attr ?? null,

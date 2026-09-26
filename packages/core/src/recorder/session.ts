@@ -668,6 +668,12 @@ export class RecorderController {
     return { count, items };
   }
 
+  /** Item containers of the active table in which the primary matches, out of their count; null for a page field or without an item block. */
+  private async coverageOf(scope: FieldScope, primary: ProtocolCandidate, containers: readonly ElementRef[]): Promise<{ matched: number; total: number } | null> {
+    if (scope !== 'item' || !this.table().item) return null;
+    return { matched: (await this.countIn(primary, containers)).items, total: containers.length };
+  }
+
   /** Candidates with host counts; `coverage` adds the item coverage to item scoped ones. */
   private async withCounts<T extends Candidate>(
     candidates: readonly T[],
@@ -729,11 +735,17 @@ export class RecorderController {
       const withinCount = item.within?.[0] ? await this.countPage(item.within[0]) : null;
       this.apply({ type: 'setItemCounts', count: containers.length, total, withinCount, table: t });
     }
-    const counts: { count: number | null; sample: string | null }[] = [];
+    const counts: { count: number | null; sample: string | null; coverage: { matched: number; total: number } | null }[] = [];
     for (const field of this.draft.tables[t]!.fields) {
       const primary = field.selectors[0]!;
-      const count = field.scope === 'item' ? (await this.countIn(primary, containers)).count : await this.countPage(primary);
-      counts.push({ count, sample: count > 0 ? await this.sample(field, containers) : null });
+      let count: number;
+      let coverage: { matched: number; total: number } | null = null;
+      if (field.scope === 'item') {
+        const found = await this.countIn(primary, containers);
+        count = found.count;
+        if (item) coverage = { matched: found.items, total: containers.length };
+      } else count = await this.countPage(primary);
+      counts.push({ count, sample: count > 0 ? await this.sample(field, containers) : null, coverage });
     }
     this.apply({ type: 'setFieldCounts', counts, table: t });
   }
@@ -824,7 +836,8 @@ export class RecorderController {
       const containers = scope === 'item' ? await this.containers() : [];
       const selectors = orderForSave(candidates, 0);
       const sample = await this.sample({ ...field, scope, selectors }, containers);
-      this.apply({ type: 'replaceSelectors', index: repick, selectors, fingerprint: selection.fingerprint, count: selectors[0]?.count ?? null, sample });
+      const coverage = selectors[0] ? await this.coverageOf(scope, selectors[0], containers) : null;
+      this.apply({ type: 'replaceSelectors', index: repick, selectors, fingerprint: selection.fingerprint, count: selectors[0]?.count ?? null, coverage, sample });
       if (field.scope !== scope) this.apply({ type: 'updateField', index: repick, patch: { scope } });
       const ctx = this.current.repickContext;
       if (ctx && ctx.index === repick) {
@@ -1188,6 +1201,7 @@ export class RecorderController {
     const count = selectors[0]!.count ?? null;
     const sample = count ? await this.sample({ selectors, type, scope, ...(attr ? { attr } : {}) }, containers) : null;
     const fp = selected?.selection.fingerprint ?? field.fingerprint;
+    const coverage = await this.coverageOf(scope, selectors[0]!, containers);
     this.apply({
       type: 'replaceField',
       index: editing.index,
@@ -1199,8 +1213,10 @@ export class RecorderController {
         ...(attr ? { attr } : {}),
         optional: patch.optional ?? field.optional,
         key: patch.key ?? field.key,
+        fallback: patch.fallback ?? field.fallback ?? false,
         ...(fp ? { fingerprint: fp } : {}),
         count,
+        coverage,
         sample,
       },
     });
@@ -1714,6 +1730,7 @@ export class RecorderController {
     const name = patch.name ?? (taken.includes(selected.defaults.name) ? fieldDefaults({ tag: selected.selection.tag, attrs: selected.selection.attrs, text: selected.selection.text, ...(selected.selection.name ? { name: selected.selection.name } : {}) }, taken).name : selected.defaults.name);
     const containers = scope === 'item' ? await this.containers() : [];
     const sample = await this.sample({ selectors, type, scope, ...(attr ? { attr } : {}) }, containers);
+    const coverage = await this.coverageOf(scope, selectors[0]!, containers);
     this.apply({
       type: 'addField',
       field: {
@@ -1724,8 +1741,10 @@ export class RecorderController {
         ...(attr ? { attr } : {}),
         optional: patch.optional ?? false,
         key: patch.key ?? false,
+        fallback: patch.fallback ?? false,
         fingerprint: selected.selection.fingerprint,
         count: selectors[0]!.count ?? null,
+        coverage,
         sample,
       },
     });

@@ -521,13 +521,16 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
     states.push({ field, settled, missingRows: [] });
   }
 
+  // Per row, an item field uses only its settled primary unless it opts into walking the candidates.
+  const rowSelectors = states.map((s) => (s.settled ? (s.field.fallback ? s.settled.selectors : s.settled.selectors.slice(0, 1)) : null));
   const extracted: Row[] = [];
   for (const [index, container] of containers.slice(opts.fromIndex ?? 0).entries()) {
     const row: Row = { _page: opts.page, _index: index };
-    for (const state of states) {
+    for (const [n, state] of states.entries()) {
       let result = state.pageValue;
       if (!result) {
-        const resolved = state.settled ? await resolveFirst(session, state.settled.selectors, container) : null;
+        const selectors = rowSelectors[n];
+        const resolved = selectors ? await resolveFirst(session, selectors, container) : null;
         result = await fieldValue(session, state.field, resolved?.refs[0], opts.pageUrl);
       }
       if (!result.found) state.missingRows.push(index);

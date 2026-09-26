@@ -670,7 +670,9 @@ def extract_table(page, table, page_number, page_url, resolved, from_index):
         for state in states:
             result = state["page_value"]
             if result is None:
-                found = resolve_first(container if container is not None else page, state["selectors"]) if state["selectors"] else None
+                # Only the settled primary per row, unless the field falls back to later candidates.
+                selectors = state["selectors"] if state["field"]["fallback"] else state["selectors"][:1] if state["selectors"] else None
+                found = resolve_first(container if container is not None else page, selectors) if selectors else None
                 result = field_value(page, state["field"], found.locator.nth(0) if found else None, page_url)
             if not result[1]:
                 state["missing_rows"].append(index)

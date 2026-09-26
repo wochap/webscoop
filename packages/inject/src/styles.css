@@ -264,6 +264,19 @@
 }
 .ws-crumb-current { background: var(--ws-accent-tint); color: var(--ws-accent-text); }
 .ws-crumb-sep { color: var(--ws-text-faint); font-size: 10px; align-self: center; }
+.ws-path { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; }
+.ws-path-chip {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: var(--ws-r-sm);
+  background: var(--ws-surface-2);
+  color: var(--ws-text-muted);
+  font-family: var(--ws-mono);
+  font-size: 11px;
+  line-height: 16px;
+  word-break: break-all;
+  white-space: normal;
+}
 
 .ws-list { display: flex; flex-direction: column; }
 .ws-list-row {

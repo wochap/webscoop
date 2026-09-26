@@ -142,6 +142,7 @@ function recipeField(f: DraftField) {
     selectors: f.selectors.map(bare),
     ...(f.attr ? { attr: f.attr } : {}),
     optional: f.optional,
+    ...(f.fallback ? { fallback: true } : {}),
     ...(f.key ? { key: true } : {}),
     ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
   };
@@ -280,6 +281,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
         ...(f.attr ? { attr: f.attr } : {}),
         optional: f.optional,
         key: f.key ?? false,
+        ...(f.fallback ? { fallback: true } : {}),
         ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
         count: null,
         sample: null,
@@ -338,8 +340,10 @@ export interface NewField {
   attr?: string;
   optional?: boolean;
   key?: boolean;
+  fallback?: boolean;
   fingerprint?: DraftField['fingerprint'];
   count?: number | null;
+  coverage?: DraftField['coverage'];
   sample?: string | null;
 }
 
@@ -364,7 +368,15 @@ export type DraftAction =
   | { type: 'updateField'; index: number; patch: FieldPatch }
   /** Replace the field at `index` in place: options, selectors, fingerprint, and counts. */
   | { type: 'replaceField'; index: number; field: NewField }
-  | { type: 'replaceSelectors'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; count: number | null; sample: string | null }
+  | {
+      type: 'replaceSelectors';
+      index: number;
+      selectors: ProtocolCandidate[];
+      fingerprint?: DraftField['fingerprint'];
+      count: number | null;
+      coverage?: DraftField['coverage'];
+      sample: string | null;
+    }
   | { type: 'removeField'; index: number }
   | { type: 'moveField'; from: number; to: number }
   | { type: 'setItem'; item: DraftItem | null }
@@ -373,7 +385,7 @@ export type DraftAction =
   | { type: 'setItemCounts'; count: number | null; total: number | null; withinCount?: number | null; table?: number }
   /** Set or clear (null) the item container's list parent. */
   | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint'] }
-  | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null }[]; table?: number }
+  | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null; coverage?: DraftField['coverage'] }[]; table?: number }
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
   | { type: 'addStep'; step: NewDraftStep }
@@ -422,6 +434,7 @@ function applyFieldPatch(field: DraftField, patch: FieldPatch): DraftField {
   if (patch.scope !== undefined) next.scope = patch.scope;
   if (patch.optional !== undefined) next.optional = patch.optional;
   if (patch.key !== undefined) next.key = patch.key;
+  if (patch.fallback !== undefined) next.fallback = patch.fallback;
   if (patch.attr === null || patch.attr === '') delete next.attr;
   else if (patch.attr !== undefined) next.attr = patch.attr;
   return next;
@@ -436,8 +449,10 @@ function toDraftField(f: NewField): DraftField {
     ...(f.attr ? { attr: f.attr } : {}),
     optional: f.optional ?? false,
     key: f.key ?? false,
+    ...(f.fallback ? { fallback: true } : {}),
     ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
     count: f.count ?? null,
+    ...(f.coverage !== undefined ? { coverage: f.coverage } : {}),
     sample: f.sample ?? null,
   };
 }
@@ -481,8 +496,10 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       break;
     }
     case 'replaceField': {
-      if (!table.fields[action.index]) return draft;
-      const field = toDraftField(action.field);
+      const prev = table.fields[action.index];
+      if (!prev) return draft;
+      // The fallback flag is set on the field row, not in the selection form: keep it unless the field says otherwise.
+      const field = toDraftField({ ...action.field, fallback: action.field.fallback ?? prev.fallback ?? false });
       const fields = table.fields.map((f, i) => (i === action.index ? field : field.key ? { ...f, key: false } : f));
       next = setActive({ fields });
       break;
@@ -503,6 +520,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
             selectors: action.selectors,
             ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}),
             count: action.count,
+            ...(action.coverage !== undefined ? { coverage: action.coverage } : {}),
             sample: action.sample,
           };
         }),

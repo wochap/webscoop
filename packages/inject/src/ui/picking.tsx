@@ -1,5 +1,7 @@
 import { classifyToken, attrStability, type Crumb, type ParsedSelection, type Path } from '@webscoop/core/page';
+import type { ChainLevel } from '../chain';
 import { walkTrail } from '../keyboard';
+import { SelectorPath } from './selector-path';
 import { Kbd } from './shell';
 
 export function PickModeStrip({
@@ -141,7 +143,7 @@ export function ElementInspector({
   selection,
   trail,
   onSelectPath,
-  chain = '',
+  chain = [],
   onClear,
 }: {
   selection: ParsedSelection;
@@ -150,7 +152,7 @@ export function ElementInspector({
   /** Clear the selection, back to the empty state. */
   onClear?: () => void;
   /** The composed selector chain, for an item scoped selection. */
-  chain?: string;
+  chain?: readonly ChainLevel[];
 }) {
   return (
     <section className="ws-card" data-ws="inspector">
@@ -176,11 +178,7 @@ export function ElementInspector({
         </span>
       )}
       <AttrTable attrs={selection.attrs} />
-      {chain && (
-        <span className="ws-mono-sm ws-ellipsis" title={chain} data-ws="inspector-chain">
-          {chain}
-        </span>
-      )}
+      <SelectorPath levels={chain} testId="inspector-chain" />
       <AncestorBreadcrumb trail={trail.length > 0 ? trail : selection.ancestors} current={selection.path} onSelect={onSelectPath} />
     </section>
   );

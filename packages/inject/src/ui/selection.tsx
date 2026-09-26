@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { currentTable, type Crumb, type DraftTable, type FieldOptions, type RecorderState } from '@webscoop/core/page';
-import { selectorChain } from '../chain';
+import { CHAIN_LABELS, chainLevels } from '../chain';
 import { CoverageHint, EditActions, PickActionGrid, SelectorCandidateList, SelectorInput } from './candidates';
 import { useActions } from './context';
 import { FieldOptionsForm, formPatch, nameProblem } from './fields';
@@ -129,7 +129,7 @@ function SelectionBody({ host, trail, seed }: { host: RecorderState; trail: Crum
           trail={trail}
           onSelectPath={actions.selectPath}
           onClear={clear}
-          chain={selected.scope === 'item' && item ? selectorChain([item.within?.[0], item.selectors[0], primary]) : ''}
+          chain={selected.scope === 'item' && item ? chainLevels([item.within?.[0], item.selectors[0], primary], CHAIN_LABELS) : []}
         />
       ) : (
         <div className="ws-warning" role="alert" data-ws="edit-zero-match">

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { dataset, render } from '@webscoop/playground';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { describeSelection, elementAt, pathOfElement, resolveLocal } from '../src/dom';
+import { containersLocal, describeSelection, elementAt, pathOfElement, resolveLocal } from '../src/dom';
 import { isTypingTarget } from '../src/keyboard';
 
 beforeEach(() => {
@@ -50,6 +50,22 @@ describe('in-page selection', () => {
     expect(resolveLocal({ strategy: 'css', value: '::nonsense(', stability: 'medium' })).toEqual([]);
     const card = resolveLocal({ strategy: 'id', value: 'product-p03', stability: 'stable' })[0]!;
     expect(resolveLocal({ strategy: 'xpath', value: './h2[1]', stability: 'fragile' }, card)[0]!.textContent).toBe(dataset[2]!.title);
+  });
+
+  it('anchors :scope prefixed CSS at the list parent, like the runner', () => {
+    document.body.innerHTML = `<div id="rso">${'<div><div><div class="hit">r</div></div></div>'.repeat(11)}</div>`;
+    const containers = containersLocal({
+      within: [{ strategy: 'id', value: 'rso', stability: 'stable' }],
+      selectors: [
+        { strategy: 'css', value: ':scope > div > div > div', stability: 'medium' },
+        { strategy: 'css', value: 'div', stability: 'fragile' },
+      ],
+      exclude: [],
+    });
+    expect(containers).toHaveLength(11);
+    expect(containers.every((el) => el.classList.contains('hit'))).toBe(true);
+    const rso = document.getElementById('rso')!;
+    expect(resolveLocal({ strategy: 'css', value: ':scope > div, span', stability: 'medium' }, rso)).toHaveLength(11);
   });
 
   it('knows typing targets', () => {

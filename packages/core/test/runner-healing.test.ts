@@ -82,6 +82,20 @@ describe('runner healing', () => {
     expect(again.saveRecipe).not.toHaveBeenCalled();
   });
 
+  it('uses the fuzzy healed selector for every row with fallback off', async () => {
+    const recipe = fingerprintedRecipe();
+    expect(recipe.fields!.every((f) => !f.fallback)).toBe(true);
+    const t = setup(catalogSnapshot(1), recipe);
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    const price = t.log.of('field.healed').find((e) => e.target === 'price')!;
+    expect(price.outcome.kind).toBe('fuzzy');
+    const rows = t.log.of('row.emitted').map((e) => e.row);
+    expect(rows.length).toBe(result.report.item?.count);
+    expect(rows.every((row) => typeof row.price === 'number')).toBe(true);
+    expect(result.report.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'healed', missingRows: [] });
+  });
+
   it('does not write when the run fails after a field healed', async () => {
     const recipe = withField(fingerprintedRecipe(), 'category', { selectors: [css('.gone')], fingerprint: undefined });
     const t = setup(catalogSnapshot(1), recipe);

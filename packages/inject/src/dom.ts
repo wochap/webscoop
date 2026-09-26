@@ -218,7 +218,9 @@ function splitList(selector: string): string[] {
  * reaches the element itself or its ancestors.
  */
 function queryScoped(selector: string, within: Element): Element[] {
-  return queryAll(splitList(selector).map((part) => `:scope ${part}`).join(', '), within);
+  // A part that already starts with `:scope` is anchored at the element, as Playwright reads it.
+  const parts = splitList(selector).map((part) => (/^:scope(?![\w-])/.test(part) ? part : `:scope ${part}`));
+  return queryAll(parts.join(', '), within);
 }
 
 function cssString(value: string): string {

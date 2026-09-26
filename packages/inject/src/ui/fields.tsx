@@ -1,7 +1,9 @@
 import { useEffect, useState, type HTMLAttributes } from 'react';
-import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
+import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
+import { CHAIN_LABELS, chainLevels } from '../chain';
 import { useActions, useSnapshot } from './context';
 import { Toggle } from './items';
+import { SelectorPath } from './selector-path';
 
 type FieldType = DraftField['type'];
 
@@ -177,6 +179,7 @@ function NameField({ field, index }: { field: DraftField; index: number }) {
 export function FieldRow({
   field,
   index,
+  item = null,
   focused,
   repicking,
   editing,
@@ -188,6 +191,8 @@ export function FieldRow({
 }: {
   field: DraftField;
   index: number;
+  /** The table's item block, whose primaries head an item scoped field's chain. */
+  item?: DraftItem | null;
   focused: boolean;
   repicking: boolean;
   /** The field is open in the selection panel. */
@@ -203,6 +208,8 @@ export function FieldRow({
   const steps = useSnapshot().host?.draft.steps.length ?? 0;
   const update = (patch: FieldPatch) => void actions.send({ kind: 'draft.updateField', index, patch });
   const primary = field.selectors[0]!;
+  const levels = field.scope === 'item' && item ? chainLevels([item.within?.[0], item.selectors[0], primary], CHAIN_LABELS) : chainLevels([primary], ['field']);
+  const coverage = field.scope === 'item' ? field.coverage : null;
   // One step at a time: each send resolves after the host answers with the step's result.
   const replay = async () => {
     for (let i = 0; i < steps; i++) await actions.send({ kind: 'draft.replayStep', index: i });
@@ -254,17 +261,30 @@ export function FieldRow({
         </span>
       )}
       <div className={`ws-row${editLocked ? '' : ' ws-clickable'}`} data-ws="field-summary" title={editLocked ? undefined : 'Edit this field'} onClick={editLocked ? undefined : onEdit}>
-        <span className="ws-mono-sm ws-faint ws-ellipsis ws-spacer" title={`${primary.strategy}=${primary.value}`}>
-          {primary.strategy}={primary.value}
-        </span>
+        <SelectorPath levels={levels} testId="field-path" className="ws-spacer" />
         <span className="ws-meta ws-ellipsis" style={{ maxWidth: 140 }} title={field.sample ?? ''} data-ws="field-sample">
           {field.sample ?? ''}
         </span>
       </div>
       <div className="ws-row">
-        <span className="ws-row ws-spacer">
+        {coverage ? (
+          <span
+            className={`ws-meta ws-spacer${coverage.matched < coverage.total ? ' ws-num-zero' : ''}`}
+            title="Item containers in which the primary selector matches"
+            data-ws="field-coverage"
+          >
+            {coverage.matched} / {coverage.total} items
+          </span>
+        ) : (
+          <span className="ws-spacer" />
+        )}
+        <span className="ws-row">
           <span className="ws-meta">optional</span>
           <Toggle on={field.optional} onChange={(optional) => update({ optional })} label="Optional" testId="field-optional" />
+        </span>
+        <span className="ws-row" title="In rows where the primary selector matches nothing, try the other candidates in order">
+          <span className="ws-meta">fallback</span>
+          <Toggle on={field.fallback ?? false} onChange={(fallback) => update({ fallback })} label="Fallback" testId="field-fallback" />
         </span>
         <DedupKeyToggle on={field.key} onChange={(key) => update({ key })} />
       </div>
@@ -287,6 +307,7 @@ export function FieldRow({
 /** Fields in recipe order; drag or Alt+Up and Alt+Down reorder. */
 export function FieldList({
   fields,
+  item = null,
   focused,
   repick,
   editing = null,
@@ -295,6 +316,8 @@ export function FieldList({
   onEdit = () => {},
 }: {
   fields: DraftField[];
+  /** The table's item block, for the item scoped fields' chains. */
+  item?: DraftItem | null;
   focused: number | null;
   repick: number | null;
   /** Index of the field open in the selection panel. */
@@ -322,6 +345,7 @@ export function FieldList({
           key={`${index}-${field.name}`}
           field={field}
           index={index}
+          item={item}
           focused={focused === index}
           repicking={repick === index}
           editing={editing === index}

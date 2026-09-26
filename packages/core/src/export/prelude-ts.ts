@@ -54,6 +54,7 @@ interface Field {
   type: FieldType;
   scope: 'item' | 'page';
   optional: boolean;
+  fallback: boolean;
   selectors: Selector[];
   read: 'attr' | 'html' | 'text';
   attr: string | null;
@@ -727,7 +728,9 @@ async function extractTable(
     for (const state of states) {
       let result = state.pageValue;
       if (!result) {
-        const found = state.selectors ? await resolveFirst(container ?? page, state.selectors) : null;
+        // Only the settled primary per row, unless the field falls back to later candidates.
+        const selectors = state.selectors && !state.field.fallback ? state.selectors.slice(0, 1) : state.selectors;
+        const found = selectors ? await resolveFirst(container ?? page, selectors) : null;
         result = await fieldValue(state.field, found ? found.locator.nth(0) : null, pageUrl);
       }
       if (!result.found) state.missingRows.push(index);
