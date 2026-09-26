@@ -69,7 +69,11 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     const panel = await hook(page, (h) => h.query('[data-ws="body"]'));
     expect(panel!.rect.x).toBe(width - 400);
     // Topmost element at a point inside the panel, level with the fixed header and over the modal backdrop.
-    const top = await page.evaluate(([x]) => [document.elementFromPoint(x!, 30)?.tagName, document.elementFromPoint(x!, 400)?.tagName], [width - 200]);
+    // The lower point stays inside the viewport: a headed window tiled by the compositor can be shorter than 400px.
+    const top = await page.evaluate(
+      ([x]) => [document.elementFromPoint(x!, 30)?.tagName, document.elementFromPoint(x!, Math.min(400, window.innerHeight - 10))?.tagName],
+      [width - 200],
+    );
     expect(top).toEqual(['WEBSCOOP-ROOT', 'WEBSCOOP-ROOT']);
     expect(await page.evaluate(() => getComputedStyle(document.documentElement).marginRight)).toBe('400px');
     const cardRight = await page.evaluate(() => Math.max(...Array.from(document.querySelectorAll('article')).map((a) => a.getBoundingClientRect().right)));
