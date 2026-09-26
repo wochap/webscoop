@@ -77,7 +77,7 @@ The script SHALL implement the recipe's pagination kind (`url`, `next`, `more`, 
 - **THEN** `page` has 2 rows and `products` has the deduplicated rows of both pages, equal to `webscoop run`
 
 ### Requirement: Missing field policy
-The script SHALL apply the runner's missing field policy per table: a required field missing on every row of its table exits 3 with no rows, a row on which a required field is missing is dropped with a warning on stderr naming the table, the field, and the container index, a first page where an item table with containers has no rows left exits 3, a non-primary item table with no containers yields no rows and a warning, and optional fields yield `null`.
+The script SHALL apply the runner's missing field policy per table, where a required field is missing on a row when it resolves no element or its converted value is `null` or an empty string after whitespace collapse: a required field missing on every row of its table exits 3 with no rows, a row on which a required field is missing is dropped with a warning on stderr naming the table, the field, and the container index, a first page where an item table with containers has no rows left exits 3, a non-primary item table with no containers yields no rows and a warning, and optional fields yield `null` when missing or empty.
 
 #### Scenario: Required field missing everywhere
 - **WHEN** no container resolves the `price` field
@@ -86,6 +86,10 @@ The script SHALL apply the runner's missing field policy per table: a required f
 #### Scenario: Required field missing on some rows
 - **WHEN** 2 of 24 containers lack the required `url` field
 - **THEN** the script prints 22 rows, none with a `null` `url`, and exits 0
+
+#### Scenario: Required field empty on some rows
+- **WHEN** 1 of 24 containers has a `desc` element holding only whitespace and `desc` is required
+- **THEN** the script prints 23 rows, none with an empty `desc`, warns on stderr naming `desc`, and exits 0
 
 #### Scenario: Secondary table absent
 - **WHEN** `questions` is not the primary table and matches no container

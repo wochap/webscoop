@@ -80,7 +80,7 @@ When a table has an `item` block, the runner SHALL resolve the list parent from 
 - **THEN** the run report marks the table's item container missing and names `within`
 
 ### Requirement: Missing fields
-A required field that resolves no element for a given row, after the healing ladder has been exhausted for that field, SHALL mark the row's field status `missing` and the row SHALL be dropped: it SHALL NOT be emitted and SHALL NOT count toward the row count. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field of any table was missing on every row of its table, or a table with an item block that matched containers has no row left after dropping, the run SHALL fail with exit 3 and name the table and the fields. A primary table whose item container matches nothing on the first page SHALL fail the run with exit 3; a non-primary item table that matches no container SHALL yield no rows and a warning. On later pages a required field missing on every row of its table SHALL fail the run with exit 3 after emitting the earlier pages; a later page with no row left after dropping SHALL NOT fail the run. When a required field is missing on some rows only, those rows SHALL be dropped, the run SHALL succeed, and a warning on stderr SHALL name the table, the field, the page, and the container indexes dropped. Optional fields SHALL always yield `null` when missing and SHALL still go through the ladder once. A page scoped required field that resolves nothing SHALL count as missing on every row of its table.
+A required field is missing on a row when it resolves no element for that row after the healing ladder has been exhausted for that field, or when the value read from its element converts to `null` or to an empty string once whitespace is collapsed. A missing required field SHALL mark the row's field status `missing` and the row SHALL be dropped: it SHALL NOT be emitted and SHALL NOT count toward the row count. Field resolution and healing SHALL happen on the first page where the field is needed and the resolved selector SHALL be reused on later pages. After the first page is processed, if any required field of any table was missing on every row of its table, or a table with an item block that matched containers has no row left after dropping, the run SHALL fail with exit 3 and name the table and the fields. A primary table whose item container matches nothing on the first page SHALL fail the run with exit 3; a non-primary item table that matches no container SHALL yield no rows and a warning. On later pages a required field missing on every row of its table SHALL fail the run with exit 3 after emitting the earlier pages; a later page with no row left after dropping SHALL NOT fail the run. When a required field is missing on some rows only, those rows SHALL be dropped, the run SHALL succeed, and a warning on stderr SHALL name the table, the field, the page, and the container indexes dropped. Optional fields SHALL always yield `null` when missing, including when their value is empty, and SHALL still go through the ladder once. A page scoped required field that resolves nothing or reads empty SHALL count as missing on every row of its table.
 
 #### Scenario: Required field absent everywhere
 - **WHEN** `price` is required and no rung of the ladder resolves it
@@ -90,9 +90,21 @@ A required field that resolves no element for a given row, after the healing lad
 - **WHEN** `price` is required and one of 24 containers lacks it
 - **THEN** 23 rows are emitted, none with `price: null`, and a warning names `price` and the container index dropped
 
+#### Scenario: Required field empty on one row
+- **WHEN** `desc` is required, every container has the description element, and one holds only whitespace
+- **THEN** 23 rows are emitted, none with an empty `desc`, `desc` has status `partial`, and a warning names `desc` and the container index dropped
+
+#### Scenario: Required number unparsable on one row
+- **WHEN** `price` is required with type `number` and one container's price text is `n/a`
+- **THEN** that row is dropped and 23 rows are emitted
+
 #### Scenario: Optional field absent on one row
 - **WHEN** `price` is optional and one of 24 containers lacks it
 - **THEN** 24 rows are emitted, one with `price: null`, and the exit code is 0
+
+#### Scenario: Optional field empty on one row
+- **WHEN** `desc` is optional and one container's description element holds only whitespace
+- **THEN** 24 rows are emitted and that row has `desc: null`
 
 #### Scenario: Every row dropped on the first page
 - **WHEN** `url` is required and missing on containers 0 to 11 and `price` is required and missing on containers 12 to 23
