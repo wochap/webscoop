@@ -28,12 +28,13 @@ import {
   type HealTarget,
   type Resolver,
   type SerializedElement,
+  tablesOf,
 } from '../src';
 import { dataset } from '@webscoop/playground';
 import { FakeBrowser, h } from '../src/testing';
 import { catalogSnapshot, fingerprintedRecipe, tier0Nodes } from './healing-helpers';
 import { CATALOG, referenceRecipe } from './recorder-helpers';
-import { css, PAGE, recipe, testid } from './helpers';
+import { css, PAGE, recipe, tablesRecipe, testid } from './helpers';
 
 /** A recipe as plain input again, so a test can add keys before loading it. */
 const saveRecipeInput = (recipe: ReturnType<typeof loadRecipe>) => JSON.parse(saveRecipe(recipe)) as Record<string, unknown>;
@@ -121,7 +122,7 @@ describe('fingerprint score', () => {
     const recipe = referenceRecipe();
     // The snapshot here carries no geometry, so only the bbox component is lost.
     expect(scoreFingerprint(recipe.item!.fingerprint!, nodes.item!)).toBeGreaterThanOrEqual(0.9);
-    for (const field of recipe.fields) expect(scoreFingerprint(field.fingerprint!, nodes[field.name]!), field.name).toBeGreaterThanOrEqual(0.9);
+    for (const field of recipe.fields!) expect(scoreFingerprint(field.fingerprint!, nodes[field.name]!), field.name).toBeGreaterThanOrEqual(0.9);
   });
 });
 
@@ -233,7 +234,7 @@ describe('promotion', () => {
   it('drops dead candidates and ranks fresh ones after a fuzzy match', async () => {
     const session = await open(catalogSnapshot(1));
     const recipe = fingerprintedRecipe();
-    const price = recipe.fields.find((f) => f.name === 'price')!;
+    const price = recipe.fields!.find((f) => f.name === 'price')!;
     const containers = await session.resolve(css('article'));
     const target: HealTarget = { kind: 'field', index: 1, name: 'price', scope: 'item', optional: false, selectors: price.selectors, fingerprint: price.fingerprint! };
     const ctx = ctxFor(session, { within: containers[0]!, containers, outerAncestors: recipe.item!.fingerprint!.ancestors });
@@ -244,7 +245,7 @@ describe('promotion', () => {
     expect(p.selectors[0]!.value).toMatch(/^x/);
     expect(p.selectors.at(-1)).toEqual({ strategy: 'xpath', value: './p[1]', stability: 'fragile' });
     expect(p.coverage).toBe(24);
-    expect(p.fingerprint?.ancestors).toEqual(recipe.fields[1]!.fingerprint!.ancestors);
+    expect(p.fingerprint?.ancestors).toEqual(recipe.fields![1]!.fingerprint!.ancestors);
     for (const s of p.selectors) {
       const [ref] = await session.resolve(s, containers[3]);
       expect(await session.read(ref!, { mode: 'text' }), `${s.strategy}=${s.value}`).toBe('$1,299.00');
@@ -266,17 +267,17 @@ describe('applyPromotions', () => {
   it('changes only promoted targets', () => {
     const before = fingerprintedRecipe();
     const selectors = [testid('x1abc23')];
-    const fp = { ...before.fields[1]!.fingerprint!, textSample: '$1.00' };
-    const target: HealTarget = { kind: 'field', index: 1, name: 'price', scope: 'item', optional: false, selectors: before.fields[1]!.selectors };
-    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.9 }, oldPrimary: before.fields[1]!.selectors[0]!, newPrimary: selectors[0]!, selectors, fingerprint: fp }]);
+    const fp = { ...before.fields![1]!.fingerprint!, textSample: '$1.00' };
+    const target: HealTarget = { kind: 'field', index: 1, name: 'price', scope: 'item', optional: false, selectors: before.fields![1]!.selectors };
+    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.9 }, oldPrimary: before.fields![1]!.selectors[0]!, newPrimary: selectors[0]!, selectors, fingerprint: fp }]);
     expect(after).not.toBe(before);
-    expect(after.fields[1]!.selectors).toEqual(selectors);
-    expect(after.fields[1]!.fingerprint).toEqual(fp);
+    expect(after.fields![1]!.selectors).toEqual(selectors);
+    expect(after.fields![1]!.fingerprint).toEqual(fp);
     const { fields: a, ...restA } = after;
     const { fields: b, ...restB } = before;
     expect(restA).toEqual(restB);
-    expect(a.filter((_, i) => i !== 1)).toEqual(b.filter((_, i) => i !== 1));
-    expect(before.fields[1]!.selectors[0]!.value).toBe('price');
+    expect(a!.filter((_, i) => i !== 1)).toEqual(b!.filter((_, i) => i !== 1));
+    expect(before.fields![1]!.selectors[0]!.value).toBe('price');
 
     const lines = (text: string) => text.split('\n');
     const x = lines(saveRecipe(before));
@@ -288,6 +289,41 @@ describe('applyPromotions', () => {
     const urlAtX = x.findIndex((l) => l.includes('"name": "url"'));
     const urlAtY = y.findIndex((l) => l.includes('"name": "url"'));
     expect(y.slice(urlAtY)).toEqual(x.slice(urlAtX));
+  });
+
+  it('heals a field in the second table and leaves the first untouched', () => {
+    const before = loadRecipe(tablesRecipe());
+    const products = tablesOf(before)[1]!;
+    const selectors = [testid('product-title')];
+    const target: HealTarget = { kind: 'field', table: 'products', index: 0, name: 'title', scope: 'item', optional: false, selectors: products.fields[0]!.selectors };
+    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.9 }, oldPrimary: css('h2'), newPrimary: selectors[0]!, selectors }]);
+    const [page, healed, questions] = tablesOf(after);
+    expect(healed!.fields[0]!.selectors).toEqual(selectors);
+    expect(healed!.fields[1]).toEqual(products.fields[1]);
+    expect(page).toEqual(tablesOf(before)[0]);
+    // Same field name, other table: untouched.
+    expect(questions).toEqual(tablesOf(before)[2]);
+    expect(after.fields).toBeUndefined();
+    expect(after.item).toBeUndefined();
+  });
+
+  it('heals the item container of a named table', () => {
+    const before = loadRecipe(tablesRecipe());
+    const selectors = [css('div.question')];
+    const target: HealTarget = { kind: 'item', table: 'questions', selectors: tablesOf(before)[2]!.item!.selectors };
+    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.9 }, oldPrimary: testid('question'), newPrimary: selectors[0]!, selectors }]);
+    expect(tablesOf(after)[2]!.item!.selectors).toEqual(selectors);
+    expect(tablesOf(after)[1]!.item).toEqual(tablesOf(before)[1]!.item);
+  });
+
+  it('keeps a shorthand recipe in the shorthand form', () => {
+    const before = fingerprintedRecipe();
+    const selectors = [testid('x1abc23')];
+    const target: HealTarget = { kind: 'field', table: 'items', index: 1, name: 'price', scope: 'item', optional: false, selectors: before.fields![1]!.selectors };
+    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.9 }, oldPrimary: before.fields![1]!.selectors[0]!, newPrimary: selectors[0]!, selectors }]);
+    expect(after.tables).toBeUndefined();
+    expect(after.fields![1]!.selectors).toEqual(selectors);
+    expect(Object.keys(after)).toEqual(Object.keys(before));
   });
 });
 
@@ -335,13 +371,13 @@ describe('extractPage with the healing ladder', () => {
   it('heals every broken field of the reference recipe on tier 1 through fuzzy matching', async () => {
     const session = await open(catalogSnapshot(1));
     const healed: string[] = [];
-    const out = await extractPage(session, fingerprintedRecipe(), {
+    const out = (await extractPage(session, fingerprintedRecipe(), {
       pageUrl: CATALOG,
       page: 1,
       ladder: defaultLadder({ enabled: true }),
       promote: true,
       onHealed: (p) => healed.push(p.target.kind === 'field' ? p.target.name : p.target.kind),
-    });
+    })).tables[0]!;
     expect(out.missingRequired).toEqual([]);
     expect(out.rows).toHaveLength(24);
     expect(out.item?.outcome.kind).toBe('fuzzy');
@@ -386,7 +422,7 @@ describe('extractPage with the healing ladder', () => {
         ],
       }),
     );
-    const out = await extractPage(session, r, { pageUrl: PAGE, page: 1, ladder: defaultLadder({ enabled: true }), promote: true });
+    const out = (await extractPage(session, r, { pageUrl: PAGE, page: 1, ladder: defaultLadder({ enabled: true }), promote: true })).tables[0]!;
     const price = out.fields[1]!;
     expect(price.outcome.kind).toBe('fuzzy');
     expect(price.status).toBe('partial');
@@ -408,17 +444,17 @@ describe('extractPage with the healing ladder', () => {
         fields: [{ name: 'price', type: 'text', scope: 'item', selectors: [testid('price')], fingerprint: fingerprint(origPrice) }],
       }),
     );
-    const out = await extractPage(session, r, { pageUrl: PAGE, page: 1, ladder: defaultLadder({ enabled: true }), promote: true });
+    const out = (await extractPage(session, r, { pageUrl: PAGE, page: 1, ladder: defaultLadder({ enabled: true }), promote: true })).tables[0]!;
     expect(out.fields[0]).toMatchObject({ status: 'missing', outcome: { kind: 'unresolved' } });
     expect(out.missingRequired).toEqual(['price']);
   });
 
   it('heals a positional-only recipe on tier 2 in the item that matches the item fingerprint', async () => {
     const reference = referenceRecipe();
-    const field = (name: string, selector: string) => ({ ...reference.fields.find((f) => f.name === name)!, selectors: [{ strategy: 'xpath' as const, value: selector, stability: 'fragile' as const }] });
+    const field = (name: string, selector: string) => ({ ...reference.fields!.find((f) => f.name === name)!, selectors: [{ strategy: 'xpath' as const, value: selector, stability: 'fragile' as const }] });
     const positional = { ...reference, item: { ...reference.item!, selectors: [{ strategy: 'xpath' as const, value: '//ul/li/article', stability: 'fragile' as const }] }, fields: [field('title', './h2[1]'), field('price', './p[1]')] };
     const session = await open(catalogSnapshot(2, 1));
-    const out = await extractPage(session, positional, { pageUrl: CATALOG, page: 1, ladder: defaultLadder({ enabled: true }), promote: true });
+    const out = (await extractPage(session, positional, { pageUrl: CATALOG, page: 1, ladder: defaultLadder({ enabled: true }), promote: true })).tables[0]!;
     expect(out.missingRequired).toEqual([]);
     expect(out.fields.map((f) => [f.name, f.status, f.outcome.kind])).toEqual([
       ['title', 'healed', 'fuzzy'],
@@ -430,7 +466,7 @@ describe('extractPage with the healing ladder', () => {
 
   it('keeps the old behavior without a ladder: candidates only, no promotion', async () => {
     const session = await open(catalogSnapshot(1));
-    const out = await extractPage(session, fingerprintedRecipe(), { pageUrl: CATALOG, page: 1 });
+    const out = (await extractPage(session, fingerprintedRecipe(), { pageUrl: CATALOG, page: 1 })).tables[0]!;
     expect(out.missingRequired).toEqual(['item']);
     expect(out.promotions).toEqual([]);
   });

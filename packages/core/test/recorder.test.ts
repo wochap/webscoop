@@ -441,7 +441,7 @@ describe('RecorderController', () => {
     const r: Recipe = {
       ...reference,
       item: { ...reference.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] },
-      fields: reference.fields.map((f) => ({ ...f, optional: f.name !== 'url' })),
+      fields: reference.fields!.map((f) => ({ ...f, optional: f.name !== 'url' })),
     };
     const t = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(r));
     const results = await t.controller.testRun();
@@ -472,7 +472,7 @@ describe('RecorderController', () => {
     expect(recipe.item!.selectors[1]).toEqual({ strategy: 'testid', value: 'product-card', stability: 'stable' });
     expect(recipe.item!.within![0]).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
     expect(recipe.item!.withinFingerprint?.tag).toBe('ul');
-    expect(recipe.fields[0]!.fingerprint?.tag).toBe('h2');
+    expect(recipe.fields![0]!.fingerprint?.tag).toBe('h2');
     expect(t.events.map((e) => e.name)).toContain('recorder.saved');
   });
 

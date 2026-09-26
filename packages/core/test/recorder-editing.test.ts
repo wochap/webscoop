@@ -1,8 +1,8 @@
 import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
-import { detach, emptyDraft, nodeAt, reduceDraft, type Draft } from '../src';
+import { detach, draftFromRecipe, draftToRecipe, emptyDraft, inDraftForm, nodeAt, reduceDraft, tablesOf, validateRecipe, type Draft } from '../src';
 import { h } from '../src/testing';
-import { byClass, cardPath, harness, type Harness } from './recorder-helpers';
+import { byClass, cardPath, harness, referenceRecipe, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
 
 function newDraft(): Draft {
@@ -223,5 +223,30 @@ describe('editing a saved field', () => {
     expect(t.controller.state.editing!.candidates).toEqual([{ ...selectors[0], count: 0, items: 0 }]);
     await t.send({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', optional: true } });
     expect(t.controller.draft.fields[1]).toMatchObject({ name: 'price', type: 'text', selectors: [{ value: '.gone' }] });
+  });
+});
+
+describe('editing a one entry tables recipe', () => {
+  const recipe = () => {
+    const { item, fields, ...rest } = referenceRecipe();
+    return { ...rest, tables: [{ name: 'products', ...(item ? { item } : {}), fields: fields! }] };
+  };
+
+  it('loads like the shorthand and saves back in the tables form', () => {
+    const tables = recipe();
+    const draft = draftFromRecipe(tables);
+    const shorthand = draftFromRecipe(referenceRecipe());
+    expect(draft.table).toBe('products');
+    expect(shorthand.table).toBeUndefined();
+    const { table: _table, ...rest } = draft;
+    expect(rest).toEqual(shorthand);
+    const validated = validateRecipe(draftToRecipe(draft));
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    const saved = inDraftForm(draft, validated.recipe);
+    expect(saved.fields).toBeUndefined();
+    expect(tablesOf(saved).map((t) => t.name)).toEqual(['products']);
+    expect(tablesOf(saved)[0]!.fields.map((f) => f.name)).toEqual(tablesOf(tables)[0]!.fields.map((f) => f.name));
+    expect(inDraftForm(shorthand, validated.recipe)).toBe(validated.recipe);
   });
 });

@@ -133,6 +133,7 @@ describe('summary', () => {
     finalUrl: null,
     pageCount: 1,
     rowCount: 24,
+    tables: [],
     item: null,
     fields: [],
     pagination: null,

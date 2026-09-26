@@ -28,6 +28,6 @@ export function fingerprintedRecipe(): Recipe {
   return {
     ...recipe,
     item: { ...recipe.item!, fingerprint: fingerprint(nodes.item!) },
-    fields: recipe.fields.map((f) => ({ ...f, fingerprint: fingerprint(nodes[f.name]!) })),
+    fields: recipe.fields!.map((f) => ({ ...f, fingerprint: fingerprint(nodes[f.name]!) })),
   };
 }

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadRecipe, RecipeError, saveRecipe, validateRecipe, type RecipeInput } from '../src';
+import { loadRecipe, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
+import { tablesRecipe } from './helpers';
 
 const referencePath = fileURLToPath(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url));
 
@@ -150,7 +151,7 @@ describe('fields', () => {
 
   it('defaults optional to false', () => {
     const recipe = loadRecipe(base());
-    expect(recipe.fields[0]!.optional).toBe(false);
+    expect(recipe.fields![0]!.optional).toBe(false);
   });
 
   it('rejects duplicate field names, naming the field', () => {
@@ -171,6 +172,93 @@ describe('fields', () => {
   it('rejects an empty selector list', () => {
     const errors = errorsOf(base({ fields: [field('a', { selectors: [] })] as RecipeInput['fields'] }));
     expect(errors[0]!.path).toBe('$.fields[0].selectors');
+  });
+});
+
+describe('tables', () => {
+  const table = (name: string, extra: Record<string, unknown> = {}) => ({
+    name,
+    fields: [{ name: 'title', type: 'text', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }],
+    ...extra,
+  });
+  const withTables = (tables: unknown[]): RecipeInput => {
+    const { fields: _fields, ...rest } = base();
+    return { ...rest, tables } as RecipeInput;
+  };
+
+  it('accepts a page table and a list table, with scopes defaulting from the table', () => {
+    const recipe = loadRecipe(tablesRecipe());
+    const [page, products, questions] = tablesOf(recipe);
+    expect([page!.name, products!.name, questions!.name]).toEqual(['page', 'products', 'questions']);
+    expect(page!.item).toBeUndefined();
+    expect(page!.fields[0]!.scope).toBe('page');
+    expect(products!.fields.map((f) => f.scope)).toEqual(['item', 'item']);
+    expect(recipe.fields).toBeUndefined();
+  });
+
+  it('reads the shorthand as one table named items', () => {
+    const recipe = loadRecipe(base());
+    expect(tablesOf(recipe)).toEqual([{ name: 'items', fields: recipe.fields }]);
+    expect(recipe.tables).toBeUndefined();
+  });
+
+  it('accepts a single table in the tables form', () => {
+    expect(validateRecipe(withTables([table('results')])).ok).toBe(true);
+  });
+
+  it('defaults scope to item in a table with an item block, and to page in the shorthand without one', () => {
+    const recipe = loadRecipe(withTables([table('results', { item: { selectors: [{ strategy: 'css', value: 'li', stability: 'medium' }] } })]));
+    expect(tablesOf(recipe)[0]!.fields[0]!.scope).toBe('item');
+    const { scope: _scope, ...unscoped } = base().fields![0]!;
+    expect(loadRecipe(base({ fields: [unscoped] })).fields![0]!.scope).toBe('page');
+  });
+
+  it('rejects tables together with top level fields, naming both', () => {
+    const errors = errorsOf({ ...base(), tables: [table('results')] });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.tables');
+    expect(errors[0]!.message).toMatch(/tables.*fields/);
+  });
+
+  it('rejects a recipe with neither tables nor fields', () => {
+    const errors = errorsOf(withTables([]));
+    expect(errors.map((e) => e.path)).toContain('$.tables');
+    const { fields: _fields, ...bare } = base();
+    expect(errorsOf(bare).map((e) => e.path)).toEqual(['$.fields']);
+  });
+
+  it('rejects duplicate table names, naming the table', () => {
+    const errors = errorsOf(withTables([table('results'), table('results')]));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.tables[1].name');
+    expect(errors[0]!.message).toContain('results');
+  });
+
+  it('rejects an item scoped field in a table without an item block, naming the table and the field', () => {
+    const errors = errorsOf(
+      withTables([table('page', { fields: [{ name: 'heading', type: 'text', scope: 'item', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] })]),
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.tables[0].fields[0].scope');
+    expect(errors[0]!.message).toContain('"page"');
+    expect(errors[0]!.message).toContain('"heading"');
+  });
+
+  it('accepts the same field name in two tables', () => {
+    expect(validateRecipe(withTables([table('page'), table('products')])).ok).toBe(true);
+  });
+
+  it('rejects duplicate field names and two keys within one table', () => {
+    const field = (name: string, key = false) => ({ name, type: 'text', selectors: [{ strategy: 'css', value: 'x', stability: 'fragile' }], ...(key ? { key } : {}) });
+    const dup = errorsOf(withTables([table('results', { fields: [field('price'), field('price')] })]));
+    expect(dup.map((e) => e.path)).toEqual(['$.tables[0].fields[1].name']);
+    expect(dup[0]!.message).toContain('price');
+    const keys = errorsOf(withTables([table('results', { fields: [field('a', true), field('b', true)] })]));
+    expect(keys.map((e) => e.path)).toEqual(['$.tables[0].fields[1].key']);
+  });
+
+  it('rejects a table name that is not kebab-case', () => {
+    expect(errorsOf(withTables([table('My Table')]))[0]!.path).toBe('$.tables[0].name');
   });
 });
 
@@ -199,12 +287,12 @@ describe('selector candidates', () => {
         ],
       }),
     );
-    expect(recipe.fields[0]!.selectors[0]).toEqual({ strategy: 'class', value: 'span.price.kXeqYt', stability: 'fragile' });
+    expect(recipe.fields![0]!.selectors[0]).toEqual({ strategy: 'class', value: 'span.price.kXeqYt', stability: 'fragile' });
   });
 
   it('rejects an unknown strategy and names it', () => {
     const input = base();
-    (input.fields[0]!.selectors[0] as { strategy: string }).strategy = 'magic';
+    (input.fields![0]!.selectors[0] as { strategy: string }).strategy = 'magic';
     const errors = errorsOf(input);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.path).toBe('$.fields[0].selectors[0].strategy');
@@ -324,14 +412,14 @@ describe('fingerprints and round-trip', () => {
       bbox: { x: 1, y: 2.5, w: 300, h: 20 },
     };
     const input = base();
-    input.fields[0]!.fingerprint = fingerprint;
+    input.fields![0]!.fingerprint = fingerprint;
     const saved = JSON.parse(saveRecipe(loadRecipe(input)));
     expect(saved.fields[0].fingerprint).toEqual(fingerprint);
   });
 
   it('rejects more than six ancestors', () => {
     const input = base();
-    input.fields[0]!.fingerprint = {
+    input.fields![0]!.fingerprint = {
       tag: 'h2',
       textSample: '',
       attrs: {},
@@ -352,7 +440,7 @@ describe('fingerprints and round-trip', () => {
 describe('error collection', () => {
   it('reports an undeclared variable and an unknown field type together', () => {
     const input = base({ vars: [] });
-    (input.fields[0] as { type: string }).type = 'money';
+    (input.fields![0] as { type: string }).type = 'money';
     const errors = errorsOf(input);
     expect(errors).toHaveLength(2);
     expect(new Set(errors.map((e) => e.path))).toEqual(new Set(['$.url', '$.fields[0].type']));
@@ -360,7 +448,7 @@ describe('error collection', () => {
 
   it('exposes every error on RecipeError', () => {
     const input = base({ vars: [] });
-    (input.fields[0] as { type: string }).type = 'money';
+    (input.fields![0] as { type: string }).type = 'money';
     try {
       loadRecipe(input, 'x.json');
       expect.unreachable();

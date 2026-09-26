@@ -23,6 +23,7 @@ import {
   type FieldType,
   type Recipe,
   type Row,
+  tablesOf,
 } from '../src';
 
 const run = promisify(execFile);
@@ -68,7 +69,7 @@ function withinRecipe(): Recipe {
         { strategy: 'css', value: 'ul.product-list', stability: 'medium' },
       ],
     },
-    fields: recipe.fields.map((f) => (f.name === 'title' ? { ...f, selectors: [{ strategy: 'class', value: 'h2.product-title', stability: 'medium' }, ...f.selectors] } : f)),
+    fields: recipe.fields!.map((f) => (f.name === 'title' ? { ...f, selectors: [{ strategy: 'class', value: 'h2.product-title', stability: 'medium' }, ...f.selectors] } : f)),
   };
 }
 
@@ -293,7 +294,7 @@ function coreDedup(key: string | null): Row[][] {
     url: PAGE_URL,
     fields: DEDUP_FIELDS.map((name) => ({ name, type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: name, stability: 'medium' }], ...(name === key ? { key: true } : {}) })),
   });
-  const dedup = new Dedup(recipe);
+  const dedup = new Dedup(tablesOf(recipe)[0]!);
   return DEDUP_PAGES.map((rows, i) => {
     const preview = dedup.preview(rows, i + 1);
     preview.commit();

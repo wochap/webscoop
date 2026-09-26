@@ -21,6 +21,7 @@ import {
   type WindowPort,
 } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
+import { primaryTableIndex, tablesOf } from './recipe/tables';
 import { Dedup, evaluateStop, type PageSummary } from './pagination/dedup';
 import { createStrategy } from './pagination/strategies';
 import { DEFAULT_PAGE_CAP, PaginationInputError, type PagerContext, type PageStrategy, type StopReason } from './pagination/types';
@@ -170,8 +171,9 @@ export class Runner {
         if (target.kind !== 'field' || target.optional) return null;
         const oldSelector = target.selectors[0]!;
         const fingerprint = target.fingerprint ?? null;
+        const table = target.table ?? tablesOf(this.opts.recipe)[0]!.name;
         this.transition('repicking');
-        this.emitter.emit('repick.requested', { page, target: target.name, oldSelector, fingerprint });
+        this.emitter.emit('repick.requested', { page, table, target: target.name, oldSelector, fingerprint });
         const result = await handler({
           page,
           target,
@@ -182,7 +184,7 @@ export class Runner {
           session: ctx.session,
           recipe: current(),
         });
-        this.emitter.emit('repick.resolved', { page, target: target.name, result: result.kind });
+        this.emitter.emit('repick.resolved', { page, table, target: target.name, result: result.kind });
         if (result.kind === 'abort') throw new RunFailure('aborted', `the re-pick of ${target.name} was aborted`);
         this.transition('extracting');
         if (result.kind === 'skip') return null;
@@ -211,6 +213,12 @@ export class Runner {
     const { recipe, browser, profileDir, signal } = this.opts;
     const now = this.opts.now ?? (() => new Date());
     const started = now();
+    const tables = tablesOf(recipe);
+    /** The first table with an item block drives item counts and the stop rules; -1 when there is none. */
+    const primary = primaryTableIndex(tables);
+    /** The table the report's top level `item` and `fields` mirror. */
+    const mirror = Math.max(primary, 0);
+    const multi = tables.length > 1;
     const report: RunReport = {
       recipe: recipe.name,
       startedAt: started.toISOString(),
@@ -219,6 +227,7 @@ export class Runner {
       finalUrl: null,
       pageCount: 0,
       rowCount: 0,
+      tables: tables.map((t) => ({ name: t.name, rowCount: 0, duplicateCount: 0, droppedCount: 0, item: null, fields: [] })),
       item: null,
       fields: [],
       pagination: null,
@@ -287,9 +296,11 @@ export class Runner {
       const resolvers = (healing.resolvers ?? []).filter((r) => !r.recipeGated || recipe.healing.llm);
       const onHealed = (page: number) => (promotion: Promotion) => {
         promotions.push(promotion);
+        const { target } = promotion;
         this.emitter.emit('field.healed', {
           page,
-          target: targetName(promotion.target),
+          ...(target.kind === 'field' || target.kind === 'item' || target.kind === 'within' ? { table: target.table ?? tables[0]!.name } : {}),
+          target: targetName(target),
           outcome: promotion.outcome,
           oldPrimary: promotion.oldPrimary,
           newPrimary: promotion.newPrimary,
@@ -301,7 +312,8 @@ export class Runner {
       const budget = new GuardBudget(guardOpts?.timeoutMs ?? DEFAULT_GUARD_TIMEOUT_MS);
 
       let page = 1;
-      let resolved: ResolvedSelectors | undefined;
+      /** Per table, what page 1 (or the first page a table matched on) settled on; undefined before page 1 is extracted. */
+      let resolved: (ResolvedSelectors | null)[] | undefined;
       let targetSelectors: SelectorCandidate[] | null = null;
       const pager: PagerContext = {
         session: live,
@@ -330,7 +342,8 @@ export class Runner {
         sleep: (ms) => delay(ms, signal),
       };
 
-      const dedup = new Dedup(recipe);
+      // Tables without an item block yield one row per page and are never deduplicated.
+      const dedups = tables.map((t) => (t.item ? new Dedup(t) : null));
       let previous: PageSummary | null = null;
       let fromIndex: number | undefined;
       let reason: StopReason;
@@ -463,8 +476,10 @@ export class Runner {
           extractPage(live, recipe, {
             pageUrl: info.url,
             page,
-            ...(resolved
-              ? { resolved }
+            ...(resolved ? { resolved } : {}),
+            // Tables not settled yet go through the ladder; settled ones reuse their selectors.
+            ...(resolved?.every((r) => r !== null)
+              ? {}
               : {
                   ladder: defaultLadder({
                     enabled: healing.enabled,
@@ -488,71 +503,105 @@ export class Runner {
           );
           extraction = await extract();
         }
-        if (!resolved) {
-          report.item = extraction.item;
-          report.fields = extraction.fields;
-          report.healed +=
-            extraction.fields.filter((f) => isHealed(f.outcome)).length +
-            (isHealed(extraction.item?.outcome) ? 1 : 0) +
-            (isHealed(extraction.item?.within?.outcome) ? 1 : 0);
-          for (const field of extraction.fields) this.emitter.emit('field.resolved', { page, field });
-          if (extraction.missingRequired.length > 0) {
-            const names = extraction.missingRequired;
-            throw new RunFailure(
-              'missing-required',
-              names.includes('within')
-                ? 'the list parent (item.within) matched no element, so the item container is unresolved'
-                : names.includes('item')
-                ? 'the item container matched no element'
-                : `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element`,
-              names,
-            );
+        const firstPage = resolved === undefined;
+        const settled = resolved ?? tables.map(() => null);
+        for (const [index, found] of extraction.tables.entries()) {
+          const at = multi ? `table "${found.name}": ` : '';
+          const isNew = settled[index] === null;
+          if (isNew && (firstPage || found.resolved)) {
+            // First time the table resolves: report how, and apply the first page rules.
+            const table = report.tables[index]!;
+            table.item = found.item;
+            table.fields = found.fields;
+            report.healed +=
+              found.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(found.item?.outcome) ? 1 : 0) + (isHealed(found.item?.within?.outcome) ? 1 : 0);
+            if (index === mirror) {
+              report.item = found.item;
+              report.fields = found.fields;
+            }
+            for (const field of found.fields) this.emitter.emit('field.resolved', { page, table: found.name, field });
           }
-          if (extraction.containerCount > 0 && extraction.rows.length === 0) {
-            const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
-            const names = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
-            throw new RunFailure(
-              'missing-required',
-              `every row on page ${page} was dropped for missing required field${names.length > 1 ? 's' : ''} ${names.join(', ')}`,
-              names,
-            );
+          let names = found.missingRequired;
+          if (firstPage && index !== primary && (names.includes('item') || names.includes('within'))) {
+            // A secondary list absent from the page is normal: no rows for it, not a failure.
+            report.warnings.push(`${at}the item container matched no element on page ${page}; the table yields no rows`);
+            names = names.filter((name) => name !== 'item' && name !== 'within');
           }
-          resolved = extraction.resolved;
-        } else {
-          // A later page with no items is the end of the list, not a failure; a field gone from every item is.
-          const names = extraction.missingRequired.filter((name) => name !== 'item' && name !== 'within');
-          if (names.length > 0) {
-            throw new RunFailure(
-              'missing-required',
-              `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element on page ${page}`,
-              names,
-            );
+          if (firstPage) {
+            if (names.length > 0) {
+              throw new RunFailure(
+                'missing-required',
+                at +
+                  (names.includes('within')
+                    ? 'the list parent (item.within) matched no element, so the item container is unresolved'
+                    : names.includes('item')
+                      ? 'the item container matched no element'
+                      : `required field${names.length > 1 ? 's' : ''} ${names.join(', ')} matched no element`),
+                names,
+              );
+            }
+            if (found.containerCount > 0 && found.rows.length === 0) {
+              const causes = new Set(found.dropped.flatMap((d) => d.fields));
+              const dropped = found.fields.map((f) => f.name).filter((name) => causes.has(name));
+              throw new RunFailure(
+                'missing-required',
+                `${at}every row on page ${page} was dropped for missing required field${dropped.length > 1 ? 's' : ''} ${dropped.join(', ')}`,
+                dropped,
+              );
+            }
+          } else {
+            // A later page with no items is the end of the list, not a failure; a field gone from every item is.
+            const gone = names.filter((name) => name !== 'item' && name !== 'within');
+            if (gone.length > 0) {
+              throw new RunFailure(
+                'missing-required',
+                `${at}required field${gone.length > 1 ? 's' : ''} ${gone.join(', ')} matched no element on page ${page}`,
+                gone,
+              );
+            }
           }
+          if (isNew) settled[index] = found.resolved;
+          report.warnings.push(...found.warnings);
         }
-        report.warnings.push(...extraction.warnings);
+        resolved = settled;
 
-        const fresh = dedup.preview(extraction.rows, page);
-        const summary: PageSummary = {
-          page,
-          url: info.url,
-          firstKey: extraction.firstRow ? dedup.keyOf(extraction.firstRow) : null,
-          raw: extraction.containerCount,
-          kept: fresh.kept.length,
-        };
+        const fresh = extraction.tables.map((found, index) => dedups[index]?.preview(found.rows, page) ?? { kept: found.rows, dropped: 0, commit: () => {} });
+        const lead = primary >= 0 ? extraction.tables[primary]! : null;
+        // Without an item table every page counts as one item, so only the limit, the cap, or a missing target stop the run.
+        const summary: PageSummary = lead
+          ? {
+              page,
+              url: info.url,
+              firstKey: lead.firstRow ? dedups[primary]!.keyOf(lead.firstRow) : null,
+              raw: lead.containerCount,
+              kept: fresh[primary]!.kept.length,
+            }
+          : { page, url: info.url, firstKey: null, raw: 1, kept: 1 };
         const verdict = evaluateStop({ current: summary, previous, kind: strategy.kind, stopRules: recipe.pagination.stopRules, limit, cap });
         if (!verdict.discard) {
-          fresh.commit();
-          fresh.kept.forEach((row, index) => {
-            row._index = index;
-            rows.push(row);
-            this.emitter.emit('row.emitted', { page, row });
-          });
+          const counts: { name: string; rows: number; dropped: number }[] = [];
+          for (const [index, found] of extraction.tables.entries()) {
+            const kept = fresh[index]!;
+            kept.commit();
+            kept.kept.forEach((row, at) => {
+              row._index = at;
+              rows.push(row);
+              this.emitter.emit('row.emitted', { page, table: found.name, row });
+            });
+            const table = report.tables[index]!;
+            table.rowCount += kept.kept.length;
+            table.duplicateCount = dedups[index]?.duplicates ?? 0;
+            table.droppedCount += found.dropped.length;
+            counts.push({ name: found.name, rows: kept.kept.length, dropped: found.dropped.length });
+          }
+          const pageRows = counts.reduce((n, c) => n + c.rows, 0);
+          const pageDropped = counts.reduce((n, c) => n + c.dropped, 0);
           report.pageCount = page;
           report.rowCount = rows.length;
-          report.duplicateCount = dedup.duplicates;
-          report.droppedCount += extraction.dropped.length;
-          report.pages.push({ page, url: info.url, rows: fresh.kept.length, dropped: extraction.dropped.length });
-          this.emitter.emit('page.done', { page, rows: fresh.kept.length });
+          report.duplicateCount = report.tables[mirror]!.duplicateCount;
+          report.droppedCount += pageDropped;
+          report.pages.push({ page, url: info.url, rows: pageRows, dropped: pageDropped, ...(multi ? { tables: counts } : {}) });
+          this.emitter.emit('page.done', { page, rows: pageRows });
         }
         if (verdict.reason) {
           reason = verdict.reason;

@@ -98,7 +98,7 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
 
   const recipe = loadRecipe(await readFile(path, 'utf8'));
   expect(recipe.url).toBe(template(port));
-  expect(recipe.fields.every((f) => f.fingerprint)).toBe(true);
+  expect(recipe.fields!.every((f) => f.fingerprint)).toBe(true);
   const run = await scoop.run(['run', 'shop-catalog']);
   expect(run.code, run.stderr).toBe(0);
   expect(JSON.parse(run.stdout)).toEqual(expectedRows(scoop.playground.url));
@@ -158,7 +158,7 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   const result = await r.closeWindow();
   expect(result.code, result.stderr).toBe(0);
   const recipe = loadRecipe(await readFile(path, 'utf8'));
-  expect(recipe.fields[2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
+  expect(recipe.fields![2]!.selectors[0]).toMatchObject({ strategy: candidates[other]!.strategy, value: candidates[other]!.value });
   const run = await scoop.run(['run', 'edited']);
   expect(run.code, run.stderr).toBe(0);
   expect(JSON.parse(run.stdout)).toEqual(dataset.map((p, index) => ({ _page: 1, _index: index, title: p.title, heading: p.title, price: p.price })));

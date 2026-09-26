@@ -9,6 +9,7 @@ import {
   RunEmitter,
   Runner,
   type Recipe,
+  type RecipeField,
   type RepickHandler,
   type RunEvents,
   type SelectorCandidate,
@@ -33,8 +34,8 @@ function setup(dom: SerializedElement, recipe: Recipe, extra: Partial<Constructo
 }
 
 /** The reference recipe with one field's selectors replaced. */
-function withField(recipe: Recipe, name: string, patch: Partial<Recipe['fields'][number]>): Recipe {
-  return { ...recipe, fields: recipe.fields.map((f) => (f.name === name ? { ...f, ...patch } : f)) };
+function withField(recipe: Recipe, name: string, patch: Partial<RecipeField>): Recipe {
+  return { ...recipe, fields: recipe.fields!.map((f) => (f.name === name ? { ...f, ...patch } : f)) };
 }
 
 describe('runner healing', () => {
@@ -68,8 +69,8 @@ describe('runner healing', () => {
 
     expect(t.saveRecipe).toHaveBeenCalledTimes(1);
     const written = t.saved[0]!;
-    expect(written.fields.find((f) => f.name === 'price')!.selectors[0]).toEqual(price.newPrimary);
-    expect(written.fields.find((f) => f.name === 'title')).toEqual(fingerprintedRecipe().fields.find((f) => f.name === 'title'));
+    expect(written.fields!.find((f) => f.name === 'price')!.selectors[0]).toEqual(price.newPrimary);
+    expect(written.fields!.find((f) => f.name === 'title')).toEqual(fingerprintedRecipe().fields!.find((f) => f.name === 'title'));
 
     // A second run against the written recipe resolves every target at candidate 0.
     const again = setup(catalogSnapshot(1), written);
@@ -125,13 +126,13 @@ describe('runner re-pick', () => {
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'repicking', 'extracting', 'done']);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0]![0]).toMatchObject({ page: 1, name: 'price', oldSelector: css('.gone'), fingerprint: null, sample: null });
-    expect(handler.mock.calls[0]![0].recipe.fields[1]!.selectors).toEqual([css('.gone')]);
+    expect(handler.mock.calls[0]![0].recipe.fields![1]!.selectors).toEqual([css('.gone')]);
     expect(result.ok && result.rows.every((r) => typeof r.price === 'number')).toBe(true);
-    expect(t.log.of('repick.requested')).toEqual([{ page: 1, target: 'price', oldSelector: css('.gone'), fingerprint: null }]);
-    expect(t.log.of('repick.resolved')).toEqual([{ page: 1, target: 'price', result: 'picked' }]);
+    expect(t.log.of('repick.requested')).toEqual([{ page: 1, table: 'items', target: 'price', oldSelector: css('.gone'), fingerprint: null }]);
+    expect(t.log.of('repick.resolved')).toEqual([{ page: 1, table: 'items', target: 'price', result: 'picked' }]);
     expect(t.log.of('field.healed').find((e) => e.target === 'price')?.outcome).toEqual({ kind: 'user' });
     expect(result.report.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'healed', outcome: { kind: 'user' } });
-    expect(t.saved[0]!.fields.find((f) => f.name === 'price')!.selectors).toEqual([testid('price'), css('.product-price')]);
+    expect(t.saved[0]!.fields!.find((f) => f.name === 'price')!.selectors).toEqual([testid('price'), css('.product-price')]);
   });
 
   it('treats a skipped field as missing', async () => {
@@ -139,7 +140,7 @@ describe('runner re-pick', () => {
     const result = await t.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['price'] });
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'repicking', 'extracting', 'failed']);
-    expect(t.log.of('repick.resolved')).toEqual([{ page: 1, target: 'price', result: 'skip' }]);
+    expect(t.log.of('repick.resolved')).toEqual([{ page: 1, table: 'items', target: 'price', result: 'skip' }]);
     expect(t.saveRecipe).not.toHaveBeenCalled();
   });
 

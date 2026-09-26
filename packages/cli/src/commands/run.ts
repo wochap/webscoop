@@ -1,6 +1,6 @@
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { mkdir, stat } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
 import {
   DEFAULT_GUARD_TIMEOUT_MS,
   fillText,
@@ -24,6 +24,7 @@ import {
   type SelectorCandidate,
   type StepOptions,
   type StepReport,
+  tablesOf,
 } from '@webscoop/core';
 import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
@@ -41,6 +42,8 @@ export interface RunCommandOptions {
   var: string[];
   jsonl?: boolean;
   out?: string;
+  /** `--table`: print only this table, in the single table shapes. */
+  table?: string;
   profile?: string;
   timeout: number;
   lockTimeout: number;
@@ -119,6 +122,12 @@ export function parseVars(pairs: readonly string[]): Record<string, string> {
   return vars;
 }
 
+/** The row count part of the summary: the total for one table, `name: count` per table for several. */
+function rowCounts(report: RunReport): string {
+  if (report.tables.length > 1) return `${report.tables.map((t) => `${t.name}: ${t.rowCount}`).join(', ')} rows`;
+  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'}`;
+}
+
 export function summary(report: RunReport): string {
   const seconds = (report.durationMs / 1000).toFixed(2);
   const pages = `${report.pageCount} page${report.pageCount === 1 ? '' : 's'}`;
@@ -129,7 +138,7 @@ export function summary(report: RunReport): string {
   const dropped = report.droppedCount > 0 ? `, ${report.droppedCount} row${report.droppedCount === 1 ? '' : 's'} dropped for missing fields` : '';
   const skippedSteps = report.steps.filter((s) => s.outcome === 'skipped').length;
   const skipped = skippedSteps > 0 ? `, ${skippedSteps} step${skippedSteps === 1 ? '' : 's'} skipped` : '';
-  return `${report.rowCount} row${report.rowCount === 1 ? '' : 's'} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped} in ${seconds}s (${report.recipe})`;
+  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -158,43 +167,104 @@ export function formatStep(step: StepReport): string {
   return `${name}: ${step.outcome}${step.outcome === 'skipped' ? '' : how}${notes}`;
 }
 
-/** Where rows go: stdout or `--out`, JSON array or streamed JSONL. */
-class RowSink {
-  private stream: WriteStream | undefined;
-  private readonly buffered: Row[] = [];
+export interface RowSinkOptions {
+  jsonl: boolean;
+  /** File to write instead of stdout. */
+  out?: string;
+  /** Directory to write one `<table>.json` (or `.jsonl`) file per table into, instead of `out`. */
+  dir?: string;
+  /** Table names, in recipe order. */
+  tables: readonly string[];
+  /** `--table`: keep only this table's rows. */
+  only?: string;
+}
 
-  constructor(
-    private readonly io: CliIo,
-    private readonly opts: { jsonl: boolean; out: string | undefined },
-  ) {}
+interface Writable {
+  write(chunk: string): unknown;
+}
 
-  private async target(): Promise<{ write(chunk: string): unknown }> {
-    if (!this.opts.out) return this.io.stdout;
-    if (!this.stream) {
-      await mkdir(dirname(this.opts.out), { recursive: true });
-      this.stream = createWriteStream(this.opts.out);
-    }
-    return this.stream;
-  }
-
+/**
+ * Where rows go: stdout, `--out`, or one file per table; JSON or streamed
+ * JSONL. One table (or `--table`, or a directory) keeps the single table
+ * shapes: a JSON array, or plain JSONL rows. Several tables to one target
+ * give a JSON object keyed by table name, or JSONL rows carrying `_table`.
+ */
+export class RowSink {
+  private readonly streams = new Map<string, WriteStream>();
+  private readonly buffered = new Map<string, Row[]>();
   private pending: Promise<unknown> = Promise.resolve();
 
-  row(row: Row): void {
+  constructor(
+    private readonly stdout: Writable,
+    private readonly opts: RowSinkOptions,
+  ) {}
+
+  /** Tables written, in recipe order. */
+  private get selected(): readonly string[] {
+    return this.opts.only !== undefined ? [this.opts.only] : this.opts.tables;
+  }
+
+  /** Several tables share one target. */
+  private get combined(): boolean {
+    return this.opts.dir === undefined && this.selected.length > 1;
+  }
+
+  private async target(table: string): Promise<Writable> {
+    const path = this.opts.dir !== undefined ? join(this.opts.dir, `${table}.${this.opts.jsonl ? 'jsonl' : 'json'}`) : this.opts.out;
+    if (path === undefined) return this.stdout;
+    let stream = this.streams.get(path);
+    if (!stream) {
+      await mkdir(dirname(path), { recursive: true });
+      stream = createWriteStream(path);
+      this.streams.set(path, stream);
+    }
+    return stream;
+  }
+
+  row(table: string, row: Row): void {
+    if (!this.selected.includes(table)) return;
     if (!this.opts.jsonl) {
-      this.buffered.push(row);
+      const rows = this.buffered.get(table) ?? [];
+      rows.push(row);
+      this.buffered.set(table, rows);
       return;
     }
-    this.pending = this.pending.then(async () => (await this.target()).write(`${JSON.stringify(row)}\n`));
+    const line = this.combined ? { _table: table, ...row } : row;
+    this.pending = this.pending.then(async () => (await this.target(table)).write(`${JSON.stringify(line)}\n`));
   }
 
   /** Write what was collected: every row on success, the rows of completed pages when a guard timed out. */
   async finish(success: boolean): Promise<void> {
     await this.pending;
-    if (success && !this.opts.jsonl) (await this.target()).write(`${JSON.stringify(this.buffered, null, 2)}\n`);
-    if (success && this.opts.jsonl && this.opts.out) await this.target();
-    const stream = this.stream;
-    if (stream) await new Promise<void>((done, fail) => stream.end((error?: Error | null) => (error ? fail(error) : done())));
+    if (success) {
+      const rowsOf = (table: string) => this.buffered.get(table) ?? [];
+      if (this.opts.jsonl) {
+        // Files exist even for a table without rows.
+        if (this.opts.dir !== undefined || this.opts.out !== undefined) for (const table of this.selected) await this.target(table);
+      } else if (this.combined) {
+        const all = Object.fromEntries(this.selected.map((table) => [table, rowsOf(table)]));
+        (await this.target('')).write(`${JSON.stringify(all, null, 2)}\n`);
+      } else {
+        for (const table of this.selected) (await this.target(table)).write(`${JSON.stringify(rowsOf(table), null, 2)}\n`);
+      }
+    }
+    for (const stream of this.streams.values()) {
+      await new Promise<void>((done, fail) => stream.end((error?: Error | null) => (error ? fail(error) : done())));
+    }
   }
+}
+
+/** Whether `--out` names a directory: one that exists, or a path ending with a separator. */
+export async function isOutDir(out: string, path: string): Promise<boolean> {
+  if (out.endsWith('/') || out.endsWith(sep)) return true;
+  return (await stat(path).catch(() => null))?.isDirectory() ?? false;
+}
+
+/** `--table` must name one of the recipe's tables. */
+export function checkTable(recipe: Recipe, table: string | undefined): void {
+  if (table === undefined) return;
+  const names = tablesOf(recipe).map((t) => t.name);
+  if (!names.includes(table)) throw new CliError(`recipe "${recipe.name}" has no table "${table}" (tables: ${names.join(', ')})`);
 }
 
 /** What `run` and `test` share: the recipe, its variables, a display, and a locked profile. */
@@ -208,11 +278,12 @@ interface Prepared {
   lock: ProfileLock;
 }
 
-async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number }): Promise<Prepared> {
+async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string }): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths);
   const storage = new FsStorage(paths.recipesDir, io.cwd);
   const recipe = await storage.load(recipeRef);
+  checkTable(recipe, opts.table);
   const vars = parseVars(opts.var);
   try {
     firstPageUrl(recipe, vars);
@@ -236,7 +307,9 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
-function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
+function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string, multi = false): void {
+  /** Field names carry their table when the recipe has several. */
+  const named = (table: string | undefined, name: string) => (multi && table !== undefined ? `${table}.${name}` : name);
   emitter.on('run.start', (e) => log(io, `running ${e.recipe} on profile "${profile}": ${e.url}`));
   emitter.on('page.loaded', (e) => log(io, `page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -246,18 +319,18 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string): void {
   emitter.on('step.replayed', (e) => log(io, formatStep(e.step)));
   emitter.on('step.skipped', (e) => log(io, formatStep(e.step)));
   emitter.on('field.healed', (e) =>
-    log(io, `healed ${e.target}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
+    log(io, `healed ${named(e.table, e.target)}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
   );
-  emitter.on('field.resolved', ({ field }) => {
+  emitter.on('field.resolved', ({ table, field }) => {
     if ((field.status === 'ok' || field.status === 'healed') && field.missingRows.length === 0) return;
     const notes = field.notes && field.notes.length > 0 ? ` (${field.notes.join('; ')})` : '';
-    log(io, `field ${field.name}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
+    log(io, `field ${named(table, field.name)}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
   });
   emitter.on('page.advanced', (e) => log(io, `page ${e.page}: ${e.kind}`));
   emitter.on('pagination.stopped', (e) => {
     if (e.reason !== 'limit' && e.reason !== 'none') log(io, `pagination stopped after page ${e.page}: ${e.reason}`);
   });
-  emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${e.target} (was ${selectorText(e.oldSelector)})`));
+  emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
   emitter.on('recipe.saved', (e) => log(io, `recipe written to ${e.path}`));
 }
 
@@ -282,12 +355,20 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
     log(io, 'interrupted, closing the browser');
     controller.abort();
   });
-  const sink = new RowSink(io, { jsonl: opts.jsonl ?? false, out: opts.out ? resolve(io.cwd, opts.out) : undefined });
+  const tables = tablesOf(recipe).map((t) => t.name);
+  const out = opts.out ? resolve(io.cwd, opts.out) : undefined;
+  const dir = opts.out && out && (await isOutDir(opts.out, out)) ? out : undefined;
+  const sink = new RowSink(io.stdout, {
+    jsonl: opts.jsonl ?? false,
+    tables,
+    ...(dir !== undefined ? { dir } : out !== undefined ? { out } : {}),
+    ...(opts.table !== undefined ? { only: opts.table } : {}),
+  });
 
   try {
     const emitter = new RunEmitter();
-    logRunEvents(io, emitter, profile);
-    emitter.on('row.emitted', (e) => sink.row(e.row));
+    logRunEvents(io, emitter, profile, tables.length > 1);
+    emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
     const port = await e2ePort(io);

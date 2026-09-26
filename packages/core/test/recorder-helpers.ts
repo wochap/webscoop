@@ -31,7 +31,7 @@ export class MemoryStorage implements StoragePort {
   async list(): Promise<RecipeSummary[]> {
     return [...this.files.values()].map((text) => {
       const r = loadRecipe(text);
-      return { name: r.name, url: r.url, fieldCount: r.fields.length, modified: new Date(0) };
+      return { name: r.name, url: r.url, fieldCount: r.fields!.length, modified: new Date(0) };
     });
   }
   async load(ref: string): Promise<Recipe> {

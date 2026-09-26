@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { buildPlan, renderPy, renderTs } from '@webscoop/core';
+import { buildPlan, renderPy, renderTs, tablesOf } from '@webscoop/core';
 import { log, type CliIo } from '../context';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { resolvePaths } from '../paths';
@@ -29,6 +29,12 @@ export async function exportCommand(io: CliIo, recipeRef: string, opts: ExportCo
   }
   const paths = resolvePaths(io.env, io.homedir);
   const recipe = await new FsStorage(paths.recipesDir, io.cwd).load(recipeRef);
+  const tables = tablesOf(recipe);
+  if (tables.length > 1) {
+    throw new CliError(
+      `recipe "${recipe.name}" has ${tables.length} tables (${tables.map((t) => t.name).join(', ')}); export does not support multi-table recipes yet`,
+    );
+  }
   const render = format === 'py' ? renderPy : renderTs;
   const script = render(buildPlan(recipe), { version, now: new Date(), headless: opts.headless === true });
   if (!opts.out) {

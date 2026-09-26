@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, TABLES_RECIPE, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -152,4 +152,42 @@ test('test on the paged recipe extracts one page', async ({ scoop }) => {
   expect(result.code, result.stderr).toBe(0);
   expect(result.stderr).toContain('8 rows');
   expect(scoop.playground.requests.filter((r) => r.path === '/catalog')).toHaveLength(1);
+});
+
+test.describe('a recipe with tables', () => {
+  /** The tables reference recipe on `paginate=url`, 2 pages. */
+  async function pagedTables(scoop: Scoop, name: string, query = ''): Promise<string> {
+    const recipe = referenceRecipe(scoop.playground.port, TABLES_RECIPE);
+    recipe.name = name;
+    recipe.url = `${recipe.url}&paginate=url&page={page}${query}`;
+    recipe.vars = [...recipe.vars!, { name: 'page', type: 'string', default: '1' }];
+    recipe.pagination = { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 2 };
+    return scoop.writeRecipe(recipe);
+  }
+
+  test('url pagination over 2 pages yields a page row per page and 16 products', async ({ scoop }) => {
+    const name = await pagedTables(scoop, 'tables-paged');
+    const result = await scoop.run(['run', name]);
+    expect(result.code, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout) as Record<string, Record<string, unknown>[]>;
+    expect(out.page!.map((r) => [r._page, r._index, r.heading])).toEqual([
+      [1, 0, dataset[0]!.category],
+      [2, 0, dataset[0]!.category],
+    ]);
+    expect(out.products!.map((r) => r.title)).toEqual(dataset.slice(0, 16).map((p) => p.title));
+    expect(out.questions!.map((r) => r._page)).toEqual([1, 1]);
+    expect(result.stderr).toMatch(/page: 2, products: 16, questions: 2 rows from 2 pages/);
+  });
+
+  test('products dedup by url while the page table keeps every page', async ({ scoop }) => {
+    // From page 3 on the site repeats page 3: page 4 brings no new product.
+    const name = await pagedTables(scoop, 'tables-repeat', '&lastPageRepeats=1');
+    const result = await scoop.run(['run', name, '--var', 'page=3']);
+    expect(result.code, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout) as Record<string, Record<string, unknown>[]>;
+    expect(out.page!.map((r) => r._page)).toEqual([1, 2]);
+    expect(out.products!.map((r) => r.title)).toEqual(dataset.slice(16, 24).map((p) => p.title));
+    expect(out.products!.every((r) => r._page === 1)).toBe(true);
+    expect(result.stderr).toMatch(/8 duplicates dropped/);
+  });
 });

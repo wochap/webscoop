@@ -64,10 +64,10 @@ describe('run healing flags', () => {
     expect(JSON.parse(t.out())).toHaveLength(3);
     const file = join(dir, 'recipes', 'shop.json');
     const saved = loadRecipe(await readFile(file, 'utf8'));
-    expect(saved.fields[1]!.selectors[0]).toEqual(sel('css', '.price'));
-    expect(saved.fields[1]!.selectors).toContainEqual(sel('testid', 'price'));
-    expect(saved.fields[1]!.selectors).not.toContainEqual(sel('css', '.old-price'));
-    expect(saved.fields[0]).toEqual(loadRecipe(recipe()).fields[0]);
+    expect(saved.fields![1]!.selectors[0]).toEqual(sel('css', '.price'));
+    expect(saved.fields![1]!.selectors).toContainEqual(sel('testid', 'price'));
+    expect(saved.fields![1]!.selectors).not.toContainEqual(sel('css', '.old-price'));
+    expect(saved.fields![0]).toEqual(loadRecipe(recipe()).fields![0]);
     expect(t.err()).toContain('healed price: candidate 1: css=.price (was css=.old-price)');
     expect(t.err()).toContain(`recipe written to ${file}`);
     expect(t.err()).toMatch(/3 rows from 1 page, 1 healed in \d+\.\d+s \(shop\)\n$/);
@@ -79,7 +79,7 @@ describe('run healing flags', () => {
     await writeFile(file, saveRecipe(loadRecipe(recipe())));
     const t = io(dir, 2, dir);
     expect(await main(['run', './mine.json'], t)).toBe(ExitCode.Ok);
-    expect(loadRecipe(await readFile(file, 'utf8')).fields[1]!.selectors[0]).toEqual(sel('css', '.price'));
+    expect(loadRecipe(await readFile(file, 'utf8')).fields![1]!.selectors[0]).toEqual(sel('css', '.price'));
     await expect(readFile(join(dir, 'recipes', 'shop.json'), 'utf8')).rejects.toThrow();
   });
 

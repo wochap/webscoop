@@ -1,10 +1,11 @@
 import type { Row } from '../events';
-import type { PaginationKind, Recipe } from '../recipe/schema';
+import type { PaginationKind, RecipeField } from '../recipe/schema';
 import type { StopReason } from './types';
 
 /**
  * Drops rows already seen on an earlier page. Rows are identified by the key
  * field's value, or by all field values together when no field is the key.
+ * One instance per item table: keys never cross tables.
  */
 export class Dedup {
   private readonly seen = new Set<string>();
@@ -13,9 +14,9 @@ export class Dedup {
   /** Rows dropped so far. */
   duplicates = 0;
 
-  constructor(recipe: Recipe) {
-    this.key = recipe.fields.find((f) => f.key)?.name;
-    this.names = recipe.fields.map((f) => f.name);
+  constructor(table: { fields: readonly RecipeField[] }) {
+    this.key = table.fields.find((f) => f.key)?.name;
+    this.names = table.fields.map((f) => f.name);
   }
 
   keyOf(row: Row): string {

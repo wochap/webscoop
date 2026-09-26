@@ -40,7 +40,7 @@ function variant(scoop: Scoop, name: string, change: (r: RecipeInput) => void): 
 
 /** The price field matches nothing and has no fingerprint, so no rung can heal it. */
 const deadPrice = (r: RecipeInput) => {
-  const price = r.fields.find((f) => f.name === 'price')!;
+  const price = r.fields!.find((f) => f.name === 'price')!;
   price.selectors = [{ strategy: 'css', value: '.gone-price', stability: 'medium' }];
   delete price.fingerprint;
 };
@@ -62,10 +62,10 @@ test('tier 1: the reference recipe heals, writes back, and the next run needs no
   expect(first.stderr).toContain(`recipe written to ${scoop.recipePath}`);
 
   const after = loadRecipe(await readFile(scoop.recipePath, 'utf8'));
-  const price = after.fields.find((f) => f.name === 'price')!;
+  const price = after.fields!.find((f) => f.name === 'price')!;
   expect(price.selectors[0]!.value).not.toBe('price');
   expect(price.selectors.map((s) => s.value)).not.toContain('.product-price');
-  expect(after.fields.find((f) => f.name === 'title')).toEqual(before.fields.find((f) => f.name === 'title'));
+  expect(after.fields!.find((f) => f.name === 'title')).toEqual(before.fields!.find((f) => f.name === 'title'));
   expect(after.guards).toEqual(before.guards);
 
   const check = await scoop.run(['test', RECIPE, '--var', 'tier=1', '--json']);
@@ -157,7 +157,7 @@ test('run --interactive: re-pick the price in the panel and the run finishes wit
   expect(result.stderr).toContain('re-picked price: testid=price');
   expect(result.stderr).toContain('healed price: re-picked: testid=price');
   const saved = loadRecipe(await readFile(join(scoop.home, 'recipes', `${name}.json`), 'utf8'));
-  expect(saved.fields.find((f) => f.name === 'price')!.selectors[0]).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
+  expect(saved.fields!.find((f) => f.name === 'price')!.selectors[0]).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
 });
 
 test('record --repick: the new selection is saved into the recipe', async ({ scoop }) => {
@@ -173,7 +173,7 @@ test('record --repick: the new selection is saved into the recipe', async ({ sco
   expect(result.code, result.stderr).toBe(0);
   expect(result.stderr).toContain('saved the new location of price');
   const saved = loadRecipe(await readFile(join(scoop.home, 'recipes', `${name}.json`), 'utf8'));
-  const price = saved.fields.find((f) => f.name === 'price')!;
+  const price = saved.fields!.find((f) => f.name === 'price')!;
   expect(price.selectors[0]).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
   expect(price.selectors.map((s) => s.value)).not.toContain('.gone-price');
   expect(price.fingerprint?.textSample).toBe('$249.99');

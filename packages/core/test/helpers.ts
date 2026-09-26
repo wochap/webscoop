@@ -62,3 +62,48 @@ export function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
     ...overrides,
   };
 }
+
+/** A category page with a heading, a product list, and a block of questions. */
+export function mixedPage(products: CardSpec[], questions: string[], category = 'Electronics') {
+  return h(
+    'html',
+    {},
+    h('head', {}, h('title', {}, 'Catalog')),
+    h(
+      'body',
+      {},
+      h(
+        'main',
+        {},
+        h('h1', { class: 'category-heading', 'data-testid': 'category' }, category),
+        h('ul', {}, products.map((c, i) => h('li', {}, card(c, i)))),
+        h(
+          'section',
+          { class: 'questions' },
+          questions.map((q, i) => h('div', { class: 'question', 'data-testid': 'question', id: `q${i}` }, h('h3', {}, q))),
+        ),
+      ),
+    ),
+  );
+}
+
+/** Tables `page` (the heading), `products` (cards, keyed by url), and `questions`; scopes left to their defaults. */
+export function tablesRecipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
+  const { item: _item, fields: _fields, ...rest } = recipe();
+  return {
+    ...rest,
+    tables: [
+      { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [testid('category')] }] },
+      {
+        name: 'products',
+        item: { selectors: [testid('product-card')] },
+        fields: [
+          { name: 'title', type: 'text', selectors: [css('h2')] },
+          { name: 'url', type: 'url', selectors: [css('a.product-link')], key: true },
+        ],
+      },
+      { name: 'questions', item: { selectors: [testid('question')] }, fields: [{ name: 'title', type: 'text', selectors: [css('h3')] }] },
+    ],
+    ...overrides,
+  };
+}

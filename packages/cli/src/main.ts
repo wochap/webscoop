@@ -83,7 +83,8 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
     .option('--jsonl', 'print one JSON object per line as rows become available')
-    .option('--out <path>', 'write the output to a file instead of stdout')
+    .option('--out <path>', 'write the output to a file instead of stdout; a directory (existing, or ending with /) gets one file per table')
+    .option('--table <name>', 'print only this table of a multi-table recipe, as a plain array (or plain JSONL rows)')
     .option('--profile <name>', 'browser profile name (default: the recipe name)')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
@@ -124,6 +125,12 @@ Pagination: the recipe says how to reach the next page (a page number in the
 URL, a next link, a load-more button, or infinite scroll) and how many pages
 to walk. Rows repeated from an earlier page are dropped. With --jsonl, rows
 are printed as each page completes.
+
+Tables: a recipe with several tables prints one JSON object keyed by table
+name, each holding that table's rows; with --jsonl every row carries _table.
+--table <name> prints one table in the plain shapes. --out ./dir/ writes
+<table>.json (or <table>.jsonl) per table; a path that does not exist and
+does not end with / is a file.
 
 Healing: when stored selectors stop matching, the run tries the other stored
 selectors, then the element that best matches the field's fingerprint, then

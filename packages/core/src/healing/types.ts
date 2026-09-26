@@ -10,12 +10,15 @@ interface TargetBase {
 
 /** Something the runner resolves on a page, with the place in the recipe a promotion writes to. */
 export type HealTarget =
-  | (TargetBase & { kind: 'item' })
+  /** `table` names the recipe table the target belongs to; absent means the first one. */
+  | (TargetBase & { kind: 'item'; table?: string })
   /** The list parent in `item.within`. */
-  | (TargetBase & { kind: 'within' })
+  | (TargetBase & { kind: 'within'; table?: string })
   | (TargetBase & {
       kind: 'field';
+      /** Index of the field within its table. */
       index: number;
+      table?: string;
       name: string;
       scope: FieldScope;
       optional: boolean;

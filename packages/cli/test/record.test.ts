@@ -109,7 +109,7 @@ describe('webscoop record', () => {
 
     const file = join(dir, 'recipes', '127-0-0-1-catalog.json');
     const recipe = loadRecipe(await readFile(file, 'utf8'));
-    expect(recipe.fields.map((f) => f.name)).toEqual(['title']);
+    expect(recipe.fields!.map((f) => f.name)).toEqual(['title']);
     expect(recipe.item!.selectors.slice(0, 2).map((c) => c.value)).toEqual(['article', 'product-card']);
     expect(recipe.item!.within![0]).toEqual({ strategy: 'role', value: 'list', stability: 'stable' });
     expect(io.err()).toContain(`saved 127-0-0-1-catalog to ${file}`);

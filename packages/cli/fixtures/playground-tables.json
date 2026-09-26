@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "name": "playground-tables",
+  "url": "http://127.0.0.1:{port}/catalog?mixed=1&tier={tier}",
+  "vars": [
+    { "name": "port", "type": "string", "default": "4777" },
+    { "name": "tier", "type": "string", "default": "0" }
+  ],
+  "tables": [
+    {
+      "name": "page",
+      "fields": [
+        {
+          "name": "heading",
+          "type": "text",
+          "selectors": [
+            { "strategy": "testid", "value": "category", "stability": "stable" },
+            { "strategy": "css", "value": "h1.category-heading", "stability": "medium" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "products",
+      "item": {
+        "selectors": [
+          { "strategy": "testid", "value": "product-card", "stability": "stable" },
+          { "strategy": "css", "value": "article.product-card", "stability": "medium" }
+        ]
+      },
+      "fields": [
+        {
+          "name": "title",
+          "type": "text",
+          "selectors": [{ "strategy": "css", "value": "h2.product-title", "stability": "medium" }]
+        },
+        {
+          "name": "url",
+          "type": "url",
+          "attr": "href",
+          "key": true,
+          "selectors": [{ "strategy": "css", "value": "a.product-link", "stability": "medium" }]
+        }
+      ]
+    },
+    {
+      "name": "questions",
+      "item": {
+        "selectors": [{ "strategy": "css", "value": "article.mixed-questions", "stability": "medium" }]
+      },
+      "fields": [
+        {
+          "name": "title",
+          "type": "text",
+          "selectors": [{ "strategy": "css", "value": "h3.questions-title", "stability": "medium" }]
+        },
+        {
+          "name": "first_option",
+          "type": "text",
+          "selectors": [{ "strategy": "css", "value": "button.questions-option", "stability": "medium" }]
+        }
+      ]
+    }
+  ]
+}

@@ -38,6 +38,37 @@ export interface FieldReport {
   notes?: string[];
 }
 
+/** How an item container (and its list parent) resolved. */
+export interface ItemReport {
+  candidateIndex: number | null;
+  candidate: SelectorCandidate | null;
+  count: number;
+  outcome: HealOutcome;
+  /** Why healing rungs declined the item container. */
+  notes?: string[];
+  /** How the list parent (`item.within`) resolved, for a table that has one. */
+  within?: {
+    candidateIndex: number | null;
+    candidate: SelectorCandidate | null;
+    outcome: HealOutcome;
+    notes?: string[];
+  };
+}
+
+/** One table of the run: its counts and how its targets resolved. */
+export interface TableReport {
+  name: string;
+  /** Rows emitted. */
+  rowCount: number;
+  /** Rows dropped because an earlier page already had them. */
+  duplicateCount: number;
+  /** Rows dropped because a required field resolved nothing on them. */
+  droppedCount: number;
+  /** Null for a table without an item block, or before the table first resolved. */
+  item: ItemReport | null;
+  fields: FieldReport[];
+}
+
 export interface RunReport {
   recipe: string;
   startedAt: string;
@@ -45,22 +76,13 @@ export interface RunReport {
   durationMs: number;
   finalUrl: string | null;
   pageCount: number;
+  /** Rows emitted, across every table. */
   rowCount: number;
-  item: {
-    candidateIndex: number | null;
-    candidate: SelectorCandidate | null;
-    count: number;
-    outcome: HealOutcome;
-    /** Why healing rungs declined the item container. */
-    notes?: string[];
-    /** How the list parent (`item.within`) resolved, for a recipe that has one. */
-    within?: {
-      candidateIndex: number | null;
-      candidate: SelectorCandidate | null;
-      outcome: HealOutcome;
-      notes?: string[];
-    };
-  } | null;
+  /** Every table, in recipe order. */
+  tables: TableReport[];
+  /** The primary table's item container (the first table's, without one); kept as a mirror of `tables`. */
+  item: ItemReport | null;
+  /** The primary table's fields (the first table's, without one); kept as a mirror of `tables`. */
   fields: FieldReport[];
   /** How the pagination target resolved, when the run needed it. */
   pagination: {
@@ -68,9 +90,9 @@ export interface RunReport {
     outcome: HealOutcome;
     notes?: string[];
   } | null;
-  /** Rows dropped because an earlier page already had them. */
+  /** Rows of the primary table dropped because an earlier page already had them; per table counts are in `tables`. */
   duplicateCount: number;
-  /** Rows dropped because a required field resolved nothing on them. */
+  /** Rows dropped because a required field resolved nothing on them, across every table. */
   droppedCount: number;
   /** Why the page loop ended, or null when the run failed before it did. */
   stopReason: StopReason | null;
@@ -90,14 +112,19 @@ export interface RunReport {
 export interface PageReport {
   page: number;
   url: string;
+  /** Rows emitted for this page, across every table. */
   rows: number;
   /** Rows dropped on this page because a required field resolved nothing on them. */
   dropped: number;
+  /** Per table counts, for a recipe with several tables. */
+  tables?: { name: string; rows: number; dropped: number }[];
 }
 
 /** What a re-pick asks the user about. */
 export interface RepickInfo {
   page: number;
+  /** Table the field belongs to. */
+  table: string;
   /** Field name, `item`, or `pagination`. */
   target: string;
   oldSelector: SelectorCandidate;
@@ -114,9 +141,11 @@ export interface RunEvents {
   'step.replayed': { page: number; step: StepReport };
   /** An optional step found no target (or could not run) and was left out. */
   'step.skipped': { page: number; step: StepReport };
-  'field.resolved': { page: number; field: FieldReport };
+  'field.resolved': { page: number; table: string; field: FieldReport };
   'field.healed': {
     page: number;
+    /** Table of a field, item container, or list parent target. */
+    table?: string;
     /** Field name, `item`, `pagination`, or a step's label or `step:N`. */
     target: string;
     outcome: HealOutcome;
@@ -124,8 +153,9 @@ export interface RunEvents {
     newPrimary: SelectorCandidate;
   };
   'repick.requested': RepickInfo;
-  'repick.resolved': { page: number; target: string; result: 'picked' | 'skip' | 'abort' };
-  'row.emitted': { page: number; row: Row };
+  'repick.resolved': { page: number; table: string; target: string; result: 'picked' | 'skip' | 'abort' };
+  /** Rows of a page are emitted table by table, in recipe order. */
+  'row.emitted': { page: number; table: string; row: Row };
   'page.done': { page: number; rows: number };
   /** Emitted right before the action that loads page `page`. */
   'page.advanced': { page: number; kind: PaginationKind };

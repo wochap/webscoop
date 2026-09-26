@@ -7,7 +7,8 @@ import { promote, type Promotion } from './healing/promote';
 import type { Viewport } from './healing/score';
 import { isHealed, targetName, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import type { ElementRef, Session } from './ports';
-import type { Fingerprint, Recipe, RecipeField, SelectorCandidate } from './recipe/schema';
+import type { Fingerprint, Recipe, RecipeField, RecipeTable, SelectorCandidate } from './recipe/schema';
+import { primaryTableIndex, tablesOf } from './recipe/tables';
 import type { AnnotatedNode } from './selectors/annotated';
 import { normalize, textContent } from './selectors/aria';
 import { refForNode } from './selectors/xpath';
@@ -31,7 +32,10 @@ export async function resolveFirst(
   return null;
 }
 
-export interface PageExtraction {
+/** One table of one page. */
+export interface TableExtraction {
+  /** Table name; `items` for a shorthand recipe. */
+  name: string;
   /** Rows kept after dropping those with a missing required field, `_index` renumbered. */
   rows: Row[];
   /** Containers extracted (one without an item block), before dropping. */
@@ -47,8 +51,17 @@ export interface PageExtraction {
   warnings: string[];
   /** Targets that healed, with their new selectors, in the order they were resolved. */
   promotions: Promotion[];
-  /** Selectors each target resolved with, for later pages to reuse without the ladder. */
-  resolved: ResolvedSelectors;
+  /** Selectors each target resolved with, for later pages to reuse without the ladder; null for an item table that matched nothing. */
+  resolved: ResolvedSelectors | null;
+}
+
+/** Every table of one page, in recipe order. */
+export interface PageExtraction {
+  tables: TableExtraction[];
+  /** Targets that healed, across tables, in the order they were resolved. */
+  promotions: Promotion[];
+  /** Per table, in recipe order: what later pages reuse, or null when the table must still be resolved. */
+  resolved: (ResolvedSelectors | null)[];
 }
 
 export interface DroppedRow {
@@ -58,11 +71,11 @@ export interface DroppedRow {
 
 /** The selectors page 1 settled on, so later pages skip the healing ladder. */
 export interface ResolvedSelectors {
-  /** Item container selectors, or null when the recipe has no item block or nothing matched. */
+  /** Item container selectors, or null when the table has no item block or nothing matched. */
   item: SelectorCandidate[] | null;
-  /** List parent selectors, or null when the recipe has no `item.within` or nothing matched. */
+  /** List parent selectors, or null when the table has no `item.within` or nothing matched. */
   within?: SelectorCandidate[] | null;
-  /** Per recipe field, in recipe order: the selectors that resolved it, or null when nothing did. */
+  /** Per table field, in table order: the selectors that resolved it, or null when nothing did. */
   fields: (SelectorCandidate[] | null)[];
 }
 
@@ -79,10 +92,17 @@ export interface ExtractOptions {
   /** Called once per healed target, before its field report exists. */
   onHealed?: (promotion: Promotion) => void;
   viewport?: Viewport;
-  /** Selectors from an earlier page: used as they are, with no healing ladder. */
-  resolved?: ResolvedSelectors;
-  /** Extract only item containers from this index on (a page that grew); `_index` restarts at 0. */
+  /** Selectors from an earlier page, per table: used as they are, with no healing ladder. A null entry goes through the ladder. */
+  resolved?: readonly (ResolvedSelectors | null)[];
+  /** Extract only primary table containers from this index on (a page that grew); `_index` restarts at 0. */
   fromIndex?: number;
+}
+
+export interface TableExtractOptions extends Omit<ExtractOptions, 'resolved'> {
+  /** Selectors this table settled on on an earlier page. */
+  resolved?: ResolvedSelectors;
+  /** Table name to prefix warnings with, for recipes with several tables. */
+  label?: string;
 }
 
 /** Drop containers that also match one of the exclusion candidates. */
@@ -167,12 +187,20 @@ export async function listParent(session: Session, within: readonly SelectorCand
   return found?.refs[0] ?? null;
 }
 
-/** How many item containers the page holds now, with the selectors an earlier page resolved. */
-export async function countItems(session: Session, recipe: Recipe, resolved: ResolvedSelectors): Promise<number> {
-  if (!recipe.item || !resolved.item) return 0;
-  const parent = recipe.item.within ? await listParent(session, resolved.within ?? recipe.item.within) : undefined;
+/**
+ * How many primary table containers the page holds now, with the selectors an
+ * earlier page resolved. A recipe without an item table counts one per page.
+ */
+export async function countItems(session: Session, recipe: Recipe, resolved: readonly (ResolvedSelectors | null)[]): Promise<number> {
+  const tables = tablesOf(recipe);
+  const primary = primaryTableIndex(tables);
+  if (primary < 0) return 1;
+  const item = tables[primary]!.item!;
+  const selectors = resolved[primary];
+  if (!selectors?.item) return 0;
+  const parent = item.within ? await listParent(session, selectors.within ?? item.within) : undefined;
   if (parent === null) return 0;
-  return (await containersFor(session, resolved.item, recipe.item.exclude ?? [], parent)).length;
+  return (await containersFor(session, selectors.item, item.exclude ?? [], parent)).length;
 }
 
 export interface TargetResult {
@@ -222,10 +250,11 @@ export async function resolvePaginationTarget(session: Session, recipe: Recipe, 
   return resolveDocumentTarget(session, recipe, target, opts);
 }
 
-function fieldTarget(field: RecipeField, index: number): HealTarget {
+function fieldTarget(field: RecipeField, index: number, table: string): HealTarget {
   return {
     kind: 'field',
     index,
+    table,
     name: field.name,
     scope: field.scope,
     optional: field.optional,
@@ -288,12 +317,13 @@ async function probeContainer(
 }
 
 /**
- * Extract every row of the current page. Each target (item container, then
- * page fields, then item fields) goes through the healing ladder once: page
- * scoped targets against the document, item scoped fields against the first
- * item container, with the winning selector reused for the other containers.
+ * Extract every row of one table on the current page. Each target (item
+ * container, then page fields, then item fields) goes through the healing
+ * ladder once: page scoped targets against the document, item scoped fields
+ * against the first item container, with the winning selector reused for the
+ * other containers.
  */
-export async function extractPage(session: Session, recipe: Recipe, opts: ExtractOptions): Promise<PageExtraction> {
+export async function extractTable(session: Session, recipe: Recipe, table: RecipeTable, opts: TableExtractOptions): Promise<TableExtraction> {
   const ladder = opts.ladder ?? [candidatesResolver];
   const cache = new SnapshotCache(session);
   const threshold = recipe.healing.fuzzyThreshold;
@@ -338,7 +368,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   let withinReport: NonNullable<RunReport['item']>['within'];
   /** The list parent resolved nothing: without healing the containers count as unresolved. */
   let withinMissing = false;
-  if (recipe.item?.within) {
+  if (table.item?.within) {
     if (reused) {
       withinSelectors = reused.within ?? null;
       const found = withinSelectors ? await resolveFirst(session, withinSelectors) : null;
@@ -351,8 +381,9 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     } else {
       const target: HealTarget = {
         kind: 'within',
-        selectors: recipe.item.within,
-        ...(recipe.item.withinFingerprint ? { fingerprint: recipe.item.withinFingerprint } : {}),
+        table: table.name,
+        selectors: table.item.within,
+        ...(table.item.withinFingerprint ? { fingerprint: table.item.withinFingerprint } : {}),
       };
       const ctx = context();
       const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
@@ -371,7 +402,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
     withinMissing = !parent && !heals(ladder);
   }
   const withinPart = withinReport ? { within: withinReport } : {};
-  if (recipe.item && withinMissing) {
+  if (table.item && withinMissing) {
     containers = [];
     item = {
       candidateIndex: null,
@@ -381,10 +412,10 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       notes: ['the list parent (item.within) matched no element'],
       ...withinPart,
     };
-  } else if (recipe.item && reused) {
+  } else if (table.item && reused) {
     const selectors = reused.item;
     itemSelectors = selectors;
-    const kept = selectors ? await containersFor(session, selectors, recipe.item.exclude ?? [], parent) : [];
+    const kept = selectors ? await containersFor(session, selectors, table.item.exclude ?? [], parent) : [];
     containers = kept;
     item = {
       candidateIndex: kept.length > 0 ? 0 : null,
@@ -393,11 +424,12 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       outcome: kept.length > 0 ? { kind: 'candidate', index: 0 } : UNRESOLVED,
       ...withinPart,
     };
-  } else if (recipe.item) {
+  } else if (table.item) {
     const target: HealTarget = {
       kind: 'item',
-      selectors: recipe.item.selectors,
-      ...(recipe.item.fingerprint ? { fingerprint: recipe.item.fingerprint } : {}),
+      table: table.name,
+      selectors: table.item.selectors,
+      ...(table.item.fingerprint ? { fingerprint: table.item.fingerprint } : {}),
     };
     const ctx = context(parent ? { within: parent } : {});
     const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
@@ -410,7 +442,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
         if (all.length > refs.length) refs = all;
       }
     }
-    const kept = await excludeContainers(session, refs, recipe.item.exclude ?? []);
+    const kept = await excludeContainers(session, refs, table.item.exclude ?? []);
     containers = kept;
     const outcome = settled?.resolution.outcome ?? UNRESOLVED;
     item = {
@@ -422,7 +454,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       ...withinPart,
     };
     itemSelectors = settled?.selectors ?? null;
-    itemFingerprint = settled?.promotion?.fingerprint ?? recipe.item.fingerprint;
+    itemFingerprint = settled?.promotion?.fingerprint ?? table.item.fingerprint;
     itemAncestors = itemFingerprint?.ancestors ?? [];
   }
 
@@ -437,9 +469,9 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
   const firstContainer = containers[0];
   const realContainers = containers.filter((c): c is ElementRef => c !== undefined);
   let probed: Promise<ElementRef | undefined> | undefined;
-  const probe = () => (probed ??= probeContainer(session, cache, realContainers, recipe.item?.fingerprint, itemFingerprint, threshold));
-  for (const [index, field] of recipe.fields.entries()) {
-    const target = fieldTarget(field, index);
+  const probe = () => (probed ??= probeContainer(session, cache, realContainers, table.item?.fingerprint, itemFingerprint, threshold));
+  for (const [index, field] of table.fields.entries()) {
+    const target = fieldTarget(field, index, table.name);
     if (reused) {
       const selectors = reused.fields[index] ?? null;
       if (field.scope === 'page') {
@@ -466,7 +498,7 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
       states.push({ field, settled, pageValue, missingRows: [] });
       continue;
     }
-    if (recipe.item && realContainers.length === 0) {
+    if (table.item && realContainers.length === 0) {
       states.push({ field, settled: null, missingRows: [] });
       continue;
     }
@@ -532,26 +564,55 @@ export async function extractPage(session: Session, recipe: Recipe, opts: Extrac
 
   const missingRequired: string[] = [];
   const warnings: string[] = [];
-  if (recipe.item && withinReport?.outcome.kind === 'unresolved') {
+  const prefix = opts.label ? `table "${opts.label}": ` : '';
+  if (table.item && withinReport?.outcome.kind === 'unresolved') {
     if (withinMissing) missingRequired.push('within');
-    else warnings.push(`list parent (item.within) missing on page ${opts.page}; item containers were found in the whole document`);
+    else warnings.push(`${prefix}list parent (item.within) missing on page ${opts.page}; item containers were found in the whole document`);
   }
-  if (recipe.item && containerCount === 0) missingRequired.push('item');
+  if (table.item && containerCount === 0) missingRequired.push('item');
   for (const report of fields) {
     if (report.optional) continue;
     if (report.status === 'missing' && containerCount > 0) missingRequired.push(report.name);
     if (report.status === 'partial') {
       const n = report.missingRows.length;
       warnings.push(
-        `dropped ${n} row${n > 1 ? 's' : ''} on page ${opts.page}: required field "${report.name}" missing on row${n > 1 ? 's' : ''} ${report.missingRows.join(', ')}`,
+        `${prefix}dropped ${n} row${n > 1 ? 's' : ''} on page ${opts.page}: required field "${report.name}" missing on row${n > 1 ? 's' : ''} ${report.missingRows.join(', ')}`,
       );
     }
   }
 
-  const resolved: ResolvedSelectors = {
-    item: itemSelectors,
-    ...(recipe.item?.within ? { within: withinSelectors } : {}),
-    fields: states.map((s) => s.settled?.selectors ?? null),
-  };
-  return { rows, containerCount, firstRow: extracted[0] ?? null, dropped, item, fields, missingRequired, warnings, promotions, resolved };
+  // An item table that matched nothing has nothing to reuse: a later page resolves it afresh.
+  const resolved: ResolvedSelectors | null =
+    table.item && containerCount === 0 && !reused
+      ? null
+      : {
+          item: itemSelectors,
+          ...(table.item?.within ? { within: withinSelectors } : {}),
+          fields: states.map((s) => s.settled?.selectors ?? null),
+        };
+  return { name: table.name, rows, containerCount, firstRow: extracted[0] ?? null, dropped, item, fields, missingRequired, warnings, promotions, resolved };
+}
+
+/**
+ * Extract every table of the recipe on the current page, in recipe order.
+ * `fromIndex` applies to the primary table only: other tables are read in
+ * full and left to dedup.
+ */
+export async function extractPage(session: Session, recipe: Recipe, opts: ExtractOptions): Promise<PageExtraction> {
+  const tables = tablesOf(recipe);
+  const primary = primaryTableIndex(tables);
+  const { resolved, fromIndex, ...rest } = opts;
+  const out: TableExtraction[] = [];
+  for (const [index, table] of tables.entries()) {
+    const reused = resolved?.[index];
+    out.push(
+      await extractTable(session, recipe, table, {
+        ...rest,
+        ...(reused ? { resolved: reused } : {}),
+        ...(fromIndex !== undefined && index === primary ? { fromIndex } : {}),
+        ...(tables.length > 1 ? { label: table.name } : {}),
+      }),
+    );
+  }
+  return { tables: out, promotions: out.flatMap((t) => t.promotions), resolved: out.map((t) => t.resolved) };
 }

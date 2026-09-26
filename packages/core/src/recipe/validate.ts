@@ -30,6 +30,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Field checks within one table: unique names, one key at most, `item` scope only with an item block. */
+function fieldErrors(fields: unknown[], hasItem: boolean, at: (string | number)[], table?: string): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const seen = new Map<string, number>();
+  const keys: number[] = [];
+  const where = table === undefined ? 'the recipe has' : `table "${table}" has`;
+  fields.forEach((field, index) => {
+    if (!isRecord(field)) return;
+    const name = typeof field.name === 'string' ? field.name : `#${index}`;
+    if (field.scope === 'item' && !hasItem) {
+      errors.push({
+        path: jsonPath([...at, index, 'scope']),
+        message: `field "${name}" has scope item but ${where} no item block`,
+      });
+    }
+    if (typeof field.name === 'string') {
+      if (seen.has(field.name)) {
+        errors.push({
+          path: jsonPath([...at, index, 'name']),
+          message: `duplicate field name "${field.name}" (first declared at ${jsonPath([...at, seen.get(field.name)!])})`,
+        });
+      } else {
+        seen.set(field.name, index);
+      }
+    }
+    if (field.key === true) keys.push(index);
+  });
+  for (const index of keys.slice(1)) {
+    errors.push({
+      path: jsonPath([...at, index, 'key']),
+      message: `only one field may set key: true (already set at ${jsonPath([...at, keys[0]!])})`,
+    });
+  }
+  return errors;
+}
+
 /**
  * Checks that span several parts of the document. They run on the raw input so
  * they still report when the structural schema also fails.
@@ -50,36 +86,34 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
     }
   }
 
-  if (Array.isArray(input.fields)) {
-    const seen = new Map<string, number>();
-    const keys: number[] = [];
-    input.fields.forEach((field, index) => {
-      if (!isRecord(field)) return;
-      const name = typeof field.name === 'string' ? field.name : `#${index}`;
-      if (field.scope === 'item' && input.item === undefined) {
-        errors.push({
-          path: jsonPath(['fields', index, 'scope']),
-          message: `field "${name}" has scope item but the recipe has no item block`,
-        });
-      }
-      if (typeof field.name === 'string') {
-        if (seen.has(field.name)) {
+  const hasTables = input.tables !== undefined;
+  if (hasTables && (input.fields !== undefined || input.item !== undefined)) {
+    const both = [input.fields !== undefined ? 'fields' : null, input.item !== undefined ? 'item' : null].filter(Boolean).join(' and ');
+    errors.push({ path: '$.tables', message: `a recipe declares either tables or top level item and fields, not both (found tables and ${both})` });
+  }
+  if (!hasTables && input.fields === undefined) {
+    errors.push({ path: '$.fields', message: 'a recipe needs at least one field' });
+  }
+  if (Array.isArray(input.fields)) errors.push(...fieldErrors(input.fields, input.item !== undefined, ['fields']));
+  if (Array.isArray(input.tables)) {
+    const names = new Map<string, number>();
+    input.tables.forEach((table, index) => {
+      if (!isRecord(table)) return;
+      if (typeof table.name === 'string') {
+        if (names.has(table.name)) {
           errors.push({
-            path: jsonPath(['fields', index, 'name']),
-            message: `duplicate field name "${field.name}" (first declared at ${jsonPath(['fields', seen.get(field.name)!])})`,
+            path: jsonPath(['tables', index, 'name']),
+            message: `duplicate table name "${table.name}" (first declared at ${jsonPath(['tables', names.get(table.name)!])})`,
           });
         } else {
-          seen.set(field.name, index);
+          names.set(table.name, index);
         }
       }
-      if (field.key === true) keys.push(index);
+      if (Array.isArray(table.fields)) {
+        const label = typeof table.name === 'string' ? table.name : `#${index}`;
+        errors.push(...fieldErrors(table.fields, table.item !== undefined, ['tables', index, 'fields'], label));
+      }
     });
-    for (const index of keys.slice(1)) {
-      errors.push({
-        path: jsonPath(['fields', index, 'key']),
-        message: `only one field may set key: true (already set at ${jsonPath(['fields', keys[0]!])})`,
-      });
-    }
   }
 
   if (Array.isArray(input.steps)) {

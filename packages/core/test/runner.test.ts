@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { loadRecipe, recordEvents, RunEmitter, Runner, runRecipe, type BrowserPort } from '../src';
+import { loadRecipe, recordEvents, RunEmitter, Runner, runRecipe, tablesOf, type BrowserPort, type Recipe, type RecipeInput } from '../src';
 import { FakeBrowser, h } from '../src/testing';
-import { card, catalog, cards, css, PAGE, recipe } from './helpers';
+import { card, catalog, cards, css, mixedPage, PAGE, recipe, tablesRecipe, testid } from './helpers';
 
 function setup(dom = catalog(cards(24)), delayMs = 0) {
   const browser = new FakeBrowser({ [PAGE]: { dom, title: 'Catalog', delayMs } });
@@ -188,5 +188,122 @@ describe('Runner with a list parent', () => {
     expect(result.rows).toHaveLength(28);
     expect(result.report.item!.within!.outcome).toEqual({ kind: 'unresolved' });
     expect(result.report.warnings.join('\n')).toContain('item.within');
+  });
+});
+
+describe('Runner with tables', () => {
+  const QUESTIONS = ['Is it waterproof?', 'Does it ship abroad?'];
+  const run = (dom: ReturnType<typeof mixedPage>, r = tablesRecipe()) => {
+    const { browser, emitter, log } = setup(dom);
+    return { log, result: runRecipe({ recipe: loadRecipe(r), browser, profileDir: '/p', emitter }) };
+  };
+  /** The tables recipe with one table changed. */
+  const edit = (index: number, patch: (table: NonNullable<RecipeInput['tables']>[number]) => NonNullable<RecipeInput['tables']>[number]) => {
+    const r = tablesRecipe();
+    return { ...r, tables: r.tables!.map((t, i) => (i === index ? patch(t) : t)) };
+  };
+
+  it('emits rows table by table, each naming its table, and reports every table', async () => {
+    const { log, result } = run(mixedPage(cards(4), QUESTIONS));
+    const out = await result;
+    expect(out.ok).toBe(true);
+    expect(log.sequence()).toEqual(['run.start', 'page.loaded', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'run.done']);
+    expect(log.of('row.emitted').map((e) => e.table)).toEqual(['page', 'products', 'products', 'products', 'products', 'questions', 'questions']);
+    expect(log.of('row.emitted').map((e) => e.row._index)).toEqual([0, 0, 1, 2, 3, 0, 1]);
+    expect(log.of('field.resolved').map((e) => `${e.table}.${e.field.name}`)).toEqual(['page.heading', 'products.title', 'products.url', 'questions.title']);
+    const report = out.report;
+    expect(report.rowCount).toBe(7);
+    expect(report.tables.map((t) => [t.name, t.rowCount, t.duplicateCount, t.droppedCount])).toEqual([
+      ['page', 1, 0, 0],
+      ['products', 4, 0, 0],
+      ['questions', 2, 0, 0],
+    ]);
+    expect(report.tables[0]!.item).toBeNull();
+    expect(report.tables[1]!.item?.count).toBe(4);
+    expect(report.tables[2]!.fields.map((f) => f.name)).toEqual(['title']);
+    // The top level mirrors the primary table.
+    expect(report.item).toEqual(report.tables[1]!.item);
+    expect(report.fields).toEqual(report.tables[1]!.fields);
+    expect(report.pages).toEqual([
+      {
+        page: 1,
+        url: PAGE,
+        rows: 7,
+        dropped: 0,
+        tables: [
+          { name: 'page', rows: 1, dropped: 0 },
+          { name: 'products', rows: 4, dropped: 0 },
+          { name: 'questions', rows: 2, dropped: 0 },
+        ],
+      },
+    ]);
+  });
+
+  it('fails naming the table and the field when a page table field is missing', async () => {
+    const r = edit(0, (t) => ({ ...t, fields: [{ ...t.fields[0]!, selectors: [css('.gone')] }] }));
+    const { log, result } = run(mixedPage(cards(4), QUESTIONS), r);
+    const out = await result;
+    expect(out).toMatchObject({ ok: false, reason: 'missing-required', fields: ['heading'], rows: [] });
+    expect(out.ok || out.message).toContain('table "page"');
+    expect(log.of('row.emitted')).toHaveLength(0);
+  });
+
+  it('fails when a required field of a secondary table is missing everywhere', async () => {
+    const r = edit(2, (t) => ({ ...t, fields: [{ ...t.fields[0]!, selectors: [css('h4')] }] }));
+    const out = await run(mixedPage(cards(4), QUESTIONS), r).result;
+    expect(out).toMatchObject({ ok: false, reason: 'missing-required', fields: ['title'] });
+    expect(out.ok || out.message).toContain('table "questions"');
+  });
+
+  it('fails when every row of an item table is dropped', async () => {
+    const r = edit(1, (t) => ({ ...t, fields: [...t.fields, { name: 'price', type: 'number', selectors: [testid('price')] }] }));
+    const out = await run(mixedPage(cards(4, (i) => (i < 2 ? { price: undefined } : { noLink: true })), QUESTIONS), r).result;
+    expect(out).toMatchObject({ ok: false, reason: 'missing-required', fields: ['url', 'price'] });
+    expect(out.ok || out.message).toContain('table "products": every row on page 1 was dropped');
+  });
+
+  it('fails when the primary table matches no container', async () => {
+    const out = await run(mixedPage([], QUESTIONS)).result;
+    expect(out).toMatchObject({ ok: false, reason: 'missing-required', fields: ['item'] });
+    expect(out.ok || out.message).toContain('table "products"');
+  });
+
+  it('warns and continues when a secondary table matches no container', async () => {
+    const { log, result } = run(mixedPage(cards(4), []));
+    const out = await result;
+    expect(out.ok).toBe(true);
+    expect(log.of('row.emitted').map((e) => e.table)).toEqual(['page', 'products', 'products', 'products', 'products']);
+    expect(out.report.warnings).toEqual([expect.stringContaining('table "questions"')]);
+    expect(out.report.tables[2]).toMatchObject({ name: 'questions', rowCount: 0 });
+  });
+
+  it('names the table of a healed field and writes the recipe back in the tables form', async () => {
+    const r = edit(2, (t) => ({ ...t, fields: [{ ...t.fields[0]!, selectors: [css('h4'), css('h3')] }] }));
+    const { browser, emitter, log } = setup(mixedPage(cards(4), QUESTIONS));
+    const saved: Recipe[] = [];
+    const out = await runRecipe({
+      recipe: loadRecipe(r),
+      browser,
+      profileDir: '/p',
+      emitter,
+      saveRecipe: async (recipe) => {
+        saved.push(recipe);
+        return '/r/shop.json';
+      },
+    });
+    expect(out.ok).toBe(true);
+    expect(log.of('field.healed')).toMatchObject([{ table: 'questions', target: 'title' }]);
+    expect(out.report.healed).toBe(1);
+    expect(saved[0]!.fields).toBeUndefined();
+    expect(tablesOf(saved[0]!)[2]!.fields[0]!.selectors[0]).toEqual(css('h3'));
+    expect(tablesOf(saved[0]!)[1]!.fields[0]!.selectors).toEqual([css('h2')]);
+  });
+
+  it('runs a recipe made only of a page table', async () => {
+    const r = tablesRecipe({ tables: [tablesRecipe().tables![0]!] });
+    const out = await run(mixedPage(cards(2), []), r).result;
+    expect(out.ok).toBe(true);
+    expect(out.rows).toEqual([{ _page: 1, _index: 0, heading: 'Electronics' }]);
+    expect(out.report.item).toBeNull();
   });
 });

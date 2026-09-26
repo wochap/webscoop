@@ -7,6 +7,7 @@ import {
   isInteractiveSession,
   RecorderController,
   RecorderEmitter,
+  tablesOf,
   templateVariables,
   type Recipe,
   type RecorderMode,
@@ -118,13 +119,20 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   if (opts.edit) {
     if (template) throw new CliError('pass either a URL template or --edit <recipe>, not both');
     recipe = await storage.load(opts.edit);
+    const tables = tablesOf(recipe);
+    if (tables.length > 1) {
+      throw new CliError(
+        `recipe "${recipe.name}" has ${tables.length} tables (${tables.map((t) => t.name).join(', ')}); the recorder does not edit multi-table recipes yet`,
+      );
+    }
     template = recipe.url;
   }
   let mode: RecorderMode = { kind: 'full' };
   if (opts.repick !== undefined && recipe) {
-    const fieldIndex = recipe.fields.findIndex((f) => f.name === opts.repick);
+    const { fields } = tablesOf(recipe)[0]!;
+    const fieldIndex = fields.findIndex((f) => f.name === opts.repick);
     if (fieldIndex === -1) {
-      throw new CliError(`recipe "${recipe.name}" has no field named "${opts.repick}" (fields: ${recipe.fields.map((f) => f.name).join(', ')})`);
+      throw new CliError(`recipe "${recipe.name}" has no field named "${opts.repick}" (fields: ${fields.map((f) => f.name).join(', ')})`);
     }
     mode = { kind: 'repick', fieldIndex, reason: 'cli' };
   }

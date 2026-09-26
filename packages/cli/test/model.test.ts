@@ -59,7 +59,7 @@ describe('model rung in the CLI', () => {
     const report = JSON.parse(t.err().slice(t.err().indexOf('{'), t.err().lastIndexOf('}') + 1)) as { fields: { name: string; outcome: unknown }[] };
     expect(report.fields.find((f) => f.name === 'price')!.outcome).toEqual({ kind: 'model', rationale: 'price with currency' });
     const saved = loadRecipe(await readFile(join(dir, 'recipes', 'shop.json'), 'utf8'));
-    expect(saved.fields[1]!.selectors[0]).not.toEqual(css('.old-price'));
+    expect(saved.fields![1]!.selectors[0]).not.toEqual(css('.old-price'));
   });
 
   it('logs the model reason for a refused field in run and test', async () => {

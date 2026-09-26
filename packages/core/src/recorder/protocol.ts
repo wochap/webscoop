@@ -187,6 +187,8 @@ export const DraftSchema = z.object({
   pagination: z.nullable(DraftPaginationSchema),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
+  /** Name of the single table when the recipe was loaded in the `tables` form; saving keeps that form. Absent: shorthand. */
+  table: z.optional(z.string()),
   dirty: z.boolean(),
   errors: z.array(ErrorEntrySchema),
 });

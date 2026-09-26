@@ -1,6 +1,7 @@
 export * from './recipe/schema';
 export * from './recipe/validate';
 export * from './recipe/load';
+export * from './recipe/tables';
 export * from './template';
 export * from './ports';
 export * from './events';

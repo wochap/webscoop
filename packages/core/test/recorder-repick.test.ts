@@ -9,7 +9,7 @@ const PRICE = 1;
 
 function brokenPrice(): Recipe {
   const recipe = fingerprintedRecipe();
-  return { ...recipe, fields: recipe.fields.map((f, i) => (i === PRICE ? { ...f, selectors: [css('.gone')] } : f)) };
+  return { ...recipe, fields: recipe.fields!.map((f, i) => (i === PRICE ? { ...f, selectors: [css('.gone')] } : f)) };
 }
 
 async function setup(reason: 'run' | 'cli', dom = catalogSnapshot(0)) {
@@ -104,8 +104,8 @@ describe('recorder re-pick mode', () => {
     await t.session.callHost({ kind: 'repick.confirm' });
     expect((await t.controller.awaitRepick()).kind).toBe('picked');
     const saved = await t.storage.load('playground-catalog');
-    expect(saved.fields[PRICE]!.selectors[0]).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
-    expect(saved.fields[PRICE]!.fingerprint?.textSample).toBe('$24.99');
+    expect(saved.fields![PRICE]!.selectors[0]).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
+    expect(saved.fields![PRICE]!.fingerprint?.textSample).toBe('$24.99');
     expect(t.controller.state.saved?.path).toBe('/recipes/playground-catalog.json');
   });
 

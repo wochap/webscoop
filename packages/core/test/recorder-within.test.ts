@@ -150,10 +150,10 @@ describe('item containers relative to the list parent', () => {
 
     const session = await new FakeBrowser({ [RESULTS]: resultsSnapshot() }).open('/run');
     await session.goto(RESULTS, { timeoutMs: 1000 });
-    const out = await extractPage(session, recipe, { pageUrl: RESULTS, page: 1 });
+    const out = (await extractPage(session, recipe, { pageUrl: RESULTS, page: 1 })).tables[0]!;
     expect(out.missingRequired).toEqual([]);
     expect(out.rows).toHaveLength(8);
-    const name = recipe.fields[0]!.name;
+    const name = recipe.fields![0]!.name;
     expect(out.rows.map((r) => r[name])).toEqual(dataset.slice(0, 8).map((p) => p.title));
   });
 });

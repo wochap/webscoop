@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { loadRecipe, RecipeError, saveRecipe, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
+import { loadRecipe, RecipeError, saveRecipe, tablesOf, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
 import { CliError } from './exit';
 
 /** Whether a recipe reference is a path rather than a name in the recipes directory. */
@@ -40,7 +40,7 @@ export class FsStorage implements StoragePort {
       const path = join(this.recipesDir, entry);
       try {
         const [recipe, info] = await Promise.all([this.load(path), stat(path)]);
-        out.push({ name: recipe.name, url: recipe.url, fieldCount: recipe.fields.length, modified: info.mtime, path });
+        out.push({ name: recipe.name, url: recipe.url, fieldCount: tablesOf(recipe).reduce((n, t) => n + t.fields.length, 0), modified: info.mtime, path });
       } catch (error) {
         this.warnings.push(error instanceof CliError ? error.message : `${path}: ${(error as Error).message}`);
       }

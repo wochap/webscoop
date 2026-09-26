@@ -62,7 +62,8 @@ export const ItemSchema = z.object({
 export const FieldSchema = z.object({
   name: z.string().regex(IDENTIFIER, 'field names must be identifiers'),
   type: oneOf('field type', FIELD_TYPES),
-  scope: oneOf('scope', FIELD_SCOPES),
+  /** Defaults from the table: `item` when it has an item block, else `page`. */
+  scope: oneOf('scope', FIELD_SCOPES).optional(),
   selectors: z.array(SelectorCandidateSchema).min(1),
   attr: z.string().min(1).optional(),
   optional: z.boolean().default(false),
@@ -111,19 +112,46 @@ export const StepSchema = z.object({
   label: z.string().min(1).optional(),
 });
 
+/** One flat output: one row per item container, or one row per page without an item block. */
+export const TableSchema = z.object({
+  name: z.string().regex(KEBAB, 'table names must be kebab-case'),
+  item: ItemSchema.optional(),
+  fields: z.array(FieldSchema).min(1, 'a table needs at least one field'),
+});
+
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
 
-export const RecipeSchema = z.object({
+const RecipeObjectSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   name: z.string().regex(KEBAB, 'recipe names must be kebab-case'),
   url: z.string().min(1),
   vars: z.array(VarSchema).default([]),
+  /** Shorthand for a single table named `items`; a recipe declares either this pair or `tables`. */
   item: ItemSchema.optional(),
-  fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field'),
+  fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field').optional(),
+  tables: z.array(TableSchema).min(1, 'a recipe needs at least one table').optional(),
   steps: z.array(StepSchema).default([]),
   pagination: PaginationSchema.default(() => PaginationSchema.parse({})),
   guards: z.array(GuardSchema).default(defaultGuards),
   healing: HealingSchema.default(() => HealingSchema.parse({})),
+});
+
+type ParsedField = z.output<typeof FieldSchema>;
+type ParsedRecipe = z.output<typeof RecipeObjectSchema>;
+
+/** Fill each field's scope from its table: `item` when the table has an item block, else `page`. */
+function withScopes(fields: readonly ParsedField[], item: unknown): RecipeField[] {
+  return fields.map((f) => (f.scope ? (f as RecipeField) : { ...f, scope: item ? 'item' : 'page' }));
+}
+
+/** The recipe schema; parsing fills every field's `scope` from its table. */
+export const RecipeSchema = RecipeObjectSchema.transform((recipe: ParsedRecipe): Recipe => {
+  const { fields, tables, ...rest } = recipe;
+  return {
+    ...rest,
+    ...(fields ? { fields: withScopes(fields, recipe.item) } : {}),
+    ...(tables ? { tables: tables.map((t) => ({ ...t, fields: withScopes(t.fields, t.item) })) } : {}),
+  } as Recipe;
 });
 
 export type SelectorCandidate = z.infer<typeof SelectorCandidateSchema>;
@@ -132,9 +160,11 @@ export type Stability = SelectorCandidate['stability'];
 export type Fingerprint = z.infer<typeof FingerprintSchema>;
 export type RecipeVar = z.infer<typeof VarSchema>;
 export type RecipeItem = z.infer<typeof ItemSchema>;
-export type RecipeField = z.infer<typeof FieldSchema>;
+export type FieldScope = (typeof FIELD_SCOPES)[number];
+/** A field after parsing: `scope` is always set. */
+export type RecipeField = Omit<ParsedField, 'scope'> & { scope: FieldScope };
 export type FieldType = RecipeField['type'];
-export type FieldScope = RecipeField['scope'];
+export type RecipeTable = Omit<z.output<typeof TableSchema>, 'fields'> & { fields: RecipeField[] };
 export type Target = z.infer<typeof TargetSchema>;
 export type Step = z.infer<typeof StepSchema>;
 export type StepKind = Step['kind'];
@@ -144,6 +174,6 @@ export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;
 export type GuardKind = Guard['kind'];
 export type Healing = z.infer<typeof HealingSchema>;
-export type Recipe = z.infer<typeof RecipeSchema>;
+export type Recipe = Omit<ParsedRecipe, 'fields' | 'tables'> & { fields?: RecipeField[]; tables?: RecipeTable[] };
 /** Recipe as written on disk, before defaults are filled in. */
 export type RecipeInput = z.input<typeof RecipeSchema>;

@@ -14,6 +14,7 @@ import {
   RUN_EVENT_NAMES,
   RunEmitter,
   Runner,
+  tablesOf,
   type PageSummary,
   type Recipe,
   type RecipeInput,
@@ -64,7 +65,7 @@ function pagedRecipe(pagination: RecipeInput['pagination'], overrides: Partial<R
     ...base,
     url: `${BASE}?page={n}`,
     vars: [{ name: 'n', type: 'string' }],
-    fields: base.fields.map((f) => (f.name === 'url' ? { ...f, attr: 'href', key: true } : f)),
+    fields: base.fields!.map((f) => (f.name === 'url' ? { ...f, attr: 'href', key: true } : f)),
     pagination,
     ...overrides,
   });
@@ -313,17 +314,17 @@ describe('extractPage across pages', () => {
 
   const recipe = () => {
     const base = baseRecipe();
-    return loadRecipe({ ...base, fields: base.fields.map((f) => (f.name === 'title' ? { ...f, selectors: [css('h3.gone'), css('h2')] } : f)) });
+    return loadRecipe({ ...base, fields: base.fields!.map((f) => (f.name === 'title' ? { ...f, selectors: [css('h3.gone'), css('h2')] } : f)) });
   };
 
   it('reuses the selectors page 1 settled on, without the ladder', async () => {
     const first = await open(listPage(slice(1)));
     const page1 = await extractPage(first.session, recipe(), { pageUrl: BASE, page: 1, ladder: defaultLadder({ enabled: true }) });
     expect(first.calls).toContain('h3.gone');
-    expect(page1.resolved).toEqual({ item: [testid('product-card')], fields: [[css('h2')], [testid('price')], [css('a.product-link')], [testid('category')]] });
+    expect(page1.resolved).toEqual([{ item: [testid('product-card')], fields: [[css('h2')], [testid('price')], [css('a.product-link')], [testid('category')]] }]);
 
     const second = await open(listPage(slice(2)));
-    const page2 = await extractPage(second.session, recipe(), { pageUrl: BASE, page: 2, resolved: page1.resolved });
+    const page2 = (await extractPage(second.session, recipe(), { pageUrl: BASE, page: 2, resolved: page1.resolved })).tables[0]!;
     expect(second.calls).not.toContain('h3.gone');
     expect(titles(page2.rows)).toEqual(range(9, 16));
     expect(page2.rows.every((r) => r._page === 2)).toBe(true);
@@ -333,7 +334,7 @@ describe('extractPage across pages', () => {
   it('extracts only containers from fromIndex on, numbered from 0', async () => {
     const { session } = await open(listPage(products(1, 16)));
     const page1 = await extractPage(session, recipe(), { pageUrl: BASE, page: 1 });
-    const grown = await extractPage(session, recipe(), { pageUrl: BASE, page: 2, resolved: page1.resolved, fromIndex: 8 });
+    const grown = (await extractPage(session, recipe(), { pageUrl: BASE, page: 2, resolved: page1.resolved, fromIndex: 8 })).tables[0]!;
     expect(grown.rows.map((r) => r._index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     expect(titles(grown.rows)).toEqual(range(9, 16));
   });
@@ -380,7 +381,7 @@ describe('dedup and stop rules', () => {
 
   it('dedups by all field values without a key, and never within page 1', () => {
     const recipe = loadRecipe(baseRecipe());
-    const dedup = new Dedup(recipe);
+    const dedup = new Dedup(tablesOf(recipe)[0]!);
     const row = (title: string, price: number): Row => ({ _page: 1, _index: 0, title, price, url: null, category: 'x' });
     const page1 = dedup.preview([row('a', 1), row('a', 1)], 1);
     expect(page1.kept).toHaveLength(2);
@@ -432,6 +433,109 @@ describe('dedup and stop rules', () => {
   });
 });
 
+describe('tables across pages', () => {
+  function mixedListPage(items: { spec: CardSpec; index: number }[], questions: string[]): SerializedElement {
+    const page = listPage(items);
+    const main = (page.children[1] as SerializedElement).children[0] as SerializedElement;
+    main.children.push(h('section', {}, questions.map((q) => h('div', { 'data-testid': 'question' }, h('h3', {}, q)))));
+    return page;
+  }
+
+  function mixedSite(pages: number, items: (page: number) => { spec: CardSpec; index: number }[], questions: (page: number) => string[]) {
+    const browser = new FakeBrowser();
+    for (let p = 1; p <= pages; p++) browser.setPage(`${BASE}?page=${p}`, { dom: mixedListPage(items(p), questions(p)), title: `Page ${p}` });
+    return browser;
+  }
+
+  function tablesPaged(pagination: RecipeInput['pagination'], tables?: RecipeInput['tables']): Recipe {
+    const { item: _item, fields: _fields, ...base } = baseRecipe();
+    return loadRecipe({
+      ...base,
+      url: `${BASE}?page={n}`,
+      vars: [{ name: 'n', type: 'string' }],
+      tables: tables ?? [
+        { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [testid('category')] }] },
+        {
+          name: 'products',
+          item: { selectors: [testid('product-card')] },
+          fields: [
+            { name: 'title', type: 'text', selectors: [css('h2')] },
+            { name: 'url', type: 'url', attr: 'href', selectors: [css('a.product-link')], key: true },
+          ],
+        },
+        { name: 'questions', item: { selectors: [testid('question')] }, fields: [{ name: 'title', type: 'text', selectors: [css('h3')] }] },
+      ],
+      pagination,
+    });
+  }
+
+  const rowsOf = (log: ReturnType<typeof run>['log'], table: string) => log.of('row.emitted').filter((e) => e.table === table).map((e) => e.row);
+
+  it('keeps a same heading page row on page 2 and dedups products by url', async () => {
+    // Page 2 repeats products 7 and 8 from page 1.
+    const browser = mixedSite(2, (p) => (p === 1 ? slice(1) : products(7, 14)), () => ['Q?']);
+    const { log, result } = run(tablesPaged({ ...URL_PAGINATION, limit: 2 }), browser);
+    const r = await result;
+    expect(r.ok).toBe(true);
+    expect(rowsOf(log, 'page').map((row) => [row.heading, row._page, row._index])).toEqual([
+      ['Electronics', 1, 0],
+      ['Electronics', 2, 0],
+    ]);
+    expect(titles(rowsOf(log, 'products'))).toEqual(range(1, 14));
+    expect(r.report.tables.find((t) => t.name === 'products')?.duplicateCount).toBe(2);
+    expect(r.report.duplicateCount).toBe(2);
+    // No key: all field values; the same question on page 2 is a duplicate of its own table only.
+    expect(rowsOf(log, 'questions')).toHaveLength(1);
+  });
+
+  it('keeps keys per table', async () => {
+    const browser = mixedSite(2, slice, (p) => (p === 1 ? ['Q1'] : ['Product 1']));
+    const { log, result } = run(tablesPaged({ ...URL_PAGINATION, limit: 2 }), browser);
+    expect((await result).ok).toBe(true);
+    expect(titles(rowsOf(log, 'questions'))).toEqual(['Q1', 'Product 1']);
+    expect(titles(rowsOf(log, 'products'))).toEqual(range(1, 16));
+  });
+
+  it('continues past a page where a secondary table is empty', async () => {
+    const browser = mixedSite(3, slice, (p) => (p === 2 ? [] : [`Q${p}`]));
+    const { log, result } = run(tablesPaged({ ...URL_PAGINATION, limit: 3, stopRules: ['no-new-items'] }), browser);
+    const r = await result;
+    expect(r.ok).toBe(true);
+    expect(r.report.stopReason).toBe('limit');
+    expect(r.report.pageCount).toBe(3);
+    expect(titles(rowsOf(log, 'questions'))).toEqual(['Q1', 'Q3']);
+    expect(r.report.pages[1]!.tables).toEqual([
+      { name: 'page', rows: 1, dropped: 0 },
+      { name: 'products', rows: 8, dropped: 0 },
+      { name: 'questions', rows: 0, dropped: 0 },
+    ]);
+  });
+
+  it('resolves a secondary table first seen on a later page', async () => {
+    const browser = mixedSite(2, slice, (p) => (p === 1 ? [] : ['Late?']));
+    const { log, result } = run(tablesPaged({ ...URL_PAGINATION, limit: 2 }), browser);
+    const r = await result;
+    expect(r.ok).toBe(true);
+    expect(rowsOf(log, 'questions').map((row) => [row.title, row._page])).toEqual([['Late?', 2]]);
+    // Reported missing on page 1, then resolved on page 2.
+    expect(log.of('field.resolved').filter((e) => e.table === 'questions').map((e) => [e.page, e.field.status])).toEqual([
+      [1, 'missing'],
+      [2, 'ok'],
+    ]);
+    expect(r.report.tables[2]!.fields[0]!.status).toBe('ok');
+  });
+
+  it('stops a recipe with only a page table on the limit', async () => {
+    const browser = mixedSite(3, slice, () => []);
+    const pageOnly = [{ name: 'page', fields: [{ name: 'heading', type: 'text' as const, selectors: [testid('category')] }] }];
+    const { result } = run(tablesPaged({ ...URL_PAGINATION, limit: 3, stopRules: ['no-new-items', 'first-item-repeats'] }, pageOnly), browser);
+    const r = await result;
+    expect(r.ok).toBe(true);
+    expect(r.report.stopReason).toBe('limit');
+    expect(r.rows.map((row) => row._page)).toEqual([1, 2, 3]);
+  });
+});
+
 describe('runner page loop', () => {
   it('orders page.done, page.advanced, and page.loaded across pages', async () => {
     const { log, result } = run(pagedRecipe({ ...URL_PAGINATION, limit: 2 }), urlSite(2));
@@ -456,7 +560,7 @@ describe('runner page loop', () => {
 
   it('saves promotions from page 1 once, after the last page', async () => {
     const recipe = pagedRecipe(URL_PAGINATION);
-    recipe.fields[0]!.selectors = [css('h3.gone'), css('h2')];
+    recipe.fields![0]!.selectors = [css('h3.gone'), css('h2')];
     const saved: Recipe[] = [];
     const { log, result } = run(recipe, urlSite(3), { saveRecipe: async (r) => (saved.push(r), '/r.json') });
     const r = await result;
@@ -498,7 +602,7 @@ describe('playground-paged reference recipe', () => {
     expect(recipe.pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 'all' });
     expect(recipe.pagination.target!.selectors[0]).toEqual(role('link|Next'));
     expect(recipe.pagination.target!.fingerprint).toBeDefined();
-    expect(recipe.fields.find((f) => f.key)?.name).toBe('url');
+    expect(recipe.fields!.find((f) => f.key)?.name).toBe('url');
 
     const at = (page: number) => `http://127.0.0.1:4777/catalog?paginate=url&tier=0&page=${page}`;
     const browser = new FakeBrowser();

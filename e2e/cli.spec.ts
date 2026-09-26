@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, REFERENCE_RECIPE, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, REFERENCE_RECIPE, referenceRecipe, TABLES_RECIPE, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -81,7 +81,7 @@ test('a missing --var exits 1 and names the variable', async ({ scoop }) => {
 test('a required field missing everywhere exits 3 with no rows', async ({ scoop }) => {
   const name = await scoop.writeRecipe(
     variant(scoop, 'price-gone', (r) => {
-      const price = r.fields.find((f) => f.name === 'price')!;
+      const price = r.fields!.find((f) => f.name === 'price')!;
       price.selectors = [{ strategy: 'testid', value: 'no-such-price', stability: 'stable' }];
       // Without a fingerprint no healing rung can find it either.
       delete price.fingerprint;
@@ -96,7 +96,7 @@ test('a required field missing everywhere exits 3 with no rows', async ({ scoop 
 test('an optional field missing yields null and exit 0', async ({ scoop }) => {
   const name = await scoop.writeRecipe(
     variant(scoop, 'with-badge', (r) => {
-      r.fields.push({
+      r.fields!.push({
         name: 'badge',
         type: 'text',
         scope: 'item',
@@ -118,7 +118,7 @@ test('a required link field on the mixed catalog keeps only product rows and rep
       r.url = `${r.url}&mixed=1`;
       // Every article, the "People also ask" blocks included; those have no product link.
       r.item = { ...r.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] };
-      r.fields = r.fields.map((f) => ({ ...f, optional: f.name !== 'url' }));
+      r.fields = r.fields!.map((f) => ({ ...f, optional: f.name !== 'url' }));
     }),
   );
   const result = await scoop.run(['run', name]);
@@ -175,4 +175,55 @@ test('SIGINT closes the browser, releases the lock, and exits 1', async ({ scoop
   expect(result.stdout).toBe('');
   expect(existsSync(lockFile)).toBe(false);
   expect(processesUsing(join(scoop.home, 'profiles', RECIPE))).toEqual([]);
+});
+
+test.describe('a recipe with tables', () => {
+  const tables = async (scoop: Scoop) => scoop.writeRecipe(referenceRecipe(scoop.playground.port, TABLES_RECIPE));
+
+  test('prints an object keyed by table: 1 page row, 24 products, 6 questions blocks', async ({ scoop }) => {
+    const name = await tables(scoop);
+    const result = await scoop.run(['run', name]);
+    expect(result.code, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout) as Record<string, Record<string, unknown>[]>;
+    expect(Object.keys(out)).toEqual(['page', 'products', 'questions']);
+    expect(out.page).toEqual([{ _page: 1, _index: 0, heading: dataset[0]!.category }]);
+    expect(out.products!.map((r) => r.title)).toEqual(dataset.map((p) => p.title));
+    expect(out.products!.every((r) => !('heading' in r))).toBe(true);
+    expect(out.questions).toHaveLength(6);
+    expect(out.questions![0]).toEqual({ _page: 1, _index: 0, title: 'People also ask', first_option: 'Which one ships fastest?' });
+    expect(result.stderr).toMatch(/page: 1, products: 24, questions: 6 rows from 1 page in \d+\.\d+s/);
+  });
+
+  test('--jsonl rows carry _table', async ({ scoop }) => {
+    const name = await tables(scoop);
+    const result = await scoop.run(['run', name, '--jsonl']);
+    expect(result.code, result.stderr).toBe(0);
+    const rows = result.stdout.trimEnd().split('\n').map((l) => JSON.parse(l) as { _table: string });
+    expect(rows).toHaveLength(31);
+    const counts = rows.reduce<Record<string, number>>((n, r) => ({ ...n, [r._table]: (n[r._table] ?? 0) + 1 }), {});
+    expect(counts).toEqual({ page: 1, products: 24, questions: 6 });
+    expect(rows[0]!._table).toBe('page');
+  });
+
+  test('--table products prints a plain array of 24', async ({ scoop }) => {
+    const name = await tables(scoop);
+    const result = await scoop.run(['run', name, '--table', 'products']);
+    expect(result.code, result.stderr).toBe(0);
+    const rows = JSON.parse(result.stdout) as Record<string, unknown>[];
+    expect(rows).toHaveLength(24);
+    expect(rows[0]).toEqual({ _page: 1, _index: 0, title: dataset[0]!.title, url: new URL(dataset[0]!.url, scoop.playground.url).href });
+  });
+
+  test('--out dir/ writes one file per table', async ({ scoop }) => {
+    const name = await tables(scoop);
+    const dir = join(scoop.home, 'out', 'tables');
+    const result = await scoop.run(['run', name, '--out', `${dir}/`]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe('');
+    const read = async (table: string) => JSON.parse(await readFile(join(dir, `${table}.json`), 'utf8')) as unknown[];
+    expect((await readdir(dir)).sort()).toEqual(['page.json', 'products.json', 'questions.json']);
+    expect(await read('page')).toHaveLength(1);
+    expect(await read('products')).toHaveLength(24);
+    expect(await read('questions')).toHaveLength(6);
+  });
 });

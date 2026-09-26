@@ -68,7 +68,7 @@ describe('step flags and logs', () => {
   });
 
   it('mentions skipped steps in the summary', () => {
-    const base = { recipe: 'shop', durationMs: 1000, pageCount: 1, rowCount: 3, healed: 0, guards: [], duplicateCount: 0 } as unknown as RunReport;
+    const base = { recipe: 'shop', durationMs: 1000, pageCount: 1, rowCount: 3, tables: [], healed: 0, guards: [], duplicateCount: 0 } as unknown as RunReport;
     expect(summary({ ...base, steps: [report()] })).toBe('3 rows from 1 page in 1.00s (shop)');
     expect(summary({ ...base, steps: [report(), report({ index: 1, outcome: 'skipped' })] })).toBe('3 rows from 1 page, 1 step skipped in 1.00s (shop)');
   });

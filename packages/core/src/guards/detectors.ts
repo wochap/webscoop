@@ -2,6 +2,7 @@ import type { PageExtraction } from '../extract';
 import { resolveFirst } from '../extract';
 import type { PageInfo, SerializedNode, Session } from '../ports';
 import type { GuardKind, Recipe } from '../recipe/schema';
+import { tablesOf } from '../recipe/tables';
 
 /** Path segments that mark a login page: `/login`, `/signin`, `/sign-in`, `/account/login`, `/auth`, `/sso`. */
 export const LOGIN_URL_PATTERN = /(?:^|\/)(?:login|signin|sign-in|auth|sso)(?:\/|$)/i;
@@ -78,12 +79,14 @@ function hidden(el: Extract<SerializedNode, { type: 'element' }>): boolean {
   return (el.bbox !== undefined && (el.bbox.w === 0 || el.bbox.h === 0)) || 'hidden' in el.attrs || el.attrs.type === 'hidden';
 }
 
-/** Whether the item container (or, without one, any field) resolves with its stored selectors. */
+/** Whether any table's item container (or, for a table without one, any field) resolves with its stored selectors. */
 async function itemsPresent(ctx: GuardContext): Promise<boolean> {
   const { recipe, session } = ctx;
-  if (recipe.item) return (await resolveFirst(session, recipe.item.selectors)) !== null;
-  for (const field of recipe.fields) {
-    if ((await resolveFirst(session, field.selectors)) !== null) return true;
+  for (const table of tablesOf(recipe)) {
+    const targets = table.item ? [table.item] : table.fields;
+    for (const target of targets) {
+      if ((await resolveFirst(session, target.selectors)) !== null) return true;
+    }
   }
   return false;
 }
@@ -123,12 +126,20 @@ export const captchaDetector: GuardDetector = {
   },
 };
 
-/** Whether the item container and every required field resolved nothing. */
+/** Whether, in every table, the item container and every required field resolved nothing. */
 export function nothingResolved(recipe: Recipe, extraction: PageExtraction): boolean {
-  const required = extraction.fields.filter((f) => !f.optional);
-  if (!recipe.item && required.length === 0) return false;
-  const noItems = !recipe.item || !extraction.item || extraction.item.count === 0;
-  return noItems && required.every((f) => f.status === 'missing');
+  let checked = false;
+  for (const [index, table] of tablesOf(recipe).entries()) {
+    const found = extraction.tables[index];
+    if (!found) continue;
+    const required = found.fields.filter((f) => !f.optional);
+    // A table with nothing required cannot tell an empty page from a full one.
+    if (!table.item && required.length === 0) continue;
+    checked = true;
+    const noItems = !table.item || !found.item || found.item.count === 0;
+    if (!noItems || !required.every((f) => f.status === 'missing')) return false;
+  }
+  return checked;
 }
 
 export const zeroFieldsDetector: GuardDetector = {

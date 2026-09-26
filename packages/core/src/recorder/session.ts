@@ -32,6 +32,7 @@ import {
   detectPagination,
   draftErrors,
   draftToRecipe,
+  inDraftForm,
   fieldDefaults,
   reduceDraft,
   type DraftAction,
@@ -1617,7 +1618,8 @@ export class RecorderController {
         error: validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n'),
       };
     } else {
-      const extraction = await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 });
+      // The draft is always one table.
+      const extraction = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 })).tables[0]!;
       const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
       const droppedFields = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
       results = {
@@ -1658,7 +1660,7 @@ export class RecorderController {
     if (errors.length > 0 || !validated.ok) {
       return { kind: 'save.result', ok: false, errors, state: this.current };
     }
-    await this.opts.storage.save(validated.recipe);
+    await this.opts.storage.save(inDraftForm(this.draft, validated.recipe));
     this.apply({ type: 'markSaved' });
     const path = this.opts.pathFor?.(validated.recipe.name);
     this.current = {

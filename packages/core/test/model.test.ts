@@ -94,7 +94,7 @@ describe('pruneCandidates', () => {
   it('ranks by fingerprint score, best first', () => {
     const root = annotate(catalogSnapshot(2, 3));
     const recipe = fingerprintedRecipe();
-    const price = recipe.fields.find((f) => f.name === 'price')!;
+    const price = recipe.fields!.find((f) => f.name === 'price')!;
     const target = field('price', 'number', { fingerprint: price.fingerprint! });
     const candidates = pruneCandidates(root, target, noCtx, new MockLlm({ responses: [] }));
     const scores = candidates.map((c) => c.score!);
@@ -124,7 +124,7 @@ describe('prompt', () => {
     const build = () => {
       const root = annotate(html());
       const recipe = fingerprintedRecipe();
-      const fp = { ...recipe.fields.find((f) => f.name === 'price')!.fingerprint!, textSample: long.slice(0, 80), name: long };
+      const fp = { ...recipe.fields!.find((f) => f.name === 'price')!.fingerprint!, textSample: long.slice(0, 80), name: long };
       const target = field('price', 'number', { fingerprint: fp });
       const candidates = pruneCandidates(root, target, noCtx, new MockLlm({ responses: [] }));
       return buildPrompt(target, target.fingerprint, sampleOf(target), candidates.map((c) => c.node));
@@ -191,7 +191,7 @@ describe('modelResolver on tier 3', () => {
     const healed = t.log.of('field.healed').find((e) => e.target === 'price')!;
     expect(healed.outcome).toEqual({ kind: 'model', rationale: 'price with currency' });
     expect(t.saved).toHaveLength(1);
-    expect(t.saved[0]!.fields.find((f) => f.name === 'price')!.selectors[0]).toEqual(healed.newPrimary);
+    expect(t.saved[0]!.fields!.find((f) => f.name === 'price')!.selectors[0]).toEqual(healed.newPrimary);
     // Every price read through the promoted selectors is that card's price.
     expect(result.rows).toHaveLength(24);
     for (const row of result.rows) {
@@ -233,7 +233,7 @@ describe('modelResolver on tier 3', () => {
   it('rejects a pick for a number field whose text has no digits', async () => {
     const recipe = fingerprintedRecipe();
     // Without a fingerprint only the type check stands between the pick and acceptance.
-    const price = recipe.fields.find((f) => f.name === 'price')!;
+    const price = recipe.fields!.find((f) => f.name === 'price')!;
     delete price.fingerprint;
     const llm = mockFromScript(withPrice({ match: 'Field: price', pick: 'role="heading"', reason: 'the title' }));
     const result = await run(recipe, llm).result;
@@ -256,7 +256,7 @@ describe('modelResolver on tier 3', () => {
     const recipe = fingerprintedRecipe();
     // On tier 0 only the two dead fields without fingerprints reach the model rung.
     for (const name of ['price', 'rating']) {
-      const f = recipe.fields.find((x) => x.name === name)!;
+      const f = recipe.fields!.find((x) => x.name === name)!;
       f.selectors = [{ strategy: 'css', value: `.gone-${name}`, stability: 'medium' }];
       delete f.fingerprint;
     }
@@ -275,7 +275,7 @@ describe('modelResolver on tier 3', () => {
   it('keeps asking after a malformed answer, which is not an endpoint failure', async () => {
     const recipe = fingerprintedRecipe();
     for (const name of ['price', 'rating']) {
-      const f = recipe.fields.find((x) => x.name === name)!;
+      const f = recipe.fields!.find((x) => x.name === name)!;
       f.selectors = [{ strategy: 'css', value: `.gone-${name}`, stability: 'medium' }];
       delete f.fingerprint;
     }

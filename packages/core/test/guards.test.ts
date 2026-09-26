@@ -8,6 +8,7 @@ import {
   GuardBudget,
   GuardWaitAborted,
   loadRecipe,
+  nothingResolved,
   loginDetector,
   Recheck,
   recordEvents,
@@ -26,7 +27,7 @@ import {
   type WindowPort,
 } from '../src';
 import { FakeBrowser, h, type FakePage } from '../src/testing';
-import { catalog, cards, PAGE, recipe } from './helpers';
+import { catalog, cards, PAGE, recipe, tablesRecipe } from './helpers';
 
 const LOGIN = 'https://shop.test/login?next=%2Fc%2Felectronics';
 const HOME = 'https://shop.test/';
@@ -139,6 +140,25 @@ describe('guard detectors', () => {
     const { session, info } = await sessionOn(PAGE, interstitial());
     const extraction = await extractPage(session, shop, { pageUrl: info.url, page: 2 });
     expect(await zeroFieldsDetector.matches(guardContext({ session, recipe: shop, info, intendedUrl: PAGE, extraction, laterPage: true }))).toBeNull();
+  });
+
+  it('raises no zero-fields on a short page where only the second table resolves', async () => {
+    const recipe = loadRecipe(tablesRecipe({ tables: tablesRecipe().tables!.slice(1) }));
+    const dom = h('html', {}, h('body', {}, h('div', { 'data-testid': 'question' }, h('h3', {}, 'Any stock?'))));
+    const { session, info } = await sessionOn(PAGE, dom);
+    const extraction = await extractPage(session, recipe, { pageUrl: info.url, page: 1 });
+    expect(extraction.tables[0]!.containerCount).toBe(0);
+    expect(extraction.tables[1]!.rows).toHaveLength(1);
+    expect(nothingResolved(recipe, extraction)).toBe(false);
+    expect(await zeroFieldsDetector.matches(guardContext({ session, recipe, info, intendedUrl: PAGE, extraction }))).toBeNull();
+  });
+
+  it('raises zero-fields on a short page where no table resolves', async () => {
+    const recipe = loadRecipe(tablesRecipe());
+    const { session, info } = await sessionOn(PAGE, interstitial());
+    const extraction = await extractPage(session, recipe, { pageUrl: info.url, page: 1 });
+    expect(nothingResolved(recipe, extraction)).toBe(true);
+    expect(await zeroFieldsDetector.matches(guardContext({ session, recipe, info, intendedUrl: PAGE, extraction }))).toMatchObject({ kind: 'zero-fields' });
   });
 
   it('reports captcha before login when both match', async () => {

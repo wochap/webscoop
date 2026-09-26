@@ -63,7 +63,7 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
           { strategy: 'css', value: 'ul.product-list', stability: 'medium' },
         ],
       };
-      recipe.fields = recipe.fields.map((f) =>
+      recipe.fields = recipe.fields!.map((f) =>
         f.name === 'title' ? { ...f, selectors: [{ strategy: 'class', value: 'h2.product-title', stability: 'medium' }, ...f.selectors] } : f,
       );
       await scoop.writeRecipe(recipe);
@@ -83,7 +83,7 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
     test('a required field matching nothing exits 3 with empty stdout', async ({ scoop }) => {
       const recipe = structuredClone(scoop.recipe);
       recipe.name = 'dead-price';
-      recipe.fields = recipe.fields.map((f) => (f.name === 'price' ? { ...f, selectors: [{ strategy: 'css', value: '.no-such-price', stability: 'medium' }] } : f));
+      recipe.fields = recipe.fields!.map((f) => (f.name === 'price' ? { ...f, selectors: [{ strategy: 'css', value: '.no-such-price', stability: 'medium' }] } : f));
       await scoop.writeRecipe(recipe);
       const dead = await exportAndRun(scoop, 'dead-price', format);
       expect(dead.code, dead.stderr).toBe(3);
@@ -97,7 +97,7 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       recipe.url = `${recipe.url}&mixed=1`;
       // Every article, the "People also ask" blocks included; those have no product link.
       recipe.item = { ...recipe.item!, selectors: [{ strategy: 'css', value: 'article', stability: 'medium' }] };
-      recipe.fields = recipe.fields.map((f) => ({ ...f, optional: f.name !== 'url' }));
+      recipe.fields = recipe.fields!.map((f) => ({ ...f, optional: f.name !== 'url' }));
       await scoop.writeRecipe(recipe);
       const mixed = await exportAndRun(scoop, 'mixed-catalog', format);
       expect(mixed.code, mixed.stderr).toBe(0);

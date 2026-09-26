@@ -1,6 +1,7 @@
 import { defaultAttr } from '../convert';
 import { DEFAULT_PAGE_CAP } from '../pagination/types';
 import type { FieldScope, FieldType, PaginationKind, Recipe, SelectorCandidate, StepKind, StepWhen } from '../recipe/schema';
+import { tablesOf } from '../recipe/tables';
 import { WAIT_POLL_MS } from '../steps/replay';
 import { templateVariables } from '../template';
 
@@ -120,6 +121,8 @@ function readMode(type: FieldType, attr: string | undefined): ReadMode {
 /** Turn a validated recipe into the plan both renderers share. */
 export function buildPlan(recipe: Recipe): ExportPlan {
   const { pagination } = recipe;
+  // Export renders one table; multi-table recipes are refused before this point.
+  const table = tablesOf(recipe)[0]!;
   const pageParam = pagination.kind === 'url' ? (pagination.param ?? null) : null;
 
   // Variables the run needs before the browser opens; the page variable has its own start value.
@@ -152,7 +155,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     return { index, kind: step.kind, name: step.label ?? `step:${index}`, when: step.when, optional: step.optional, target, action };
   });
 
-  const fields: PlanField[] = recipe.fields.map((field) => {
+  const fields: PlanField[] = table.fields.map((field) => {
     const attr = field.attr ?? defaultAttr(field.type);
     return {
       name: field.name,
@@ -170,15 +173,15 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     url: recipe.url,
     vars,
     steps,
-    item: recipe.item
+    item: table.item
       ? {
-          selectors: selectors(recipe.item.selectors),
-          ...(recipe.item.within ? { within: selectors(recipe.item.within) } : {}),
-          exclude: selectors(recipe.item.exclude ?? []),
+          selectors: selectors(table.item.selectors),
+          ...(table.item.within ? { within: selectors(table.item.within) } : {}),
+          exclude: selectors(table.item.exclude ?? []),
         }
       : null,
     fields,
-    key: recipe.fields.find((f) => f.key)?.name ?? null,
+    key: table.fields.find((f) => f.key)?.name ?? null,
     pagination: {
       kind: pagination.kind,
       param: pageParam ? { name: pageParam.name, start: pageParam.start, step: pageParam.step } : null,

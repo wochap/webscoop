@@ -10,10 +10,23 @@ describe('RunEmitter', () => {
       rows.push(payload.row);
     });
     const log = recordEvents(emitter);
-    emitter.emit('row.emitted', { page: 1, row: { _page: 1, _index: 0, title: 'x' } });
+    emitter.emit('row.emitted', { page: 1, table: 'items', row: { _page: 1, _index: 0, title: 'x' } });
     expect(rows).toEqual([{ _page: 1, _index: 0, title: 'x' }]);
     expect(log.names()).toEqual(['row.emitted']);
     expect(log.of('row.emitted')[0]!.row.title).toBe('x');
+  });
+
+  it('names the table on rows, resolved fields, healed targets, and re-picks', () => {
+    expectTypeOf<RunEvents['row.emitted']['table']>().toEqualTypeOf<string>();
+    expectTypeOf<RunEvents['field.resolved']['table']>().toEqualTypeOf<string>();
+    expectTypeOf<RunEvents['field.healed']['table']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<RunEvents['repick.requested']['table']>().toEqualTypeOf<string>();
+    expectTypeOf<RunEvents['repick.resolved']['table']>().toEqualTypeOf<string>();
+    const emitter = new RunEmitter();
+    const log = recordEvents(emitter);
+    emitter.emit('row.emitted', { page: 1, table: 'page', row: { _page: 1, _index: 0, heading: 'x' } });
+    emitter.emit('row.emitted', { page: 1, table: 'products', row: { _page: 1, _index: 0, title: 'y' } });
+    expect(log.of('row.emitted').map((e) => e.table)).toEqual(['page', 'products']);
   });
 
   it('collapses repeated events in the sequence helper', () => {

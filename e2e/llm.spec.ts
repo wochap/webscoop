@@ -35,7 +35,7 @@ test('tier 3: the model rung heals the reference recipe and writes it back', asy
   expect(result.stderr).toContain(`recipe written to ${scoop.recipePath}`);
 
   const saved = loadRecipe(await readFile(scoop.recipePath, 'utf8'));
-  expect(saved.fields.find((f) => f.name === 'price')!.selectors[0]!.value).toContain('data-qa="price"');
+  expect(saved.fields!.find((f) => f.name === 'price')!.selectors[0]!.value).toContain('data-qa="price"');
 
   // The written recipe works on tier 3 without the model.
   const again = await scoop.run(['run', RECIPE, '--var', 'tier=3', '--no-llm']);

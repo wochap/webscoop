@@ -511,7 +511,7 @@ describe('fingerprint', () => {
     expect(fingerprint(link).attrs).toEqual({ href: '/p/p##' });
 
     const reference = JSON.parse(readFileSync(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url), 'utf8'));
-    const expected = loadRecipe(reference).fields[0]!.fingerprint!;
+    const expected = loadRecipe(reference).fields![0]!.fingerprint!;
     const fp = fingerprint(byClass(root, 'product-title', 0));
     expect(Object.keys(fp)).toEqual(Object.keys(expected));
     expect(fp.tag).toBe(expected.tag);

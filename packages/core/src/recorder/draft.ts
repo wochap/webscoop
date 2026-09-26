@@ -1,6 +1,7 @@
 import { parseNumber } from '../convert';
 import { templateVariables } from '../template';
 import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
+import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import type {
   Draft,
@@ -200,6 +201,8 @@ export function validateDraft(draft: Draft): Draft {
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
 export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
+  // The recorder edits one table; multi-table recipes are refused before a session starts.
+  const table = tablesOf(recipe)[0]!;
   const steps: DraftStep[] = recipe.steps.map((s) => ({
     kind: s.kind,
     ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
@@ -213,7 +216,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     name,
     value: values[name] ?? recipe.vars.find((v) => v.name === name)?.default ?? '',
   }));
-  const fields: DraftField[] = recipe.fields.map((f) => ({
+  const fields: DraftField[] = table.fields.map((f) => ({
     name: f.name,
     type: f.type,
     scope: f.scope,
@@ -225,13 +228,13 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     count: null,
     sample: null,
   }));
-  const item: DraftItem | null = recipe.item
+  const item: DraftItem | null = table.item
     ? {
-        selectors: recipe.item.selectors.map(bare),
-        ...(recipe.item.within ? { within: recipe.item.within.map(bare), withinCount: null } : {}),
-        ...(recipe.item.withinFingerprint ? { withinFingerprint: recipe.item.withinFingerprint } : {}),
-        exclude: (recipe.item.exclude ?? []).map(bare),
-        ...(recipe.item.fingerprint ? { fingerprint: recipe.item.fingerprint } : {}),
+        selectors: table.item.selectors.map(bare),
+        ...(table.item.within ? { within: table.item.within.map(bare), withinCount: null } : {}),
+        ...(table.item.withinFingerprint ? { withinFingerprint: table.item.withinFingerprint } : {}),
+        exclude: (table.item.exclude ?? []).map(bare),
+        ...(table.item.fingerprint ? { fingerprint: table.item.fingerprint } : {}),
         count: null,
         total: null,
       }
@@ -258,9 +261,17 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     pagination,
     guards: recipe.guards,
     healing: recipe.healing,
+    ...(recipe.tables ? { table: table.name } : {}),
     dirty: false,
     errors: [],
   });
+}
+
+/** The validated recipe in the form the draft was loaded in: one entry `tables` when it came that way, else the shorthand. */
+export function inDraftForm(draft: Pick<Draft, 'table'>, recipe: Recipe): Recipe {
+  if (draft.table === undefined || recipe.tables) return recipe;
+  const { item, fields, ...rest } = recipe;
+  return { ...rest, tables: [{ name: draft.table, ...(item ? { item } : {}), fields: fields ?? [] }] };
 }
 
 export interface NewField {
