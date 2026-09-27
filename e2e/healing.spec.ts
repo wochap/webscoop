@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { loadRecipe, type RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
 import { expect, hasDisplay, test, type Scoop } from './fixtures';
+import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -147,10 +148,10 @@ test('run --interactive: re-pick the price in the panel and the run finishes wit
   const r = await scoop.interactiveRun([name]);
   const waiting = await r.until((s) => s.host?.repickContext);
   expect(waiting).toMatchObject({ field: 'price', reason: 'run', oldSelector: { value: '.gone-price' } });
-  expect(await r.query('[data-ws="repick-prompt"]')).toMatchObject({ text: expect.stringContaining('Click the new location of price') });
+  expect(await r.query(ws('repick-prompt'))).toMatchObject({ text: expect.stringContaining('Click the new location of price') });
   await r.pick('p.product-price', 2);
   await r.until((s) => s.host?.repickContext?.picked);
-  await r.clickPanel('[data-ws="repick-confirm"]');
+  await r.clickPanel(ws('repick-confirm'));
   const result = await r.run.done;
   expect(result.code, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual(expectedRows(scoop.playground.url));
@@ -168,7 +169,7 @@ test('record --repick: the new selection is saved into the recipe', async ({ sco
   await r.pick('p.product-price', 4);
   const picked = await r.until((s) => s.host?.repickContext?.picked);
   expect(picked.selector).toEqual({ strategy: 'testid', value: 'price', stability: 'stable' });
-  await r.clickPanel('[data-ws="repick-confirm"]');
+  await r.clickPanel(ws('repick-confirm'));
   const result = await r.run.done;
   expect(result.code, result.stderr).toBe(0);
   expect(result.stderr).toContain('saved the new location of price');

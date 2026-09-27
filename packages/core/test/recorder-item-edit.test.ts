@@ -1,9 +1,9 @@
-import { dataset } from '@webscoop/playground';
+import { dataset, render } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
 import { detach, emptyDraft, type Draft, type RecorderState } from '../src';
 import { h } from '../src/testing';
 import { acceptList, byClass, cardPath, harness, manualList, openList, type Harness } from './recorder-helpers';
-import { tier0Snapshot } from './snapshot';
+import { snapshotFromHtml, tier0Snapshot } from './snapshot';
 
 function newDraft(): Draft {
   return emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?tier={tier}', vars: [{ name: 'tier', value: '0' }] });
@@ -57,6 +57,18 @@ describe('editing the confirmed item container', () => {
     const p = proposal(t);
     expect(p.origin).toBe('edit');
     expect(p.proposed).toMatchObject({ tag: 'article', count: 24 });
+  });
+
+  it('reopens the setup on a page nested more than 200 elements deep, from the snapshot the page attaches', async () => {
+    const html = render(dataset, { tier: 0, seed: 1 });
+    const depth = 250;
+    const deep = snapshotFromHtml(html.replace('<body>', `<body>${'<div>'.repeat(depth)}`).replace('</body>', `${'</div>'.repeat(depth)}</body>`));
+    const t = await confirmed(deep);
+    expect(cardPath(byClass(t.page, 'product-title', 0)).length).toBeGreaterThan(depth);
+    expect(t.controller.draft.tables[0]!.item!.count).toBe(24);
+    await t.send({ kind: 'draft.editItem', snapshot: detach(t.page) });
+    expect(t.controller.state.error).toBeNull();
+    expect(proposal(t)).toMatchObject({ origin: 'edit', proposed: { tag: 'article', count: 24 } });
   });
 
   it('updates to the broader level, keeps the fields, and refreshes their counts', async () => {

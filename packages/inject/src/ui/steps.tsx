@@ -211,12 +211,12 @@ export function StepList({
   const actions = useActions();
   const [dragging, setDragging] = useState<number | null>(null);
   const toggle = browsing ? (
-    <button type="button" className="ws-btn ws-btn-sm ws-btn-primary" onClick={actions.stopBrowsing} data-ws="browse-stop">
+    <button type="button" className="ws-btn ws-btn-sm ws-btn-primary" onClick={actions.stopBrowsing} data-ws="steps-stop">
       <Icon name="stop" size={11} />
       Stop recording <Kbd>B</Kbd>
     </button>
   ) : (
-    <button type="button" className="ws-btn ws-btn-sm" onClick={actions.startBrowsing} data-ws="browse">
+    <button type="button" className="ws-btn ws-btn-sm" onClick={actions.startBrowsing} data-ws="steps-record">
       <Icon name="record" size={11} />
       Record steps <Kbd>B</Kbd>
     </button>
@@ -232,7 +232,7 @@ export function StepList({
       {...(onCollapse ? { onCollapse } : {})}
       summary={stepsSummary(steps)}
     >
-      <div className="ws-col" data-ws="steps" data-browsing={browsing}>
+      <div className="ws-col" data-browsing={browsing}>
       {browsing && <span className="ws-meta">Use the page: clicks, typing, choices, and Enter are recorded. Esc stops.</span>}
       {steps.length === 0 && !browsing && <span className="ws-meta">No steps. Record the clicks and typing a page needs before its data shows.</span>}
       {steps.map((step, index) => (

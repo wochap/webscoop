@@ -32,7 +32,7 @@ export function stackLevels(
  * the previous one with a connector, holding its name, its chip, and its
  * count. Levels that are not set are left out. Display only.
  */
-export function SelectorStack({ levels, testId = 'selector-stack' }: { levels: readonly StackLevel[]; testId?: string }) {
+export function SelectorStack({ levels, testId = 'stack' }: { levels: readonly StackLevel[]; testId?: string }) {
   const shown = levels.filter((l): l is StackLevel & { candidate: ProtocolCandidate } => Boolean(l.candidate));
   if (shown.length === 0) return null;
   return (

@@ -42,20 +42,20 @@ export function ZeroMatchWarning({
   onReplay?: () => void;
 }) {
   return (
-    <div className="ws-warning" role="alert" data-ws="zero-match">
+    <div className="ws-warning" role="alert" data-ws="field-zero">
       <span className="ws-spacer">
         Matches nothing on this page.{onReplay && ' It may appear only after the recorded steps.'}
       </span>
       {onReplay && (
-        <button type="button" className="ws-btn ws-btn-sm" onClick={onReplay} data-ws="replay-steps" title="Run the recorded steps on this page, in order">
+        <button type="button" className="ws-btn ws-btn-sm" onClick={onReplay} data-ws="field-replay-steps" title="Run the recorded steps on this page, in order">
           Replay steps
         </button>
       )}
-      <button type="button" className="ws-btn ws-btn-sm" onClick={onRepick} data-ws="repick">
+      <button type="button" className="ws-btn ws-btn-sm" onClick={onRepick} data-ws="field-repick">
         Re-pick
       </button>
       {!optional && (
-        <button type="button" className="ws-btn ws-btn-sm" onClick={onOptional} data-ws="make-optional">
+        <button type="button" className="ws-btn ws-btn-sm" onClick={onOptional} data-ws="field-make-optional">
           Mark optional
         </button>
       )}
@@ -79,19 +79,19 @@ export function nameProblem(name: string, taken: readonly string[]): string | nu
 export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldOptions; onChange: (next: FieldOptions) => void; nameError: string | null }) {
   const set = (patch: Partial<FieldOptions>) => onChange({ ...value, ...patch });
   return (
-    <section className="ws-col" data-ws="field-form">
+    <section className="ws-col" data-ws="pick-form">
       <div className="ws-row">
         <input
           className={`ws-input ws-input-sm ws-mono-sm ws-spacer${nameError ? ' ws-invalid' : ''}`}
           value={value.name}
           aria-label="Field name"
           aria-invalid={nameError ? true : undefined}
-          data-ws="form-name"
+          data-ws="pick-form-name"
           onChange={(e) => set({ name: e.target.value })}
         />
         <TypeSelect
           value={value.type}
-          testId="form-type"
+          testId="pick-form-type"
           onChange={(type) => {
             // The attribute follows the type unless the user typed one of their own.
             const followed = value.attr === undefined || value.attr === '' || value.attr === defaultAttr(value.type);
@@ -101,7 +101,7 @@ export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldO
         />
       </div>
       {nameError && (
-        <span className="ws-error" data-ws="form-name-error">
+        <span className="ws-error" data-ws="pick-form-name-error">
           {nameError}
         </span>
       )}
@@ -112,14 +112,14 @@ export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldO
           value={value.attr ?? ''}
           placeholder="text content"
           aria-label="Attribute to read"
-          data-ws="form-attr"
+          data-ws="pick-form-attr"
           onChange={(e) => set({ attr: e.target.value })}
         />
         <span className="ws-row">
           <span className="ws-meta">optional</span>
-          <Toggle on={value.optional} onChange={(optional) => set({ optional })} label="Optional" testId="form-optional" />
+          <Toggle on={value.optional} onChange={(optional) => set({ optional })} label="Optional" testId="pick-form-optional" />
         </span>
-        <DedupKeyToggle on={value.key} onChange={(key) => set({ key })} testId="form-key" />
+        <DedupKeyToggle on={value.key} onChange={(key) => set({ key })} testId="pick-form-key" />
       </div>
     </section>
   );
@@ -240,10 +240,10 @@ export function FieldRow({
         </span>
       )}
       {item && field.scope === 'page' && (
-        <div className="ws-warning" role="alert" data-ws="misplaced">
+        <div className="ws-warning" role="alert" data-ws="field-misplaced">
           <Icon name="warning" weight="bold" size={12} />
           <span className="ws-spacer">Read once from the page, repeated on every row.</span>
-          <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.moveFieldToPage', index })} data-ws="move-to-page">
+          <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.moveFieldToPage', index })} data-ws="field-move-to-page">
             Move to page table
           </button>
         </div>
@@ -317,7 +317,7 @@ export function FieldList({
   const [dragging, setDragging] = useState<number | null>(null);
   if (fields.length === 0) return <span className="ws-meta">No fields yet. Pick an element and add it as a field.</span>;
   return (
-    <div className="ws-col" data-ws="field-list">
+    <div className="ws-col">
       {fields.map((field, index) => (
         <FieldRow
           key={`${index}-${field.name}`}

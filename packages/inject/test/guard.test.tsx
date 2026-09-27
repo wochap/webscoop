@@ -32,24 +32,24 @@ describe('guard banner', () => {
   it('renders the kind, reason, page, and countdown outside the sidebar body', () => {
     vi.useFakeTimers({ now: NOW });
     const p = renderPanel(guardState());
-    expect(p.q('mode')!.dataset.mode).toBe('guard');
+    expect(p.q('panel-mode')!.dataset.mode).toBe('guard');
     const banner = p.q('guard-banner')!;
     expect(banner.id).toBe('ws-guard');
-    expect(p.q('body')!.contains(banner)).toBe(false);
+    expect(p.q('panel-body')!.contains(banner)).toBe(false);
     expect(banner.dataset.kind).toBe('login');
     expect(p.q('guard-kind')!.textContent).toBe('Login required');
     expect(p.q('guard-reason')!.textContent).toBe('Page 2: redirected to a login page (/login)');
-    expect(p.q('countdown')!.textContent).toBe('5:00');
-    expect(p.q('countdown')!.dataset.tone).toBe('neutral');
+    expect(p.q('guard-countdown')!.textContent).toBe('5:00');
+    expect(p.q('guard-countdown')!.dataset.tone).toBe('neutral');
     expect(p.q('guard-panel')).not.toBeNull();
     expect(p.q('fields')).toBeNull();
-    expect(p.q('save')).toBeNull();
+    expect(p.q('footer-save')).toBeNull();
   });
 
   it('switches the countdown to the warning tone under 90 seconds as time passes', () => {
     vi.useFakeTimers({ now: NOW });
     const { container } = render(<Countdown deadline={NOW + WARN_UNDER_MS + 2_000} />);
-    const el = () => container.querySelector('[data-ws="countdown"]') as HTMLElement;
+    const el = () => container.querySelector('[data-ws="guard-countdown"]') as HTMLElement;
     expect(el().dataset.tone).toBe('neutral');
     expect(el().textContent).toBe('1:32');
     act(() => void vi.advanceTimersByTime(3_000));

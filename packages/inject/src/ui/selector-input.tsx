@@ -109,7 +109,7 @@ export function SelectorInput({
   };
   const tag = STRATEGY_TAGS[state.strategy];
   return (
-    <div className="ws-selin" data-ws="selector-input" data-invalid={error ? true : undefined}>
+    <div className="ws-selin" data-ws="input" data-invalid={error ? true : undefined}>
       <div className="ws-row">
         <form
           className="ws-selin-box ws-spacer"

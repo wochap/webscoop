@@ -29,7 +29,7 @@ export const MODE_TONE: Record<Mode, 'neutral' | 'accent' | 'ok' | 'warn'> = {
 
 export function ModePill({ mode }: { mode: Mode }) {
   return (
-    <span className={`ws-pill ws-tone-${MODE_TONE[mode]}`} data-ws="mode" data-mode={mode}>
+    <span className={`ws-pill ws-tone-${MODE_TONE[mode]}`} data-ws="panel-mode" data-mode={mode}>
       {MODE_LABEL[mode]}
     </span>
   );
@@ -47,7 +47,7 @@ export function PanelHeader({ mode, onEnd }: { mode: Mode; onEnd: () => void }) 
       </span>
       <ModePill mode={mode} />
       <span className="ws-spacer" />
-      <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onEnd} title="End the recording session" data-ws="end">
+      <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onEnd} title="End the recording session" data-ws="panel-end">
         <Icon name="sign-out" size={12} />
         End session
       </button>
@@ -59,7 +59,7 @@ export function PanelShell({ header, footer, bar, children }: { header: ReactNod
   return (
     <>
       {header}
-      <div className="ws-body" data-ws="body">
+      <div className="ws-body" data-ws="panel-body">
         {children}
       </div>
       {bar}
@@ -87,7 +87,7 @@ export function PanelFooter({
 }) {
   return (
     <footer className="ws-footer">
-      <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest} data-ws="test-run">
+      <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest} data-ws="footer-test">
         <Icon name="play" size={12} />
         Test run
       </button>
@@ -96,10 +96,10 @@ export function PanelFooter({
         {stepCount > 0 ? ` · ${plural(stepCount, 'step')}` : ''}
       </span>
       <span className="ws-spacer" />
-      <span className="ws-meta" data-ws="save-status">
+      <span className="ws-meta" data-ws="footer-status">
         {dirty ? 'Unsaved changes' : savedName ? `Saved ${savedName}` : ''}
       </span>
-      <button type="button" className="ws-btn ws-btn-primary ws-btn-lg" onClick={onSave} data-ws="save">
+      <button type="button" className="ws-btn ws-btn-primary ws-btn-lg" onClick={onSave} data-ws="footer-save">
         Save <Kbd>Ctrl S</Kbd>
       </button>
     </footer>
@@ -111,7 +111,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function Toast({ toast }: { toast: ToastData }) {
   const actions = useActions();
   return (
-    <div className={`ws-toast ws-toast-${toast.tone}`} role="status" data-ws="toast" data-tone={toast.tone}>
+    <div className={`ws-toast ws-toast-${toast.tone}`} role="status" data-ws="panel-toast" data-tone={toast.tone}>
       <span style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{toast.text}</span>
       <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => actions.dismissToast(toast.id)} aria-label="Dismiss">
         <Icon name="x" size={11} />

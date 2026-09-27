@@ -66,7 +66,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
   it('shows the panel above the hostile header and cookie modal, with its own font', async () => {
     const { page } = await open('tier=0&chrome=hostile');
     const width = await page.evaluate(() => document.documentElement.clientWidth);
-    const panel = await hook(page, (h) => h.query('[data-ws="body"]'));
+    const panel = await hook(page, (h) => h.query('[data-ws="panel-body"]'));
     expect(panel!.rect.x).toBe(width - 400);
     // Topmost element at a point inside the panel, level with the fixed header and over the modal backdrop.
     // The lower point stays inside the viewport: a headed window tiled by the compositor can be shorter than 400px.
@@ -82,7 +82,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     const title = await hook(page, (h) => h.query('.ws-logo'));
     expect(title!.fontFamily).toContain('Webscoop Inter');
     expect(title!.fontFamily).not.toContain('Georgia');
-    const root = await hook(page, (h) => h.query('[data-ws="save"]'));
+    const root = await hook(page, (h) => h.query('[data-ws="footer-save"]'));
     expect(root!.backgroundColor).toBe('rgb(145, 132, 217)');
     await page.screenshot({ path: join(SHOTS, 'hostile-panel.png') });
   });
@@ -158,31 +158,31 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
   it('prefills the list parent and item fields and recounts after an edit', async () => {
     const { page } = await open('tier=0');
     await pickTitle(page, 1);
-    await hook(page, (h) => h.click('[data-ws="setup-row-within"]'));
-    await hook(page, (h) => h.click('[data-ws="setup-row-item"]'));
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-within-strategy"]')!.value)).toBe('role');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-within"]')!.value)).toBe('list');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('article');
-    expect(await hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('24');
+    await hook(page, (h) => h.click('[data-ws="list-row-within"]'));
+    await hook(page, (h) => h.click('[data-ws="list-row-item"]'));
+    expect(await hook(page, (h) => h.query('[data-ws="list-input-within-strategy"]')!.value)).toBe('role');
+    expect(await hook(page, (h) => h.query('[data-ws="list-input-within"]')!.value)).toBe('list');
+    expect(await hook(page, (h) => h.query('[data-ws="list-input-item"]')!.value)).toBe('article');
+    expect(await hook(page, (h) => h.query('[data-ws="list-count"]')!.text)).toBe('24');
     expect((await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'list')).toHaveLength(1);
 
-    await hook(page, (h) => h.submit('[data-ws="level-input-item"]', 'css=li.product-item:nth-child(-n+5)'));
-    await expect.poll(() => hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('5');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-item-strategy"]')!.value)).toBe('css');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('li.product-item:nth-child(-n+5)');
+    await hook(page, (h) => h.submit('[data-ws="list-input-item"]', 'css=li.product-item:nth-child(-n+5)'));
+    await expect.poll(() => hook(page, (h) => h.query('[data-ws="list-count"]')!.text)).toBe('5');
+    expect(await hook(page, (h) => h.query('[data-ws="list-input-item-strategy"]')!.value)).toBe('css');
+    expect(await hook(page, (h) => h.query('[data-ws="list-input-item"]')!.value)).toBe('li.product-item:nth-child(-n+5)');
     await expect.poll(async () => (await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'sibling').length).toBe(5);
 
-    await hook(page, (h) => h.submit('[data-ws="level-input-item"]', '.no-such-card'));
-    await expect.poll(() => hook(page, (h) => h.query('[data-ws="level-error-item"]')?.text ?? null)).toContain('matches nothing');
-    expect(await hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('5');
+    await hook(page, (h) => h.submit('[data-ws="list-input-item"]', '.no-such-card'));
+    await expect.poll(() => hook(page, (h) => h.query('[data-ws="list-error-item"]')?.text ?? null)).toContain('matches nothing');
+    expect(await hook(page, (h) => h.query('[data-ws="list-count"]')!.text)).toBe('5');
     await page.screenshot({ path: join(SHOTS, 'list-fields.png') });
   });
 
   it('picks the list parent only among ancestors of the item and says why others are refused', async () => {
     const { page } = await open('tier=0');
     await pickTitle(page, 1);
-    await hook(page, (h) => h.click('[data-ws="setup-row-within"]'));
-    await hook(page, (h) => h.click('[data-ws="level-pick-within"]'));
+    await hook(page, (h) => h.click('[data-ws="list-row-within"]'));
+    await hook(page, (h) => h.click('[data-ws="list-pick-within"]'));
     await expect.poll(() => hook(page, (h) => h.state().ui.picking)).toBe(true);
     expect(await hook(page, (h) => h.state().host!.levelPick?.level)).toBe('within');
 
@@ -249,7 +249,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     expect(step!.kind).toBe('click');
     expect(step!.target!.fingerprint!.textSample).toBe('Accept all');
     // Panel clicks are not steps.
-    await hook(page, (h) => h.click('[data-ws="browse-stop"]'));
+    await hook(page, (h) => h.click('[data-ws="steps-stop"]'));
     expect(await hook(page, (h) => h.state().ui.picking)).toBe(false);
     expect(controller.draft.steps).toHaveLength(1);
   });
@@ -267,6 +267,6 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
       ['type', 'mouse'],
       ['press', 'Enter'],
     ]);
-    expect(await hook(page, (h) => h.query('[data-ws="steps"]'))).not.toBeNull();
+    expect(await hook(page, (h) => h.query('[data-ws="section-steps"]'))).not.toBeNull();
   });
 });

@@ -293,7 +293,7 @@ export function ScoopRoot() {
           </>
         )}
         {draft.errors.length > 0 && fieldCount > 0 && (
-          <div className="ws-col" data-ws="draft-errors">
+          <div className="ws-col" data-ws="panel-errors">
             {draft.errors.map((e, i) => (
               <span key={i} className="ws-error">
                 {e.path}: {e.message}

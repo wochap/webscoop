@@ -35,7 +35,7 @@ export function LevelField({
   const primary = view?.selectors[view.primary];
   const value = selectorText(primary);
   return (
-    <div className="ws-col" data-ws={`level-field-${level}`}>
+    <div className="ws-col" data-ws={`list-level-${level}`}>
       {!bare && (
         <div className="ws-row ws-row-between">
           <span className="ws-caps">{label}</span>
@@ -44,8 +44,8 @@ export function LevelField({
       )}
       <SelectorInput
         label={level === 'within' ? 'List parent selector' : 'Item selector'}
-        testId={`level-input-${level}`}
-        errorTestId={`level-error-${level}`}
+        testId={`list-input-${level}`}
+        errorTestId={`list-error-${level}`}
         value={value}
         count={view?.count ?? null}
         error={error}
@@ -54,18 +54,18 @@ export function LevelField({
           if (selector !== value) void actions.send({ kind: 'draft.setLevel', level, by: 'selector', selector });
         }}
         onPick={() => void actions.send({ kind: 'draft.pickLevel', level })}
-        pickTestId={`level-pick-${level}`}
-        {...(view && view.selectors.length > 1 ? { candidates: view.selectors.length, candidatesOpen: open, onCandidates: () => setOpen(!open), candidatesTestId: `level-more-${level}` } : {})}
+        pickTestId={`list-pick-${level}`}
+        {...(view && view.selectors.length > 1 ? { candidates: view.selectors.length, candidatesOpen: open, onCandidates: () => setOpen(!open), candidatesTestId: `list-more-${level}` } : {})}
         extra={
           onClear && view ? (
-            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Clear ${label.toLowerCase()}`} onClick={onClear} data-ws={`level-clear-${level}`}>
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Clear ${label.toLowerCase()}`} onClick={onClear} data-ws={`list-clear-${level}`}>
               <Icon name="x" size={11} />
             </button>
           ) : undefined
         }
       />
       {open && view && (
-        <div className="ws-list" role="listbox" aria-label={`${label} candidates`} data-ws={`level-candidates-${level}`}>
+        <div className="ws-list" role="listbox" aria-label={`${label} candidates`} data-ws={`list-candidates-${level}`}>
           {view.selectors.map((c, i) => (
             <SelectorRow
               key={`${c.strategy}=${c.value}`}
@@ -101,7 +101,7 @@ export function ExclusionInput({ exclude, title = 'Exclude' }: { exclude: Protoc
     <div className="ws-col">
       <span className="ws-caps">{title}</span>
       {exclude.map((c, i) => (
-        <div key={`${c.value}-${i}`} className="ws-row" data-ws="exclusion">
+        <div key={`${c.value}-${i}`} className="ws-row" data-ws="list-exclusion">
           <span className="ws-spacer ws-row">
             <SelectorChip candidate={c} level="item" />
           </span>
@@ -118,7 +118,7 @@ export function ExclusionInput({ exclude, title = 'Exclude' }: { exclude: Protoc
       ))}
       <SelectorInput
         label="Exclusion selector"
-        testId="exclude-input"
+        testId="list-exclude-input"
         placeholder="sponsored, or paste strategy=value"
         clearOnSubmit
         submitLabel="Exclude"
@@ -135,7 +135,7 @@ export const SAMPLE_PARTS = ' · ';
 export function NumberedSamples({ samples, more, extra, plain = false }: { samples: string[]; more: number; extra?: ReactNode; plain?: boolean }) {
   if (samples.length === 0) return null;
   return (
-    <div className={`ws-samples${plain ? ' ws-samples-plain' : ''}`} data-ws="samples">
+    <div className={`ws-samples${plain ? ' ws-samples-plain' : ''}`} data-ws="list-samples">
       {samples.map((text, i) => (
         <span key={i} className="ws-sample ws-row" title={text}>
           <span className="ws-sample-n">{i + 1}</span>
@@ -149,7 +149,7 @@ export function NumberedSamples({ samples, more, extra, plain = false }: { sampl
         </span>
       ))}
       {(more > 0 || extra) && (
-        <span className="ws-meta" data-ws="samples-more">
+        <span className="ws-meta" data-ws="list-samples-more">
           {more > 0 && `+ ${more} more`}
           {extra}
         </span>
@@ -189,11 +189,11 @@ function ItemLadder({ proposal, onPreview }: { proposal: ProposalView; onPreview
   const current = proposal.proposed.path.join('.');
   const fromPick = proposal.origin === 'pick';
   return (
-    <div className="ws-col ws-ladder-list" data-ws="item-ladder">
+    <div className="ws-col ws-ladder-list" data-ws="list-item-ladder">
       {rows.map((row) => {
         if (row.sameAs !== null) {
           return (
-            <span key={row.distance} className="ws-meta ws-ladder-folded" data-ws="ladder-folded" data-distance={row.distance}>
+            <span key={row.distance} className="ws-meta ws-ladder-folded" data-ws="list-ladder-folded" data-distance={row.distance}>
               <Icon name="eye" size={11} />↑{row.distance} hidden · same elements as ↑{row.sameAs}
             </span>
           );
@@ -209,7 +209,7 @@ function ItemLadder({ proposal, onPreview }: { proposal: ProposalView; onPreview
             onMouseEnter={() => onPreview(row.path)}
             onMouseLeave={() => onPreview(null)}
             onClick={() => void actions.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: row.path })}
-            data-ws="ladder-row"
+            data-ws="list-ladder-row"
             data-distance={row.distance}
             data-likely={row.likely || undefined}
           >
@@ -222,7 +222,7 @@ function ItemLadder({ proposal, onPreview }: { proposal: ProposalView; onPreview
         );
       })}
       {proposal.within && (
-        <span className="ws-meta" data-ws="ladder-parent">
+        <span className="ws-meta" data-ws="list-ladder-parent">
           <Icon name="arrow-left" size={11} />↑{(rows.at(-1)?.distance ?? 0) + 1} is the list parent {proposal.within.label}
         </span>
       )}
@@ -238,7 +238,7 @@ function ParentLadder({ proposal, onPreview }: { proposal: ProposalView; onPrevi
   if (rows.length === 0) return <span className="ws-meta">Set the item first.</span>;
   const current = proposal.within?.path.join('.');
   return (
-    <div className="ws-col ws-ladder-list" data-ws="parent-ladder">
+    <div className="ws-col ws-ladder-list" data-ws="list-parent-ladder">
       {rows.map((row) => (
         <button
           key={row.distance}
@@ -248,7 +248,7 @@ function ParentLadder({ proposal, onPreview }: { proposal: ProposalView; onPrevi
           onMouseEnter={() => onPreview(row.path)}
           onMouseLeave={() => onPreview(null)}
           onClick={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'path', path: row.path })}
-          data-ws="parent-row"
+          data-ws="list-parent-row"
           data-distance={row.distance}
           data-likely={row.likely || undefined}
         >
@@ -285,11 +285,11 @@ function StackRow({
   const primary = view?.selectors[view.primary];
   if (open || !primary) {
     return (
-      <div className="ws-col ws-stack-edit" data-ws={`setup-row-${level}`} data-editing>
+      <div className="ws-col ws-stack-edit" data-ws={`list-row-${level}`} data-editing>
         <div className="ws-row">
           <span className={`ws-stack-label ws-spacer ws-label-${level === 'within' ? 'list' : 'item'}`}>{LEVEL_LABEL[level]}</span>
           {primary && (
-            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onClose} data-ws={`setup-row-done-${level}`}>
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onClose} data-ws={`list-row-done-${level}`}>
               Done
             </button>
           )}
@@ -306,12 +306,12 @@ function StackRow({
     );
   }
   return (
-    <button type="button" className="ws-stack-row ws-stack-click" style={level === 'item' ? { paddingLeft: 14 } : undefined} onClick={onOpen} title="Click to type a selector by hand" data-ws={`setup-row-${level}`}>
+    <button type="button" className="ws-stack-row ws-stack-click" style={level === 'item' ? { paddingLeft: 14 } : undefined} onClick={onOpen} title="Click to type a selector by hand" data-ws={`list-row-${level}`}>
       <span className={`ws-stack-label ws-label-${level === 'within' ? 'list' : 'item'}`}>{LEVEL_LABEL[level]}</span>
       <SelectorChip candidate={primary} level={level === 'within' ? 'list' : 'item'} />
-      {inferred && <StackBadge text="inferred" testId="within-inferred" />}
+      {inferred && <StackBadge text="inferred" testId="rows-parent-inferred" />}
       <span className="ws-spacer" />
-      <span className="ws-stack-count" data-ws="stack-count">
+      <span className="ws-stack-count" data-ws="list-stack-count">
         {view?.count ?? '…'}
       </span>
       <Icon name="pencil-simple" size={11} />
@@ -356,7 +356,7 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
   return (
     <section className="ws-col ws-setup" data-ws="list-setup" data-origin={proposal.origin}>
       <div className="ws-row ws-setup-head">
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label="Back" onClick={() => void actions.send({ kind: 'draft.cancelItems' })} data-ws="setup-back">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label="Back" onClick={() => void actions.send({ kind: 'draft.cancelItems' })} data-ws="list-back">
           <Icon name="arrow-left" size={13} />
         </button>
         <span className="ws-title ws-spacer">
@@ -365,16 +365,16 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
         <Kbd>Esc</Kbd>
       </div>
       <div className="ws-row ws-setup-count">
-        <span className={`ws-count${invalid ? ' ws-count-zero' : ''}`} data-ws="items-count">
+        <span className={`ws-count${invalid ? ' ws-count-zero' : ''}`} data-ws="list-count">
           {chosen.count ?? '…'}
         </span>
         <span className="ws-spacer">items on this page</span>
         {invalid ? (
-          <span className="ws-meta ws-invalid-text" data-ws="setup-invalid">
+          <span className="ws-meta ws-invalid-text" data-ws="list-invalid">
             {invalid}
           </span>
         ) : edit && proposal.previousCount !== null ? (
-          <span className="ws-meta" data-ws="items-was">
+          <span className="ws-meta" data-ws="list-was">
             was {proposal.previousCount}
           </span>
         ) : (
@@ -383,9 +383,9 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
       </div>
       <span className="ws-meta">
         {chosen.total !== null && chosen.total !== chosen.count ? `${chosen.total} before exclusions · ` : ''}
-        <span data-ws="items-skipped">{proposal.skipped} skipped as dissimilar</span>
+        <span data-ws="list-skipped">{proposal.skipped} skipped as dissimilar</span>
       </span>
-      <div className="ws-stack ws-setup-stack" data-ws="setup-stack">
+      <div className="ws-stack ws-setup-stack" data-ws="list-stack">
         <StackRow
           level="within"
           view={proposal.within}
@@ -397,7 +397,7 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
         />
         <StackRow level="item" view={chosen.selectors.length > 0 ? chosen : null} error={error('item')} open={rows.item} onOpen={() => openRow('item', true)} onClose={() => openRow('item', false)} />
         {proposal.pick && proposal.pick.selector && (
-          <div className="ws-stack-row ws-stack-pick" style={{ paddingLeft: 28 }} data-ws="setup-pick">
+          <div className="ws-stack-row ws-stack-pick" style={{ paddingLeft: 28 }} data-ws="list-your-pick">
             <span className="ws-stack-label ws-label-field">your pick</span>
             <SelectorChip candidate={proposal.pick.selector} level="field" />
             <span className="ws-spacer" />
@@ -410,15 +410,15 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
       <span className="ws-meta">Click a row to type a selector by hand.</span>
       <NumberedSamples samples={chosen.samples} more={Math.max(0, count - chosen.samples.length)} extra={count > 0 ? ' · all highlighted on the page' : undefined} />
       {edit && proposal.fieldPreview.length > 0 && (
-        <div className="ws-col ws-danger-box" data-ws="field-preview">
+        <div className="ws-col ws-danger-box" data-ws="list-field-preview">
           {broken > 0 && (
-            <span className="ws-row ws-title" data-ws="field-preview-broken">
+            <span className="ws-row ws-title" data-ws="list-field-preview-broken">
               <Icon name="warning" weight="bold" size={13} />
               {broken} field{broken > 1 ? 's' : ''} would read nothing
             </span>
           )}
           {proposal.fieldPreview.map((f) => (
-            <span key={f.name} className="ws-row" data-ws="field-preview-row" data-name={f.name}>
+            <span key={f.name} className="ws-row" data-ws="list-field-preview-row" data-name={f.name}>
               <span className="ws-mono-sm ws-spacer">{f.name}</span>
               <span className="ws-coverage" data-partial data-zero={f.matched === 0 || undefined}>
                 {f.matched}/{f.total}
@@ -429,14 +429,14 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
         </div>
       )}
       <div className="ws-col ws-adjust">
-        <Collapsible title="Adjust item level" summary={itemSummary} open={itemOpen} onToggle={toggleItem} testId="adjust-item">
+        <Collapsible title="Adjust item level" summary={itemSummary} open={itemOpen} onToggle={toggleItem} testId="list-adjust-item">
           <ItemLadder proposal={proposal} onPreview={onPreview} />
           <div className="ws-row">
             <span className="ws-meta ws-spacer">Include all siblings</span>
-            <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="include-all" />
+            <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="list-include-all" />
           </div>
         </Collapsible>
-        <Collapsible title="Adjust list parent" summary={proposal.within ? `${proposal.within.label}${proposal.withinInferred ? ' · inferred' : ''}` : 'none'} open={parentOpen} onToggle={toggleParent} testId="adjust-parent">
+        <Collapsible title="Adjust list parent" summary={proposal.within ? `${proposal.within.label}${proposal.withinInferred ? ' · inferred' : ''}` : 'none'} open={parentOpen} onToggle={toggleParent} testId="list-adjust-parent">
           <ParentLadder proposal={proposal} onPreview={onPreview} />
         </Collapsible>
       </div>
@@ -450,12 +450,12 @@ export function ListSetupActions({ proposal }: { proposal: ProposalView }) {
   const actions = useActions();
   const count = proposal.proposed.count ?? 0;
   return (
-    <div className="ws-setup-bar" data-ws="setup-actions">
-      <button type="button" className="ws-btn ws-btn-outline ws-spacer" disabled={count === 0} onClick={() => void actions.send({ kind: 'draft.confirmItems' })} data-ws="confirm-items">
+    <div className="ws-setup-bar" data-ws="list-actions">
+      <button type="button" className="ws-btn ws-btn-outline ws-spacer" disabled={count === 0} onClick={() => void actions.send({ kind: 'draft.confirmItems' })} data-ws="list-accept">
         <Icon name="check" size={12} />
         {proposal.origin === 'edit' ? 'Update list' : `Accept ${count} items`} <Kbd>Enter</Kbd>
       </button>
-      <button type="button" className="ws-btn" onClick={() => void actions.send({ kind: 'draft.cancelItems' })} data-ws="cancel-items">
+      <button type="button" className="ws-btn" onClick={() => void actions.send({ kind: 'draft.cancelItems' })} data-ws="list-cancel">
         Cancel <Kbd>Esc</Kbd>
       </button>
     </div>
@@ -467,11 +467,11 @@ export function WithinSummary({ item }: { item: DraftItem }) {
   const actions = useActions();
   const primary = item.within?.[0];
   return (
-    <div className="ws-row" data-ws="within-summary">
-      <span className="ws-meta ws-spacer" data-ws="within-selector" data-selector={primary ? selectorText(primary) : undefined}>
+    <div className="ws-row" data-ws="rows-parent">
+      <span className="ws-meta ws-spacer" data-ws="rows-parent-selector" data-selector={primary ? selectorText(primary) : undefined}>
         {primary ? 'List parent' : 'No list parent: containers anywhere on the page'}
       </span>
-      <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.pickLevel', level: 'within' })} data-ws="within-repick">
+      <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.pickLevel', level: 'within' })} data-ws="rows-parent-repick">
         <Icon name="crosshair-simple" size={12} />
         {primary ? (item.withinInferred ? 'Change' : 'Re-pick') : 'Pick'}
       </button>
@@ -481,7 +481,7 @@ export function WithinSummary({ item }: { item: DraftItem }) {
           className="ws-btn ws-btn-ghost ws-btn-sm"
           aria-label="Clear list parent"
           onClick={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
-          data-ws="within-clear"
+          data-ws="rows-parent-clear"
         >
           <Icon name="x" size={11} />
         </button>
@@ -494,21 +494,21 @@ export function WithinSummary({ item }: { item: DraftItem }) {
 export function ItemSummary({ item }: { item: DraftItem }) {
   const primary = item.selectors[0]!;
   return (
-    <div className="ws-col" data-ws="item-summary">
+    <div className="ws-col" data-ws="rows">
       <SelectorStack
         levels={stackLevels(item.within?.[0], primary, { within: item.withinCount ?? null, item: item.count ?? '…' }).map((l) =>
-          l.level === 'list' && item.withinInferred ? { ...l, badge: { text: 'inferred', testId: 'within-inferred' } } : l,
+          l.level === 'list' && item.withinInferred ? { ...l, badge: { text: 'inferred', testId: 'rows-parent-inferred' } } : l,
         )}
         testId="rows-stack"
       />
       <div className="ws-row">
-        <span className="ws-meta" data-ws="item-count" data-count={item.count ?? undefined}>
+        <span className="ws-meta" data-ws="rows-count" data-count={item.count ?? undefined}>
           {item.count ?? '…'} rows
         </span>
         {item.total !== null && item.total !== item.count && <span className="ws-meta">· {item.total} before exclusions</span>}
       </div>
       {item.count === 0 && (
-        <span className="ws-error" data-ws="item-zero">
+        <span className="ws-error" data-ws="rows-zero">
           The item container matches nothing on this page.
         </span>
       )}
@@ -524,13 +524,13 @@ export function ItemActions({ item, locked }: { item: DraftItem; locked: boolean
   return (
     <>
       {item.count !== null && item.count > 0 && (
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.editItem' })} data-ws="edit-item">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.editItem' })} data-ws="rows-edit">
           <Icon name="pencil-simple" size={12} />
           Edit
         </button>
       )}
       {!locked && (
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="clear-item">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="rows-remove">
           <Icon name="trash" size={12} />
           Remove
         </button>

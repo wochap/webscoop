@@ -101,8 +101,8 @@ export function TypedSelector({
   return (
     <SelectorInput
       label="Selection selector"
-      testId="selection-selector"
-      errorTestId="selector-error"
+      testId="pick-selector"
+      errorTestId="pick-selector-error"
       scope={scope}
       error={host.selectorError}
       placeholder={
@@ -122,7 +122,7 @@ export function TypedSelector({
 export function PickNotice({ host }: { host: RecorderState }) {
   if (!host.notice) return null;
   return (
-    <div className="ws-notice" role="status" data-ws="list-ready">
+    <div className="ws-notice" role="status" data-ws="pick-list-ready">
       <Icon name="check" size={12} />
       <span>{host.notice}</span>
     </div>
@@ -135,7 +135,7 @@ export function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
   return (
     <section
       className="ws-card ws-suggest ws-col"
-      data-ws="list-suggestion"
+      data-ws="pick-cta"
       data-count={suggestion.count}
     >
       <div className="ws-row" style={{ alignItems: "flex-start" }}>
@@ -161,7 +161,7 @@ export function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
           onClick={() =>
             void actions.send({ kind: "list.open", from: "suggestion" })
           }
-          data-ws="setup-list"
+          data-ws="pick-cta-setup"
         >
           <Icon name="rows" size={12} />
           Set up list <Kbd>L</Kbd>
@@ -170,7 +170,7 @@ export function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
           type="button"
           className="ws-btn ws-btn-ghost"
           onClick={() => void actions.send({ kind: "list.dismiss" })}
-          data-ws="single-value"
+          data-ws="pick-cta-single"
         >
           No, single value
         </button>
@@ -187,7 +187,7 @@ export function ManualLink() {
       type="button"
       className="ws-link"
       onClick={() => void actions.send({ kind: "list.open", from: "manual" })}
-      data-ws="setup-manual"
+      data-ws="pick-cta-manual"
     >
       <Icon name="rows" size={12} />
       Set up list manually…
@@ -199,7 +199,7 @@ export function ManualLink() {
 export function RepeatLine({ count }: { count: number }) {
   const actions = useActions();
   return (
-    <div className="ws-row ws-meta" data-ws="repeat-line">
+    <div className="ws-row ws-meta" data-ws="pick-repeat">
       <Icon name="rows" size={12} />
       <span>Repeats {count}× —</span>
       <button
@@ -208,7 +208,7 @@ export function RepeatLine({ count }: { count: number }) {
         onClick={() =>
           void actions.send({ kind: "list.open", from: "newTable" })
         }
-        data-ws="start-list-table"
+        data-ws="pick-repeat-start"
       >
         start a list table
         <Icon name="arrow-right" size={11} />
@@ -235,7 +235,7 @@ export function OutsideBanner({
     <section
       className="ws-banner ws-banner-warn ws-col"
       role="status"
-      data-ws="outside-banner"
+      data-ws="pick-outside-banner"
       data-repeats={outside.repeats ?? undefined}
     >
       <div className="ws-row">
@@ -244,7 +244,7 @@ export function OutsideBanner({
         </span>
         <span className="ws-title">Outside the {list} list</span>
         {outside.repeats !== null && (
-          <span className="ws-badge ws-tone-warn" data-ws="outside-repeats">
+          <span className="ws-badge ws-tone-warn" data-ws="pick-outside-repeats">
             repeats {outside.repeats}×
           </span>
         )}
@@ -270,7 +270,7 @@ export function OutsideBanner({
             onClick={() =>
               void actions.send({ kind: "list.open", from: "newTable" })
             }
-            data-ws="outside-new-list"
+            data-ws="pick-outside-new-list"
           >
             <Icon name="rows" size={12} />
             New list table
@@ -286,7 +286,7 @@ export function OutsideBanner({
                 index: outside.pageTable!,
               })
             }
-            data-ws="outside-add-to"
+            data-ws="pick-outside-add-to"
             data-table={page.name}
           >
             <Icon name="rectangle" size={12} />
@@ -302,7 +302,7 @@ export function OutsideBanner({
                 aria-invalid={problem ? true : undefined}
                 title={problem ?? undefined}
                 onChange={(e) => setName(e.target.value)}
-                data-ws="outside-table-name"
+                data-ws="pick-outside-table-name"
               />
             )}
             <button
@@ -312,7 +312,7 @@ export function OutsideBanner({
               onClick={() =>
                 void actions.send({ kind: "draft.addTable", name: name.trim() })
               }
-              data-ws="outside-new-page"
+              data-ws="pick-outside-new-page"
             >
               <Icon name="rectangle" size={12} />
               New page table
@@ -325,7 +325,7 @@ export function OutsideBanner({
           type="button"
           className="ws-btn"
           onClick={actions.startPicking}
-          data-ws="outside-repick"
+          data-ws="pick-outside-repick"
         >
           Re-pick <Kbd>P</Kbd>
         </button>
@@ -349,7 +349,7 @@ export function BelongsBanner({
     <section
       className="ws-banner ws-banner-accent ws-col"
       role="status"
-      data-ws="belongs-banner"
+      data-ws="pick-belongs-banner"
       data-table={other.name}
     >
       <div className="ws-row">
@@ -358,7 +358,7 @@ export function BelongsBanner({
         </span>
         <span className="ws-title">Belongs to the {other.name} list</span>
       </div>
-      <span className="ws-meta ws-banner-text" data-ws="belongs-item">
+      <span className="ws-meta ws-banner-text" data-ws="pick-belongs-item">
         This is inside item {belongs.index + 1} of {belongs.of} in{" "}
         <b>{other.name}</b>
       </span>
@@ -368,7 +368,7 @@ export function BelongsBanner({
             within: other.item?.withinCount ?? null,
             item: belongs.of,
           })}
-          testId="belongs-stack"
+          testId="pick-belongs-stack"
         />
       </div>
       <div className="ws-row">
@@ -381,7 +381,7 @@ export function BelongsBanner({
               index: belongs.table,
             })
           }
-          data-ws="belongs-switch"
+          data-ws="pick-belongs-switch"
         >
           <Icon name="arrow-right" size={12} />
           Switch to {other.name}
@@ -390,7 +390,7 @@ export function BelongsBanner({
           type="button"
           className="ws-btn ws-btn-ghost"
           onClick={actions.startPicking}
-          data-ws="belongs-repick"
+          data-ws="pick-belongs-repick"
         >
           Re-pick <Kbd>P</Kbd>
         </button>
@@ -468,14 +468,14 @@ function SelectionBody({
                   },
                 ).map((l) =>
                   l.level === "list" && item.withinInferred
-                    ? { ...l, badge: { text: "inferred", testId: "within-inferred" } }
+                    ? { ...l, badge: { text: "inferred", testId: "rows-parent-inferred" } }
                     : l,
                 )
               : []
           }
         />
       ) : (
-        <div className="ws-warning" role="alert" data-ws="edit-zero-match">
+        <div className="ws-warning" role="alert" data-ws="pick-edit-zero">
           <span className="ws-spacer">
             This field matches nothing on this page. Pick its element or type a
             selector.

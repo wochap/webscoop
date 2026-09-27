@@ -35,31 +35,31 @@ function repickState(extra: Partial<RepickContext> = {}): RecorderState {
 describe('re-pick panel', () => {
   it('renders the field, its old selector, sample, and fingerprint, with a live score bar', () => {
     const p = renderPanel(repickState(), { hoverScore: 0.83 });
-    expect(p.q('mode')!.dataset.mode).toBe('repick');
+    expect(p.q('panel-mode')!.dataset.mode).toBe('repick');
     expect(p.q('repick-prompt')!.textContent).toContain('Click the new location of price');
-    expect(p.q('old-selector')!.dataset.selector).toBe('testid=price');
-    expect(p.q('old-sample')!.textContent).toBe('$24.99');
-    expect(p.q('fp-tag')!.textContent).toBe('p · paragraph');
-    expect(p.q('fp-text')!.textContent).toBe('$24.99');
-    expect(p.q('fp-ancestors')!.textContent).toBe('html › body › main › list › listitem › article');
-    expect(p.q('score-value')!.textContent).toBe('0.83');
-    expect(p.q('score')!.dataset.likely).toBe('true');
-    expect(p.q('likely')).not.toBeNull();
+    expect(p.q('repick-old-selector')!.dataset.selector).toBe('testid=price');
+    expect(p.q('repick-old-sample')!.textContent).toBe('$24.99');
+    expect(p.q('repick-fp-tag')!.textContent).toBe('p · paragraph');
+    expect(p.q('repick-fp-text')!.textContent).toBe('$24.99');
+    expect(p.q('repick-fp-ancestors')!.textContent).toBe('html › body › main › list › listitem › article');
+    expect(p.q('repick-score-value')!.textContent).toBe('0.83');
+    expect(p.q('repick-score')!.dataset.likely).toBe('true');
+    expect(p.q('repick-likely')).not.toBeNull();
     expect(p.q('fields')).toBeNull();
-    expect(p.q('save')).toBeNull();
+    expect(p.q('footer-save')).toBeNull();
     expect((p.q('repick-confirm') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('does not mark scores below the threshold as likely', () => {
     const p = renderPanel(repickState(), { hoverScore: 0.52 });
-    expect(p.q('score')!.dataset.likely).toBe('false');
-    expect(p.q('likely')).toBeNull();
+    expect(p.q('repick-score')!.dataset.likely).toBe('false');
+    expect(p.q('repick-likely')).toBeNull();
   });
 
   it('shows the pick waiting for confirmation and confirms it', () => {
     const p = renderPanel(repickState({ picked: { score: 0.91, sample: '24.99', selector: { strategy: 'css', value: 'p.x1', stability: 'medium' } } }));
-    expect(p.q('picked-selector')!.dataset.selector).toBe('css=p.x1');
-    expect(p.q('picked-sample')!.textContent).toBe('24.99');
+    expect(p.q('repick-picked-selector')!.dataset.selector).toBe('css=p.x1');
+    expect(p.q('repick-picked-sample')!.textContent).toBe('24.99');
     fireEvent.click(p.q('repick-confirm')!);
     expect(p.sent).toEqual([{ kind: 'repick.confirm' }]);
   });
@@ -68,15 +68,15 @@ describe('re-pick panel', () => {
     const p = renderPanel(repickState());
     fireEvent.click(p.q('repick-skip')!);
     fireEvent.click(p.q('repick-abort')!);
-    fireEvent.keyDown(p.q('body')!, { key: 's' });
-    fireEvent.keyDown(p.q('body')!, { key: 'Escape' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 's' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'Escape' });
     expect(p.sent).toEqual([{ kind: 'repick.skip' }, { kind: 'repick.abort' }, { kind: 'repick.skip' }, { kind: 'repick.abort' }]);
   });
 
   it('says so when the field has no fingerprint', () => {
     const p = renderPanel(repickState({ fingerprint: null }));
-    expect(p.q('no-fingerprint')).not.toBeNull();
-    expect(p.q('score')).toBeNull();
+    expect(p.q('repick-no-fingerprint')).not.toBeNull();
+    expect(p.q('repick-score')).toBeNull();
   });
 
   it('maps s and Esc only while re-picking; Esc stops picking first', () => {

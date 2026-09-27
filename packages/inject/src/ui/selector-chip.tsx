@@ -88,7 +88,7 @@ export function SelectorChip({
     <span
       className={`ws-sel-chip${className ? ` ${className}` : ''}`}
       title={d.full}
-      data-ws="selector-chip"
+      data-ws="chip"
       data-level={level}
       data-strategy={d.strategy}
       data-selector={`${candidate.strategy}=${candidate.value}`}
@@ -98,11 +98,11 @@ export function SelectorChip({
       </span>
       <span className="ws-sel-body">
         {d.direct && (
-          <span className="ws-sel-direct" title="direct child (:scope >)" data-ws="selector-direct">
+          <span className="ws-sel-direct" title="direct child (:scope >)" data-ws="chip-direct">
             ↳
           </span>
         )}
-        <span className="ws-sel-value" data-ws="selector-value">
+        <span className="ws-sel-value" data-ws="chip-value">
           {d.main}
           {d.quoted && <span className="ws-sel-quoted">{d.quoted}</span>}
         </span>

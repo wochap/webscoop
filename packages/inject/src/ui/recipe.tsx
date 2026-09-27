@@ -56,8 +56,8 @@ export function UrlTemplateInput({ template, error }: { template: string; error:
   };
   return (
     <div className="ws-col" style={{ gap: 4 }}>
-      <div className={`ws-template${error ? ' ws-invalid' : ''}`} data-ws="template">
-        <div className="ws-template-backdrop" ref={backdrop} aria-hidden="true" data-ws="template-backdrop">
+      <div className={`ws-template${error ? ' ws-invalid' : ''}`}>
+        <div className="ws-template-backdrop" ref={backdrop} aria-hidden="true" data-ws="recipe-url-backdrop">
           <TemplateHighlight template={value} />
         </div>
         <input
@@ -66,7 +66,7 @@ export function UrlTemplateInput({ template, error }: { template: string; error:
           value={value}
           spellCheck={false}
           aria-label="URL template"
-          data-ws="template-input"
+          data-ws="recipe-url"
           onChange={(e) => {
             setValue(e.target.value);
             sync();
@@ -84,7 +84,7 @@ export function UrlTemplateInput({ template, error }: { template: string; error:
         />
       </div>
       {error && (
-        <span className="ws-error" data-ws="template-error">
+        <span className="ws-error" data-ws="recipe-url-error">
           {error}
         </span>
       )}
@@ -99,7 +99,7 @@ export function RenderedUrl({ draft }: { draft: Pick<Draft, 'url' | 'vars'> }) {
   const first = parts[0];
   if (first && 'text' in first) parts[0] = { text: first.text.replace(/^https?:\/\//, '') };
   return (
-    <div className="ws-rendered" data-ws="rendered-url" title={renderedUrl(draft)}>
+    <div className="ws-rendered" data-ws="recipe-rendered-url" title={renderedUrl(draft)}>
       <span className="ws-rendered-arrow">↳</span>
       <span className="ws-ellipsis">
         {parts.map((part, i) =>
@@ -264,7 +264,11 @@ function NameInput({ name, error }: { name: string; error: string | undefined })
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
       />
-      {error && <span className="ws-error">{error}</span>}
+      {error && (
+        <span className="ws-error" data-ws="recipe-name-error">
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -281,7 +285,7 @@ export function RecipeSummary({ draft }: { draft: Draft }) {
           'text' in part ? (
             <span key={i}>{part.text}</span>
           ) : (
-            <span key={i} className="ws-chip" data-ws={`summary-var-${part.name}`} title={`{${part.name}}`}>
+            <span key={i} className="ws-chip" data-ws={`recipe-summary-var-${part.name}`} title={`{${part.name}}`}>
               {part.name}
               <span className="ws-chip-value">{draft.vars.find((v) => v.name === part.name)?.value ?? ''}</span>
             </span>
@@ -314,7 +318,7 @@ export function RecipeBar({
   const addError = varError && !rowError ? varError : null;
   return (
     <Section id="recipe" title="Recipe" collapsible collapsed={collapsed} {...(onCollapse ? { onCollapse } : {})} summary={<RecipeSummary draft={draft} />}>
-      <div className="ws-col ws-recipe" data-ws="recipe-bar">
+      <div className="ws-col ws-recipe">
         <label className="ws-col ws-recipe-field">
           <span className="ws-label">Name</span>
           <NameInput name={draft.name} error={draft.nameError} />
@@ -323,7 +327,7 @@ export function RecipeBar({
           <div className="ws-row">
             <span className="ws-label">URL template</span>
             {diff && (
-              <span className="ws-edited" data-ws="template-edited">
+              <span className="ws-edited" data-ws="recipe-url-edited">
                 edited
               </span>
             )}
@@ -351,21 +355,21 @@ export function RecipeBar({
         <div className="ws-row">
           <AddVar error={addError} />
           <span className="ws-spacer" />
-          <button type="button" className="ws-btn ws-btn-sm ws-btn-quiet" data-ws="use-current-url" onClick={() => void actions.send({ kind: 'draft.useCurrentUrl' })}>
+          <button type="button" className="ws-btn ws-btn-sm ws-btn-quiet" data-ws="recipe-use-current" onClick={() => void actions.send({ kind: 'draft.useCurrentUrl' })}>
             Use current page URL
           </button>
           <button
             type="button"
             className={`ws-btn ws-btn-sm ws-btn-quiet ws-reopen${diff ? ' ws-reopen-changed' : ''}`}
             onClick={() => void actions.send({ kind: 'draft.reopen' })}
-            data-ws="reopen"
+            data-ws="recipe-reopen"
           >
             Reopen
-            {diff && <span className="ws-reopen-dot" data-ws="reopen-dot" />}
+            {diff && <span className="ws-reopen-dot" data-ws="recipe-reopen-dot" />}
           </button>
         </div>
         {diff && (
-          <div className="ws-open-differs" data-ws="open-differs" title={`open: ${openedUrl}\nrendered: ${rendered}`}>
+          <div className="ws-open-differs" data-ws="recipe-open-differs" title={`open: ${openedUrl}\nrendered: ${rendered}`}>
             Open page differs: <span className="ws-mono-sm ws-ellipsis">{describeUrlDiff(diff)}</span>
           </div>
         )}

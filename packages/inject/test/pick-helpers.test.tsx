@@ -365,20 +365,22 @@ describe('pick helpers in the panel', () => {
     const proposed = { tag: 'div', label: 'div.Mjj4Yd', path: [1, 1, 0, 0, 0, 0, 0], selectors: [{ strategy: 'class' as const, value: 'div.Mjj4Yd', stability: 'fragile' as const, count: 8 }], primary: 0, count: 8, total: 8, paths: [], samples: [] };
     const proposal: ProposalView = { within, withinInferred: true, proposed, skipped: 1, includeAll: false, error: null, exclude: [], origin: 'pick', previousCount: null, pick: null, itemLadder: null, parentLadder: null, fieldPreview: [] };
     const p = renderPanel(stateWith(null, { proposal }));
-    expect(p.q('setup-row-within')!.querySelector('[data-ws="within-inferred"]')!.textContent).toBe('inferred');
-    expect(p.q('adjust-parent')!.textContent).toContain('div#rso · inferred');
+    expect(p.q('list-row-within')!.querySelector('[data-ws="rows-parent-inferred"]')!.textContent).toBe('inferred');
+    expect(p.q('list-adjust-parent')!.textContent).toContain('div#rso · inferred');
     act(() => p.store.setHost(stateWith(null, { proposal: { ...proposal, withinInferred: false } })));
-    expect(p.q('within-inferred')).toBeNull();
-    expect(p.q('adjust-parent')!.textContent).not.toContain('inferred');
+    expect(p.q('rows-parent-inferred')).toBeNull();
+    expect(p.q('list-adjust-parent')!.textContent).not.toContain('inferred');
   });
 
   it('marks an inferred list parent in the Rows section and offers Change', () => {
     const p = renderPanel(stateWith(item({ withinInferred: true, withinCount: 1 })));
     const row = p.q('rows-stack')!.querySelector('[data-level="list"]')!;
-    expect(row.querySelector('[data-ws="within-inferred"]')!.textContent).toBe('inferred');
-    expect(p.q('within-repick')!.textContent).toBe('Change');
+    expect(row.querySelector('[data-ws="rows-parent-inferred"]')!.textContent).toBe('inferred');
+    expect(p.q('rows-parent-repick')!.textContent).toBe('Change');
+    // A reopened recipe has no mark: the list parent shows without the badge.
     act(() => p.store.setHost(stateWith(item({ withinCount: 1 }))));
-    expect(p.q('within-inferred')).toBeNull();
-    expect(p.q('within-repick')!.textContent).toBe('Re-pick');
+    expect(p.q('rows-stack')!.querySelector('[data-level="list"] [data-ws="chip"]')).not.toBeNull();
+    expect(p.q('rows-parent-inferred')).toBeNull();
+    expect(p.q('rows-parent-repick')!.textContent).toBe('Re-pick');
   });
 });

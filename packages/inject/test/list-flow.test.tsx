@@ -15,27 +15,27 @@ describe('list suggestion (04a)', () => {
   it('shows the card with samples, opens the setup with L or the button, and dismisses', async () => {
     const { suggested } = await hostStates();
     const p = renderPanel(suggested);
-    const card = p.q('list-suggestion')!;
+    const card = p.q('pick-cta')!;
     expect(card.dataset.count).toBe('24');
     expect(card.textContent).toContain('Repeats 24× on this page');
     expect(card.textContent).toContain('Make this table a list? One row per item.');
-    expect(p.q('samples')!.querySelectorAll('.ws-sample')).toHaveLength(3);
-    expect(p.q('samples')!.textContent).toContain(dataset[0]!.title);
-    expect(p.q('samples-more')!.textContent).toBe('+ 21 more');
+    expect(p.q('list-samples')!.querySelectorAll('.ws-sample')).toHaveLength(3);
+    expect(p.q('list-samples')!.textContent).toContain(dataset[0]!.title);
+    expect(p.q('list-samples-more')!.textContent).toBe('+ 21 more');
     // The card sits between the field form and Add field.
-    const order = ['field-form', 'list-suggestion', 'add-field'].map((ws) => p.q(ws)!);
+    const order = ['pick-form', 'pick-cta', 'pick-add-field'].map((ws) => p.q(ws)!);
     expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(p.q('add-hint')!.textContent).toBe('Adds one value — items becomes a page table (1 row).');
-    expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(false);
-    expect(p.q('setup-manual')).toBeNull();
+    expect(p.q('pick-add-hint')!.textContent).toBe('Adds one value — items becomes a page table (1 row).');
+    expect((p.q('pick-add-field') as HTMLButtonElement).disabled).toBe(false);
+    expect(p.q('pick-cta-manual')).toBeNull();
     expect(p.q('table-kind')!.textContent).toBe('No mode yet');
 
-    fireEvent.keyDown(p.q('body')!, { key: 'L' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'L' });
     expect(p.sent.at(-1)).toEqual({ kind: 'list.open', from: 'suggestion' });
-    fireEvent.click(p.q('setup-list')!);
+    fireEvent.click(p.q('pick-cta-setup')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'list.open', from: 'suggestion' });
-    fireEvent.click(p.q('single-value')!);
+    fireEvent.click(p.q('pick-cta-single')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'list.dismiss' });
   });
 
@@ -43,10 +43,10 @@ describe('list suggestion (04a)', () => {
     const t = await harness(tier0Snapshot(), emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?tier=0', vars: [] }));
     await t.pick(byClass(t.page, 'category-heading'));
     const p = renderPanel(t.controller.state);
-    expect(p.q('list-suggestion')).toBeNull();
-    fireEvent.click(p.q('setup-manual')!);
+    expect(p.q('pick-cta')).toBeNull();
+    fireEvent.click(p.q('pick-cta-manual')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'list.open', from: 'manual' });
-    fireEvent.keyDown(p.q('body')!, { key: 'l' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'l' });
     expect(p.sent).toHaveLength(1);
   });
 
@@ -57,17 +57,17 @@ describe('list suggestion (04a)', () => {
     await t.pick(byClass(t.page, 'product-title', 0));
     const p = renderPanel(t.controller.state);
     expect(p.q('table-kind')!.textContent).toBe('Page · 1 row');
-    expect(p.q('list-suggestion')).toBeNull();
-    expect(p.q('repeat-line')!.textContent).toContain('Repeats 24× —');
-    expect(p.q('add-hint')!.textContent).toBe('Reads the first match on the page.');
-    fireEvent.click(p.q('start-list-table')!);
+    expect(p.q('pick-cta')).toBeNull();
+    expect(p.q('pick-repeat')!.textContent).toContain('Repeats 24× —');
+    expect(p.q('pick-add-hint')!.textContent).toBe('Reads the first match on the page.');
+    fireEvent.click(p.q('pick-repeat-start')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'list.open', from: 'newTable' });
-    fireEvent.keyDown(p.q('body')!, { key: 'L' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'L' });
     expect(p.sent).toHaveLength(1);
     cleanup();
 
     const ready = renderPanel({ ...baseState(), notice: 'List ready — pick fields inside an item' });
-    expect(ready.q('list-ready')!.textContent).toBe('List ready — pick fields inside an item');
+    expect(ready.q('pick-list-ready')!.textContent).toBe('List ready — pick fields inside an item');
   });
 });
 
@@ -84,21 +84,21 @@ describe('banners for picks outside the list', () => {
     const t = await products();
     await t.pick(byClass(t.page, 'category-heading'));
     const p = renderPanel(t.controller.state);
-    const banner = p.q('outside-banner')!;
+    const banner = p.q('pick-outside-banner')!;
     expect(banner.textContent).toContain('Outside the products list');
     expect(banner.textContent).toContain('keep it in a page table');
-    expect(p.q('outside-add-to')).toBeNull();
-    expect(p.q('outside-new-list')).toBeNull();
-    const name = p.q('outside-table-name') as HTMLInputElement;
+    expect(p.q('pick-outside-add-to')).toBeNull();
+    expect(p.q('pick-outside-new-list')).toBeNull();
+    const name = p.q('pick-outside-table-name') as HTMLInputElement;
     expect(name.value).toBe('page');
     fireEvent.change(name, { target: { value: 'search-info' } });
-    fireEvent.click(p.q('outside-new-page')!);
+    fireEvent.click(p.q('pick-outside-new-page')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.addTable', name: 'search-info' });
     fireEvent.change(name, { target: { value: 'products' } });
-    expect((p.q('outside-new-page') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(p.q('outside-repick')!);
+    expect((p.q('pick-outside-new-page') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(p.q('pick-outside-repick')!);
     expect(p.store.get().ui.picking).toBe(true);
-    expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(true);
+    expect((p.q('pick-add-field') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('says a pick repeats outside the list and offers a new list table and the page table (04c2)', async () => {
@@ -107,14 +107,14 @@ describe('banners for picks outside the list', () => {
     await t.send({ kind: 'draft.selectTable', index: 0 });
     await t.pick(byClass(t.page, 'questions-title', 0));
     const p = renderPanel(t.controller.state);
-    const banner = p.q('outside-banner')!;
+    const banner = p.q('pick-outside-banner')!;
     const repeats = t.controller.state.selected!.outside!.repeats!;
-    expect(p.q('outside-repeats')!.textContent).toBe(`repeats ${repeats}×`);
+    expect(p.q('pick-outside-repeats')!.textContent).toBe(`repeats ${repeats}×`);
     expect(banner.textContent).toContain('probably a separate list');
-    fireEvent.click(p.q('outside-new-list')!);
+    fireEvent.click(p.q('pick-outside-new-list')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'list.open', from: 'newTable' });
-    expect(p.q('outside-add-to')!.textContent).toBe('Add to summary');
-    fireEvent.click(p.q('outside-add-to')!);
+    expect(p.q('pick-outside-add-to')!.textContent).toBe('Add to summary');
+    fireEvent.click(p.q('pick-outside-add-to')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.selectTable', index: 1 });
   });
 
@@ -128,15 +128,15 @@ describe('banners for picks outside the list', () => {
     await t.send({ kind: 'draft.selectTable', index: 0 });
     await t.pick(byClass(t.page, 'questions-title', 1));
     const p = renderPanel(t.controller.state);
-    expect(p.q('outside-banner')).toBeNull();
-    const banner = p.q('belongs-banner')!;
+    expect(p.q('pick-outside-banner')).toBeNull();
+    const banner = p.q('pick-belongs-banner')!;
     expect(banner.textContent).toContain('Belongs to the questions list');
-    expect(p.q('belongs-item')!.textContent).toBe('This is inside item 2 of 6 in questions');
-    expect(p.q('belongs-stack')!.querySelector('[data-level="item"] [data-ws="selector-chip"]')!.getAttribute('data-selector')).toBe('css=article.mixed-questions');
-    expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(p.q('belongs-switch')!);
+    expect(p.q('pick-belongs-item')!.textContent).toBe('This is inside item 2 of 6 in questions');
+    expect(p.q('pick-belongs-stack')!.querySelector('[data-level="item"] [data-ws="chip"]')!.getAttribute('data-selector')).toBe('css=article.mixed-questions');
+    expect((p.q('pick-add-field') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(p.q('pick-belongs-switch')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.selectTable', index: 1 });
-    fireEvent.click(p.q('belongs-repick')!);
+    fireEvent.click(p.q('pick-belongs-repick')!);
     expect(p.store.get().ui.picking).toBe(true);
   });
 
@@ -145,7 +145,7 @@ describe('banners for picks outside the list', () => {
     await t.pick(byClass(t.page, 'category-heading'));
     const state: RecorderState = { ...t.controller.state, editing: { index: 0, options: { name: 'x', type: 'text', scope: 'item', optional: false, key: false }, candidates: [], primary: 0 } };
     const p = renderPanel(state);
-    expect(p.q('outside-banner')).toBeNull();
+    expect(p.q('pick-outside-banner')).toBeNull();
   });
 });
 
@@ -168,9 +168,9 @@ describe('old mixed tables', () => {
     });
     const p = renderPanel(baseState(draftFromRecipe(recipe)));
     const rows = p.qa('field');
-    expect(rows.map((r) => r.querySelector('[data-ws="misplaced"]') !== null)).toEqual([false, true]);
-    expect(rows[1]!.querySelector('[data-ws="misplaced"]')!.textContent).toContain('Read once from the page');
-    fireEvent.click(rows[1]!.querySelector('[data-ws="move-to-page"]')!);
+    expect(rows.map((r) => r.querySelector('[data-ws="field-misplaced"]') !== null)).toEqual([false, true]);
+    expect(rows[1]!.querySelector('[data-ws="field-misplaced"]')!.textContent).toContain('Read once from the page');
+    fireEvent.click(rows[1]!.querySelector('[data-ws="field-move-to-page"]')!);
     expect(p.sent).toEqual([{ kind: 'draft.moveFieldToPage', index: 1 }]);
   });
 });

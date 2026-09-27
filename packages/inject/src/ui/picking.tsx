@@ -39,7 +39,7 @@ export function PickModeStrip({
   return (
     <div className="ws-strip" data-ws="pick-strip" data-picking="false">
       <span className="ws-spacer ws-meta">Pick an element on the page to inspect it.</span>
-      <button type="button" className="ws-btn ws-btn-primary" onClick={onStart} data-ws="pick">
+      <button type="button" className="ws-btn ws-btn-primary" onClick={onStart} data-ws="pick-start">
         <Icon name="crosshair-simple" size={13} />
         Pick element <Kbd>P</Kbd>
       </button>
@@ -100,7 +100,7 @@ export function AttrTable({ attrs }: { attrs: Record<string, string> }) {
   const rows = inspectedAttrs(attrs);
   if (rows.length === 0) return <span className="ws-meta">No id, data-testid, class, or aria attributes.</span>;
   return (
-    <div className="ws-attrs" data-ws="attrs">
+    <div className="ws-attrs" data-ws="pick-attrs">
       {rows.map(([name, value]) =>
         name === 'class' ? (
           value
@@ -121,7 +121,7 @@ function AttrLine({ name, value, stable }: { name: string; value: string; stable
   return (
     <>
       <span className="ws-mono-sm ws-faint">{name}</span>
-      <span className="ws-mono-sm ws-ellipsis" title={value} data-ws="attr-value" data-stable={stable}>
+      <span className="ws-mono-sm ws-ellipsis" title={value} data-ws="pick-attr-value" data-stable={stable}>
         {value}
       </span>
       <Flag stable={stable} />
@@ -136,7 +136,7 @@ export function CrumbChip({ crumb, current, onClick }: { crumb: Crumb; current: 
       className={`ws-crumb${current ? ' ws-crumb-current' : ''}`}
       onClick={onClick}
       aria-current={current ? 'true' : undefined}
-      data-ws="crumb"
+      data-ws="pick-crumb"
       data-path={crumb.path.join('.')}
     >
       {crumb.label}
@@ -173,7 +173,7 @@ export function AncestorBreadcrumb({ trail, current, onSelect }: { trail: Crumb[
   return (
     <div
       className="ws-crumbs"
-      data-ws="breadcrumb"
+      data-ws="pick-breadcrumb"
       data-expanded={expanded || undefined}
       tabIndex={0}
       aria-label="Ancestors"
@@ -190,7 +190,7 @@ export function AncestorBreadcrumb({ trail, current, onSelect }: { trail: Crumb[
       }}
     >
       {hidden > 0 && (
-        <button type="button" className="ws-crumb" title={`Show all ${trail.length} crumbs`} aria-label={`Show ${hidden} more ancestors`} onClick={() => setExpanded(true)} data-ws="crumb-expand">
+        <button type="button" className="ws-crumb" title={`Show all ${trail.length} crumbs`} aria-label={`Show ${hidden} more ancestors`} onClick={() => setExpanded(true)} data-ws="pick-crumb-expand">
           …
         </button>
       )}
@@ -220,30 +220,30 @@ export function ElementInspector({
   chain?: readonly StackLevel[];
 }) {
   return (
-    <section className="ws-card" data-ws="inspector">
+    <section className="ws-card" data-ws="pick-inspector">
       <div className="ws-row">
-        <span className="ws-mono" style={{ color: 'var(--ws-accent-400)' }} data-ws="inspector-tag">
+        <span className="ws-mono" style={{ color: 'var(--ws-accent-400)' }} data-ws="pick-inspector-tag">
           {selection.tag}
         </span>
         {selection.role && <span className="ws-meta">{selection.role}</span>}
         {selection.name && (
-          <span className="ws-meta ws-ellipsis" title={selection.name} data-ws="inspector-name">
+          <span className="ws-meta ws-ellipsis" title={selection.name} data-ws="pick-inspector-name">
             “{selection.name}”
           </span>
         )}
         {onClear && (
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" style={{ marginLeft: 'auto' }} aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear} data-ws="clear-selection">
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" style={{ marginLeft: 'auto' }} aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear} data-ws="pick-clear">
             <Icon name="x" size={11} />
           </button>
         )}
       </div>
       {selection.text && (
-        <span className="ws-meta ws-ellipsis" title={selection.text} data-ws="inspector-text">
+        <span className="ws-meta ws-ellipsis" title={selection.text} data-ws="pick-inspector-text">
           {selection.text}
         </span>
       )}
       <AttrTable attrs={selection.attrs} />
-      <SelectorStack levels={chain} testId="inspector-chain" />
+      <SelectorStack levels={chain} testId="pick-inspector-stack" />
       <AncestorBreadcrumb trail={trail.length > 0 ? trail : selection.ancestors} current={selection.path} onSelect={onSelectPath} />
     </section>
   );

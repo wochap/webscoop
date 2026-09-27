@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
 import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, test, type Scoop } from './fixtures';
+import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -129,16 +130,16 @@ test('interactive run on wall=login shows the banner, and Continue after logging
   const r = await scoop.interactiveRun([name]);
   const ctx = await r.until((s) => s.host?.guardContext);
   expect(ctx).toMatchObject({ kind: 'login', page: 1 });
-  expect(await r.query('[data-ws="guard-banner"]')).toMatchObject({ rect: expect.objectContaining({ y: 0 }) });
-  expect(await r.query('[data-ws="countdown"]')).toMatchObject({ text: expect.stringMatching(/^\d+:\d\d$/) });
+  expect(await r.query(ws('guard-banner'))).toMatchObject({ rect: expect.objectContaining({ y: 0 }) });
+  expect(await r.query(ws('guard-countdown'))).toMatchObject({ text: expect.stringMatching(/^\d+:\d\d$/) });
 
   await r.page.locator('input[name="username"]').fill('ada');
   await r.page.locator('input[name="password"]').fill('secret');
   await Promise.all([r.page.waitForURL((url) => url.pathname === '/catalog'), r.page.locator('#login-form button[type="submit"]').click()]);
   // The banner comes back on the catalog until the run sees the guard is gone; Continue checks at once.
-  await r.clickPanel('[data-ws="guard-continue"]').catch(() => {});
+  await r.clickPanel(ws('guard-continue')).catch(() => {});
   await expect
-    .poll(async () => r.count('[data-ws="guard-banner"]').catch(() => 0), { timeout: 15_000 })
+    .poll(async () => r.count(ws('guard-banner')).catch(() => 0), { timeout: 15_000 })
     .toBe(0);
 
   const result = await r.run.done;

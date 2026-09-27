@@ -29,7 +29,7 @@ describe('steps list', () => {
     const p = renderPanel(withSteps([step('click'), step('type', { value: 'mouse', target: { selectors: [{ strategy: 'css', value: 'input', stability: 'medium' }] }, count: 1 })]));
     expect(p.qa('step').map((r) => r.dataset.kind)).toEqual(['click', 'type']);
     expect(p.qa('step-target').map((t) => t.title)).toEqual(['button "Accept all"', 'css=input']);
-    expect(p.qa('step-target')[1]!.querySelector('[data-ws="selector-chip"]')!.getAttribute('data-selector')).toBe('css=input');
+    expect(p.qa('step-target')[1]!.querySelector('[data-ws="chip"]')!.getAttribute('data-selector')).toBe('css=input');
     expect(p.q('footer-count')!.textContent).toBe('1 field · 2 steps');
     expect(p.q('section-steps')!.querySelector('[data-ws="section-count"]')!.textContent).toBe('2');
   });
@@ -38,7 +38,7 @@ describe('steps list', () => {
     const steps = [step('click'), step('type', { value: 'mouse', target: { selectors: [{ strategy: 'css', value: 'input', stability: 'medium' }] }, count: 1 }), step('click')];
     const state = withSteps(steps);
     const p = renderPanel({ ...state, panel: { collapsed: { recipe: false, steps: true, pagination: true } } });
-    expect(p.q('steps')).toBeNull();
+    expect(p.q('section-steps')!.querySelector('[data-browsing]')).toBeNull();
     expect(p.q('section-steps')!.querySelector('[data-ws="section-count"]')!.textContent).toBe('3');
     expect(p.q('section-steps')!.querySelector('[data-ws="section-summary"]')!.textContent).toBe('click button "Accept all", type css=input, …');
     fireEvent.click(p.q('section-steps')!.querySelector('[data-ws="section-toggle"]')!);
@@ -92,10 +92,10 @@ describe('steps list', () => {
 
   it('warns about a target that matches nothing and re-picks it', () => {
     const p = renderPanel(withSteps([step('click', { count: 0 })]));
-    expect(p.q('zero-match')!.textContent).toContain('Matches nothing');
-    fireEvent.click(p.q('make-optional')!);
+    expect(p.q('field-zero')!.textContent).toContain('Matches nothing');
+    fireEvent.click(p.q('field-make-optional')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', index: 0, patch: { optional: true } });
-    fireEvent.click(p.q('repick')!);
+    fireEvent.click(p.q('field-repick')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.repickTarget', target: 'step', index: 0 });
     expect(p.store.get().ui.picking).toBe(true);
   });
@@ -103,13 +103,13 @@ describe('steps list', () => {
   it('offers to replay the steps for a field that matches nothing only when the draft has steps', () => {
     const zero = { ...field, count: 0, sample: null };
     const none = renderPanel(baseState(withTable(newDraft(), { fields: [zero] })));
-    expect(none.q('zero-match')).not.toBeNull();
-    expect(none.q('replay-steps')).toBeNull();
+    expect(none.q('field-zero')).not.toBeNull();
+    expect(none.q('field-replay-steps')).toBeNull();
     none.unmount();
 
     const p = renderPanel(baseState({ ...withTable(newDraft(), { fields: [zero] }), steps: [step('click'), step('click')] }));
-    expect(p.q('zero-match')!.textContent).toContain('may appear only after the recorded steps');
-    expect(p.q('replay-steps')).not.toBeNull();
+    expect(p.q('field-zero')!.textContent).toContain('may appear only after the recorded steps');
+    expect(p.q('field-replay-steps')).not.toBeNull();
   });
 
   it('replays the steps in order, one after the other', async () => {
@@ -120,7 +120,7 @@ describe('steps list', () => {
       p.sent.push(msg);
       return new Promise<void>((resolve) => pending.push(resolve));
     };
-    fireEvent.click(p.q('replay-steps')!);
+    fireEvent.click(p.q('field-replay-steps')!);
     const replays = () => p.sent.filter((m) => m.kind === 'draft.replayStep');
     expect(replays()).toEqual([{ kind: 'draft.replayStep', index: 0 }]);
     await act(async () => pending.shift()!());
@@ -135,14 +135,14 @@ describe('steps list', () => {
 
   it('toggles browse mode from the list and with b', () => {
     const p = renderPanel(withSteps([]));
-    fireEvent.click(p.q('browse')!);
-    expect(p.q('mode')!.dataset.mode).toBe('browsing');
-    expect(p.q('steps')!.dataset.browsing).toBe('true');
-    fireEvent.click(p.q('browse-stop')!);
-    expect(p.q('mode')!.dataset.mode).toBe('idle');
-    fireEvent.keyDown(p.q('body')!, { key: 'b' });
+    fireEvent.click(p.q('steps-record')!);
+    expect(p.q('panel-mode')!.dataset.mode).toBe('browsing');
+    expect(p.q('section-steps')!.querySelector<HTMLElement>('[data-browsing]')!.dataset.browsing).toBe('true');
+    fireEvent.click(p.q('steps-stop')!);
+    expect(p.q('panel-mode')!.dataset.mode).toBe('idle');
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'b' });
     expect(p.store.get().ui.browsing).toBe(true);
-    fireEvent.keyDown(p.q('body')!, { key: 'Escape' });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'Escape' });
     expect(p.store.get().ui.browsing).toBe(false);
   });
 });
@@ -151,7 +151,7 @@ describe('record as step', () => {
   it('turns the picked element into a step without acting on it', async () => {
     const { proposed } = await hostStates();
     const p = renderPanel({ ...proposed, proposal: null });
-    await act(async () => fireEvent.click(p.q('record-step')!));
+    await act(async () => fireEvent.click(p.q('pick-as-step')!));
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.addStep', step: { kind: 'click' } });
   });
 

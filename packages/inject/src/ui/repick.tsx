@@ -11,16 +11,16 @@ export function formatScore(score: number): string {
 export function ScoreBar({ score, threshold }: { score: number | null; threshold: number }) {
   const likely = score !== null && score >= threshold;
   return (
-    <div className="ws-row" data-ws="score" data-likely={String(likely)}>
+    <div className="ws-row" data-ws="repick-score" data-likely={String(likely)}>
       <div className="ws-scorebar" aria-hidden="true">
         <div className={`ws-scorebar-fill${likely ? ' ws-scorebar-likely' : ''}`} style={{ width: `${Math.round((score ?? 0) * 100)}%` }} />
         <div className="ws-scorebar-threshold" style={{ left: `${Math.round(threshold * 100)}%` }} title={`Threshold ${formatScore(threshold)}`} />
       </div>
-      <span className="ws-num" data-ws="score-value">
+      <span className="ws-num" data-ws="repick-score-value">
         {score === null ? '–' : formatScore(score)}
       </span>
       {likely && (
-        <span className="ws-badge ws-tone-ok" data-ws="likely">
+        <span className="ws-badge ws-tone-ok" data-ws="repick-likely">
           likely
         </span>
       )}
@@ -32,14 +32,14 @@ export function ScoreBar({ score, threshold }: { score: number | null; threshold
 export function FingerprintCard({ context, hoverScore }: { context: RepickContext; hoverScore: number | null }) {
   const fp = context.fingerprint;
   return (
-    <section className="ws-card ws-col" data-ws="fingerprint">
+    <section className="ws-card ws-col" data-ws="repick-fingerprint">
       <span className="ws-caps">Was</span>
-      <span className="ws-row" data-ws="old-selector" data-selector={`${context.oldSelector.strategy}=${context.oldSelector.value}`}>
+      <span className="ws-row" data-ws="repick-old-selector" data-selector={`${context.oldSelector.strategy}=${context.oldSelector.value}`}>
         <SelectorChip candidate={context.oldSelector} />
       </span>
       <div className="ws-row">
         <span className="ws-meta">sample</span>
-        <span className="ws-ellipsis ws-spacer" data-ws="old-sample">
+        <span className="ws-ellipsis ws-spacer" data-ws="repick-old-sample">
           {context.sample ?? '—'}
         </span>
       </div>
@@ -47,20 +47,20 @@ export function FingerprintCard({ context, hoverScore }: { context: RepickContex
         <>
           <div className="ws-row">
             <span className="ws-meta">tag</span>
-            <span className="ws-mono-sm" data-ws="fp-tag">
+            <span className="ws-mono-sm" data-ws="repick-fp-tag">
               {fp.tag}
               {fp.role ? ` · ${fp.role}` : ''}
             </span>
           </div>
           <div className="ws-row">
             <span className="ws-meta">text</span>
-            <span className="ws-ellipsis ws-spacer" data-ws="fp-text">
+            <span className="ws-ellipsis ws-spacer" data-ws="repick-fp-text">
               {fp.textSample || '—'}
             </span>
           </div>
           <div className="ws-row">
             <span className="ws-meta">in</span>
-            <span className="ws-mono-sm ws-ellipsis ws-spacer" data-ws="fp-ancestors">
+            <span className="ws-mono-sm ws-ellipsis ws-spacer" data-ws="repick-fp-ancestors">
               {[...fp.ancestors].reverse().join(' › ')}
             </span>
           </div>
@@ -68,7 +68,7 @@ export function FingerprintCard({ context, hoverScore }: { context: RepickContex
           <ScoreBar score={hoverScore} threshold={context.threshold} />
         </>
       ) : (
-        <span className="ws-meta" data-ws="no-fingerprint">
+        <span className="ws-meta" data-ws="repick-no-fingerprint">
           No fingerprint was stored for this field, so hovered elements cannot be scored.
         </span>
       )}
@@ -112,21 +112,21 @@ export function RepickPanel({
             Stop
           </button>
         ) : (
-          <button type="button" className="ws-btn ws-btn-sm" onClick={onPick} data-ws="pick">
+          <button type="button" className="ws-btn ws-btn-sm" onClick={onPick} data-ws="repick-pick">
             Pick <Kbd>P</Kbd>
           </button>
         )}
       </div>
       <FingerprintCard context={context} hoverScore={hoverScore} />
       {picked && (
-        <section className="ws-card ws-card-accent ws-col" data-ws="picked">
+        <section className="ws-card ws-card-accent ws-col" data-ws="repick-picked">
           <span className="ws-caps">New</span>
-          <span className="ws-row" data-ws="picked-selector" data-selector={`${picked.selector.strategy}=${picked.selector.value}`}>
+          <span className="ws-row" data-ws="repick-picked-selector" data-selector={`${picked.selector.strategy}=${picked.selector.value}`}>
             <SelectorChip candidate={picked.selector} />
           </span>
           <div className="ws-row">
             <span className="ws-meta">sample</span>
-            <span className="ws-ellipsis ws-spacer" data-ws="picked-sample">
+            <span className="ws-ellipsis ws-spacer" data-ws="repick-picked-sample">
               {picked.sample ?? '—'}
             </span>
           </div>

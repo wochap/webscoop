@@ -24,7 +24,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, l
   return (
     <div className="ws-seg" role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)} data-ws={`seg-${o.value}`}>
+        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)} data-ws={`pagination-limit-${o.value}`}>
           {o.label}
         </button>
       ))}
@@ -72,7 +72,7 @@ export function NumberStepper({
 
 export function KindOption({ kind, label, hint, active, onChoose }: { kind: Kind; label: string; hint: string; active: boolean; onChoose: () => void }) {
   return (
-    <button type="button" className="ws-kind" aria-pressed={active} onClick={onChoose} data-ws={`kind-${kind}`}>
+    <button type="button" className="ws-kind" aria-pressed={active} onClick={onChoose} data-ws={`pagination-kind-${kind}`}>
       <span className="ws-title">{label}</span>
       <span className="ws-meta">{hint}</span>
     </button>
@@ -108,7 +108,7 @@ export function PaginationEditor({ pagination }: { pagination: DraftPagination }
   const [pages, setPages] = useState(typeof pagination.limit === 'number' && pagination.limit > 1 ? pagination.limit : 3);
   const choice: LimitChoice = pagination.limit === 'all' ? 'all' : pagination.limit === 1 ? 'first' : 'n';
   return (
-    <div className="ws-col" data-ws="pagination">
+    <div className="ws-col">
       <div className="ws-kinds">
         {KINDS.map((k) => (
           <KindOption key={k.kind} {...k} active={pagination.kind === k.kind} onChoose={() => update({ kind: k.kind })} />
@@ -149,7 +149,7 @@ export function PaginationEditor({ pagination }: { pagination: DraftPagination }
               <Toggle
                 on={on}
                 label={STOP_LABELS[rule]}
-                testId={`stop-${rule}`}
+                testId={`pagination-stop-${rule}`}
                 onChange={(next) => update({ stopRules: next ? [...pagination.stopRules, rule] : pagination.stopRules.filter((r) => r !== rule) })}
               />
             </div>
@@ -190,7 +190,7 @@ export function PaginationSection({ pagination, collapsed, onCollapse }: { pagin
       summary={<span data-ws="pagination-summary">{paginationSummary(pagination)}</span>}
       actions={
         on ? (
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearPagination' })} data-ws="clear-pagination">
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearPagination' })} data-ws="pagination-clear">
             Remove
           </button>
         ) : undefined

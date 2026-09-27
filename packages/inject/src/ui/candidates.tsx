@@ -4,7 +4,7 @@ import { SelectorChip, type SelectorLevel } from './selector-chip';
 
 export function StabilityBadge({ stability }: { stability: ProtocolCandidate['stability'] }) {
   return (
-    <span className={`ws-badge ws-${stability}`} data-ws="stability" data-stability={stability}>
+    <span className={`ws-badge ws-${stability}`} data-ws="pick-candidate-stability" data-stability={stability}>
       {stability}
     </span>
   );
@@ -39,7 +39,7 @@ export function SelectorRow({
           onChoose();
         }
       }}
-      data-ws="candidate"
+      data-ws="pick-candidate"
       data-strategy={candidate.strategy}
       data-primary={primary}
       data-hit={candidate.hit === undefined ? undefined : String(candidate.hit)}
@@ -47,16 +47,16 @@ export function SelectorRow({
       <span className="ws-row ws-spacer">
         <SelectorChip candidate={candidate} level={level} />
       </span>
-      <span className={`ws-num${count === 0 ? ' ws-num-zero' : ''}`} data-ws="candidate-count" title="Matches on this page, counted by the browser">
+      <span className={`ws-num${count === 0 ? ' ws-num-zero' : ''}`} data-ws="pick-candidate-count" title="Matches on this page, counted by the browser">
         {count ?? '…'}
       </span>
       {candidate.items !== undefined && containers !== null && (
-        <span className="ws-meta" data-ws="candidate-items" title="Item containers holding a match">
+        <span className="ws-meta" data-ws="pick-candidate-items" title="Item containers holding a match">
           {candidate.items}/{containers}
         </span>
       )}
       {candidate.hit === false && (
-        <span className="ws-badge ws-tone-warn" data-ws="candidate-miss" title="Its first match is not the element you picked">
+        <span className="ws-badge ws-tone-warn" data-ws="pick-candidate-miss" title="Its first match is not the element you picked">
           reads another element
         </span>
       )}
@@ -86,7 +86,7 @@ export function SelectorCandidateList({
         <span className="ws-caps">Selectors</span>
         <span className="ws-caps">matches</span>
       </div>
-      <div className="ws-list" role="listbox" aria-label="Selector candidates" data-ws="candidates">
+      <div className="ws-list" role="listbox" aria-label="Selector candidates" data-ws="pick-candidates">
         {candidates.map((c, i) => (
           <SelectorRow key={`${c.strategy}=${c.value}`} candidate={c} primary={i === primary} containers={containers} level={level} onChoose={() => onPrimary(i)} />
         ))}
@@ -99,12 +99,12 @@ export function SelectorCandidateList({
 export function CoverageHint({ items, containers, optional, onOptional }: { items: number; containers: number; optional: boolean; onOptional: () => void }) {
   const partial = items < containers;
   return (
-    <div className={`ws-row${partial ? ' ws-warning' : ''}`} data-ws="coverage" data-partial={partial}>
-      <span className="ws-spacer ws-meta" data-ws="coverage-count">
+    <div className={`ws-row${partial ? ' ws-warning' : ''}`} data-ws="pick-coverage" data-partial={partial}>
+      <span className="ws-spacer ws-meta" data-ws="pick-coverage-count">
         {items} / {containers} items
       </span>
       {partial && !optional && (
-        <button type="button" className="ws-btn ws-btn-sm" onClick={onOptional} data-ws="coverage-optional" title="Some items have no match: keep their rows with an empty value">
+        <button type="button" className="ws-btn ws-btn-sm" onClick={onOptional} data-ws="pick-coverage-optional" title="Some items have no match: keep their rows with an empty value">
           Mark optional
         </button>
       )}
@@ -115,11 +115,11 @@ export function CoverageHint({ items, containers, optional, onOptional }: { item
 /** Update and Cancel, in place of the action grid while a saved field is being edited. */
 export function EditActions({ onUpdate, onCancel, canUpdate }: { onUpdate: () => void; onCancel: () => void; canUpdate: boolean }) {
   return (
-    <div className="ws-grid2" data-ws="edit-actions">
-      <button type="button" className="ws-btn ws-btn-primary" onClick={onUpdate} data-ws="update-field" disabled={!canUpdate}>
+    <div className="ws-grid2" data-ws="pick-edit-actions">
+      <button type="button" className="ws-btn ws-btn-primary" onClick={onUpdate} data-ws="pick-update" disabled={!canUpdate}>
         Update field
       </button>
-      <button type="button" className="ws-btn" onClick={onCancel} data-ws="cancel-edit">
+      <button type="button" className="ws-btn" onClick={onCancel} data-ws="pick-cancel-edit">
         Cancel
       </button>
     </div>
@@ -146,23 +146,23 @@ export function PickActionGrid({
   hint?: string;
 }) {
   return (
-    <div className="ws-col ws-actions" data-ws="actions">
-      <button type="button" className="ws-btn ws-btn-outline ws-btn-wide" onClick={onAddField} data-ws="add-field" disabled={repicking || !canAdd}>
+    <div className="ws-col ws-actions" data-ws="pick-actions">
+      <button type="button" className="ws-btn ws-btn-outline ws-btn-wide" onClick={onAddField} data-ws="pick-add-field" disabled={repicking || !canAdd}>
         <Icon name="plus" size={12} />
         Add field
       </button>
       {hint && (
-        <span className="ws-meta ws-center" data-ws="add-hint">
+        <span className="ws-meta ws-center" data-ws="pick-add-hint">
           {hint}
         </span>
       )}
       <div className="ws-row ws-also">
         <span className="ws-meta">Also</span>
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onPagination} data-ws="mark-pagination">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onPagination} data-ws="pick-pagination">
           <Icon name="arrow-right" size={12} />
           Pagination target
         </button>
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onRecordStep} data-ws="record-step" title="Add a step that acts on this element, without acting now">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onRecordStep} data-ws="pick-as-step" title="Add a step that acts on this element, without acting now">
           <Icon name="record" size={12} />
           Record as step
         </button>

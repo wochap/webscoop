@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { loadRecipe, type RecipeInput, type RunReport } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
 import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, test, type Recording, type Scoop } from './fixtures';
+import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the recorder and the CLI need WAYLAND_DISPLAY or DISPLAY');
 
@@ -42,12 +43,12 @@ test('gate=cookie: browse mode records the consent click; the run replays it, an
   await r.page.evaluate(() => document.querySelector('main')!.insertAdjacentHTML('afterbegin', '<select id="sort"><option value="name">Name</option><option value="price">Price</option></select>'));
   await r.selectOnPage('#sort', 'price');
   await r.until((s) => s.host?.draft.steps.length === 2 && s.host.draft.steps[1]!.kind === 'select' && s.host.draft.steps[1]!.value === 'price');
-  await r.clickPanel('[data-ws="step-remove"]', 1);
+  await r.clickPanel(ws('step-remove'), 1);
   await r.until((s) => s.host?.draft.steps.length === 1);
   await r.key('b');
   await r.until((s) => !s.ui.browsing);
   // Consent now lives in the recording profile, so later loads there skip the banner.
-  await r.clickPanel('[data-ws="step-optional"]');
+  await r.clickPanel(ws('step-optional'));
   await r.until((s) => s.host?.draft.steps[0]?.optional === true);
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -78,11 +79,11 @@ test('gate=search: typing and Enter become steps, the value becomes {q}, and the
     ['press', 'Enter'],
   ]);
   // The panel came back on the results page.
-  expect(await r.count('[data-ws="steps"]')).toBe(1);
+  expect(await r.count(ws('section-steps'))).toBe(1);
 
-  await r.fill('[data-ws="step-value"]', '{q}', 0);
+  await r.fill(ws('step-value'), '{q}', 0);
   await r.until((s) => s.host?.draft.steps[0]?.value === '{q}' && s.host.draft.vars.some((v) => v.name === 'q'));
-  expect(await r.count('[data-ws="step-var-q"]')).toBe(1);
+  expect(await r.count(ws('step-var-q'))).toBe(1);
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
   const recipe = loadRecipe(await readFile(path, 'utf8'));
@@ -155,8 +156,8 @@ test('replaying one step from the panel fills the search box', async ({ scoop })
   );
   const r = await edit(scoop, 'replay-shop');
   expect(await r.page.locator('input[name="q"]').inputValue()).toBe('');
-  await r.clickPanel('[data-ws="step-replay"]');
+  await r.clickPanel(ws('step-replay'));
   await expect.poll(() => r.page.locator('input[name="q"]').inputValue()).toBe('keyboard');
-  await expect.poll(async () => (await r.query('[data-ws="toast"]'))?.text ?? '').toContain('replayed step 1 (type)');
+  await expect.poll(async () => (await r.query(ws('panel-toast')))?.text ?? '').toContain('replayed step 1 (type)');
   expect((await r.closeWindow()).code).toBe(0);
 });

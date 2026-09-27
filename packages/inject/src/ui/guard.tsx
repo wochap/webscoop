@@ -34,7 +34,7 @@ export function Countdown({ deadline, now = Date.now }: { deadline: number; now?
   const left = deadline - now();
   const warn = left < WARN_UNDER_MS;
   return (
-    <span className={`ws-pill ws-countdown ${warn ? 'ws-tone-warn' : 'ws-tone-neutral'}`} data-ws="countdown" data-tone={warn ? 'warn' : 'neutral'} title="Time left before the run gives up">
+    <span className={`ws-pill ws-countdown ${warn ? 'ws-tone-warn' : 'ws-tone-neutral'}`} data-ws="guard-countdown" data-tone={warn ? 'warn' : 'neutral'} title="Time left before the run gives up">
       {formatCountdown(left)}
     </span>
   );

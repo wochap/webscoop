@@ -28,7 +28,7 @@ const MODE_TITLE = { list: 'list', page: 'page table', none: 'no mode yet' } as 
 export function ModeIcon({ table }: { table: Pick<DraftTable, 'item' | 'fields'> }) {
   const mode = tableMode(table);
   return (
-    <span className="ws-mode-icon" title={MODE_TITLE[mode]} data-ws="mode-icon" data-mode={mode}>
+    <span className="ws-mode-icon" title={MODE_TITLE[mode]} data-ws="tab-mode-icon" data-mode={mode}>
       <Icon name={MODE_ICON[mode]} size={12} />
     </span>
   );
@@ -92,7 +92,7 @@ function RenameInput({ table, index, tables, onDone }: { table: DraftTable; inde
       autoFocus
       aria-label="Table name"
       aria-invalid={problem ? true : undefined}
-      data-ws="table-name"
+      data-ws="tab-rename"
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => setValue(e.target.value)}
       onBlur={commit}
@@ -139,7 +139,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   // Keep keyboard focus on the moved tab.
   useLayoutEffect(() => {
     if (ui.focusedTab === null) return;
-    const tab = strip.current?.querySelectorAll<HTMLElement>('[data-ws="table-tab"]')[ui.focusedTab];
+    const tab = strip.current?.querySelectorAll<HTMLElement>('[data-ws="tab"]')[ui.focusedTab];
     if (tab && tab.ownerDocument.activeElement !== tab && !tab.contains(tab.ownerDocument.activeElement)) tab.focus();
   }, [order, ui.focusedTab]);
 
@@ -148,7 +148,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
     const el = strip.current;
     if (!el) return;
     const measure = () => {
-      const tabs = Array.from(el.querySelectorAll<HTMLElement>('[data-ws="table-tab"]')).map((t) => t.getBoundingClientRect());
+      const tabs = Array.from(el.querySelectorAll<HTMLElement>('[data-ws="tab"]')).map((t) => t.getBoundingClientRect());
       const next = clippedTabs(el.getBoundingClientRect(), tabs);
       setHidden((prev) => (prev.join() === next.join() ? prev : next));
     };
@@ -174,9 +174,9 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   const moreOpen = ui.menu === 'tabs-more';
 
   return (
-    <div className="ws-col" data-ws="tabbar">
+    <div className="ws-col">
       <div className="ws-tabbar">
-        <div className="ws-tabs" ref={strip} role="tablist" aria-label="Tables" data-ws="tables">
+        <div className="ws-tabs" ref={strip} role="tablist" aria-label="Tables" data-ws="tabs">
           {draft.tables.map((table, index) => {
             const active = index === draft.activeTable;
             const count = tableRowCount(table);
@@ -184,7 +184,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
             const title = table.error ?? table.fields.find((f) => f.error)?.error ?? (locked && !active ? 'Finish the list setup first' : undefined);
             if (renaming) {
               return (
-                <div key={table.name} className="ws-tab" role="tab" aria-selected data-ws="table-tab" data-table={table.name} data-active>
+                <div key={table.name} className="ws-tab" role="tab" aria-selected data-ws="tab" data-table={table.name} data-active>
                   <ModeIcon table={table} />
                   <RenameInput
                     table={table}
@@ -241,23 +241,23 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                   setDragging(null);
                   setDrop(null);
                 }}
-                data-ws="table-tab"
+                data-ws="tab"
                 data-table={table.name}
                 data-active={active || undefined}
               >
                 <ModeIcon table={table} />
                 <span className="ws-tab-name">{table.name}</span>
                 {count !== null && (
-                  <span className="ws-tab-count" data-ws="table-count">
+                  <span className="ws-tab-count" data-ws="tab-count">
                     {count}
                   </span>
                 )}
                 {badge && index === primary && (
-                  <span className="ws-tab-badge" title="The runner follows pagination with this table" data-ws="drives-pagination">
+                  <span className="ws-tab-badge" title="The runner follows pagination with this table" data-ws="tab-drives-pagination">
                     pages
                   </span>
                 )}
-                {(table.error || table.fields.some((f) => f.error)) && <span className="ws-tab-dot" data-ws="table-error" aria-label="has an error" />}
+                {(table.error || table.fields.some((f) => f.error)) && <span className="ws-tab-dot" data-ws="tab-error" aria-label="has an error" />}
               </button>
             );
           })}
@@ -287,7 +287,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                     onClick={() => {
                       actions.setUi({ menu: null });
                       activate(i);
-                      strip.current?.querySelectorAll<HTMLElement>('[data-ws="table-tab"]')[i]?.scrollIntoView?.({ inline: 'nearest' });
+                      strip.current?.querySelectorAll<HTMLElement>('[data-ws="tab"]')[i]?.scrollIntoView?.({ inline: 'nearest' });
                     }}
                     data-ws="tabs-more-item"
                     data-table={draft.tables[i]!.name}
@@ -308,13 +308,13 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
           title="Add a table: picks go to the active table"
           onClick={() => void actions.send({ kind: 'draft.addTable' })}
           onDragOver={(e) => e.preventDefault()}
-          data-ws="table-add"
+          data-ws="tab-add"
         >
           <Icon name="plus" size={12} />
         </button>
       </div>
       {renameError && ui.renamingTab !== null && (
-        <span className="ws-error" data-ws="table-name-error">
+        <span className="ws-error" data-ws="tab-rename-error">
           {renameError}
         </span>
       )}
@@ -361,24 +361,24 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
         aria-expanded={open}
         disabled={locked}
         onClick={() => actions.setUi({ menu: open ? null : 'table' })}
-        data-ws="tab-menu"
+        data-ws="table-menu"
       >
         <Icon name="dots-three" size={14} />
       </button>
       {open && (
-        <div className="ws-menu" role="menu" style={{ right: 0, top: 24 }} data-ws="tab-menu-list">
+        <div className="ws-menu" role="menu" style={{ right: 0, top: 24 }} data-ws="table-menu-list">
           {table.fields.length > 0 && (
-            <div className="ws-menu-note" role="note" data-ws="menu-mode-locked">
+            <div className="ws-menu-note" role="note" data-ws="table-menu-locked">
               <Icon name="lock-simple" size={11} />
               Mode locked — {mode}. Clear table to change.
             </div>
           )}
-          {item('Rename', 'menu-rename', () => actions.setUi({ renamingTab: at }), false, undefined, false, 'pencil-simple', 'dbl-click tab')}
-          {item('Move left', 'menu-move-left', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at - 1 }), at === 0, undefined, false, 'arrow-left', <Kbd>Alt ←</Kbd>)}
-          {item('Move right', 'menu-move-right', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at + 1 }), at === draft.tables.length - 1, undefined, false, 'arrow-right', <Kbd>Alt →</Kbd>)}
+          {item('Rename', 'table-menu-rename', () => actions.setUi({ renamingTab: at }), false, undefined, false, 'pencil-simple', 'dbl-click tab')}
+          {item('Move left', 'table-menu-move-left', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at - 1 }), at === 0, undefined, false, 'arrow-left', <Kbd>Alt ←</Kbd>)}
+          {item('Move right', 'table-menu-move-right', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at + 1 }), at === draft.tables.length - 1, undefined, false, 'arrow-right', <Kbd>Alt →</Kbd>)}
           {item(
             'Use for pagination',
-            'menu-pagination',
+            'table-menu-pagination',
             () => void actions.send({ kind: 'draft.moveTable', from: at, to: primary }),
             !table.item || primary === at || primary === -1,
             pagingTitle,
@@ -390,7 +390,7 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
           {(table.fields.length > 0 || table.item) &&
             item(
               'Clear table',
-              'menu-clear-table',
+              'table-menu-clear-table',
               () => void actions.send({ kind: 'draft.clearTable' }),
               false,
               table.item ? 'Remove the fields and the list; the table keeps its name' : 'Remove the fields; the table keeps its name',
@@ -398,7 +398,7 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
               'eraser',
               table.item && table.fields.length > 0 ? 'fields + list' : table.item ? 'list' : 'fields',
             )}
-          {draft.tables.length > 1 && item('Remove table', 'table-remove', () => void actions.send({ kind: 'draft.removeTable' }), false, 'Remove this table with its item container and fields', true, 'trash')}
+          {draft.tables.length > 1 && item('Remove table', 'table-menu-remove', () => void actions.send({ kind: 'draft.removeTable' }), false, 'Remove this table with its item container and fields', true, 'trash')}
         </div>
       )}
     </span>
@@ -411,7 +411,7 @@ export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }
   return (
     <div className="ws-col" data-ws="table-header">
       <div className="ws-table-head">
-        <span className="ws-title ws-mono ws-ellipsis" data-ws="table-title">
+        <span className="ws-title ws-mono ws-ellipsis" data-ws="table-name">
           {table.name}
         </span>
         <span className="ws-table-kind ws-kind-pill" data-ws="table-kind" data-kind={tableMode(table)}>
@@ -422,7 +422,7 @@ export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }
         <TableMenu draft={draft} locked={locked} />
       </div>
       {table.error && table.fields.length > 0 && (
-        <span className="ws-error" data-ws="table-bar-error">
+        <span className="ws-error" data-ws="table-error">
           {table.error}
         </span>
       )}
