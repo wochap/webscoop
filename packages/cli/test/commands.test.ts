@@ -90,6 +90,17 @@ describe('webscoop run', () => {
     expect(browser.visited).toEqual(['https://shop.test/c/running%20shoes']);
   });
 
+  it('warns about an encoded --var value used in the URL and still runs', async () => {
+    const dir = await home();
+    const browser = new FakeBrowser({ 'https://shop.test/c/red%2520shoes': shopPage(1) });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--var', 'category=red%20shoes'], io)).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('warning: --var category="red%20shoes" is URL-encoded again ("%" becomes "%25"); pass the decoded text "red shoes"');
+    const test = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ 'https://shop.test/c/top%2Bllms': shopPage(1) }) });
+    expect(await main(['test', 'shop', '--var', 'category=top+llms'], test)).toBe(ExitCode.Ok);
+    expect(test.err()).toContain('warning: --var category="top+llms" is URL-encoded, so "+" stays a literal plus; for a space pass "top llms"');
+  });
+
   it('exits 1 naming a variable with no value', async () => {
     const dir = await home([recipe({ vars: [{ name: 'category', type: 'string' }] })]);
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });

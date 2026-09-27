@@ -1,8 +1,8 @@
 import { fileURLToPath, URL } from 'node:url';
 
 /** esbuild options for the injected recorder, shared by the build and the size test. */
-/** Raised from 470 KiB for the sidebar shell (inline icons, tabs, sections, selector chips), then from 520 KiB for the pick helpers. */
-export const SIZE_BUDGET = 530 * 1024;
+/** Raised from 470 KiB for the sidebar shell (inline icons, tabs, sections, selector chips), then from 520 KiB for the pick helpers, then from 530 KiB for the recipe URL editor. */
+export const SIZE_BUDGET = 540 * 1024;
 
 export function bundleOptions({ e2e, outfile }) {
   return {

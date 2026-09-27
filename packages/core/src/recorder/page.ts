@@ -5,5 +5,14 @@ export * from './selection';
 export * from '../selectors';
 export { scoreFingerprint, scoreParts, SCORE_WEIGHTS, type ScoreParts } from '../healing/score';
 export { collapseWhitespace, defaultAttr } from '../convert';
-export { templateVariables } from '../template';
+export {
+  describeUrlDiff,
+  fillTemplate,
+  templateParts,
+  templateProblem,
+  templateVariables,
+  urlDiff,
+  VARIABLE_NAME,
+  type UrlDiff,
+} from '../template';
 export { FIELD_SCOPES, FIELD_TYPES, PAGINATION_KINDS, STEP_KINDS, STEP_WHENS, STOP_RULES } from '../recipe/constants';

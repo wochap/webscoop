@@ -8,6 +8,7 @@ import {
   RecorderController,
   RecorderEmitter,
   tablesOf,
+  templateProblem,
   templateVariables,
   type Recipe,
   type RecorderMode,
@@ -21,7 +22,7 @@ import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
 import { FsStorage } from '../storage';
-import { parseVars } from './run';
+import { encodedValueWarnings, parseVars } from './run';
 
 export interface RecordCommandOptions {
   name?: string;
@@ -39,21 +40,8 @@ const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Reject templates with stray braces or that do not produce an http(s) URL. */
 export function checkTemplate(template: string): void {
-  // A digit is valid wherever a variable may sit: host, port, path, or query.
-  const stripped = template.replace(/\{[A-Za-z_][A-Za-z0-9_]*\}/g, '1');
-  const brace = stripped.search(/[{}]/);
-  if (brace !== -1) {
-    throw new CliError(`invalid URL template "${template}": unmatched "${stripped[brace]}" (variables look like {name})`);
-  }
-  let url: URL;
-  try {
-    url = new URL(stripped);
-  } catch {
-    throw new CliError(`invalid URL template "${template}": not an absolute URL`);
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new CliError(`invalid URL template "${template}": only http and https pages can be recorded`);
-  }
+  const problem = templateProblem(template);
+  if (problem) throw new CliError(problem);
 }
 
 /** `<host>-<first path segment>`, slugified: `http://shop.test/catalog?x=1` becomes `shop-test-catalog`. */
@@ -165,6 +153,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   if (opts.name !== undefined && !KEBAB.test(opts.name)) throw new CliError(`invalid recipe name "${opts.name}": recipe names must be kebab-case`);
 
   const values = await resolveValues(io, template, parseVars(opts.var), recipe);
+  for (const warning of encodedValueWarnings(template, values)) log(io, warning);
   const url = fillTemplate(template, [], values);
   const name = opts.name ?? recipe?.name ?? proposeName(url);
 

@@ -12,7 +12,7 @@ The design is implemented by four OpenSpec changes: `sidebar-shell` (layout, sec
 |---|---|---|
 | `Webscoop sidebar v2` (canvas) | — | container of the frames below |
 | `01 Idle first open` | `sidebar-shell` | done |
-| `02 Recipe editing` | `recipe-url-edit` | not started |
+| `02 Recipe editing` | `recipe-url-edit` | done |
 | `03 Picking` | `pick-helpers` | done |
 | `03 Picking sidebar` | `pick-helpers` | done |
 | `04 Element selected` | `sidebar-shell` (inspector, candidates, breadcrumb), `pick-helpers` (ladder) | done (the ancestor ladder is the list setup's "Adjust item level"; walking while picking is the hover walk) |
@@ -78,6 +78,11 @@ Agreed differences between the frames and the panel.
 | Selecting a tab while an element is selected: panel sends `draft.selectTable` then `selection.retarget` | The host retargets the kept selection itself on `draft.selectTable` and `draft.addTable` | One message, no window where the selection belongs to no table |
 | Pagination starts collapsed | It opens when a pagination target is marked | The user just set it and needs its options |
 | `03`: hover tag starts with `tag.class` (`div.MjjYud`) | Tag keeps `tag role excerpt` and appends `↑N`, "N similar siblings", and `W×H` | The existing tag is spec'd and tested; the walk parts are what the frame adds |
+| `02`: the rendered URL line shows `q=top+llms` | Shows the exact encoded URL, `q=top%20llms` | The line shows the real URL; form-style `+` would hide the encoding trap the CLI warns about |
+| `02`: no confirmation drawn for removing a used variable | Inline confirm in the row: "Used in URL, step 2 — replace with its value?" | Removing rewrites the template and steps, so the user sees what happens first |
+| `02`: no template error state | Inline error under the input; the previous template stays | An invalid template cannot open |
+| `02`: "Open page differs" with a free-form description | Prefix/suffix diff: "`x` added", "`x` removed", "`a` → `b`" | Deterministic text from the two URLs |
+| `02`: link and arrow glyphs on the usage hints, "Use current page URL", and "Reopen" | Text only | The inline icon subset has no link, footprints, or arrow glyphs |
 | `06`: on-page strip reads "Picking in results ↑ ↓ parent / child Esc cancel" | Strip also lists "click to pick" and "Alt+click through overlays" (as in v2 `03`) | One strip for both frames; the Alt hint was in the panel strip before |
 | No "Change" control on the list parent row | The Rows list parent control reads "Change" when the list parent is inferred | The inferred badge needs an obvious override |
 | `[` / `]` not shown | Accepted silently as walk keys | Alternative keys for keyboards without arrows; hints stay short |

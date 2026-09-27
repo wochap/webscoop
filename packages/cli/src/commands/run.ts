@@ -25,6 +25,7 @@ import {
   type StepOptions,
   type StepReport,
   tablesOf,
+  templateVariables,
 } from '@webscoop/core';
 import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
@@ -120,6 +121,33 @@ export function parseVars(pairs: readonly string[]): Record<string, string> {
     vars[pair.slice(0, eq)] = pair.slice(eq + 1);
   }
   return vars;
+}
+
+/**
+ * One warning per URL template variable whose value looks URL-encoded already:
+ * values are encoded again, so `+` stays a literal plus and `%20` becomes `%2520`.
+ * Variables only steps use are typed as is and are skipped.
+ */
+export function encodedValueWarnings(template: string, values: Readonly<Record<string, string>>): string[] {
+  const warnings: string[] = [];
+  for (const name of templateVariables(template)) {
+    const value = values[name];
+    if (value === undefined) continue;
+    if (/%[0-9A-Fa-f]{2}/.test(value)) {
+      let decoded: string | null = null;
+      try {
+        decoded = decodeURIComponent(value);
+      } catch {
+        // Not decodable as a whole; name only the problem.
+      }
+      warnings.push(
+        `warning: --var ${name}="${value}" is URL-encoded again ("%" becomes "%25")${decoded === null ? '' : `; pass the decoded text "${decoded}"`}`,
+      );
+    } else if (value.includes('+')) {
+      warnings.push(`warning: --var ${name}="${value}" is URL-encoded, so "+" stays a literal plus; for a space pass "${value.replaceAll('+', ' ')}"`);
+    }
+  }
+  return warnings;
 }
 
 /** The row count part of the summary: the total for one table, `name: count` per table for several. */
@@ -295,6 +323,8 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
     if (error instanceof PaginationInputError) throw new CliError(error.message);
     throw error;
   }
+  const defaults = Object.fromEntries(recipe.vars.flatMap((v) => (v.default !== undefined ? [[v.name, v.default]] : [])));
+  for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars })) log(io, warning);
 
   requireDisplay(io.env);
 

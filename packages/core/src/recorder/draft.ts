@@ -1,5 +1,5 @@
 import { parseNumber } from '../convert';
-import { templateVariables } from '../template';
+import { inlineVariable, renameVariable, templateProblem, templateVariables, VARIABLE_NAME } from '../template';
 import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
 import { SHORTHAND_TABLE, tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
@@ -85,10 +85,16 @@ export function draftVariables(draft: Pick<Draft, 'url' | 'steps'>): string[] {
   return names;
 }
 
-/** The draft's variable list after its URL or steps changed: one entry per used variable, keeping entered values. */
+/**
+ * The draft's variable list after its URL or steps changed: one entry per used
+ * variable, keeping entered values, then the added variables nothing uses.
+ */
 function syncVars(draft: Draft): Draft {
   const names = draftVariables(draft);
-  const vars = names.map((name) => draft.vars.find((v) => v.name === name) ?? { name, value: '' });
+  const vars = [
+    ...names.map((name) => draft.vars.find((v) => v.name === name) ?? { name, value: '' }),
+    ...draft.vars.filter((v) => v.added && !names.includes(v.name)),
+  ];
   const same = vars.length === draft.vars.length && vars.every((v, i) => v === draft.vars[i]);
   return same ? draft : { ...draft, vars };
 }
@@ -316,6 +322,18 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
   });
 }
 
+/** Why a variable name cannot be used, or null: it must be an identifier and not taken by another variable. */
+export function varNameError(draft: Pick<Draft, 'vars'>, name: string, except?: string): string | null {
+  if (!VARIABLE_NAME.test(name)) return 'variable names are a letter or _ followed by letters, digits, or _';
+  if (name !== except && draft.vars.some((v) => v.name === name)) return `a variable named "${name}" already exists`;
+  return null;
+}
+
+/** The draft's steps with `rewrite` applied to every `type` step value. */
+function rewriteSteps(steps: readonly DraftStep[], rewrite: (value: string) => string): DraftStep[] {
+  return steps.map((s) => (s.kind === 'type' && s.value ? { ...s, value: rewrite(s.value) } : s));
+}
+
 const TABLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Why a table name cannot be used, or null: it must be kebab-case and unique among the other tables. */
@@ -407,6 +425,14 @@ export type DraftAction =
   | { type: 'setStepCounts'; counts: (number | null)[] }
   | { type: 'setName'; name: string }
   | { type: 'setVar'; name: string; value: string }
+  /** Replace the URL template; an invalid template leaves the draft unchanged. */
+  | { type: 'setUrl'; url: string }
+  /** Add a variable nothing uses yet; an invalid or taken name leaves the draft unchanged. */
+  | { type: 'addVar'; name: string }
+  /** Rename a variable and each `{from}` in the template and `type` step values. */
+  | { type: 'renameVar'; from: string; to: string }
+  /** Remove a variable; each use becomes its value, encoded in the template and raw in steps. */
+  | { type: 'removeVar'; name: string }
   | { type: 'markSaved' };
 
 /** Actions that only refresh live data and do not make the draft dirty. */
@@ -690,6 +716,36 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'setVar':
       next = { ...draft, vars: draft.vars.map((v) => (v.name === action.name ? { ...v, value: action.value } : v)) };
       break;
+    case 'setUrl':
+      if (action.url === draft.url || templateProblem(action.url)) return draft;
+      next = { ...draft, url: action.url };
+      break;
+    case 'addVar':
+      if (varNameError(draft, action.name)) return draft;
+      next = { ...draft, vars: [...draft.vars, { name: action.name, value: '', added: true }] };
+      break;
+    case 'renameVar': {
+      const { from, to } = action;
+      if (from === to || !draft.vars.some((v) => v.name === from) || varNameError(draft, to)) return draft;
+      next = {
+        ...draft,
+        url: renameVariable(draft.url, from, to),
+        steps: rewriteSteps(draft.steps, (value) => renameVariable(value, from, to)),
+        vars: draft.vars.map((v) => (v.name === from ? { ...v, name: to } : v)),
+      };
+      break;
+    }
+    case 'removeVar': {
+      const variable = draft.vars.find((v) => v.name === action.name);
+      if (!variable) return draft;
+      next = {
+        ...draft,
+        url: inlineVariable(draft.url, variable.name, variable.value, true),
+        steps: rewriteSteps(draft.steps, (value) => inlineVariable(value, variable.name, variable.value, false)),
+        vars: draft.vars.filter((v) => v !== variable),
+      };
+      break;
+    }
     case 'markSaved':
       next = { ...draft, dirty: false };
       break;

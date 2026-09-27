@@ -28,7 +28,7 @@ import {
   type ItemLevel,
   type ItemProposal,
 } from '../selectors';
-import { fillTemplate } from '../template';
+import { fillTemplate, retemplateUrl, templateProblem } from '../template';
 import {
   bare,
   DEFAULT_PAGINATION,
@@ -39,6 +39,7 @@ import {
   fieldDefaults,
   tableNameError,
   reduceDraft,
+  varNameError,
   type DraftAction,
 } from './draft';
 import { RecorderEmitter } from './events';
@@ -275,6 +276,9 @@ export class RecorderController {
       editing: null,
       pendingSelect: null,
       selectorError: null,
+      urlError: null,
+      varError: null,
+      openedUrl: '',
       repick: repickContext ? repickContext.index : null,
       repickStep: null,
       repickContext,
@@ -331,7 +335,9 @@ export class RecorderController {
   /** Expose the bridge, inject the bundle, and open the target URL. */
   async start(): Promise<PageInfo> {
     await this.attach();
-    const info = await this.session.goto(this.targetUrl(), { timeoutMs: this.opts.timeoutMs ?? 30_000 });
+    const target = this.targetUrl();
+    this.current = { ...this.current, openedUrl: target };
+    const info = await this.session.goto(target, { timeoutMs: this.opts.timeoutMs ?? 30_000 });
     this.current = { ...this.current, url: info.url };
     return info;
   }
@@ -434,12 +440,26 @@ export class RecorderController {
     this.current = { ...this.current, draft: reduceDraft(this.current.draft, action) };
   }
 
+  /** Apply an accepted template or variable edit; it clears both inline errors. */
+  private applyVar(action: DraftAction): void {
+    this.apply(action);
+    this.current = { ...this.current, urlError: null, varError: null };
+  }
+
+  /** Commit a URL template, or refuse it into `urlError` and keep the previous one. */
+  private setUrl(url: string): void {
+    const problem = templateProblem(url);
+    if (problem) this.current = { ...this.current, urlError: problem };
+    else this.applyVar({ type: 'setUrl', url });
+  }
+
   private async route(msg: ParsedPageMessage): Promise<HostMessage | void> {
     switch (msg.kind) {
       case 'session.ready':
         // A page loaded after the host detached still runs the injected bundle; tell it to go away.
         if (this.detached) return { kind: 'session.detach' };
-        this.current = { ...this.current, url: msg.url };
+        // Attached to a page the session did not open: that page is the last opened URL.
+        this.current = { ...this.current, url: msg.url, openedUrl: this.current.openedUrl || msg.url };
         this.emitter.emit('recorder.ready', { url: msg.url });
         // Counts refresh after the reply, so the panel renders at once.
         void this.handleInternal(async () => {
@@ -678,11 +698,35 @@ export class RecorderController {
         this.apply({ type: 'setName', name: msg.name });
         return;
       case 'draft.setVar':
-        this.apply({ type: 'setVar', name: msg.name, value: msg.value });
+        this.applyVar({ type: 'setVar', name: msg.name, value: msg.value });
         return;
-      case 'draft.reopen':
+      case 'draft.reopen': {
+        const target = this.targetUrl();
+        this.current = { ...this.current, openedUrl: target };
         // Navigating tears down the page that sent this message; do not wait for it.
-        void this.handleInternal(() => this.session.goto(this.targetUrl(), { timeoutMs: this.opts.timeoutMs ?? 30_000 }));
+        void this.handleInternal(() => this.session.goto(target, { timeoutMs: this.opts.timeoutMs ?? 30_000 }));
+        return;
+      }
+      case 'draft.setUrl':
+        this.setUrl(msg.url);
+        return;
+      case 'draft.useCurrentUrl':
+        this.setUrl(retemplateUrl(this.current.url, this.draft.vars));
+        return;
+      case 'draft.addVar': {
+        const error = varNameError(this.draft, msg.name);
+        if (error) this.current = { ...this.current, varError: { name: msg.name, message: error } };
+        else this.applyVar({ type: 'addVar', name: msg.name });
+        return;
+      }
+      case 'draft.renameVar': {
+        const error = msg.from === msg.to ? null : varNameError(this.draft, msg.to);
+        if (error) this.current = { ...this.current, varError: { name: msg.from, message: error } };
+        else this.applyVar({ type: 'renameVar', from: msg.from, to: msg.to });
+        return;
+      }
+      case 'draft.removeVar':
+        this.applyVar({ type: 'removeVar', name: msg.name });
         return;
       case 'test.run': {
         const results = await this.testRun();

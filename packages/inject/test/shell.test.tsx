@@ -231,6 +231,24 @@ describe('sections', () => {
     fireEvent.click(p.q('section-recipe')!.querySelector('[data-ws="section-toggle"]')!);
     expect(p.sent).toEqual([{ kind: 'panel.setCollapsed', section: 'recipe', collapsed: false }]);
   });
+
+  it('reflects an edited template in the collapsed recipe and leaves unused variables out', () => {
+    const draft = {
+      ...newDraft(),
+      name: 'google-com-search',
+      url: 'https://www.google.com/search?q={query}&hl={lang}',
+      vars: [
+        { name: 'query', value: 'top llms' },
+        { name: 'lang', value: 'en' },
+        { name: 'email', value: 'me@acme.dev', added: true as const },
+      ],
+    };
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, steps: false, pagination: true } } });
+    const summary = p.q('section-recipe')!.querySelector('[data-ws="section-summary"]')!;
+    expect(summary.querySelector('[data-ws="recipe-summary-url"]')!.textContent).toBe('https://www.google.com/search?q=querytop llms&hl=langen');
+    expect(summary.querySelector('[data-ws="summary-var-lang"] .ws-chip-value')!.textContent).toBe('en');
+    expect(summary.querySelector('[data-ws="summary-var-email"]')).toBeNull();
+  });
 });
 
 describe('ancestor breadcrumb', () => {

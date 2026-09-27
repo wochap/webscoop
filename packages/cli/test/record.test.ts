@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
 import { checkTemplate, proposeName } from '../src/commands/record';
+import { encodedValueWarnings } from '../src/commands/run';
 import { tempDir, testIo } from './helpers';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
@@ -70,6 +71,19 @@ describe('webscoop record', () => {
     expect(io.browserCreated()).toBe(0);
     expect(() => checkTemplate('ftp://x/{a}')).toThrow(/http and https/);
     expect(() => checkTemplate('/relative')).toThrow(/absolute/);
+  });
+
+  it('warns about encoded --var values used in the template, not about step-only ones', async () => {
+    const dir = await tempDir();
+    const io = testIo({ env: { WEBSCOOP_HOME: dir } });
+    // No display: the warning comes first, then the usual display error and exit code.
+    expect(await main(['record', 'https://www.google.com/search?q={query}', '--var', 'query=top+llms'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain('warning: --var query="top+llms" is URL-encoded, so "+" stays a literal plus; for a space pass "top llms"');
+    expect(io.err()).toContain('a display is required');
+    expect(encodedValueWarnings('https://shop.test/login', { login_email: 'a+b@acme.dev' })).toEqual([]);
+    expect(encodedValueWarnings('https://x.test/{a}', { a: 'bad%zz' })).toEqual([]);
+    expect(encodedValueWarnings('https://x.test/{a}', { a: '100%25%' })).toEqual(['warning: --var a="100%25%" is URL-encoded again ("%" becomes "%25")']);
+    expect(encodedValueWarnings('https://x.test/{a}', { a: 'plain text' })).toEqual([]);
   });
 
   it('prompts for variables without a value, unless given with --var', async () => {

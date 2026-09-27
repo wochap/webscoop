@@ -246,8 +246,9 @@ export function ScoopRoot() {
           <>
             <RecipeBar
               draft={draft}
-              editingVar={ui.editingVar}
-              setEditingVar={(editingVar) => actions.setUi({ editingVar })}
+              urlError={host.urlError}
+              varError={host.varError}
+              openedUrl={host.openedUrl}
               collapsed={collapsed.recipe}
               onCollapse={collapse('recipe')}
             />

@@ -26,7 +26,6 @@ export interface UiState {
   menu: string | null;
   drawerOpen: boolean;
   drawerView: 'table' | 'json';
-  editingVar: string | null;
   /** Fingerprint score of the hovered element while re-picking, null when nothing is hovered. */
   hoverScore: number | null;
   /** While picking: the hover walk distance, the similar sibling count, and the labels from the hover target down to the start element. */
@@ -52,7 +51,6 @@ export const initialUi: UiState = {
   menu: null,
   drawerOpen: false,
   drawerView: 'table',
-  editingVar: null,
   hoverScore: null,
   hover: null,
   toasts: [],

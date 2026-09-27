@@ -153,6 +153,8 @@ export const ProposalSchema = z.object({
 export const VarValueSchema = z.object({
   name: z.string(),
   value: z.string(),
+  /** Added with "+ var": kept in the draft while nothing uses it, never saved unused. */
+  added: z.optional(z.literal(true)),
 });
 
 export const DraftFieldSchema = z.object({
@@ -391,6 +393,12 @@ export const RecorderStateSchema = z.object({
   pendingSelect: z._default(z.nullable(z.object({ path: PathSchema })), null),
   /** Why the last typed selection selector was refused; the previous selection stays. */
   selectorError: z._default(z.nullable(z.string()), null),
+  /** Why the last committed URL template was refused; the previous template stays. */
+  urlError: z._default(z.nullable(z.string()), null),
+  /** Why the last variable add or rename was refused; `name` is the row (the new name for an add). */
+  varError: z._default(z.nullable(z.object({ name: z.string(), message: z.string() })), null),
+  /** The URL the session itself last opened: at start, on Reopen, or the page it attached to. */
+  openedUrl: z._default(z.string(), ''),
   /** Set while an interactive run is paused on a guard. */
   guardContext: z._default(z.nullable(GuardContextSchema), null),
   test: z.nullable(TestResultsSchema),
@@ -530,6 +538,16 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.setName', { name: z.string() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
   msg('draft.reopen', {}),
+  /** Replace the URL template; an invalid template is refused into `urlError`. */
+  msg('draft.setUrl', { url: z.string() }),
+  /** Add a variable that nothing uses yet; a bad or taken name is refused into `varError`. */
+  msg('draft.addVar', { name: z.string() }),
+  /** Rename a variable and every `{from}` in the template and `type` step values. */
+  msg('draft.renameVar', { from: z.string(), to: z.string() }),
+  /** Remove a variable, writing its value in place of every use. */
+  msg('draft.removeVar', { name: z.string() }),
+  /** Set the template from the open page's URL, putting back variables found exactly once. */
+  msg('draft.useCurrentUrl', {}),
   msg('test.run', {}),
   msg('test.clear', {}),
   msg('save.request', {}),
