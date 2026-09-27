@@ -5,7 +5,7 @@ import { useActions } from './context';
 import { Icon } from './icons';
 import { SelectorChip } from './selector-chip';
 import { SelectorInput } from './selector-input';
-import { SelectorStack, stackLevels } from './selector-stack';
+import { SelectorStack, StackBadge, stackLevels } from './selector-stack';
 import { Kbd } from './shell';
 
 const selectorText = (c: ProtocolCandidate | undefined) => (c ? `${c.strategy}=${c.value}` : '');
@@ -263,7 +263,24 @@ function ParentLadder({ proposal, onPreview }: { proposal: ProposalView; onPrevi
 }
 
 /** A stack row of the list setup: the level's chip and count; a click turns it into the selector input. */
-function StackRow({ level, view, error, open, onOpen, onClose }: { level: LevelKind; view: LevelView | null; error: string | null; open: boolean; onOpen: () => void; onClose: () => void }) {
+function StackRow({
+  level,
+  view,
+  error,
+  open,
+  onOpen,
+  onClose,
+  inferred = false,
+}: {
+  level: LevelKind;
+  view: LevelView | null;
+  error: string | null;
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  /** The list parent was derived by the recorder. */
+  inferred?: boolean;
+}) {
   const actions = useActions();
   const primary = view?.selectors[view.primary];
   if (open || !primary) {
@@ -292,6 +309,7 @@ function StackRow({ level, view, error, open, onOpen, onClose }: { level: LevelK
     <button type="button" className="ws-stack-row ws-stack-click" style={level === 'item' ? { paddingLeft: 14 } : undefined} onClick={onOpen} title="Click to type a selector by hand" data-ws={`setup-row-${level}`}>
       <span className={`ws-stack-label ws-label-${level === 'within' ? 'list' : 'item'}`}>{LEVEL_LABEL[level]}</span>
       <SelectorChip candidate={primary} level={level === 'within' ? 'list' : 'item'} />
+      {inferred && <StackBadge text="inferred" testId="within-inferred" />}
       <span className="ws-spacer" />
       <span className="ws-stack-count" data-ws="stack-count">
         {view?.count ?? '…'}
@@ -368,7 +386,15 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
         <span data-ws="items-skipped">{proposal.skipped} skipped as dissimilar</span>
       </span>
       <div className="ws-stack ws-setup-stack" data-ws="setup-stack">
-        <StackRow level="within" view={proposal.within} error={error('within')} open={rows.within} onOpen={() => openRow('within', true)} onClose={() => openRow('within', false)} />
+        <StackRow
+          level="within"
+          view={proposal.within}
+          error={error('within')}
+          open={rows.within}
+          onOpen={() => openRow('within', true)}
+          onClose={() => openRow('within', false)}
+          inferred={proposal.withinInferred && proposal.within !== null}
+        />
         <StackRow level="item" view={chosen.selectors.length > 0 ? chosen : null} error={error('item')} open={rows.item} onOpen={() => openRow('item', true)} onClose={() => openRow('item', false)} />
         {proposal.pick && proposal.pick.selector && (
           <div className="ws-stack-row ws-stack-pick" style={{ paddingLeft: 28 }} data-ws="setup-pick">
@@ -410,7 +436,7 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
             <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="include-all" />
           </div>
         </Collapsible>
-        <Collapsible title="Adjust list parent" summary={proposal.within?.label ?? 'none'} open={parentOpen} onToggle={toggleParent} testId="adjust-parent">
+        <Collapsible title="Adjust list parent" summary={proposal.within ? `${proposal.within.label}${proposal.withinInferred ? ' · inferred' : ''}` : 'none'} open={parentOpen} onToggle={toggleParent} testId="adjust-parent">
           <ParentLadder proposal={proposal} onPreview={onPreview} />
         </Collapsible>
       </div>
@@ -447,7 +473,7 @@ export function WithinSummary({ item }: { item: DraftItem }) {
       </span>
       <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.pickLevel', level: 'within' })} data-ws="within-repick">
         <Icon name="crosshair-simple" size={12} />
-        {primary ? 'Re-pick' : 'Pick'}
+        {primary ? (item.withinInferred ? 'Change' : 'Re-pick') : 'Pick'}
       </button>
       {primary && (
         <button
@@ -469,7 +495,12 @@ export function ItemSummary({ item }: { item: DraftItem }) {
   const primary = item.selectors[0]!;
   return (
     <div className="ws-col" data-ws="item-summary">
-      <SelectorStack levels={stackLevels(item.within?.[0], primary, { within: item.withinCount ?? null, item: item.count ?? '…' })} testId="rows-stack" />
+      <SelectorStack
+        levels={stackLevels(item.within?.[0], primary, { within: item.withinCount ?? null, item: item.count ?? '…' }).map((l) =>
+          l.level === 'list' && item.withinInferred ? { ...l, badge: { text: 'inferred', testId: 'within-inferred' } } : l,
+        )}
+        testId="rows-stack"
+      />
       <div className="ws-row">
         <span className="ws-meta" data-ws="item-count" data-count={item.count ?? undefined}>
           {item.count ?? '…'} rows

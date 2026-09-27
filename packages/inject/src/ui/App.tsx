@@ -239,7 +239,7 @@ export function ScoopRoot() {
         {proposal ? (
           // The list setup takes over the content; tabs, the table menu, and field edits wait.
           <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
-            {host.levelPick && <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick.level} />}
+            {host.levelPick && <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick.level} hover={ui.hover} />}
             <ListSetup proposal={proposal} table={table.name} pick={host.selected?.selection.path ?? null} onPreview={(path) => actions.previewPath?.(path)} />
           </div>
         ) : (
@@ -271,7 +271,7 @@ export function ScoopRoot() {
                 </Section>
               )}
               <Section id="pick" title="Pick">
-                <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
+                <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} hover={ui.hover} />
                 <SelectionPanel host={host} trail={ui.trail} />
               </Section>
               <Section id="fields" title="Fields" count={table.fields.length > 0 ? table.fields.length : null}>

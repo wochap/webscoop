@@ -9,6 +9,8 @@ export interface StackLevel {
   level: SelectorLevel;
   /** Matches of the level, or for a field the containers holding a match out of the container count. */
   count?: string | number | null;
+  /** A small badge after the chip, such as "inferred" on a derived list parent. */
+  badge?: { text: string; testId?: string };
 }
 
 /** The list parent, item container, and optional field levels of an item scoped selector, outermost first. */
@@ -39,6 +41,7 @@ export function SelectorStack({ levels, testId = 'selector-stack' }: { levels: r
         <div key={l.name} className="ws-stack-row" style={{ paddingLeft: i * 14, ['--ws-indent' as string]: `${i * 14}px` }} data-ws="stack-level" data-level={l.level}>
           <span className="ws-stack-label">{l.name}</span>
           <SelectorChip candidate={l.candidate} level={l.level} />
+          {l.badge && <StackBadge text={l.badge.text} testId={l.badge.testId} />}
           {l.count !== null && l.count !== undefined && (
             <span className="ws-stack-count" data-ws="stack-count">
               {l.count}
@@ -47,5 +50,14 @@ export function SelectorStack({ levels, testId = 'selector-stack' }: { levels: r
         </div>
       ))}
     </div>
+  );
+}
+
+/** A badge on a stack row. */
+export function StackBadge({ text, testId }: { text: string; testId?: string | undefined }) {
+  return (
+    <span className="ws-badge ws-badge-outline" data-ws={testId}>
+      {text}
+    </span>
   );
 }

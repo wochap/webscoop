@@ -275,6 +275,12 @@
   box-shadow: var(--ws-shadow-sm);
 }
 .ws-strip-active { background: var(--ws-accent-tint); box-shadow: 0 0 0 1px var(--ws-accent); }
+.ws-pick-card { display: flex; flex-direction: column; gap: var(--ws-s3); padding: var(--ws-s3) var(--ws-s4); border-radius: var(--ws-r-md); background: var(--ws-accent-tint); box-shadow: 0 0 0 1px var(--ws-accent-700); }
+.ws-pick-card .ws-strip { padding: 0; background: transparent; box-shadow: none; }
+.ws-pick-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ws-accent); flex: none; }
+.ws-hover-card { display: flex; flex-direction: column; gap: 6px; }
+.ws-hover-path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-family: var(--ws-mono); font-size: 11px; color: var(--ws-text-muted); }
+.ws-hover-path .ws-hover-current { color: var(--ws-text); font-weight: 600; }
 .ws-attrs { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; }
 .ws-crumbs { display: flex; flex-wrap: wrap; gap: 3px; }
 .ws-crumb {
@@ -328,6 +334,7 @@
   text-transform: uppercase;
   flex: none;
 }
+.ws-badge-outline { background: transparent; box-shadow: inset 0 0 0 1px var(--ws-neutral-700); color: var(--ws-text-muted); text-transform: none; letter-spacing: 0; }
 .ws-stable { background: var(--ws-ok-tint); color: var(--ws-ok); }
 .ws-medium { background: var(--ws-warn-tint); color: var(--ws-warn); }
 .ws-fragile { background: var(--ws-danger-tint); color: var(--ws-danger); }

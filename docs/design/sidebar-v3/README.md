@@ -12,10 +12,10 @@ The design is implemented by four OpenSpec changes: `sidebar-shell` (layout, sec
 |---|---|---|
 | `Webscoop sidebar v2` (canvas) | — | container of the frames below |
 | `01 Idle first open` | `sidebar-shell` | done |
-| `02 Recipe editing` | `recipe-url-edit` | |
-| `03 Picking` | `pick-helpers` | |
-| `03 Picking sidebar` | `pick-helpers` | |
-| `04 Element selected` | `sidebar-shell` (inspector, candidates, breadcrumb), `pick-helpers` (ladder) | done for `sidebar-shell` |
+| `02 Recipe editing` | `recipe-url-edit` | not started |
+| `03 Picking` | `pick-helpers` | done |
+| `03 Picking sidebar` | `pick-helpers` | done |
+| `04 Element selected` | `sidebar-shell` (inspector, candidates, breadcrumb), `pick-helpers` (ladder) | done (the ancestor ladder is the list setup's "Adjust item level"; walking while picking is the hover walk) |
 | `05 Items proposal` | `table-modes` | done (replaced by the v3 list setup) |
 | `06 Working state` | `sidebar-shell` | done |
 | `07 Editing field` | `sidebar-shell` | done (without the Non-Goals extras) |
@@ -33,7 +33,7 @@ The design is implemented by four OpenSpec changes: `sidebar-shell` (layout, sec
 | `04d Belongs to ads` | `table-modes` | done |
 | `04e Page table repeating` | `table-modes` | done |
 | `05a List setup` | `table-modes` | done |
-| `05b Adjust item level` | `table-modes`, `pick-helpers` | done for `table-modes` |
+| `05b Adjust item level` | `table-modes`, `pick-helpers` | done |
 | `05c Manual list parent` | `table-modes` | done |
 | `05c2 Invalid list parent` | `table-modes` | done |
 | `05d Edit list` | `table-modes` | done |
@@ -61,8 +61,6 @@ Agreed differences between the frames and the panel.
 | `04a`: no "Set up list manually…" | Quiet link when nothing repeats | A way to make a list when detection fails; replaces "Use as item container" |
 | `05a` Accept on a pick of the item itself goes to `04b` | Goes to the empty Pick state with "List ready — pick fields inside an item" | A field reading the whole container is not useful |
 | `04a` `in item / page` toggle | No scope choice; the scope follows the table's mode | One mode per table |
-| "inferred" badge on the list parent row (`05a`, `05b`) | Not shown | The draft does not record whether the list parent was derived; `pick-helpers` adds it |
-| `06`: hint "↑ ↓ parent / child" in the pick strip | Not shown | Hover walk belongs to `pick-helpers` |
 | `05b`: "on page 13 incl. 2 ads" for a level that also matches other tables' items | Plain match count inside the list parent | Counting other tables' items per ladder row adds cost for a rare hint |
 | `05a`: no include all siblings control | Toggle inside "Adjust item level" | Keeps the existing capability reachable without adding a row to the main screen |
 | `04c`: new page table name prefilled from the element (`search-info`) | Prefilled with the default new table name (`page` or `table-N`) | Same default as the `+` tab; the user edits it inline |
@@ -72,7 +70,6 @@ Agreed differences between the frames and the panel.
 | `04a`, `04b`, `04e`: "Add field" with an `Enter` key hint | "Add field" without a key hint | Enter accepts the list setup; adding a field stays a click |
 | `05a`: no skipped count | "N skipped as dissimilar" under the count | The recorder spec keeps the skipped count in the list setup |
 | `05a`: Exclude above the two "Adjust" controls | Exclude below them | `05b` draws it below; one order for both states |
-| `06`: pick strip "Picking in results" at the bottom of the page | The panel's pick strip | The on-page strip belongs to `pick-helpers` with the hover walk |
 | 376px frame width | 400px panel | The recorder spec fixes the panel width |
 | Phosphor glyphs from unpkg, regular, bold, and fill | Inline SVG subset, regular plus bold for the strategy tags and warnings | The panel runs inside third-party pages and loads nothing remote |
 | Rows section: stack only | Stack plus a "N rows" line, the list parent re-pick row, and the exclusion input | Existing edit hooks and exclusions stay reachable without the list setup of `table-modes` |
@@ -80,6 +77,13 @@ Agreed differences between the frames and the panel.
 | Tab "…" menu on each tab | One "…" menu in the active table's header | Menus act on the active table; the host renames and removes only the active table |
 | Selecting a tab while an element is selected: panel sends `draft.selectTable` then `selection.retarget` | The host retargets the kept selection itself on `draft.selectTable` and `draft.addTable` | One message, no window where the selection belongs to no table |
 | Pagination starts collapsed | It opens when a pagination target is marked | The user just set it and needs its options |
+| `03`: hover tag starts with `tag.class` (`div.MjjYud`) | Tag keeps `tag role excerpt` and appends `↑N`, "N similar siblings", and `W×H` | The existing tag is spec'd and tested; the walk parts are what the frame adds |
+| `06`: on-page strip reads "Picking in results ↑ ↓ parent / child Esc cancel" | Strip also lists "click to pick" and "Alt+click through overlays" (as in v2 `03`) | One strip for both frames; the Alt hint was in the panel strip before |
+| No "Change" control on the list parent row | The Rows list parent control reads "Change" when the list parent is inferred | The inferred badge needs an obvious override |
+| `[` / `]` not shown | Accepted silently as walk keys | Alternative keys for keyboards without arrows; hints stay short |
+| `03 Picking sidebar`: element thumbnail in the hovering card | No thumbnail | The panel draws no page image; the page outline shows the element |
+| `03`: "start" label beside the start element's text | Label beside the start element's box | The overlay outlines boxes; a block element's box is wider than its text |
+| `05a`: "Adjust list parent" summary `#rso · inferred` in mono | The list parent's label (`ul.product-list · inferred`) in the summary style | The summary shows the level label, as before this change |
 
 ## Token mapping
 

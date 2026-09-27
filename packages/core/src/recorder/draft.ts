@@ -395,7 +395,7 @@ export type DraftAction =
   | { type: 'removeExclusion'; index: number }
   | { type: 'setItemCounts'; count: number | null; total: number | null; withinCount?: number | null; table?: number }
   /** Set or clear (null) the item container's list parent. */
-  | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint'] }
+  | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint']; inferred?: boolean }
   | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null; coverage?: DraftField['coverage'] }[]; table?: number }
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
@@ -619,10 +619,16 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     }
     case 'setWithin': {
       if (!table.item) return draft;
-      const { within: _w, withinFingerprint: _f, withinCount: _c, ...rest } = table.item;
+      const { within: _w, withinFingerprint: _f, withinCount: _c, withinInferred: _i, ...rest } = table.item;
       next = setActive({
         item: action.within && action.within.length > 0
-          ? { ...rest, within: action.within, ...(action.fingerprint ? { withinFingerprint: action.fingerprint } : {}), withinCount: action.within[0]!.count ?? null }
+          ? {
+              ...rest,
+              within: action.within,
+              ...(action.fingerprint ? { withinFingerprint: action.fingerprint } : {}),
+              withinCount: action.within[0]!.count ?? null,
+              ...(action.inferred ? { withinInferred: true } : {}),
+            }
           : rest,
       });
       break;

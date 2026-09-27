@@ -1,10 +1,37 @@
-import { isOwn, pickable } from './dom';
+import { isOwn, OWN_TAGS, pickable } from './dom';
+import { isTypingTarget } from './keyboard';
+
+/** The hover walk: the element under the pointer and how many steps the target is raised above it. */
+export interface HoverWalk {
+  start: Element;
+  depth: number;
+}
 
 export interface PickerHooks {
   isActive(): boolean;
-  onHover(el: Element | null): void;
+  /** The hover target changed: the walked target, with the walk it came from; null clears it. */
+  onHover(el: Element | null, walk?: HoverWalk): void;
   onPick(el: Element): void;
   onCancel(): void;
+  /** A key aimed at the page while picking, held back from the page; the runtime may run a shortcut (Ctrl+S). */
+  onKey?(e: KeyboardEvent): void;
+  /** Focus is in a text input inside the panel, which a closed shadow root hides from the event path. */
+  isPanelTyping?(): boolean;
+}
+
+const WALK_UP = new Set(['ArrowUp', '[']);
+const WALK_DOWN = new Set(['ArrowDown', ']']);
+
+/** The start element and its ancestors below `body`, skipping recorder hosts: the chain the walk moves along. */
+export function walkChain(start: Element): Element[] {
+  const chain = [start];
+  for (let cur = start.parentElement; cur; cur = cur.parentElement) {
+    const tag = cur.tagName.toLowerCase();
+    if (tag === 'body' || tag === 'html') break;
+    if (OWN_TAGS.has(tag)) continue;
+    chain.push(cur);
+  }
+  return chain;
 }
 
 /** Events swallowed while picking so host handlers never see them. */
@@ -50,10 +77,14 @@ export function elementThrough(doc: Document, x: number, y: number): Element | n
 /**
  * Capture-phase listeners on `window`, registered once at injection time so
  * they run before any host handler. While picking, pointer events on the
- * page are stopped; the click selects. Alt picks through overlays.
+ * page are stopped; the click selects. Alt picks through overlays. Up and
+ * Down (or `[` and `]`) walk the hover target to the parent of the element
+ * under the pointer and back; key presses aimed at the page are held back.
  */
 export class Picker {
-  private last: Element | null = null;
+  /** The element under the pointer; the walk starts here. */
+  private start: Element | null = null;
+  private depth = 0;
 
   constructor(
     private readonly win: Window,
@@ -63,6 +94,8 @@ export class Picker {
     win.addEventListener('mousemove', this.onMove, opts);
     for (const type of BLOCKED) win.addEventListener(type, this.onBlocked, opts);
     win.addEventListener('keydown', this.onKey, opts);
+    win.addEventListener('keyup', this.onKeyAside, opts);
+    win.addEventListener('keypress', this.onKeyAside, opts);
   }
 
   /** Remove every listener, so the page gets its events back. */
@@ -71,7 +104,35 @@ export class Picker {
     this.win.removeEventListener('mousemove', this.onMove, opts);
     for (const type of BLOCKED) this.win.removeEventListener(type, this.onBlocked, opts);
     this.win.removeEventListener('keydown', this.onKey, opts);
-    this.last = null;
+    this.win.removeEventListener('keyup', this.onKeyAside, opts);
+    this.win.removeEventListener('keypress', this.onKeyAside, opts);
+    this.reset();
+  }
+
+  private reset(): void {
+    this.start = null;
+    this.depth = 0;
+  }
+
+  /** The hover target: the start element raised `depth` steps. */
+  private walked(): Element | null {
+    if (!this.start) return null;
+    const chain = walkChain(this.start);
+    return chain[Math.min(this.depth, chain.length - 1)]!;
+  }
+
+  private emit(): void {
+    const target = this.walked();
+    this.hooks.onHover(target, target ? { start: this.start!, depth: this.depth } : undefined);
+  }
+
+  private walk(delta: 1 | -1): void {
+    if (!this.start) return;
+    const max = walkChain(this.start).length - 1;
+    const next = Math.max(0, Math.min(max, this.depth + delta));
+    if (next === this.depth) return;
+    this.depth = next;
+    this.emit();
   }
 
   private target(e: MouseEvent): Element | null {
@@ -84,11 +145,18 @@ export class Picker {
   private readonly onMove = (e: MouseEvent) => {
     if (!this.hooks.isActive()) return;
     if (isOwn(e.target as Node)) {
-      if (this.last) this.hooks.onHover((this.last = null));
+      if (this.start) {
+        this.reset();
+        this.hooks.onHover(null);
+      }
       return;
     }
+    // Moving within the same element keeps the walk; another element starts over.
     const el = this.target(e);
-    if (el !== this.last) this.hooks.onHover((this.last = el));
+    if (el === this.start) return;
+    this.start = el;
+    this.depth = 0;
+    this.emit();
   };
 
   private readonly onBlocked = (e: Event) => {
@@ -96,18 +164,41 @@ export class Picker {
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type !== 'click') return;
-    const el = this.target(e as MouseEvent);
-    if (!el) return;
-    this.last = null;
-    this.hooks.onPick(el);
+    const raw = this.target(e as MouseEvent);
+    if (!raw) return;
+    const walked = this.depth > 0 ? this.walked() : null;
+    this.reset();
+    this.hooks.onPick(walked && walked.contains(raw) ? walked : raw);
   };
 
   private readonly onKey = (e: KeyboardEvent) => {
-    if (!this.hooks.isActive() || e.key !== 'Escape') return;
-    e.preventDefault();
+    if (!this.hooks.isActive()) return;
+    const origin = e.composedPath?.()[0] ?? e.target;
+    if ((isTypingTarget(origin) && isOwn(origin as Node)) || (isOwn(e.target as Node) && this.hooks.isPanelTyping?.())) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.reset();
+      this.hooks.onCancel();
+      return;
+    }
+    const up = WALK_UP.has(e.key);
+    if ((up || WALK_DOWN.has(e.key)) && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.walk(up ? 1 : -1);
+      return;
+    }
+    if (isOwn(e.target as Node)) return;
+    // Other keys aimed at the page: panel shortcuts may run, the page's handlers never see them.
+    this.hooks.onKey?.(e);
     e.stopImmediatePropagation();
-    this.last = null;
-    this.hooks.onCancel();
+  };
+
+  /** The other half of a key press aimed at the page stays out of the page too. */
+  private readonly onKeyAside = (e: KeyboardEvent) => {
+    if (!this.hooks.isActive() || isOwn(e.target as Node)) return;
+    e.stopImmediatePropagation();
   };
 }
 

@@ -147,6 +147,15 @@ function isInside(node: AnnotatedNode, container: AnnotatedNode): boolean {
   return false;
 }
 
+/** The nearest element holding every node, excluding the nodes themselves; null when they share none. */
+function commonAncestor(nodes: readonly AnnotatedNode[]): AnnotatedNode | null {
+  const [first, ...rest] = nodes;
+  for (let cur = first?.parent; cur; cur = cur.parent) {
+    if (rest.every((n) => n !== cur && isInside(n, cur))) return cur;
+  }
+  return null;
+}
+
 /** Move the candidate at `index` to the front. */
 function toFront<T>(list: readonly T[], index: number): T[] {
   const chosen = list[index];
@@ -208,10 +217,12 @@ export class RecorderController {
   /** Where the open list setup came from. */
   private origin: ProposalOrigin = 'pick';
   /** Proposal edits that inference does not know about: typed selectors, a cleared list parent, include all. */
-  private edits: { within: Candidate | null; item: Candidate | null; withinCleared: boolean; includeAll: boolean } = {
+  private edits: { within: Candidate | null; item: Candidate | null; withinCleared: boolean; withinInferred: boolean; includeAll: boolean } = {
     within: null,
     item: null,
     withinCleared: false,
+    /** The list parent in effect was derived by the recorder, not chosen by the user. */
+    withinInferred: false,
     includeAll: false,
   };
   /** A typed selection selector waiting for the page to select its first match. */
@@ -1063,6 +1074,7 @@ export class RecorderController {
       this.proposal = inferred;
     }
     this.resetEdits();
+    this.edits = { ...this.edits, withinInferred: this.proposal.within !== null };
     this.current = { ...this.current, proposal: null, levelPick: null, notice: null };
     await this.showProposal();
     const view = this.current.proposal!;
@@ -1217,7 +1229,7 @@ export class RecorderController {
   }
 
   private resetEdits(): void {
-    this.edits = { within: null, item: null, withinCleared: false, includeAll: false };
+    this.edits = { within: null, item: null, withinCleared: false, withinInferred: false, includeAll: false };
   }
 
   private dropProposal(): void {
@@ -1290,6 +1302,7 @@ export class RecorderController {
     this.root = root;
     this.origin = 'edit';
     this.resetEdits();
+    this.edits = { ...this.edits, withinInferred: !!item.withinInferred && !!withinNode };
     await this.showProposal();
     const view: ProposalView = { ...this.current.proposal!, previousCount: item.count, exclude: item.exclude };
     this.current = { ...this.current, proposal: await this.finishView(view) };
@@ -1456,6 +1469,7 @@ export class RecorderController {
     const proposed = p.container ? await this.levelView({ node: p.container, items }, parent, this.edits.item) : { view: EMPTY_LEVEL, fellBack: false };
     let view: ProposalView = {
       within: withinNode ? await this.withinView(withinNode, this.edits.within) : null,
+      withinInferred: withinNode !== null && this.edits.withinInferred,
       proposed: proposed.view,
       skipped: this.edits.includeAll ? 0 : p.skipped.length,
       includeAll: this.edits.includeAll,
@@ -1755,12 +1769,12 @@ export class RecorderController {
         if (!next) return 'no items like the picked one inside that element';
         this.proposal = next;
       }
-      this.edits = { ...this.edits, within: typed, item: null, withinCleared: false };
+      this.edits = { ...this.edits, within: typed, item: null, withinCleared: false, withinInferred: false };
       return null;
     };
     if (by === 'clear') {
       if (level === 'item') return refuse('the item container cannot be empty; cancel the list setup instead');
-      this.edits = { ...this.edits, within: null, withinCleared: true };
+      this.edits = { ...this.edits, within: null, withinCleared: true, withinInferred: false };
       return this.showProposal();
     }
     if (by === 'pick') {
@@ -1778,7 +1792,7 @@ export class RecorderController {
       if (!next) return refuse('no items at that level');
       this.proposal = { ...next, within: p.within };
       this.edits = { ...this.edits, item: null };
-      return this.showProposal();
+      return this.inferWithin(body);
     }
     const text = (msg.selector ?? '').trim();
     if (!text) return refuse('type a selector');
@@ -1797,7 +1811,7 @@ export class RecorderController {
       const within: LevelView = { tag: '', label: text, path: [], selectors: [{ ...candidate, count: 0 }], primary: 0, count: 0, total: 0, paths: [], samples: [] };
       this.current = {
         ...this.current,
-        proposal: { ...view, within, proposed: { ...view.proposed, count: 0, total: 0, paths: [], samples: [] }, pick: null, error: { level, message: 'list parent matches nothing' } },
+        proposal: { ...view, within, withinInferred: false, proposed: { ...view.proposed, count: 0, total: 0, paths: [], samples: [] }, pick: null, error: { level, message: 'list parent matches nothing' } },
       };
       return;
     }
@@ -1814,7 +1828,32 @@ export class RecorderController {
     if (!container) return refuse(`"${text}" matches elements that are not in the page snapshot`);
     this.proposal = { ...p, container, siblings: nodes, all: nodes, skipped: [] };
     this.edits = { ...this.edits, item: candidate };
-    return this.showProposal();
+    return this.inferWithin(body);
+  }
+
+  /**
+   * Show the proposal after an item level edit. A manual setup with no list
+   * parent (and none cleared by the user) gets one inferred: the nearest
+   * common ancestor of the matched containers below `body`, kept only when
+   * the item count stays the same relative to it.
+   */
+  private async inferWithin(body: AnnotatedNode): Promise<void> {
+    await this.showProposal();
+    const p = this.proposal!;
+    if (this.origin !== 'manual' || p.within || this.edits.withinCleared || !p.container) return;
+    const before = this.current.proposal!;
+    if (!before.proposed.count) return;
+    const items = this.edits.includeAll ? p.all : p.siblings;
+    const ancestor = commonAncestor([p.container, ...items]);
+    if (!ancestor || ancestor === body || TOP.has(ancestor.tag) || !isInside(ancestor, body)) return;
+    this.proposal = { ...p, within: ancestor };
+    this.edits = { ...this.edits, withinInferred: true };
+    await this.showProposal();
+    const after = this.current.proposal!;
+    if (after.proposed.count === before.proposed.count && !after.error) return;
+    this.proposal = p;
+    this.edits = { ...this.edits, withinInferred: false };
+    this.current = { ...this.current, proposal: before };
   }
 
   /** Set, re-pick, or clear the list parent of the confirmed item container, rewriting the item selectors relative to it. */
@@ -1914,7 +1953,12 @@ export class RecorderController {
     if (!item) throw new Error('no item container to change');
     if (level === 'within') {
       if (!item.within) throw new Error('the item container has no list parent');
-      this.apply({ type: 'setWithin', within: toFront(item.within, index), ...(item.withinFingerprint ? { fingerprint: item.withinFingerprint } : {}) });
+      this.apply({
+        type: 'setWithin',
+        within: toFront(item.within, index),
+        ...(item.withinFingerprint ? { fingerprint: item.withinFingerprint } : {}),
+        ...(item.withinInferred ? { inferred: true } : {}),
+      });
     } else {
       const { count: _c, total: _t, ...rest } = item;
       this.apply({ type: 'setItem', item: { ...rest, selectors: toFront(item.selectors, index), count: null, total: null } });
@@ -1944,7 +1988,9 @@ export class RecorderController {
       type: 'setItem',
       item: {
         selectors,
-        ...(within.length > 0 ? { within, withinFingerprint: fingerprint(withinNode!), withinCount: null } : {}),
+        ...(within.length > 0
+          ? { within, withinFingerprint: fingerprint(withinNode!), withinCount: null, ...(proposal.withinInferred ? { withinInferred: true } : {}) }
+          : {}),
         exclude,
         fingerprint: fingerprint(containerNode),
         count: null,

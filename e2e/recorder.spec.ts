@@ -666,3 +666,129 @@ test('results with a questions block among the containers: it is highlighted, an
   expect((await r.closeWindow()).code).toBe(0);
   expect(JSON.parse(await readFile(path, 'utf8')).fields[0].fallback).toBe(true);
 });
+
+/** The hover tag markup and the pick strip text, through the e2e hook. */
+async function overlayText(r: Recording): Promise<{ tag: string; strip: string }> {
+  return r.page.evaluate(() => {
+    const hook = (window as unknown as { __webscoopTest: { tag(): string; strip(): string } }).__webscoopTest;
+    return { tag: hook.tag(), strip: hook.strip() };
+  });
+}
+
+test('pick helpers: ArrowUp walks from a result title to its result block, the tag, strip, and card follow, and a click selects the block', async ({ scoop }) => {
+  const url = `http://127.0.0.1:${scoop.playground.port}/results`;
+  const r = await scoop.record([url, '--name', 'serp-walk']);
+  await r.key('p');
+  await r.until((s) => s.ui.picking);
+  expect((await overlayText(r)).strip).toContain('Picking');
+  expect((await overlayText(r)).strip).toContain('parent / child');
+  await r.hover('h3.LC20lb', 1);
+  await r.until((s) => s.ui.hover);
+  for (let i = 0; i < 5; i++) await r.key('ArrowUp');
+  const hover = await r.until((s) => {
+    return s.ui.hover?.depth === 5 ? s.ui.hover : undefined;
+  });
+  expect(hover.similar).toBe(4);
+  expect(hover.path[0]).toBe('div.Mjj4Yd');
+  expect(hover.path.at(-1)).toBe('h3.LC20lb');
+  const { tag } = await overlayText(r);
+  expect(tag).toContain('↑5');
+  expect(tag).toContain('4 similar siblings');
+  expect(tag).toMatch(/\d+×\d+/);
+  expect((await r.query('[data-ws="pick-hover-depth"]'))!.text).toBe('↑5');
+  expect((await r.query('[data-ws="pick-hover-hint"]'))!.text).toContain('Wrappers are hard to click');
+  // Down walks back toward the title.
+  await r.key('ArrowDown');
+  await r.until((s) => s.ui.hover?.depth === 4);
+  await r.key('ArrowUp');
+  await r.until((s) => s.ui.hover?.depth === 5);
+  await r.click('h3.LC20lb', 1);
+  const selected = await r.until((s) => (!s.ui.picking && s.host?.selected ? s.host.selected : undefined));
+  expect(selected.selection.tag).toBe('div');
+  expect(selected.selection.attrs.class).toBe('Mjj4Yd');
+  expect((await overlayText(r)).strip).toBe('');
+  expect(await r.count('[data-ws="pick-hover"]')).toBe(0);
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
+test('pick helpers: page keys are held back while picking, Ctrl+S still saves, and Esc removes the hints', async ({ scoop }) => {
+  const url = `http://127.0.0.1:${scoop.playground.port}/results`;
+  const r = await scoop.record([url, '--name', 'serp-keys']);
+  await r.page.evaluate(() => {
+    const w = window as unknown as { __pageKeys: string[] };
+    w.__pageKeys = [];
+    document.addEventListener('keydown', (e) => w.__pageKeys.push(e.key));
+  });
+  await r.key('p');
+  await r.until((s) => s.ui.picking);
+  await r.hover('h3.LC20lb', 0);
+  await r.key('j');
+  await r.key('ArrowUp');
+  await r.until((s) => s.ui.hover?.depth === 1);
+  expect(await r.page.evaluate(() => (window as unknown as { __pageKeys: string[] }).__pageKeys)).toEqual([]);
+  expect((await r.state()).ui.picking).toBe(true);
+  // Ctrl+S reaches the panel: the empty draft is refused with a toast, and picking goes on.
+  expect(await r.count('[data-ws="toast"]')).toBe(0);
+  await r.key('Control+s');
+  await expect.poll(async () => (await r.query('[data-ws="toast"]'))?.text ?? '').toContain('Not saved');
+  expect((await r.state()).ui.picking).toBe(true);
+  await r.key('Escape');
+  await r.until((s) => !s.ui.picking);
+  expect((await overlayText(r)).strip).toBe('');
+  expect(await r.count('[data-ws="pick-hover"]')).toBe(0);
+  // Not picking: the page gets its keys again.
+  await r.key('j');
+  expect(await r.page.evaluate(() => (window as unknown as { __pageKeys: string[] }).__pageKeys)).toEqual(['j']);
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
+test('pick helpers: the inferred list parent is marked in the setup and Rows, and Change walks up to a new list parent', async ({ scoop }) => {
+  const url = `http://127.0.0.1:${scoop.playground.port}/results`;
+  const r = await scoop.record([url, '--name', 'serp-inferred']);
+  await setUpList(r, 'h3.LC20lb', 0);
+  expect((await r.state()).host!.proposal!.withinInferred).toBe(true);
+  expect((await r.query('[data-ws="setup-row-within"] [data-ws="within-inferred"]'))!.text).toBe('inferred');
+  expect((await r.query('[data-ws="adjust-parent"]'))!.text).toContain('· inferred');
+  await acceptAndAdd(r, 'title');
+  expect((await r.query('[data-ws="rows-stack"] [data-ws="within-inferred"]'))!.text).toBe('inferred');
+  expect((await r.query('[data-ws="within-repick"]'))!.text).toBe('Change');
+
+  // Change: walk from a title up to the results wrapper's parent, which holds every result.
+  await r.clickPanel('[data-ws="within-repick"]');
+  await r.until((s) => s.ui.picking && s.host?.levelPick);
+  expect((await overlayText(r)).strip).toContain('Picking in ');
+  await r.hover('h3.LC20lb', 2);
+  for (let i = 0; i < 8; i++) await r.key('ArrowUp');
+  await r.until((s) => s.ui.hover?.depth === 8);
+  expect((await overlayText(r)).tag).not.toContain('ws-refused');
+  await r.click('h3.LC20lb', 2);
+  const item = await r.until((s) => {
+    const i = s.host?.draft.tables[0]!.item;
+    return i?.within?.[0]?.value !== 'rso' && !s.ui.picking ? i : undefined;
+  });
+  expect(item.within![0]).toMatchObject({ strategy: 'id', value: 'center_col' });
+  expect(item.withinInferred).toBeUndefined();
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8);
+  expect(await r.count('[data-ws="within-inferred"]')).toBe(0);
+  expect((await r.query('[data-ws="within-repick"]'))!.text).toBe('Re-pick');
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
+test('pick helpers: a manual setup infers the product list as list parent, and clearing it removes the mark', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'manual-inferred']);
+  await r.pick('h1.category-heading');
+  await r.clickPanel('[data-ws="setup-manual"]');
+  await r.until((s) => s.host?.proposal?.origin === 'manual');
+  await r.submit('[data-ws="level-input-item"]', 'testid=product-card');
+  const proposal = await r.until((s) => (s.host?.proposal?.proposed.count === 24 && s.host.proposal.within ? s.host.proposal : undefined));
+  expect(proposal.withinInferred).toBe(true);
+  expect(proposal.within!.tag).toBe('ul');
+  expect((await r.query('[data-ws="setup-row-within"] [data-ws="within-inferred"]'))!.text).toBe('inferred');
+  expect((await r.query('[data-ws="items-count"]'))!.text).toBe('24');
+  await r.clickPanel('[data-ws="setup-row-within"]');
+  await r.clickPanel('[data-ws="level-clear-within"]');
+  await r.until((s) => s.host?.proposal && !s.host.proposal.within);
+  expect(await r.count('[data-ws="within-inferred"]')).toBe(0);
+  expect((await r.state()).host!.proposal!.proposed.count).toBe(24);
+  expect((await r.closeWindow()).code).toBe(0);
+});

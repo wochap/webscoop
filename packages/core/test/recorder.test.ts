@@ -169,6 +169,7 @@ describe('protocol', () => {
         levelPick: { level: 'within', ancestorOf: [[1, 0, 1, 2]], ofContainers: false, descendantOf: null, containing: null },
         proposal: {
           within: { tag: 'ul', label: 'ul.product-list', path: [1, 0, 1], selectors: [{ strategy: 'role', value: 'list', stability: 'stable', count: 1 }], primary: 0, count: 1, total: 1, paths: [[1, 0, 1]], samples: [] },
+          withinInferred: false,
           proposed: { tag: 'article', label: 'article.card', path: [1, 0, 1, 0, 0], selectors: [{ strategy: 'class', value: 'article.card.kXeqYt', stability: 'fragile', count: 24 }], primary: 0, count: 24, total: 24, paths: [], samples: [] },
           skipped: 6,
           includeAll: false,
@@ -902,7 +903,7 @@ describe('RecorderController proposal fields', () => {
 
   it('re-picks and clears the list parent from the confirmed item', async () => {
     const t = await harness(tier0Snapshot(), newDraft());
-    await manualList(t, nodeAt(t.page, cardPath(title(t, 0)))!);
+    await manualList(t, nodeAt(t.page, cardPath(title(t, 0)))!, { clearWithin: true });
     expect(t.controller.draft.tables[0]!.item!.within).toBeUndefined();
     await t.send({ kind: 'draft.pickLevel', level: 'within' });
     expect(t.controller.state.levelPick).toMatchObject({ level: 'within', ofContainers: true });

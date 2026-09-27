@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { classifyToken, attrStability, type Crumb, type ParsedSelection, type Path } from '@webscoop/core/page';
 import { walkTrail } from '../keyboard';
+import type { HoverInfo } from '../store';
 import { Icon } from './icons';
 import { SelectorStack, type StackLevel } from './selector-stack';
 import { Kbd } from './shell';
@@ -10,27 +11,28 @@ export function PickModeStrip({
   onStart,
   onCancel,
   level,
+  hover = null,
 }: {
   picking: boolean;
   onStart: () => void;
   onCancel: () => void;
   /** Set while picking a list level: only some elements can be picked. */
   level?: 'within' | 'item' | null;
+  /** What is hovered on the page while picking. */
+  hover?: HoverInfo | null;
 }) {
   if (picking) {
-    const title = level === 'within' ? 'Click the element that holds every item' : level === 'item' ? 'Click one item inside the list' : 'Hover and click an element';
+    const title = level === 'within' ? 'Click the element that holds every item' : level === 'item' ? 'Click one item inside the list' : 'Picking on the page';
     return (
-      <div className="ws-strip ws-strip-active" data-ws="pick-strip" data-picking="true" data-level={level ?? undefined}>
-        <div className="ws-col ws-spacer">
-          <span className="ws-title">{title}</span>
-          <span className="ws-meta">
-            <Kbd>Alt</Kbd> + click picks through overlays · <Kbd>Esc</Kbd> cancels
-          </span>
+      <div className="ws-pick-card">
+        <div className="ws-strip ws-strip-active" data-ws="pick-strip" data-picking="true" data-level={level ?? undefined}>
+          <span className="ws-pick-dot" />
+          <span className="ws-title ws-spacer">{title}</span>
+          <button type="button" className="ws-btn ws-btn-sm" onClick={onCancel} data-ws="pick-cancel">
+            Cancel <Kbd>Esc</Kbd>
+          </button>
         </div>
-        <button type="button" className="ws-btn ws-btn-sm" onClick={onCancel} data-ws="pick-cancel">
-          <Icon name="x" size={11} />
-          Cancel
-        </button>
+        {hover && <HoveringCard hover={hover} />}
       </div>
     );
   }
@@ -42,6 +44,44 @@ export function PickModeStrip({
         Pick element <Kbd>P</Kbd>
       </button>
     </div>
+  );
+}
+
+/** While picking: the walk distance, the repeat count, and the path from the hover target down to the start element. */
+export function HoveringCard({ hover }: { hover: HoverInfo }) {
+  const last = hover.path.length - 1;
+  return (
+    <section className="ws-hover-card" data-ws="pick-hover" data-depth={hover.depth}>
+      <span className="ws-meta">Hovering</span>
+      {(hover.depth > 0 || hover.similar >= 2) && (
+        <div className="ws-row">
+          {hover.depth > 0 && (
+            <span className="ws-badge ws-tone-accent" data-ws="pick-hover-depth">
+              ↑{hover.depth}
+            </span>
+          )}
+          {hover.similar >= 2 && (
+            <span className="ws-meta" style={{ color: 'var(--ws-ok)' }} data-ws="pick-hover-similar">
+              {hover.similar} similar siblings
+            </span>
+          )}
+        </div>
+      )}
+      <div className="ws-hover-path" data-ws="pick-hover-path">
+        {hover.path.map((label, i) => (
+          <span key={i} style={{ display: 'contents' }}>
+            {i > 0 && <span className="ws-crumb-sep">‹</span>}
+            <span className={i === 0 ? 'ws-hover-current' : undefined} data-ws="pick-hover-step">
+              {label}
+            </span>
+            {i === last && last > 0 && <span className="ws-faint">· start</span>}
+          </span>
+        ))}
+      </div>
+      <span className="ws-meta" data-ws="pick-hover-hint">
+        Wrappers are hard to click — hover any child and press <Kbd>↑</Kbd> until the whole item is outlined.
+      </span>
+    </section>
   );
 }
 

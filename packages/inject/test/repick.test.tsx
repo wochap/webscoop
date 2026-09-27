@@ -83,7 +83,7 @@ describe('re-pick panel', () => {
     const base = { typing: false, picking: false, menuOpen: false, hasProposal: false, hasSelection: false, focusedField: null };
     const key = (k: string) => ({ key: k, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false });
     expect(shortcutFor(key('s'), { ...base, repicking: true })).toBe('skip');
-    expect(shortcutFor(key('s'), { ...base, repicking: true, picking: true })).toBe('skip');
+    expect(shortcutFor(key('s'), { ...base, repicking: true, picking: true })).toBeNull();
     expect(shortcutFor(key('Escape'), { ...base, repicking: true })).toBe('abort');
     expect(shortcutFor(key('Escape'), { ...base, repicking: true, picking: true })).toBe('cancel');
     expect(shortcutFor(key('s'), base)).toBeNull();

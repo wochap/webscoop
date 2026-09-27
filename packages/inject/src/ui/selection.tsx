@@ -466,6 +466,10 @@ function SelectionBody({
                         ? `${primary.items}/${containers}`
                         : null,
                   },
+                ).map((l) =>
+                  l.level === "list" && item.withinInferred
+                    ? { ...l, badge: { text: "inferred", testId: "within-inferred" } }
+                    : l,
                 )
               : []
           }

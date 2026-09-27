@@ -12,6 +12,7 @@ import {
   type RecorderState,
 } from '@webscoop/core/page';
 import {
+  compactLabel,
   containersLocal,
   describeSelection,
   elementAt,
@@ -23,10 +24,11 @@ import {
   readDocument,
   resolveFirstLocal,
   resolveLocal,
+  similarSiblings,
   snapshotOf,
 } from './dom';
-import type { HoverPlace, ListOutlines, Overlay } from './overlay';
-import type { ObservedAction } from './picker';
+import type { HoverPlace, HoverWalkInfo, ListOutlines, Overlay } from './overlay';
+import { walkChain, type HoverWalk, type ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
 import { handleKey } from './ui/App';
 
@@ -54,6 +56,10 @@ export class Runtime implements Actions {
   readonly store: Store;
   private toastId = 0;
   private selecting: Promise<void> = Promise.resolve();
+  /** Similar sibling counts of hover targets, per picking session. */
+  private similar = new WeakMap<Element, number>();
+  /** The hover target and walk depth the panel's hovering card shows. */
+  private hovered: { el: Element | null; depth: number } = { el: null, depth: 0 };
 
   constructor(private readonly opts: RuntimeOptions) {
     this.store = opts.store ?? new Store();
@@ -208,17 +214,38 @@ export class Runtime implements Actions {
 
   startPicking = (): void => {
     if (this.browsing) this.stopBrowsing();
+    this.similar = new WeakMap();
     this.store.setUi({ picking: true, menu: null });
-    this.opts.overlay.setHover(null);
+    this.clearHover();
+    this.opts.overlay.setStrip(this.stripTitle());
     this.syncOverlay();
   };
 
   cancelPicking = (): void => {
     if (!this.picking) return;
     this.store.setUi({ picking: false });
-    this.opts.overlay.setHover(null);
+    this.clearHover();
+    this.opts.overlay.setStrip(null);
     this.syncOverlay();
     void this.send({ kind: 'picker.cancel' });
+  };
+
+  /** "Picking", or "Picking in <table>" when the active table is a list. */
+  private stripTitle(): string {
+    const host = this.store.get().host;
+    const table = host ? currentTable(host.draft) : null;
+    return table?.item ? `Picking in ${table.name}` : 'Picking';
+  }
+
+  private clearHover(): void {
+    this.opts.overlay.setHover(null);
+    this.hovered = { el: null, depth: 0 };
+    if (this.store.get().ui.hover !== null) this.store.setUi({ hover: null });
+  }
+
+  /** A key aimed at the page while picking: the picker holds it back, the panel shortcuts (Ctrl+S) may still run. */
+  pageKey = (e: KeyboardEvent): void => {
+    if (handleKey(e, e.target, this.store.get(), this)) e.preventDefault();
   };
 
   // Browsing -------------------------------------------------------------------
@@ -302,26 +329,50 @@ export class Runtime implements Actions {
     this.opts.overlay.setHover(el, el ? excerpt(el) : '');
   };
 
-  hover(el: Element | null): void {
+  /** The hover walk parts for the tag and the panel: distance, similar siblings (memoized), and size. */
+  private walkInfo(el: Element, walk: HoverWalk | undefined): HoverWalkInfo {
+    let similar = this.similar.get(el);
+    if (similar === undefined) this.similar.set(el, (similar = similarSiblings(el)));
+    const r = el.getBoundingClientRect();
+    return { start: walk?.start ?? el, depth: walk?.depth ?? 0, similar, size: { w: Math.round(r.width), h: Math.round(r.height) } };
+  }
+
+  /** Update the hovering card when the target or the walk depth changed. */
+  private setHoverCard(el: Element | null, info: HoverWalkInfo | undefined): void {
+    const depth = info?.depth ?? 0;
+    if (this.hovered.el === el && this.hovered.depth === depth) return;
+    this.hovered = { el, depth };
+    if (!el || !info || !this.picking) {
+      if (this.store.get().ui.hover !== null) this.store.setUi({ hover: null });
+      return;
+    }
+    const chain = walkChain(info.start).slice(0, depth + 1).reverse();
+    this.store.setUi({ hover: { depth, similar: info.similar, path: chain.map(compactLabel) } });
+  }
+
+  /** The hover target changed, pointed at or walked to: the same refusal, list place, and re-pick score apply. */
+  hover(el: Element | null, walk?: HoverWalk): void {
+    const info = el ? this.walkInfo(el, walk) : undefined;
+    this.setHoverCard(el, info);
     const lists = el ? this.listPicking() : null;
     if (lists && el) {
       const index = lists.items.findIndex((c) => c === el || c.contains(el));
       const place: HoverPlace = index === -1 ? { kind: 'outside', table: lists.name } : { kind: 'item', index, of: lists.items.length };
-      this.opts.overlay.setHover(el, excerpt(el), undefined, undefined, place);
+      this.opts.overlay.setHover(el, excerpt(el), undefined, undefined, place, info);
       return;
     }
     if (this.store.get().host?.levelPick) {
       const refused = el ? this.levelRefusal(el) : null;
-      this.opts.overlay.setHover(el, el ? excerpt(el) : '', undefined, refused ?? undefined);
+      this.opts.overlay.setHover(el, el ? excerpt(el) : '', undefined, refused ?? undefined, undefined, info);
       return;
     }
     const ctx = this.store.get().host?.repickContext;
     if (!ctx?.fingerprint) {
-      this.opts.overlay.setHover(el, el ? excerpt(el) : '');
+      this.opts.overlay.setHover(el, el ? excerpt(el) : '', undefined, undefined, undefined, info);
       return;
     }
     const score = el ? scoreFingerprint(ctx.fingerprint, nodeForScore(el)) : null;
-    this.opts.overlay.setHover(el, el ? excerpt(el) : '', score === null ? undefined : { value: score, likely: score >= ctx.threshold });
+    this.opts.overlay.setHover(el, el ? excerpt(el) : '', score === null ? undefined : { value: score, likely: score >= ctx.threshold }, undefined, undefined, info);
     this.store.setUi({ hoverScore: score });
   }
 
@@ -332,7 +383,8 @@ export class Runtime implements Actions {
       // Out of range: the click is ignored and picking goes on; the hover tag says why.
       if (this.levelRefusal(el)) return;
       this.store.setUi({ picking: false });
-      this.opts.overlay.setHover(null);
+      this.clearHover();
+      this.opts.overlay.setStrip(null);
       const { level } = host.levelPick;
       // Without a proposal the host has no snapshot of this page yet: send one.
       const snapshot = host.proposal ? undefined : snapshotOf(readDocument(el, this.doc).root);
@@ -340,7 +392,8 @@ export class Runtime implements Actions {
       return;
     }
     this.store.setUi({ picking: false });
-    this.opts.overlay.setHover(null);
+    this.clearHover();
+    this.opts.overlay.setStrip(null);
     void this.select(el, true);
   }
 
@@ -376,6 +429,7 @@ export class Runtime implements Actions {
     const overlay = this.opts.overlay;
     const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
     overlay.setSelected(selected);
+    overlay.setStrip(this.picking ? this.stripTitle() : null);
     const lists = this.listPicking();
     overlay.setOutlines(lists && { table: lists.name, parent: lists.parent, items: lists.items, others: lists.others });
     if (!host || host.guardContext) {

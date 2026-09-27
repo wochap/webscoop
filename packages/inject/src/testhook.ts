@@ -61,6 +61,8 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
     },
     /** Markup of the hover tag, empty without a hover. */
     tag: () => overlay.tagMarkup,
+    /** Text of the pick strip, empty without one. */
+    strip: () => overlay.stripText,
     boxes: () =>
       overlay.boxes().map(({ variant, light, el }) => {
         const r = el.getBoundingClientRect();

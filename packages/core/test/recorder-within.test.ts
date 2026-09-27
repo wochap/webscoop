@@ -1,6 +1,6 @@
 import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
-import { annotate, detach, emptyDraft, extractPage, loadRecipe, pathOf, selectionOf, type Draft, type LevelView, type RecorderState } from '../src';
+import { annotate, detach, draftFromRecipe, emptyDraft, extractPage, loadRecipe, pathOf, selectionOf, type Draft, type LevelView, type RecorderState } from '../src';
 import { FakeBrowser, h } from '../src/testing';
 import { acceptList, byClass, harness, manualList, openList, RESULTS } from './recorder-helpers';
 import { resultsSnapshot, tier0Snapshot } from './snapshot';
@@ -103,6 +103,8 @@ describe('item containers relative to the list parent', () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
     await t.send({ kind: 'list.open', from: 'manual' });
     await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'Mjj4Yd', 1)) });
+    // Clear the inferred list parent so the item selector is document relative.
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
     const cls = proposal(t).proposed.selectors.findIndex((c) => c.strategy === 'class');
     await t.send({ kind: 'draft.setPrimary', level: 'item', index: cls });
     await t.send({ kind: 'draft.confirmItems' });
@@ -129,7 +131,7 @@ describe('item containers relative to the list parent', () => {
   it('keeps a tier 0 item count when the product list is set as list parent after confirming', async () => {
     const t = await harness(tier0Snapshot(), resultsDraft(), RESULTS);
     const card = byClass(t.page, 'product-card', 3);
-    await manualList(t, card);
+    await manualList(t, card, { clearWithin: true });
     const before = t.controller.draft.tables[0]!.item!;
     expect(before.count).toBe(24);
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')), snapshot: t.snapshot });
@@ -157,3 +159,99 @@ describe('item containers relative to the list parent', () => {
     expect(out.rows.map((r) => r[name])).toEqual(dataset.slice(0, 8).map((p) => p.title));
   });
 });
+
+describe('inferred list parent', () => {
+  const draftItem = (t: { controller: { draft: Draft } }) => t.controller.draft.tables[0]!.item!;
+
+  it('marks the list parent of a list setup opened from a pick as inferred', async () => {
+    const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    expect(proposal(t).within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
+    expect(proposal(t).withinInferred).toBe(true);
+  });
+
+  it('removes the mark when the user types, picks, or clears the list parent', async () => {
+    const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'selector', selector: 'id=rso' });
+    expect(proposal(t).within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
+    expect(proposal(t).withinInferred).toBe(false);
+
+    const picked = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await openList(picked, byClass(picked.page, 'LC20lb', 0));
+    await picked.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(picked.page, 'dURPMd').parent!) });
+    expect(proposal(picked).within).not.toBeNull();
+    expect(proposal(picked).withinInferred).toBe(false);
+
+    await picked.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    expect(proposal(picked)).toMatchObject({ within: null, withinInferred: false });
+  });
+
+  it('keeps the mark when the item level changes and after accept, and never saves it', async () => {
+    const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'Mjj4Yd', 0)) });
+    expect(proposal(t).withinInferred).toBe(true);
+    await acceptList(t);
+    expect(draftItem(t).within![0]).toMatchObject({ strategy: 'id', value: 'rso' });
+    expect(draftItem(t).withinInferred).toBe(true);
+    // Choosing another saved candidate keeps the mark.
+    await t.send({ kind: 'draft.setPrimary', level: 'within', index: 1 });
+    expect(draftItem(t).withinInferred).toBe(true);
+
+    const saved = (await t.send({ kind: 'save.request' })) as { ok: boolean };
+    expect(saved.ok).toBe(true);
+    const text = t.storage.files.get('search-results')!;
+    expect(text).not.toContain('withinInferred');
+    const reopened = await harness(resultsSnapshot(), loadedDraft(text), RESULTS);
+    expect(reopened.controller.draft.tables[0]!.item!).not.toHaveProperty('withinInferred');
+  });
+
+  it('removes the mark when an inferred list parent is changed from the Rows section', async () => {
+    const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    await acceptList(t);
+    expect(draftItem(t).withinInferred).toBe(true);
+    const wider = byClass(t.page, 'dURPMd').parent!;
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(wider), snapshot: t.snapshot });
+    expect(t.controller.state.error).toBeNull();
+    const item = draftItem(t);
+    expect(item.within![0]!.value).not.toBe('rso');
+    expect(item).not.toHaveProperty('withinInferred');
+    expect(item.count).toBe(8);
+  });
+
+  it('infers the list parent of a manual setup relative to which the count stays', async () => {
+    const t = await harness(tier0Snapshot(), emptyDraft({ name: 'shop', url: RESULTS, vars: [] }), RESULTS);
+    await t.send({ kind: 'list.open', from: 'manual' });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'product-card', 3)) });
+    const p = proposal(t);
+    expect(p).toMatchObject({ withinInferred: true, within: { tag: 'ul' }, proposed: { count: 24 }, error: null });
+    expect(p.within!.path).toEqual(pathOf(byClass(t.page, 'product-list')));
+    await t.send({ kind: 'draft.confirmItems' });
+    expect(draftItem(t)).toMatchObject({ count: 24, withinInferred: true });
+    expect(draftItem(t).within![0]).toMatchObject({ strategy: 'role', value: 'list' });
+  });
+
+  it('infers no list parent when the items sit directly in body', async () => {
+    const card = (i: number) => h('div', { class: 'card' }, h('h2', {}, `Item ${i}`), h('p', {}, `desc ${i}`));
+    const dom = h('html', {}, h('body', {}, ...Array.from({ length: 5 }, (_, i) => card(i))));
+    const t = await harness(dom, emptyDraft({ name: 'cards', url: RESULTS, vars: [] }), RESULTS);
+    await t.send({ kind: 'list.open', from: 'manual' });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'card', 1)) });
+    expect(proposal(t)).toMatchObject({ within: null, withinInferred: false, proposed: { count: 5 } });
+  });
+
+  it('keeps a cleared list parent cleared when the item level changes', async () => {
+    const t = await harness(tier0Snapshot(), emptyDraft({ name: 'shop', url: RESULTS, vars: [] }), RESULTS);
+    await t.send({ kind: 'list.open', from: 'manual' });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'product-card', 3)) });
+    await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'product-card', 5)) });
+    expect(proposal(t)).toMatchObject({ within: null, withinInferred: false, proposed: { count: 24 } });
+  });
+});
+
+function loadedDraft(text: string): Draft {
+  return draftFromRecipe(loadRecipe(text));
+}

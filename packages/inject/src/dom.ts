@@ -1,6 +1,9 @@
 import { computeAccessibleName, getRole } from 'dom-accessibility-api';
 import {
+  classifyToken,
   collapseWhitespace,
+  similarity,
+  SIMILARITY_THRESHOLD,
   selectionOf,
   type AnnotatedNode,
   type Path,
@@ -168,6 +171,34 @@ export function nodeForScore(el: Element): AnnotatedNode {
   annotateElement(node, el);
   parent?.children.push(node);
   return node;
+}
+
+/** The element's own tag and its child and grandchild tags: all the sibling similarity reads. */
+export function shapeOf(el: Element, depth = 2, parent: AnnotatedNode | null = null): AnnotatedNode {
+  const node: AnnotatedNode = { type: 'element', tag: el.tagName.toLowerCase(), attrs: {}, children: [], parent };
+  if (depth > 0) for (const child of childElements(el)) node.children.push(shapeOf(child, depth - 1, node));
+  return node;
+}
+
+/** Elements at the element's level that repeat it (the element included), reading at most `max` siblings. */
+export function similarSiblings(el: Element, max = 200): number {
+  const parent = el.parentElement;
+  if (!parent) return 1;
+  const own = shapeOf(el);
+  let count = 0;
+  for (const sibling of childElements(parent).slice(0, max)) {
+    if (sibling === el || similarity(own, shapeOf(sibling)) >= SIMILARITY_THRESHOLD) count++;
+  }
+  return Math.max(count, 1);
+}
+
+/** A compact label: `tag#id`, else `tag.class` with the first stable class, else the first class, else the tag. */
+export function compactLabel(el: Element): string {
+  const tag = el.tagName.toLowerCase();
+  if (el.id) return `${tag}#${el.id}`;
+  const classes = (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const cls = classes.find((c) => classifyToken(c) === 'stable') ?? classes[0];
+  return cls ? `${tag}.${cls}` : tag;
 }
 
 /** JSON snapshot for the host: no parent links, long text nodes shortened. */

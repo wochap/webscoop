@@ -14,7 +14,24 @@ export type BoxVariant =
   | 'list-parent'
   | 'item'
   | 'other-list'
+  | 'start'
   | 'dim';
+
+/** The hover walk parts of the tag: steps above the start element, similar siblings at the target's level, the target's size. */
+export interface HoverWalkInfo {
+  start: Element;
+  depth: number;
+  similar: number;
+  size: { w: number; h: number };
+}
+
+/** Key hints of the pick strip. */
+export const STRIP_HINTS: readonly [string, string][] = [
+  ['↑ ↓', 'parent / child'],
+  ['click', 'to pick'],
+  ['Alt+click', 'through overlays'],
+  ['Esc', 'cancel'],
+];
 
 /** Where the hovered element sits while picking in a list table. */
 export type HoverPlace = { kind: 'item'; index: number; of: number } | { kind: 'outside'; table: string };
@@ -27,6 +44,9 @@ export interface ListOutlines {
   items: readonly Element[];
   others: readonly { table: string; items: readonly Element[] }[];
 }
+
+/** Width of the panel docked at the right of the page; the page is pushed left by it. */
+export const PANEL_WIDTH = 400;
 
 export const OVERLAY_CSS = `
 :host { all: initial; }
@@ -61,6 +81,16 @@ export const OVERLAY_CSS = `
 .ws-tag em.ws-in-item { color: ${LEVEL_COLORS.item}; }
 .ws-tag em.ws-likely { color: #9fdcbc; }
 .ws-tag em.ws-refused { color: #f0a9a9; }
+.ws-tag em.ws-walk { padding: 0 3px; border-radius: 2px; background: #423a6a; color: #d2cefd; }
+.ws-tag span.ws-similar { color: #9fdcbc; }
+.ws-tag span.ws-size { color: #7e8298; }
+.ws-box-start { border: 1px dashed #b2b6ca; border-radius: 3px; }
+.ws-box-start .ws-list-label { top: 50%; right: auto; left: 100%; margin-left: 6px; transform: translateY(-50%); border-radius: 3px; background: #161826; color: #b5abfc; box-shadow: 0 0 0 1px #796cbf; }
+.ws-strip { position: fixed; left: calc((100% - ${PANEL_WIDTH}px) / 2); bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 8px; background: #161826; color: #e9e9ed; box-shadow: 0 0 0 1px #3a3d55, 0 8px 24px rgba(0, 0, 0, 0.35); font: 500 11px/16px '${SANS}', system-ui, sans-serif; white-space: nowrap; pointer-events: none; }
+.ws-strip b { display: inline-flex; align-items: center; gap: 6px; color: #e9e9ed; font-weight: 500; }
+.ws-strip b::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #9184d9; }
+.ws-strip span { color: #b2b6ca; }
+.ws-strip kbd { display: inline-block; margin-right: 4px; padding: 0 4px; border-radius: 3px; background: #2a2d40; color: #e9e9ed; font: 500 10px/14px '${MONO}', ui-monospace, monospace; }
 `;
 
 /** Relative luminance of an `rgb()`/`rgba()` color, or null when transparent or unparsable. */
@@ -100,6 +130,9 @@ interface Tracked {
  */
 export class Overlay {
   private hover: Tracked | null = null;
+  /** The element under the pointer while the hover target is walked up. */
+  private start: Tracked | null = null;
+  private strip: HTMLDivElement | null = null;
   private selected: Tracked | null = null;
   private list: Tracked | null = null;
   private groups: Tracked[] = [];
@@ -157,12 +190,20 @@ export class Overlay {
    * re-picking) is appended to the tag; a refusal reason (while picking a
    * list level) marks the element as not selectable.
    */
-  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }, refused?: string, place?: HoverPlace): void {
-    const key = place ? (place.kind === 'item' ? `item:${place.index}/${place.of}` : `outside:${place.table}`) : '';
-    if (this.hover?.el === el && this.hover.variant === (refused ? 'blocked' : 'hover') && this.hoverKey === key) return;
+  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }, refused?: string, place?: HoverPlace, walk?: HoverWalkInfo): void {
+    const placeKey = place ? (place.kind === 'item' ? `item:${place.index}/${place.of}` : `outside:${place.table}`) : '';
+    const key = `${placeKey}|${walk ? `${walk.depth}/${walk.similar}/${walk.size.w}x${walk.size.h}` : ''}|${refused ?? ''}|${score ? score.value : ''}`;
+    const startEl = el && walk && walk.depth > 0 ? walk.start : null;
+    if (this.hover?.el === el && this.hover.variant === (refused ? 'blocked' : 'hover') && this.hoverKey === key && (this.start?.el ?? null) === startEl) return;
     this.drop(this.hover);
+    this.drop(this.start);
     this.hoverKey = key;
     this.hover = el ? this.make(el, refused ? 'blocked' : 'hover') : null;
+    this.start = null;
+    if (startEl) {
+      this.start = this.make(startEl, 'start');
+      this.label(this.start, `${startEl.tagName.toLowerCase()} · start`);
+    }
     if (this.hover && place?.kind === 'outside') this.hover.box.classList.add('ws-outside');
     if (el) {
       const role = roleOf(el);
@@ -176,7 +217,12 @@ export class Overlay {
             : place?.kind === 'outside'
               ? ` <em class="ws-outside">outside ${escape(place.table)} list</em>`
               : '';
-      this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}${suffix}`;
+      const walked = walk
+        ? `${walk.depth > 0 ? ` <em class="ws-walk">↑${walk.depth}</em>` : ''}${walk.similar >= 2 ? ` <span class="ws-similar">${walk.similar} similar siblings</span>` : ''}${
+            walk.depth > 0 ? ` <span class="ws-size">${walk.size.w}×${walk.size.h}</span>` : ''
+          }`
+        : '';
+      this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}${walked}${suffix}`;
     }
     this.schedule();
   }
@@ -229,6 +275,29 @@ export class Overlay {
     t.box.appendChild(label);
   }
 
+  /**
+   * The pick hint strip at the bottom of the viewport: the title ("Picking",
+   * "Picking in results") and the key hints. Null removes it.
+   */
+  setStrip(title: string | null): void {
+    if (title === null) {
+      this.strip?.remove();
+      this.strip = null;
+      return;
+    }
+    if (this.strip?.dataset.title === title) return;
+    const doc = this.layer.ownerDocument;
+    this.strip ??= this.layer.appendChild(doc.createElement('div'));
+    this.strip.className = 'ws-strip';
+    this.strip.dataset.title = title;
+    this.strip.innerHTML = `<b>${escape(title)}</b>${STRIP_HINTS.map(([k, v]) => `<span><kbd>${escape(k)}</kbd>${escape(v)}</span>`).join('')}`;
+  }
+
+  /** Current strip text, for tests; empty when there is none. */
+  get stripText(): string {
+    return this.strip?.textContent ?? '';
+  }
+
   /** Current tag markup, for tests. */
   get tagMarkup(): string {
     return this.hover ? this.tagText : '';
@@ -274,11 +343,12 @@ export class Overlay {
     this.setItems([], 'sibling');
     this.setMatches([]);
     this.setOutlines(null);
+    this.setStrip(null);
   }
 
   /** Current boxes, for tests and the e2e hook. */
   boxes(): { variant: BoxVariant; light: boolean; el: Element }[] {
-    return [this.dim, ...this.outlines, this.hover, this.selected, this.list, ...this.groups, ...this.matches]
+    return [this.dim, ...this.outlines, this.hover, this.start, this.selected, this.list, ...this.groups, ...this.matches]
       .filter((t): t is Tracked => t !== null)
       .map(({ variant, light, el }) => ({ variant, light, el }));
   }
@@ -294,7 +364,7 @@ export class Overlay {
 
   /** Reposition every box now. */
   update(): void {
-    for (const t of [...this.outlines, this.hover, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
+    for (const t of [...this.outlines, this.hover, this.start, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
     if (this.dim) this.placeDim(this.dim);
     this.placeTag();
   }

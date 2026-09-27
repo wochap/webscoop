@@ -19,6 +19,15 @@ const key = (k: string, mods: { alt?: boolean; ctrl?: boolean; meta?: boolean; s
 });
 
 describe('shortcuts', () => {
+  it('fires only cancel and save while picking', () => {
+    const picking = ctx({ picking: true, hasSelection: true, focusedField: 0, focusedStep: 0, focusedTab: 0, repicking: true, hasProposal: true, canConfirm: true });
+    expect(shortcutFor(key('Escape'), picking)).toBe('cancel');
+    expect(shortcutFor(key('s', { ctrl: true }), picking)).toBe('save');
+    for (const k of [key('ArrowUp', { alt: true }), key('ArrowLeft', { alt: true }), key('F2'), key('s'), key('Enter'), key('ArrowLeft'), key('ArrowUp'), key('['), key('p')]) {
+      expect(shortcutFor(k, picking), k.key).toBeNull();
+    }
+  });
+
   it('opens the list setup with L from the suggestion, and Enter confirms items only while they match', () => {
     expect(shortcutFor(key('l'), ctx({ canSetupList: true }))).toBe('setupList');
     expect(shortcutFor(key('L'), ctx({ canSetupList: true }))).toBe('setupList');

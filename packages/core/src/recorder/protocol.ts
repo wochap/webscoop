@@ -125,6 +125,8 @@ export const ParentLadderRowSchema = z.object({
 export const ProposalSchema = z.object({
   /** The list parent, or null when there is none or the user cleared it. */
   within: z._default(z.nullable(LevelSchema), null),
+  /** The list parent was derived by the recorder, not chosen by the user. Not saved in the recipe. */
+  withinInferred: z._default(z.boolean(), false),
   /** The item container level; a manual setup starts with an empty one (no selectors, count 0). */
   proposed: LevelSchema,
   /** Elements on the item level under the list parent left out as dissimilar; 0 with `includeAll`. */
@@ -179,6 +181,8 @@ export const DraftItemSchema = z.object({
   withinFingerprint: z.optional(ProtocolFingerprintSchema),
   /** Matches of the list parent's primary selector on the current page, null until counted. */
   withinCount: z.optional(z.nullable(count())),
+  /** The list parent was derived by the recorder; authoring metadata, never saved in the recipe. */
+  withinInferred: z.optional(z.boolean()),
   exclude: z.array(CandidateSchema),
   fingerprint: z.optional(ProtocolFingerprintSchema),
   /** Containers left after exclusions. */

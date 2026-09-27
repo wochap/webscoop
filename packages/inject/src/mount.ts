@@ -1,7 +1,7 @@
-import { OVERLAY_CSS } from './overlay';
+import { OVERLAY_CSS, PANEL_WIDTH } from './overlay';
 import css from './styles.css';
 
-export const PANEL_WIDTH = 400;
+export { PANEL_WIDTH };
 
 export interface Mounted {
   panelHost: HTMLElement;

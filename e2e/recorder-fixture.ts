@@ -26,7 +26,7 @@ interface PanelInfo {
 
 export interface HookState {
   host: RecorderState | null;
-  ui: { picking: boolean; browsing: boolean; drawerOpen: boolean; focusedField: number | null; focusedStep: number | null };
+  ui: { picking: boolean; browsing: boolean; drawerOpen: boolean; focusedField: number | null; focusedStep: number | null; hover: { depth: number; similar: number; path: string[] } | null };
   mode: string;
 }
 

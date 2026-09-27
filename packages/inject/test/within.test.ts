@@ -58,6 +58,7 @@ describe('runtime with a list parent', () => {
       setSelected: () => {},
       setList: () => {},
       setHover: () => {},
+      setStrip: () => {},
       setMatches: () => {},
       setOutlines: () => {},
       setItems: (items: readonly Element[], _variant: string, excluded: readonly Element[] = []) => calls.push({ items: [...items], excluded: [...excluded] }),

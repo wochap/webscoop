@@ -128,9 +128,10 @@ export async function acceptList(t: Harness, patch: Record<string, unknown> = {}
   if (t.controller.state.selected) await t.send({ kind: 'draft.addField', patch });
 }
 
-/** Set a list up manually with `node` as the item container, and accept it. */
-export async function manualList(t: Harness, node: AnnotatedNode): Promise<void> {
+/** Set a list up manually with `node` as the item container, and accept it; `clearWithin` drops the inferred list parent first. */
+export async function manualList(t: Harness, node: AnnotatedNode, opts: { clearWithin?: boolean } = {}): Promise<void> {
   await t.send({ kind: 'list.open', from: 'manual' });
   await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(node) });
+  if (opts.clearWithin) await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
   await t.send({ kind: 'draft.confirmItems' });
 }

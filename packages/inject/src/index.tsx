@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { loadFonts } from './fonts';
 import { mount } from './mount';
 import { Overlay } from './overlay';
+import { isTypingTarget } from './keyboard';
 import { BrowseObserver, Picker } from './picker';
 import { Runtime } from './runtime';
 import { installTestHook } from './testhook';
@@ -23,10 +24,13 @@ function boot(win: Window & typeof globalThis): void {
   // Registered now, before page scripts run, so host handlers never see picking clicks.
   const picker = new Picker(win, {
     isActive: () => runtime?.picking ?? false,
-    onHover: (el) => runtime?.hover(el),
+    onHover: (el, walk) => runtime?.hover(el, walk),
     onPick: (el) => runtime?.pick(el),
     onCancel: () => runtime?.cancelPicking(),
+    onKey: (e) => runtime?.pageKey(e),
+    isPanelTyping: () => shadows.some((s) => isTypingTarget(s.activeElement)),
   });
+  let shadows: ShadowRoot[] = [];
   const observer = new BrowseObserver(win, {
     isActive: () => (runtime?.browsing ?? false) && !runtime?.picking,
     onAction: (action) => runtime?.record(action),
@@ -35,6 +39,7 @@ function boot(win: Window & typeof globalThis): void {
   const start = () => {
     loadFonts(win.document);
     const mounted = mount(win.document);
+    shadows = mounted.shadows;
     const overlay = new Overlay(mounted.overlay);
     const onDetach = () => {
       reactRoot.unmount();

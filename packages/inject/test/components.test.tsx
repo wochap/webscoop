@@ -191,7 +191,7 @@ describe('list setup', () => {
   it('shows 0 items, names the level, and disables Accept and Enter when nothing matches (05c2)', () => {
     const empty = { tag: '', label: '', path: [], selectors: [], primary: 0, count: 0, total: 0, paths: [], samples: [] };
     const within = { ...empty, tag: 'div', label: 'div#nope', path: [1, 0], selectors: [{ strategy: 'id' as const, value: 'nope', stability: 'stable' as const, count: 0 }], count: 0, total: 0 };
-    const proposal = { within, proposed: empty, skipped: 0, includeAll: false, error: null, exclude: [], origin: 'manual' as const, previousCount: null, pick: null, itemLadder: null, parentLadder: null, fieldPreview: [] };
+    const proposal = { within, withinInferred: false, proposed: empty, skipped: 0, includeAll: false, error: null, exclude: [], origin: 'manual' as const, previousCount: null, pick: null, itemLadder: null, parentLadder: null, fieldPreview: [] };
     const p = renderPanel({ ...baseState(), proposal });
     expect(p.q('items-count')!.textContent).toBe('0');
     expect(p.q('setup-invalid')!.textContent).toBe('list parent matches nothing');

@@ -83,7 +83,8 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * reorder the focused field or step, Alt+Left and Alt+Right move the
  * focused table tab, F2 renames it, Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
- * Nothing fires while typing.
+ * While picking, only Esc and Ctrl+S act here; the picker handles the hover
+ * walk keys (Up and Down, `[` and `]`) itself. Nothing fires while typing.
  */
 export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (ctx.typing) return null;
@@ -100,7 +101,7 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     if (ctx.hasSelection) return 'clearSelection';
     return null;
   }
-  if (mod) return null;
+  if (ctx.picking || mod) return null;
   if (ctx.repicking && !e.altKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) return 'skip';
   const tab = ctx.focusedTab ?? null;
   if (e.key === 'F2' && !e.altKey && !e.shiftKey) return tab !== null && !ctx.tabsLocked ? 'renameTab' : null;
@@ -116,7 +117,6 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     return up ? 'moveUp' : 'moveDown';
   }
   if (e.shiftKey) return null;
-  if (ctx.picking) return null;
   if (e.key === 'p' || e.key === 'P') return 'pick';
   if ((e.key === 'b' || e.key === 'B') && !ctx.repicking) return ctx.browsing ? 'stopBrowse' : 'browse';
   if (e.key === 'Enter' && ctx.hasProposal) return ctx.canConfirm === false ? null : 'confirm';
