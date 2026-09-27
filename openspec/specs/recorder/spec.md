@@ -21,6 +21,25 @@ Starting a recording session SHALL open the target URL in a headed persistent br
 - **WHEN** the user has two fields in the draft and follows a link within the page
 - **THEN** the panel reappears on the new page with the same two fields
 
+### Requirement: Panel layout and sections
+The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, the mode pill, and the end session control; a Recipe section; a Steps section; a Pagination section; the table tab bar; the content of the active table; and a fixed footer with the test run control, the field and step counts, the save status, and the save control. The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Steps, and Pagination sections SHALL apply to the whole recipe. The content of the active table SHALL hold, in order: a table header with the table's name, its kind (a list with its row count when the table has an item container, a page table otherwise) and a "…" menu; a Rows section showing the item container when one is set; a Pick section; and a Fields section. Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Steps, and Pagination sections SHALL be collapsible with a chevron in their header. A collapsed Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values; a collapsed Steps section SHALL show the step count and a summary of the first steps; a collapsed Pagination section SHALL show the pagination kind and limit, or that pagination is off. The Pagination section SHALL start collapsed; the Recipe and Steps sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
+
+#### Scenario: Sections in order
+- **WHEN** the panel shows a draft with two steps, pagination set, and tables `results` and `page`
+- **THEN** the panel shows, in order, the header, the Recipe, Steps, and Pagination sections, the tab bar with `results` and `page`, the active table's header, Rows, Pick, and Fields sections, and the footer
+
+#### Scenario: Collapsed recipe summary
+- **WHEN** the recipe is `google-com-search` with URL `https://www.google.com/search?q={query}` and `query` is `top llms`, and the user collapses the Recipe section
+- **THEN** the section shows one line with `google-com-search` and the URL with a `query` chip holding `top llms`
+
+#### Scenario: Collapse survives navigation
+- **WHEN** the user collapses the Steps section and follows a link on the page
+- **THEN** the panel reappears on the new page with the Steps section still collapsed
+
+#### Scenario: Footer stays visible
+- **WHEN** the active table has enough fields that the panel content scrolls
+- **THEN** the header and the footer with the save control stay visible while the content scrolls
+
 ### Requirement: URL template and variables
 The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. The panel SHALL show the template with each variable rendered as a chip, its current value, and allow editing values and reopening.
 
@@ -40,11 +59,15 @@ The panel SHALL offer a picking mode. While picking, hovering an element SHALL d
 - **THEN** the title is selected
 
 ### Requirement: Selected element inspector
-After selection the panel SHALL show: tag name, role and accessible name when present, a text excerpt, and the element's `id`, `data-testid`, `class`, and `aria-*` attributes, each attribute flagged stable or hashed. It SHALL show an ancestor breadcrumb from the document body to the element with role or tag labels. The user SHALL be able to move the selection up or down the breadcrumb with Left and Right arrow keys or by clicking a crumb; the highlight and inspector follow.
+After selection the panel SHALL show: tag name, role and accessible name when present, a text excerpt, and the element's `id`, `data-testid`, `class`, and `aria-*` attributes, each attribute flagged stable or hashed. It SHALL show an ancestor breadcrumb from the document body to the element with role or tag labels. The breadcrumb SHALL show at most the last three crumbs up to the current selection, preceded by an expander that shows every crumb when clicked. The user SHALL be able to move the selection up or down the breadcrumb with Left and Right arrow keys or by clicking a crumb; the highlight and inspector follow, and the shown crumbs follow the selection.
 
 #### Scenario: Walk up to the container
 - **WHEN** a product title is selected and the user presses Left twice
 - **THEN** the selection moves to the grandparent and the highlight box surrounds it
+
+#### Scenario: Short breadcrumb on a deep page
+- **WHEN** the selected `h3` has 22 ancestors
+- **THEN** the breadcrumb shows an expander and the last three crumbs ending in the `h3`, and clicking the expander shows all 22 ancestors
 
 ### Requirement: Selector candidates shown and chosen
 For the selected element the panel SHALL list every generated selector candidate with its strategy, value, stability badge, and the number of elements it matches on the current page, ranked as defined by the selector-generation capability. When the element was chosen by hand in this session, by a pick on the page or a click on a breadcrumb crumb, the candidates SHALL be verified against it as defined by the selector-generation capability, and a candidate verified as a miss SHALL carry a badge stating that it reads another element. Candidates shown for a typed selector or for a saved field opened for editing SHALL NOT be verified until the user picks or clicks a crumb. The top candidate SHALL be preselected. The user MAY change which candidate is primary; the saved field SHALL list the chosen candidate first and keep the others in ranked order, hits before misses.
@@ -102,7 +125,7 @@ While the item container is proposed or set, the user SHALL be able to add an ex
 - **THEN** the count shows 22 and those 2 cards lose their highlight
 
 ### Requirement: Add as field
-The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), a target table, scope (`item` when the element is inside the target table's container, else `page`), optional flag, and dedup key flag. The target table SHALL default to the active table, except when the element is outside every container of the active table and a table without an item container exists, in which case that table SHALL be the default. The form SHALL also offer to create a new table for the field, named inline. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values and activate the target table. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, scope, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down.
+The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), scope (`item` when the element is inside the table's container, else `page`), optional flag, and dedup key flag. The field SHALL go to the active table: the Pick section lives inside the active table's tab and offers no other target table. When a pick is outside every container of the active table and a table without an item container exists, the recorder SHALL activate that table, compute the selection for it, and say so in the Pick section. Activating another tab while an element is selected SHALL recompute the selection for that table. Adding the `+` tab while an element is selected SHALL create the table, activate it, and recompute the selection for it. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down.
 
 #### Scenario: Link becomes url field
 - **WHEN** the user adds a product link as a field
@@ -122,11 +145,19 @@ The user SHALL be able to turn the selection into a field with a name (defaultin
 
 #### Scenario: Pick outside the list goes to the page table
 - **WHEN** `products` is active with 24 containers, a table `page` without item exists, and the user picks the category heading
-- **THEN** the form's table defaults to `page` with scope `page`, and adding puts the field under `page`
+- **THEN** the `page` tab becomes active with the heading selected with scope `page`, and adding puts the field under `page`
 
 #### Scenario: Pick outside the list with no page table
 - **WHEN** `products` is the only table and the user picks the category heading
-- **THEN** the form's table defaults to `products` with scope `page` and offers to create a new table instead
+- **THEN** `products` stays active and the form offers scope `page`
+
+#### Scenario: New tab while selected
+- **WHEN** an element is selected and the user clicks the `+` tab
+- **THEN** a new table is created and active, the selection is kept and computed for the new table, and adding puts the field in it
+
+#### Scenario: No target table dropdown
+- **WHEN** an element is selected
+- **THEN** the field form offers no choice of table
 
 #### Scenario: Adding returns to the empty state
 - **WHEN** the user adds the selection as a field
@@ -199,7 +230,7 @@ The recorder UI SHALL render inside a shadow root with all inherited styles rese
 - **THEN** the panel renders with its own font and colors, above the fixed header and the cookie modal
 
 ### Requirement: Keyboard
-The panel SHALL support: `p` to start picking, Esc to cancel picking, close a menu, cancel a field edit, or clear the selection when not picking, Enter to confirm the current proposal, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel picking, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
+The panel SHALL support: `p` to start picking, Esc to cancel picking, close a menu, cancel a field edit, or clear the selection when not picking, Enter to confirm the current proposal, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Alt+Left and Alt+Right to move the focused table tab, F2 to rename the focused table tab, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel a tab rename, cancel picking, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
 
 #### Scenario: Enter confirms items
 - **WHEN** the item proposal is shown and the user presses Enter
@@ -212,6 +243,14 @@ The panel SHALL support: `p` to start picking, Esc to cancel picking, close a me
 #### Scenario: Esc while picking keeps the selection
 - **WHEN** an element is selected, the user starts picking, and presses Esc
 - **THEN** picking stops and the previous selection is still shown
+
+#### Scenario: Move a tab with the keyboard
+- **WHEN** the tabs are `results`, `ads`, `page`, the `ads` tab has focus, and the user presses Alt+Left
+- **THEN** the tabs read `ads`, `results`, `page` and `ads` keeps focus
+
+#### Scenario: Rename with F2
+- **WHEN** the `ads` tab has focus and the user presses F2, types `sponsored`, and presses Enter
+- **THEN** the table is named `sponsored`
 
 ### Requirement: Session end
 Closing the browser window or pressing Ctrl+C SHALL end the session. If the draft has unsaved changes, the CLI SHALL print a warning naming the recipe on stderr. The process SHALL exit 0 after a save and 1 when the session ended with an error.
@@ -331,24 +370,50 @@ The list parent and item fields SHALL list their candidates like a field does, i
 - **WHEN** the item level has `role` `listitem` and `css` `li.product-item` candidates and the user picks the role one as primary
 - **THEN** the saved `item.selectors` lists `role` `listitem` first
 
-### Requirement: Selector chain display
-Where the panel shows an item container or an item scoped field, it SHALL also show the composed selector chain from the primary selectors: list parent, then item container, then field, omitting the levels that are not set. The chain SHALL be shown as a path of chips, one chip per level, each chip holding that level's full `strategy=value` text, wrapping onto more lines instead of truncating. The chips SHALL be display only and not interactive. The same component SHALL be used in the item summary, the item proposal, the inspector, and every item scoped field row. The recipe SHALL keep one scoped selector list per level.
+### Requirement: Selector chips
+Wherever the panel shows a saved or candidate selector outside an input, it SHALL show it as a selector chip, not as `strategy=value` text. A chip SHALL show the strategy as a tag on its left (an icon for `role`, `testid`, and `text`; the glyphs `#` for `id`, `.` for `class`, `{}` for `css`, and `//` for `xpath`), the value, a dot for the stability (`stable`, `medium`, `fragile`, each its own color), and a colored left stripe for the level the selector belongs to (list parent, item, field in an item, page field, each its own color). The value SHALL be prettified: a `role` value `name|label` SHALL read as `name "label"`, a `text` value SHALL be quoted, a leading `#` of an `id`, a leading `.` of a `class`, and a leading `//` of an `xpath` SHALL be dropped, and a leading `:scope >` SHALL be replaced by a direct child marker. A value too long for the space SHALL be cut with an ellipsis, and the full `strategy=value` text with the stability SHALL be available on hover. Chips SHALL be display only.
 
-#### Scenario: Chain for an item field
+#### Scenario: Role chip
+- **WHEN** a candidate is `role` with value `heading|LLM Leaderboard 2026` and stability `stable`
+- **THEN** the chip shows the role icon, `heading "LLM Leaderboard 2026"`, and the stable dot
+
+#### Scenario: Scope prefixed css chip
+- **WHEN** an item container selector is `css` with value `:scope > div > div > div`
+- **THEN** the chip shows the `{}` tag, the direct child marker, and `div > div > div`, with the item level stripe
+
+#### Scenario: Full value on hover
+- **WHEN** a field chip's value is cut with an ellipsis and the user hovers it
+- **THEN** the full `strategy=value` text and its stability are shown
+
+### Requirement: Selector input
+Every place where the panel accepts selector text (the list parent and item container fields, the typed selector for the selection, and exclusions) SHALL use one selector input: a strategy dropdown listing `role`, `testid`, `id`, `class`, `text`, `css`, and `xpath` with their tags, a value box, the live match count of the entered selector, and, where the place supports it, a pick control and a control that lists the candidates. Text pasted or typed as `strategy=value` with a known strategy SHALL set the dropdown to that strategy and keep only the value in the box. A value starting with `/` or `./` while the dropdown is on `css` SHALL switch the dropdown to `xpath`. Submitting SHALL send the selector in the `strategy=value` form. A selector that is invalid or matches nothing SHALL mark the input as invalid with an inline error. Picking an element on the page for that place SHALL fill both the dropdown and the value from the picked element's primary candidate.
+
+#### Scenario: Paste switches the strategy
+- **WHEN** the dropdown is on `css` and the user pastes `xpath=//ol/li` into the value box
+- **THEN** the dropdown shows `xpath` and the value box holds `//ol/li`
+
+#### Scenario: Typed role selector
+- **WHEN** the user chooses `role` in the dropdown, types `listitem` in the item container input, and submits
+- **THEN** the recorder receives `role=listitem` and the count shows the `listitem` elements inside the list parent
+
+### Requirement: Selector stack display
+Where the panel shows an item container, it SHALL show the levels of the composed selector as a selector stack: one row per level, outermost first (list parent, then item container, then the field when one is shown), each row indented below the previous one with a connector, holding the level's name, the level's primary selector as a selector chip with that level's stripe color, and the level's match count (for a field, the containers holding a match out of the container count). Levels that are not set SHALL be omitted. The stack SHALL be used in the Rows section, the item proposal, the inspector of an item scoped selection, and the editor of an item scoped field. A field row in the field list SHALL show only the field's own chip, not the stack. The stack SHALL be display only. The recipe SHALL keep one scoped selector list per level.
+
+#### Scenario: Stack for an item field
 - **WHEN** the list parent is `id=rso`, the item container is `css=:scope > div > div`, and the selected element is an item scoped `h3`
-- **THEN** the panel shows the chips `id=rso`, `css=:scope > div > div`, `css=h3` in that order
+- **THEN** the inspector shows a stack with rows for the list parent `rso`, the item `div > div` with the direct child marker, and the field `h3`, in that order and indented
 
-#### Scenario: Chain without a list parent
+#### Scenario: Stack without a list parent
 - **WHEN** the confirmed item container has no list parent
-- **THEN** the chain starts at the item container
+- **THEN** the stack starts at the item container
 
-#### Scenario: Long selector wraps
-- **WHEN** a field's primary candidate is `class=div.VwiC3b.yXK7lf.p4wth.r025kc.hJNv6b`
-- **THEN** the field row shows the whole value, wrapped, with no ellipsis
+#### Scenario: Field row shows one chip
+- **WHEN** the field list shows an item scoped `title` field whose table has a list parent and an item container
+- **THEN** the row shows one chip for the `title` selector and no list parent or item chip
 
-#### Scenario: Chips are not interactive
-- **WHEN** the user clicks a chip in a field row's chain
-- **THEN** nothing changes except what clicking the field row already does
+#### Scenario: Stack is not interactive
+- **WHEN** the user clicks a chip in the Rows section stack
+- **THEN** nothing changes
 
 ### Requirement: Clear the selection
 The selection panel SHALL offer a clear control. Clearing SHALL remove the selection, any item proposal shown for it, and a pending field edit, stop highlighting the selected element, and show the empty state: the pick strip with no inspector, candidates, or actions. The draft SHALL NOT change. Confirmed item containers SHALL stay highlighted.
@@ -358,7 +423,7 @@ The selection panel SHALL offer a clear control. Clearing SHALL remove the selec
 - **THEN** the proposal and the inspector disappear, no item container is set, and the draft's fields are unchanged
 
 ### Requirement: Typed selector for the selection
-The selection panel SHALL accept selector text in the same `strategy=value` syntax as the list parent and item container fields. With scope `item`, the text SHALL be resolved inside each item container; with scope `page`, against the document. When it matches, the typed candidate SHALL become the primary candidate, shown with its stability and match count, and the first element it matches (in the first container that holds a match for item scope) SHALL become the selected element with its inspector. For item scope the panel SHALL show the number of containers holding at least one match out of the container count. A candidate that matches in only some containers SHALL be accepted, and the panel SHALL offer to mark the field optional. Text that is invalid or matches nothing SHALL show an inline error and leave the previous selection in effect. The same input SHALL be available when nothing is selected and an item container is set.
+The selection panel SHALL accept selector text through the selector input, in the same `strategy=value` form as the list parent and item container fields. With scope `item`, the text SHALL be resolved inside each item container; with scope `page`, against the document. When it matches, the typed candidate SHALL become the primary candidate, shown with its stability and match count, and the first element it matches (in the first container that holds a match for item scope) SHALL become the selected element with its inspector. For item scope the panel SHALL show the number of containers holding at least one match out of the container count. A candidate that matches in only some containers SHALL be accepted, and the panel SHALL offer to mark the field optional. Text that is invalid or matches nothing SHALL show an inline error and leave the previous selection in effect. The same input SHALL be available in the Pick section when nothing is selected and the active table has an item container.
 
 #### Scenario: Typed item selector
 - **WHEN** 24 product cards are confirmed and the user types `css=h3` with no element selected
@@ -432,24 +497,40 @@ Selection actions that would change the item (use as item container) and field e
 - **WHEN** the confirmed item container matches nothing after a navigation
 - **THEN** the item card shows a zero-match notice, Edit is absent, and Remove is available
 
-### Requirement: Tables in the panel
-The panel SHALL show a table strip listing every table of the draft with its name and, when known, its row count on the current page, and SHALL mark one table as active. A new draft SHALL start with one table named `items`. The strip SHALL offer to add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`), rename the active table, and remove the active table when the draft has more than one. Removing a table SHALL remove its item container and fields. The active table SHALL receive picks, item inference, added fields, field edits, and item edits. The item card and the field list of tables other than the active one SHALL be collapsed under their tab and SHALL expand and activate on click. Clicking a field of another table SHALL activate that table and open the field for editing.
+### Requirement: Table tab bar
+The panel SHALL show a table tab bar with one tab per table of the draft, in recipe order, each with the table's name, its row count on the current page when known, an icon for its kind (list when it has an item container, page otherwise), and an error dot when the table has a validation error. One tab SHALL be active. A new draft SHALL start with one table named `items`. A pinned `+` tab at the end SHALL add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`) and activate it. When the tabs do not fit, the bar SHALL scroll horizontally and end with a "N more" control listing the hidden tables. Double-clicking a tab, pressing F2 on a focused tab, or choosing Rename in the table's "…" menu SHALL rename the table inline; a name that is not kebab-case or not unique SHALL be refused with an error and the previous name kept. The table's "…" menu SHALL offer Rename, Move left, Move right, Use for pagination, and Remove table. Remove table SHALL be offered only when the draft has more than one table and SHALL remove the table's item container and fields. Tabs SHALL be reorderable by dragging a tab, by Alt+Left and Alt+Right on a focused tab, and by Move left and Move right; the `+` tab SHALL NOT move and SHALL NOT be a drop target. The order of the tabs SHALL be the order of the recipe's tables. Use for pagination SHALL move the table in front of every other table with an item container; it SHALL be unavailable for a table without an item container and for the table that already drives pagination. When the draft's pagination kind is not `none`, the tab of the primary table (the first table with an item container) SHALL carry a "drives pagination" badge, and when a reorder changes the primary table, the panel SHALL show a toast naming the new primary table. Reordering SHALL NOT offer undo. The active table SHALL receive picks, item inference, added fields, field edits, and item edits. Switching and reordering tabs SHALL be unavailable while the item proposal is being edited.
 
 #### Scenario: Add a page table
-- **WHEN** the draft has the table `products` with 24 containers and the user adds a table
-- **THEN** the strip shows `products` and a new active table named `page` with no item container and no fields
+- **WHEN** the draft has the table `products` with 24 containers and the user clicks the `+` tab
+- **THEN** the tab bar shows `products` and a new active table named `page` with no item container and no fields
 
 #### Scenario: Rename rejects duplicates
-- **WHEN** the user renames the active table to `products` while a table `products` exists
+- **WHEN** the user renames a table to `products` while a table `products` exists
 - **THEN** the panel shows an error on the name and keeps the previous name
 
 #### Scenario: Remove a table
-- **WHEN** the draft has tables `page` and `products` and the user removes `page`
+- **WHEN** the draft has tables `page` and `products` and the user chooses Remove table on `page`
 - **THEN** only `products` remains, it is active, and the draft has no `page` fields
 
-#### Scenario: Activate by clicking a field
-- **WHEN** `page` is active and the user clicks the `title` field under the `products` tab
-- **THEN** `products` becomes active and `title` opens in the selection panel for editing
+#### Scenario: Drag to reorder
+- **WHEN** the tabs are `results`, `summary`, `ads` and the user drags `ads` before `results`
+- **THEN** the tabs read `ads`, `results`, `summary` and a saved recipe lists the tables in that order
+
+#### Scenario: Primary table changes
+- **WHEN** pagination is `next`, `results` and `ads` both have item containers, `results` is first, and the user chooses Use for pagination on `ads`
+- **THEN** `ads` moves in front of `results`, the drives pagination badge moves to `ads`, and a toast says that `ads` now drives pagination
+
+#### Scenario: No badge without pagination
+- **WHEN** the draft's pagination kind is `none`
+- **THEN** no tab carries the drives pagination badge
+
+#### Scenario: Use for pagination on a page table
+- **WHEN** the user opens the "…" menu of a table without an item container
+- **THEN** Use for pagination is unavailable
+
+#### Scenario: Overflowing tabs
+- **WHEN** the draft has more tables than fit in the tab bar
+- **THEN** the bar ends with a "N more" control that lists the hidden tables and activates the one chosen
 
 ### Requirement: Host snapshots on deep pages
 When the host needs the page's DOM snapshot without a pick, such as when the confirmed item container is edited, the snapshot SHALL succeed regardless of the document's nesting depth. The page SHALL attach its own snapshot to the item edit message, and a snapshot the host requests directly from the browser SHALL be transported in a form that does not depend on nesting depth.
@@ -474,11 +555,11 @@ Each field row SHALL offer a `fallback` toggle next to `optional` and `key`, off
 - **THEN** the test run drops that row and reports the missing field
 
 ### Requirement: Field container coverage
-Each item scoped field row SHALL show the number of item containers in which the field's primary candidate matches, out of the container count, such as `9 / 11 items`.
+Each item scoped field row SHALL show the number of item containers in which the field's primary candidate matches, out of the container count, in the compact form `9/11`, with a tooltip naming it as items holding a match. A row whose coverage is below the container count SHALL show it in the warning tone.
 
 #### Scenario: Partial coverage shown
 - **WHEN** 11 containers are set and the field's primary candidate matches in 9
-- **THEN** the field row shows `9 / 11 items`
+- **THEN** the field row shows `9/11` in the warning tone
 
 ### Requirement: Highlight matches the runner
 The page highlight of item containers SHALL cover the same elements the runner resolves as containers for the same item block, including CSS selectors that start with `:scope`.
