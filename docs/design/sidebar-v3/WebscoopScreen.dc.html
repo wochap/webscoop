@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-53929d40-05df-499c-bc14-17884e999fc5/styles.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<script src="_ds/nocturne-53929d40-05df-499c-bc14-17884e999fc5/_ds_bundle.js"></script>
+<style>body{margin:0}a{color:var(--color-accent)}a:hover{color:var(--color-accent-400)}</style>
+</helmet>
+<div data-screen-label="{{ screenLabel }}" style="position:relative;width:1440px;height:900px;overflow:hidden;display:flex;font-family:var(--font-body);color:var(--color-text);background:#000">
+
+<!-- ================= PAGE AREA (1040) ================= -->
+<div style="position:relative;width:1040px;height:900px;flex:none;display:flex;flex-direction:column;overflow:hidden">
+<div style="position:relative;flex:1;overflow:hidden">
+
+<!-- host: dark listing -->
+<sc-if value="{{ hostListing }}" hint-placeholder-val="{{ true }}">
+<div style="position:absolute;inset:0;background:#0e0e0e;color:#e8e8e8;font-family:'Helvetica Neue',Helvetica,sans-serif;overflow:hidden">
+  <div style="position:absolute;top:0;left:0;right:0;height:56px;z-index:3;display:flex;align-items:center;gap:28px;padding:0 32px;background:#050505;border-bottom:1px solid #222">
+    <span style="font-weight:800;font-size:18px;letter-spacing:.14em;color:#ff7a2f">VOLTMART</span>
+    <div style="display:flex;gap:20px;font-size:13px;color:#bdbdbd"><span style="color:#fff">Laptops</span><span>Phones</span><span>Audio</span><span>Deals</span></div>
+    <div style="flex:1;height:32px;border-radius:16px;background:#1a1a1a;border:1px solid #2c2c2c;display:flex;align-items:center;padding:0 14px;font-size:13px;color:#777">Search 40,000 products</div>
+    <span style="font-size:13px;color:#bdbdbd">Account</span><span style="font-size:13px;color:#bdbdbd">Cart (2)</span>
+  </div>
+  <div style="padding:76px 32px 0">
+    <sc-if value="{{ notPagination }}" hint-placeholder-val="{{ true }}">
+      <div style="font-size:12px;color:#8a8a8a">Home / Computers / Laptops</div>
+      <div style="display:flex;align-items:baseline;gap:12px;margin:8px 0 14px"><span style="font-size:30px;font-weight:700;letter-spacing:-.02em;color:#fff">Laptops</span><span style="font-size:13px;color:#8a8a8a">24 results</span></div>
+      <div style="display:flex;gap:8px;margin-bottom:22px">
+        <span style="padding:6px 12px;border-radius:14px;border:1px solid #333;font-size:12px;color:#ccc">Brand ▾</span><span style="padding:6px 12px;border-radius:14px;border:1px solid #333;font-size:12px;color:#ccc">Price ▾</span><span style="padding:6px 12px;border-radius:14px;border:1px solid #333;font-size:12px;color:#ccc">Memory ▾</span><span style="padding:6px 12px;border-radius:14px;background:#ff7a2f;color:#111;font-size:12px;font-weight:700">Sort: Newest</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ isPagination }}" hint-placeholder-val="{{ false }}">
+      <div style="font-size:12px;color:#8a8a8a;margin-bottom:16px">Showing 1–24 of 72 · scrolled to end of page 1</div>
+    </sc-if>
+    <div style="position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">
+      <sc-if value="{{ showContainer }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:-10px;border:1px dashed var(--color-neutral-300);border-radius:10px;box-shadow:0 0 0 1px rgba(14,15,24,.8),inset 0 0 0 1px rgba(14,15,24,.8);pointer-events:none;z-index:1">
+          <div style="position:absolute;right:-1px;bottom:100%;margin-bottom:4px;display:flex;gap:6px;align-items:center;padding:2px 7px;border-radius:4px;background:var(--color-bg);color:var(--color-neutral-200);font:500 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-neutral-500);white-space:nowrap"><span style="color:var(--color-neutral-400)">container</span>div.grid<span style="color:var(--color-accent-300)">× 24</span></div>
+        </div>
+      </sc-if>
+      <sc-for list="{{ products }}" as="p" hint-placeholder-count="8">
+        <div style="position:relative;background:#171717;border:1px solid #262626;border-radius:6px;padding:12px">
+          <sc-if value="{{ p.sib }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:-4px;border-radius:8px;border:1px dashed var(--color-accent-400);background:color-mix(in srgb,var(--color-accent-500) 13%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.7);pointer-events:none;z-index:2"><span style="position:absolute;top:-1px;left:-1px;padding:0 5px;border-radius:7px 0 4px 0;background:var(--color-accent-500);color:var(--color-bg);font:600 10px/15px 'JetBrains Mono',monospace">{{ p.n }}</span></div>
+          </sc-if>
+          <sc-if value="{{ p.faint }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:-4px;border-radius:8px;border:1px solid color-mix(in srgb,var(--color-accent-400) 45%,transparent);pointer-events:none;z-index:2"></div>
+          </sc-if>
+          <div style="height:140px;border-radius:4px;background:repeating-linear-gradient(135deg,#1c1c1c 0 8px,#212121 8px 16px);display:flex;align-items:center;justify-content:center;font:10px 'JetBrains Mono',monospace;color:#555">product photo</div>
+          <div style="position:relative;margin:10px 0 6px;min-height:38px;font-size:14px;line-height:1.35;font-weight:600;color:#f2f2f2">{{ p.title }}
+            <sc-if value="{{ p.titleHover }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;inset:-3px;border:2px solid var(--color-accent-400);border-radius:3px;background:color-mix(in srgb,var(--color-accent-500) 16%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9),inset 0 0 0 1px rgba(14,15,24,.6);pointer-events:none;z-index:5">
+                <div style="position:absolute;left:-2px;bottom:calc(100% + 6px);display:flex;gap:7px;align-items:center;white-space:nowrap;padding:3px 7px;border-radius:4px;background:var(--color-bg);color:var(--color-text);font:500 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-accent-400),0 4px 12px rgba(0,0,0,.5)"><span style="color:var(--color-accent-300)">h3</span><span style="color:var(--color-neutral-400)">heading</span><span>“{{ p.short }}”</span><span style="color:var(--color-neutral-500)">212×38</span></div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ p.titleSel }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;inset:-3px;border:2px solid var(--color-accent-300);border-radius:3px;background:color-mix(in srgb,var(--color-accent-500) 26%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9),0 0 0 4px color-mix(in srgb,var(--color-accent-400) 25%,transparent);pointer-events:none;z-index:6">
+                <div style="position:absolute;left:-2px;bottom:calc(100% + 6px);display:flex;gap:7px;align-items:center;white-space:nowrap;padding:3px 7px;border-radius:4px;background:var(--color-accent-300);color:var(--color-bg);font:600 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px rgba(14,15,24,.9),0 4px 12px rgba(0,0,0,.5)"><i class="ph ph-check" style="font-size:12px"></i>h3.pc__title<span style="font-weight:500;opacity:.75">selected</span></div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="position:relative;font-size:16px;font-weight:700;color:#ff7a2f">{{ p.price }}
+              <sc-if value="{{ p.priceHover }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;inset:-3px -4px;border:2px solid var(--color-accent-400);border-radius:3px;background:color-mix(in srgb,var(--color-accent-500) 16%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9);pointer-events:none;z-index:5">
+                  <div style="position:absolute;left:-2px;top:calc(100% + 6px);display:flex;gap:7px;align-items:center;white-space:nowrap;padding:3px 7px;border-radius:4px;background:var(--color-bg);color:var(--color-text);font:500 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-accent-400),0 4px 12px rgba(0,0,0,.5)"><span style="color:var(--color-accent-300)">span.price-now</span><span>“$1,249.00”</span><span style="color:#9fdcbc">fingerprint 0.93</span></div>
+                </div>
+              </sc-if>
+            </span>
+            <span style="font-size:12px;color:#8a8a8a">★ {{ p.rating }}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <sc-if value="{{ isPagination }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin:44px 0 0;font-size:14px;color:#bdbdbd">
+        <span style="padding:8px 12px;border:1px solid #2c2c2c;border-radius:6px;color:#555">‹ Prev</span>
+        <span style="padding:8px 12px;border-radius:6px;background:#ff7a2f;color:#111;font-weight:700">1</span>
+        <span style="padding:8px 12px;border:1px solid #2c2c2c;border-radius:6px">2</span>
+        <span style="padding:8px 12px;border:1px solid #2c2c2c;border-radius:6px">3</span>
+        <span style="position:relative;padding:8px 14px;border:1px solid #2c2c2c;border-radius:6px;color:#fff">Next ›
+          <div style="position:absolute;inset:-3px;border:2px solid var(--color-accent-300);border-radius:6px;background:color-mix(in srgb,var(--color-accent-500) 26%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9),0 0 0 4px color-mix(in srgb,var(--color-accent-400) 25%,transparent);pointer-events:none">
+            <div style="position:absolute;left:-2px;bottom:calc(100% + 6px);display:flex;gap:7px;align-items:center;white-space:nowrap;padding:3px 7px;border-radius:4px;background:var(--color-accent-300);color:var(--color-bg);font:600 11px/16px 'JetBrains Mono',monospace"><i class="ph ph-arrow-line-right" style="font-size:12px"></i>a[rel=next]<span style="font-weight:500;opacity:.75">pagination</span></div>
+          </div>
+        </span>
+      </div>
+      <div style="margin-top:60px;padding:24px 0;border-top:1px solid #222;font-size:12px;color:#666;display:flex;gap:24px"><span>© Voltmart</span><span>Shipping</span><span>Returns</span><span>Privacy</span></div>
+    </sc-if>
+  </div>
+</div>
+</sc-if>
+
+<!-- host: light listing, hostile -->
+<sc-if value="{{ isHostile }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;background:#fbfbf8;color:#151515;font-family:Georgia,serif;overflow:hidden">
+  <div style="position:absolute;top:0;left:0;right:0;z-index:99;background:#1747d1;color:#fff;display:flex;align-items:center;gap:24px;height:60px;padding:0 32px;box-shadow:0 2px 10px rgba(0,0,0,.25)">
+    <span style="font:900 20px/1 Georgia,serif;letter-spacing:.06em">NORDHAUS</span>
+    <span style="font-size:14px">Home</span><span style="font-size:14px">Office</span><span style="font-size:14px;text-decoration:underline">Computing</span><span style="flex:1"></span><span style="font-size:14px">Basket</span>
+  </div>
+  <div style="position:absolute;top:60px;left:0;right:0;z-index:98;height:30px;background:#ffe14d;color:#151515;display:flex;align-items:center;justify-content:center;font:700 12px/1 Arial,sans-serif;letter-spacing:.04em">AUTUMN SALE · 20% OFF EVERYTHING · ENDS SUNDAY</div>
+  <div style="padding:112px 32px 0">
+    <div style="font-size:28px;font-style:italic;margin:0 0 20px">Laptops &amp; notebooks</div>
+    <div style="position:relative;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">
+      <div style="position:absolute;inset:-10px;border:1px dashed var(--color-neutral-700);border-radius:10px;box-shadow:0 0 0 1px rgba(243,245,254,.9),inset 0 0 0 1px rgba(243,245,254,.9);pointer-events:none;z-index:1">
+        <div style="position:absolute;right:-1px;bottom:100%;margin-bottom:4px;display:flex;gap:6px;align-items:center;padding:2px 7px;border-radius:4px;background:var(--color-bg);color:var(--color-neutral-200);font:500 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-neutral-500);white-space:nowrap"><span style="color:var(--color-neutral-400)">container</span>ul.products<span style="color:var(--color-accent-300)">× 24</span></div>
+      </div>
+      <sc-for list="{{ products }}" as="p" hint-placeholder-count="8">
+        <div style="position:relative;background:#fff;border:1px solid #e3e3de;border-radius:2px;padding:12px">
+          <div style="position:absolute;inset:-4px;border-radius:6px;border:1px dashed var(--color-accent-600);background:color-mix(in srgb,var(--color-accent-500) 12%,transparent);box-shadow:0 0 0 1px rgba(243,245,254,.9);pointer-events:none;z-index:2"><span style="position:absolute;top:-1px;left:-1px;padding:0 5px;border-radius:5px 0 4px 0;background:var(--color-accent-600);color:var(--color-neutral-100);font:600 10px/15px 'JetBrains Mono',monospace">{{ p.n }}</span></div>
+          <div style="height:140px;background:repeating-linear-gradient(135deg,#efefea 0 8px,#e8e8e2 8px 16px);display:flex;align-items:center;justify-content:center;font:10px 'JetBrains Mono',monospace;color:#999">product photo</div>
+          <div style="position:relative;margin:10px 0 6px;min-height:38px;font-size:15px;line-height:1.3">{{ p.title }}
+            <sc-if value="{{ p.titleHover }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;inset:-3px;border:2px solid var(--color-accent-600);border-radius:3px;background:color-mix(in srgb,var(--color-accent-500) 16%,transparent);box-shadow:0 0 0 1px rgba(243,245,254,.95),inset 0 0 0 1px rgba(243,245,254,.7);pointer-events:none;z-index:5">
+                <div style="position:absolute;left:-2px;bottom:calc(100% + 6px);display:flex;gap:7px;align-items:center;white-space:nowrap;padding:3px 7px;border-radius:4px;background:var(--color-bg);color:var(--color-text);font:500 11px/16px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-accent-400),0 4px 12px rgba(0,0,0,.3)"><span style="color:var(--color-accent-300)">h2</span><span style="color:var(--color-neutral-400)">heading</span><span>“{{ p.short }}”</span><span style="color:var(--color-neutral-500)">214×40</span></div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="font:700 16px Arial,sans-serif;color:#d01c1c">{{ p.price }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="position:absolute;inset:0;z-index:2147483000;background:rgba(0,0,0,.35);pointer-events:none"></div>
+  <div style="position:absolute;left:24px;right:24px;bottom:24px;z-index:2147483001;background:#151515;color:#fff;border-radius:4px;padding:16px 20px;display:flex;align-items:center;gap:16px;font:14px Arial,sans-serif">
+    <span style="flex:1">We use cookies to improve your experience. By continuing you agree to our cookie policy.</span>
+    <span style="padding:8px 14px;border:1px solid #fff">Settings</span><span style="padding:8px 14px;background:#fff;color:#151515;font-weight:700">Accept all</span>
+  </div>
+  <sc-for list="{{ pins }}" as="pin" hint-placeholder-count="0">
+    <div style="position:absolute;left:{{ pin.x }}px;top:{{ pin.y }}px;z-index:2147483647;width:22px;height:22px;border-radius:50%;background:#ffe14d;color:#151515;display:flex;align-items:center;justify-content:center;font:700 12px/1 'JetBrains Mono',monospace;box-shadow:0 0 0 2px #151515">{{ pin.n }}</div>
+  </sc-for>
+</div>
+</sc-if>
+
+<!-- host: login -->
+<sc-if value="{{ isGuardLogin }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;background:#0e0e0e;color:#e8e8e8;font-family:'Helvetica Neue',Helvetica,sans-serif">
+  <div style="position:absolute;top:0;left:0;right:0;height:56px;z-index:3;display:flex;align-items:center;padding:0 32px;background:#050505;border-bottom:1px solid #222"><span style="font-weight:800;font-size:18px;letter-spacing:.14em;color:#ff7a2f">VOLTMART</span></div>
+  <div style="position:absolute;top:150px;left:120px;width:380px;display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:26px;font-weight:700;color:#fff">Sign in</div>
+    <div style="font-size:13px;color:#8a8a8a">Your session has expired. Sign in to keep browsing.</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px"><span style="font-size:12px;color:#aaa">Email</span><div style="height:40px;border:1px solid #333;border-radius:6px;background:#161616;display:flex;align-items:center;padding:0 12px;font-size:14px">ops@acme-data.io</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;color:#aaa">Password</span><div style="height:40px;border:2px solid #ff7a2f;border-radius:6px;background:#161616;display:flex;align-items:center;padding:0 12px;font-size:14px;letter-spacing:.2em">••••••<span style="width:1px;height:18px;background:#fff;margin-left:2px"></span></div></div>
+    <div style="height:42px;border-radius:6px;background:#ff7a2f;color:#111;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:6px">Sign in</div>
+    <div style="font-size:12px;color:#8a8a8a">Forgot password? · Create account</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- host: captcha -->
+<sc-if value="{{ isGuardCaptcha }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;background:#f5f5f2;color:#222;font-family:Arial,sans-serif">
+  <div style="position:absolute;top:170px;left:120px;width:460px;display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:24px;font-weight:700">shop.voltmart.io</div>
+    <div style="font-size:15px;color:#555">Checking if the site connection is secure. Verify you are human to proceed.</div>
+    <div style="height:78px;border:2px dashed #b9b9b0;border-radius:4px;display:flex;align-items:center;justify-content:center;font:12px 'JetBrains Mono',monospace;color:#888;background:#fff">third-party challenge iframe</div>
+    <div style="font-size:12px;color:#888">Ray ID 8c1f0a2e · Performance &amp; security by a CDN provider</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- guard banner -->
+<sc-if value="{{ isGuard }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;top:0;left:0;right:0;z-index:30">
+  <div style="height:44px;display:flex;align-items:center;gap:10px;padding:0 8px 0 10px;background:var(--color-bg);color:var(--color-text);box-shadow:0 0 0 1px var(--color-neutral-700),0 10px 28px rgba(0,0,0,.55)">
+    <span style="width:26px;height:26px;border-radius:6px;background:#3b3222;color:#e6c98f;display:flex;align-items:center;justify-content:center"><i class="{{ guardIcon }}" style="font-size:15px"></i></span>
+    <span style="font-size:13px;white-space:nowrap"><span style="font-weight:500">webscoop needs you:</span> <span style="color:var(--color-neutral-200)">{{ guardText }}</span></span>
+    <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500);white-space:nowrap">nightly-laptops · run #184 · page 3 of 5</span>
+    <span style="flex:1"></span>
+    <sc-if value="{{ isGuardLogin }}" hint-placeholder-val="{{ false }}"><span style="display:flex;align-items:center;gap:5px;font:500 12px 'JetBrains Mono',monospace;color:#e6c98f;white-space:nowrap"><i class="ph ph-timer" style="font-size:14px"></i>04:37</span></sc-if>
+    <sc-if value="{{ isGuardCaptcha }}" hint-placeholder-val="{{ false }}"><span style="display:flex;align-items:center;gap:5px;font:500 12px 'JetBrains Mono',monospace;color:#f0a9a9;white-space:nowrap"><i class="ph ph-timer" style="font-size:14px"></i>01:12</span></sc-if>
+    <button class="btn btn-secondary" style="height:28px;font-size:12px;padding:0 10px">Abort <span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 4px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-400);background:var(--color-neutral-900)">Esc</span></button>
+    <button class="btn btn-primary" style="height:28px;font-size:12px;padding:0 10px">Continue <span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 4px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-accent-200);background:var(--color-accent-900)">⏎</span></button>
+  </div>
+  <div style="height:2px;background:var(--color-neutral-800)">
+    <sc-if value="{{ isGuardLogin }}" hint-placeholder-val="{{ false }}"><div style="height:2px;width:78%;background:#d9b46a;box-shadow:0 0 8px #d9b46a"></div></sc-if>
+    <sc-if value="{{ isGuardCaptcha }}" hint-placeholder-val="{{ false }}"><div style="height:2px;width:24%;background:#e58c8c;box-shadow:0 0 8px #e58c8c"></div></sc-if>
+  </div>
+</div>
+</sc-if>
+</div>
+
+<!-- results drawer -->
+<sc-if value="{{ isTestrun }}" hint-placeholder-val="{{ false }}">
+<div style="flex:none;height:328px;background:var(--color-bg);box-shadow:0 -1px 0 var(--color-neutral-700),0 -10px 30px rgba(0,0,0,.5);display:flex;flex-direction:column;position:relative;z-index:10">
+  <div style="height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;border-bottom:1px solid var(--color-divider)">
+    <i class="ph ph-table" style="font-size:15px;color:var(--color-accent-300)"></i>
+    <span style="font-size:12px;font-weight:500">Test run preview</span>
+    <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">first 5 of 72 rows · 3 pages · 8.4 s</span>
+    <span style="flex:1"></span>
+    <div style="display:flex;border:1px solid var(--color-divider);border-radius:6px;overflow:hidden;font-size:11px"><span style="padding:3px 9px;color:var(--color-accent-300);box-shadow:inset 0 0 0 1px var(--color-accent)">Table</span><span style="padding:3px 9px;color:var(--color-neutral-400)">JSON</span><span style="padding:3px 9px;color:var(--color-neutral-400)">CSV</span></div>
+    <button class="btn btn-ghost" style="width:28px;height:28px;padding:0;color:var(--color-neutral-400)"><i class="ph ph-x" style="font-size:14px"></i></button>
+  </div>
+  <div style="flex:1;overflow:hidden;padding:0 6px">
+    <table class="table" style="font-size:12px;table-layout:fixed">
+      <thead><tr>
+        <th style="width:34px;font-size:10px;padding:8px 6px">#</th>
+        <sc-for list="{{ columns }}" as="c" hint-placeholder-count="6">
+          <th style="width:{{ c.w }}px;padding:8px 6px;text-transform:none;letter-spacing:0">
+            <div style="display:flex;align-items:center;gap:5px"><span style="width:6px;height:6px;border-radius:50%;background:{{ c.dot }};flex:none"></span><span style="font:500 11px 'JetBrains Mono',monospace;color:var(--color-text)">{{ c.name }}</span><span style="font-size:10px;color:var(--color-neutral-500)">{{ c.type }}</span></div>
+          </th>
+        </sc-for>
+      </tr></thead>
+      <tbody>
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="5">
+          <tr>
+            <td style="padding:7px 6px;font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">{{ r.i }}</td>
+            <sc-for list="{{ r.cells }}" as="cell" hint-placeholder-count="6">
+              <td style="padding:7px 6px;font:11.5px 'JetBrains Mono',monospace;color:{{ cell.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ cell.v }}</td>
+            </sc-for>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+  </div>
+  <div style="height:30px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px;border-top:1px solid var(--color-divider);font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">
+    <span style="color:#9fdcbc">✓ p1 24</span><span style="color:#9fdcbc">✓ p2 24</span><span style="color:#9fdcbc">✓ p3 24</span><span style="flex:1"></span><span>dedup key: title · 0 duplicates dropped</span>
+  </div>
+</div>
+</sc-if>
+</div>
+
+<!-- ================= SIDEBAR (400) ================= -->
+<div style="position:relative;width:400px;height:900px;flex:none;display:flex;flex-direction:column;background:var(--color-bg);box-shadow:inset 1px 0 0 var(--color-neutral-700);font-size:12px;line-height:1.45;isolation:isolate">
+
+  <!-- header -->
+  <div style="display:flex;align-items:center;gap:8px;height:44px;padding:0 6px 0 14px;flex:none;border-bottom:1px solid var(--color-divider)">
+    <span style="width:8px;height:8px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 0 3px var(--color-accent-900),0 0 10px var(--color-accent)"></span>
+    <span style="font-size:13px;font-weight:500;letter-spacing:-.01em">webscoop</span>
+    <sc-if value="{{ pillNeutral }}" hint-placeholder-val="{{ false }}"><span style="height:20px;padding:0 7px;border-radius:4px;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;background:var(--color-neutral-900);color:var(--color-neutral-300);box-shadow:inset 0 0 0 1px var(--color-neutral-800)">{{ modeLabel }}</span></sc-if>
+    <sc-if value="{{ pillAccent }}" hint-placeholder-val="{{ false }}"><span style="height:20px;padding:0 7px;border-radius:4px;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;background:var(--color-accent-900);color:var(--color-accent-200);box-shadow:inset 0 0 0 1px var(--color-accent-700)"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent-400);box-shadow:0 0 6px var(--color-accent-400)"></span>{{ modeLabel }}</span></sc-if>
+    <sc-if value="{{ pillOk }}" hint-placeholder-val="{{ false }}"><span style="height:20px;padding:0 7px;border-radius:4px;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;background:#1e3830;color:#9fdcbc">{{ modeLabel }}</span></sc-if>
+    <sc-if value="{{ pillWarn }}" hint-placeholder-val="{{ false }}"><span style="height:20px;padding:0 7px;border-radius:4px;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;background:#3b3222;color:#e6c98f"><span style="width:6px;height:6px;border-radius:50%;background:#d9b46a;box-shadow:0 0 6px #d9b46a"></span>{{ modeLabel }}</span></sc-if>
+    <span style="flex:1"></span>
+    <button class="btn btn-ghost" style="width:28px;height:28px;padding:0;color:var(--color-neutral-400)"><i class="ph ph-keyboard" style="font-size:16px"></i></button>
+    <button class="btn btn-ghost" style="width:28px;height:28px;padding:0;color:var(--color-neutral-400)"><i class="ph ph-gear-six" style="font-size:16px"></i></button>
+    <button class="btn btn-ghost" style="width:28px;height:28px;padding:0;color:var(--color-neutral-400)"><i class="ph ph-sidebar-simple" style="font-size:16px"></i></button>
+  </div>
+
+  <!-- compact recipe row -->
+  <sc-if value="{{ compactRecipe }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:none;display:flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-bottom:1px solid var(--color-divider);white-space:nowrap;overflow:hidden">
+      <span style="font-size:12px;font-weight:500">laptops-listing</span>
+      <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500);overflow:hidden;text-overflow:ellipsis">…/c/<span style="padding:0 4px;border-radius:3px;background:var(--color-accent-800);color:var(--color-accent-200)">laptops</span>?page=<span style="padding:0 4px;border-radius:3px;background:var(--color-accent-800);color:var(--color-accent-200)">1</span></span>
+      <span style="flex:1"></span><i class="ph ph-caret-down" style="color:var(--color-neutral-500)"></i>
+    </div>
+  </sc-if>
+
+  <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column">
+
+  <!-- a. IDLE -->
+  <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:12px 14px 14px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--color-divider)">
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Recipe</span>
+        <div style="height:30px;padding:0 8px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:8px">laptops-listing<span style="flex:1"></span><i class="ph ph-pencil-simple" style="color:var(--color-neutral-500)"></i></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div style="display:flex;align-items:center"><span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">URL template</span><span style="flex:1"></span><span style="font-size:11px;color:var(--color-neutral-500)">wrap a segment in { } to make it a variable</span></div>
+        <div style="background:var(--color-surface);border:1px solid var(--color-accent);border-radius:8px;padding:7px 9px;font:12px/21px 'JetBrains Mono',monospace;color:var(--color-neutral-300);word-break:break-all;box-shadow:0 0 0 3px color-mix(in srgb,var(--color-accent) 18%,transparent)">https://shop.voltmart.io/c/<span style="display:inline-flex;align-items:center;height:18px;padding:0 5px;margin:0 1px;border-radius:4px;background:var(--color-accent-800);color:var(--color-accent-200);font-weight:500">{category}</span>?sort=new&amp;page=<span style="display:inline-flex;align-items:center;height:18px;padding:0 5px;margin:0 1px;border-radius:4px;background:var(--color-accent-800);color:var(--color-accent-200);font-weight:500">{n}</span><span style="display:inline-block;width:1px;height:14px;background:var(--color-accent);vertical-align:-2px"></span></div>
+      </div>
+      <div style="display:grid;grid-template-columns:96px minmax(0,1fr) 64px;gap:6px 8px;align-items:center">
+        <span style="justify-self:start;display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:4px;background:var(--color-accent-800);color:var(--color-accent-200);font:500 11px 'JetBrains Mono',monospace">{category}</span>
+        <div style="height:28px;padding:0 8px;display:flex;align-items:center;font:12px 'JetBrains Mono',monospace;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:6px">laptops</div>
+        <span style="font-size:11px;color:var(--color-neutral-500)">string</span>
+        <span style="justify-self:start;display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:4px;background:var(--color-accent-800);color:var(--color-accent-200);font:500 11px 'JetBrains Mono',monospace">{n}</span>
+        <div style="height:28px;padding:0 8px;display:flex;align-items:center;font:12px 'JetBrains Mono',monospace;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:6px">1</div>
+        <span style="font-size:11px;color:var(--color-neutral-500)">int · pager</span>
+      </div>
+      <div style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ https://shop.voltmart.io/c/laptops?sort=new&amp;page=1</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" style="flex:1;height:30px;font-size:12px"><i class="ph ph-arrow-square-out"></i>Open <span style="display:inline-flex;align-items:center;min-width:18px;height:16px;padding:0 4px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-accent-200);background:var(--color-accent-900)">⏎</span></button>
+        <button class="btn btn-secondary" style="height:30px;font-size:12px">Detect variables</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:14px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Fields<span style="font-family:'JetBrains Mono',monospace;letter-spacing:0;color:var(--color-neutral-500)">0</span></div>
+    <div style="margin:0 14px;border:1px dashed var(--color-neutral-700);border-radius:8px;padding:18px 16px;display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+      <i class="ph ph-cursor-click" style="font-size:20px;color:var(--color-accent)"></i>
+      <div style="font-size:13px;font-weight:500">Click any element on the page</div>
+      <div style="font-size:12px;color:var(--color-neutral-400);text-wrap:pretty">Each pick becomes a field, a pagination target or a step. Repeating items are detected from your first pick.</div>
+      <div style="display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--color-neutral-400)">
+        <span style="display:flex;gap:5px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">P</span>start picking</span>
+        <span style="display:flex;gap:5px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">Esc</span>cancel</span>
+        <span style="display:flex;gap:5px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">⏎</span>confirm</span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:18px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Pagination</div>
+    <div style="margin:0 14px;display:flex;align-items:center;gap:8px;height:30px;font-size:12px;color:var(--color-neutral-400)"><i class="ph ph-file" style="color:var(--color-neutral-500)"></i>First page only<span style="flex:1"></span><span style="font-size:11px;color:var(--color-neutral-500)">pick a next link or use {n}</span></div>
+    <div style="display:flex;align-items:center;gap:6px;padding:12px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Steps</div>
+    <div style="margin:0 14px;display:flex;align-items:center;gap:8px;height:30px;font-size:12px;color:var(--color-neutral-400)"><i class="ph ph-record" style="color:var(--color-neutral-500)"></i>None recorded</div>
+  </sc-if>
+
+  <!-- b. PICKING -->
+  <sc-if value="{{ isPicking }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:10px 14px 0;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 10px;border-radius:8px;background:var(--color-accent-900);box-shadow:inset 0 0 0 1px var(--color-accent-700)">
+      <i class="ph ph-crosshair" style="font-size:16px;color:var(--color-accent-300)"></i>
+      <span style="font-size:12px;font-weight:500;color:var(--color-accent-200)">Picking</span>
+      <span style="font-size:11px;color:var(--color-accent-300)">hover to inspect · click to select</span>
+      <span style="flex:1"></span>
+      <span style="display:flex;gap:5px;align-items:center;font-size:11px;color:var(--color-accent-300)"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-accent-100);background:var(--color-accent-800)">Esc</span>cancel</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Hovered element<span style="flex:1"></span><span style="letter-spacing:0;text-transform:none;font-weight:400;display:flex;align-items:center;gap:5px;color:var(--color-neutral-500)"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent-400)"></span>live</span></div>
+    <div style="margin:0 14px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);overflow:hidden">
+      <div style="padding:10px 12px;display:flex;align-items:baseline;gap:8px;border-bottom:1px solid var(--color-divider)">
+        <span style="font:500 15px 'JetBrains Mono',monospace;color:var(--color-accent-300)">&lt;h3&gt;</span>
+        <span style="font:12px 'JetBrains Mono',monospace;color:var(--color-neutral-300)">.pc__title.t-lg</span>
+        <span style="flex:1"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">212 × 38</span>
+      </div>
+      <div style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:7px 10px;padding:10px 12px">
+        <span style="color:var(--color-neutral-500)">role</span><span>heading <span style="color:var(--color-neutral-500)">· level 3</span></span>
+        <span style="color:var(--color-neutral-500)">name</span><span style="font-family:'JetBrains Mono',monospace;font-size:11.5px">“Kestrel 14 Ultra OLED, 32 GB”</span>
+        <span style="color:var(--color-neutral-500)">text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--color-neutral-300)">Kestrel 14 Ultra OLED, 32 GB</span>
+        <span style="color:var(--color-neutral-500)">in</span><span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--color-neutral-300)">a.pc__link → article.pc</span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Key attributes</div>
+    <div style="margin:0 14px;display:flex;flex-direction:column">
+      <div style="display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;border-bottom:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">id</span><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-600)">none</span><span></span></div>
+      <div style="display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;border-bottom:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">data-testid</span><span style="font:11.5px 'JetBrains Mono',monospace">"product-title"</span><span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:#1e3830;color:#9fdcbc">stable</span></div>
+      <div style="display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px;align-items:center;min-height:28px;padding:4px 0;border-bottom:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">class</span><span style="font:11.5px 'JetBrains Mono',monospace">pc__title t-lg <span style="text-decoration:underline wavy #e58c8c;text-underline-offset:3px">js-trk-8f2a</span></span><span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:#42262b;color:#f0a9a9">1 hashed</span></div>
+      <div style="display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;border-bottom:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">aria-level</span><span style="font:11.5px 'JetBrains Mono',monospace">"3"</span><span></span></div>
+      <div style="display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px"><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">href</span><span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-300)">on parent a · /p/kestrel-14-ultra</span><span></span></div>
+    </div>
+    <div style="margin:14px 14px 0;display:flex;gap:8px;align-items:flex-start;padding:9px 10px;border-radius:8px;background:var(--color-neutral-900)"><i class="ph ph-stack" style="font-size:15px;color:var(--color-accent-300);margin-top:1px"></i><span style="color:var(--color-neutral-300)">Same structure as <b style="font-weight:500;color:var(--color-text)">23 other elements</b> under <span style="font-family:'JetBrains Mono',monospace">div.grid</span>. Clicking will offer to detect items.</span></div>
+    <div style="flex:1"></div>
+    <div style="margin:0 14px 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:11px;color:var(--color-neutral-400)">
+      <span style="display:flex;gap:6px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">Click</span>select</span>
+      <span style="display:flex;gap:6px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">Alt</span>+ click through overlays</span>
+      <span style="display:flex;gap:6px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">↑</span>hover parent</span>
+      <span style="display:flex;gap:6px;align-items:center"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">Space</span>freeze hover</span>
+    </div>
+  </sc-if>
+
+  <!-- c. SELECTED -->
+  <sc-if value="{{ isSelected }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:6px;padding:12px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Ancestors<span style="flex:1"></span><span style="letter-spacing:0;text-transform:none;font-weight:400;color:var(--color-neutral-500)">← → walk · ⏎ confirm</span></div>
+    <div style="padding:0 14px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+      <sc-for list="{{ crumbs }}" as="c" hint-placeholder-count="6">
+        <span style="display:inline-flex;align-items:center;gap:4px">
+          <sc-if value="{{ c.active }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:4px;background:var(--color-accent-900);box-shadow:inset 0 0 0 1px var(--color-accent);font:500 11px 'JetBrains Mono',monospace;color:var(--color-accent-200)">{{ c.label }}<span style="color:var(--color-accent-300);font-weight:400">{{ c.name }}</span></span></sc-if>
+          <sc-if value="{{ c.role }}" hint-placeholder-val="{{ true }}"><span style="display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:4px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider);font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-200)">{{ c.label }}<span style="color:var(--color-neutral-500)">{{ c.name }}</span></span></sc-if>
+          <sc-if value="{{ c.tag }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;height:22px;padding:0 7px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--color-divider);font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">{{ c.label }}</span></sc-if>
+          <sc-if value="{{ c.sep }}" hint-placeholder-val="{{ true }}"><i class="ph ph-caret-right" style="font-size:10px;color:var(--color-neutral-600)"></i></sc-if>
+        </span>
+      </sc-for>
+    </div>
+    <div style="margin:8px 14px 0;font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">role chips show ARIA role · grey chips are tags without a role</div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Selector candidates<span style="font-family:'JetBrains Mono',monospace;letter-spacing:0;color:var(--color-neutral-500)">6</span><span style="flex:1"></span><span style="letter-spacing:0;text-transform:none;font-weight:400;color:var(--color-neutral-500)">ranked by stability · matches</span></div>
+    <div style="margin:0 14px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);overflow:hidden">
+      <sc-for list="{{ selectors }}" as="s" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:14px 64px minmax(0,1fr) auto 24px;gap:8px;align-items:center;min-height:34px;padding:0 10px;border-bottom:1px solid var(--color-divider);opacity:{{ s.op }};background:{{ s.bg }};box-shadow:{{ s.ring }}">
+          <span style="width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1.5px {{ s.dotRing }};background:{{ s.dotFill }}"></span>
+          <span style="font-size:11px;color:var(--color-neutral-400);white-space:nowrap">{{ s.strat }}</span>
+          <span style="font:11.5px 'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:{{ s.color }}">{{ s.sel }}</span>
+          <span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:{{ s.bBg }};color:{{ s.bFg }}">{{ s.stabLabel }}</span>
+          <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400);text-align:right">{{ s.m }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Use this element as</div>
+    <div style="margin:0 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--color-accent) 10%,transparent);box-shadow:inset 0 0 0 1px var(--color-accent)">
+        <div style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--color-accent-200)"><i class="ph ph-text-aa" style="font-size:15px"></i>Add as field<span style="flex:1"></span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-accent-100);background:var(--color-accent-800)">F ⏎</span></div>
+        <span style="font-size:11px;color:var(--color-accent-300)">text · per item after confirm</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:6px;font-weight:500"><i class="ph ph-squares-four" style="font-size:15px;color:var(--color-neutral-400)"></i>Item container<span style="flex:1"></span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">C</span></div>
+        <span style="font-size:11px;color:var(--color-neutral-400)">the unit that repeats</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;padding:9px 10px;border-radius:8px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:6px;font-weight:500"><i class="ph ph-arrow-line-right" style="font-size:15px;color:var(--color-neutral-400)"></i>Pagination<span style="flex:1"></span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">P</span></div>
+        <div style="display:flex;border:1px solid var(--color-divider);border-radius:5px;overflow:hidden;font-size:10.5px;color:var(--color-neutral-300)"><span style="flex:1;text-align:center;padding:2px 0">next</span><span style="flex:1;text-align:center;padding:2px 0;border-left:1px solid var(--color-divider)">load more</span><span style="flex:1;text-align:center;padding:2px 0;border-left:1px solid var(--color-divider)">scroll</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:8px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:6px;font-weight:500"><i class="ph ph-record" style="font-size:15px;color:var(--color-neutral-400)"></i>Record as step<span style="flex:1"></span><span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-neutral-300);background:var(--color-neutral-900);box-shadow:0 0 0 1px var(--color-neutral-800)">S</span></div>
+        <span style="font-size:11px;color:var(--color-neutral-400)">click · type · wait for</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- d. ITEMS -->
+  <sc-if value="{{ showItems }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:12px 14px 0;padding:12px;border-radius:8px;background:linear-gradient(180deg,var(--color-accent-900),var(--color-bg) 140%);box-shadow:inset 0 0 0 1px var(--color-accent-700);display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font:500 30px/1 var(--font-heading);letter-spacing:-.02em;color:var(--color-accent-200)">24</span>
+        <div style="display:flex;flex-direction:column"><span style="font-size:13px;font-weight:500">similar items found</span><span style="font-size:11px;color:var(--color-accent-300)">same structure · 24 of 24 match · 2 excluded</span></div>
+      </div>
+      <div style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-accent-200);word-break:break-all">article[data-testid="product-card"] <span style="color:var(--color-neutral-400)">in div.grid</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Samples<span style="font-family:'JetBrains Mono',monospace;letter-spacing:0;color:var(--color-neutral-500)">3 of 24</span></div>
+    <div style="margin:0 14px;display:flex;flex-direction:column;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);overflow:hidden">
+      <sc-for list="{{ samples }}" as="s" hint-placeholder-count="3">
+        <div style="display:grid;grid-template-columns:22px 34px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--color-divider)">
+          <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-accent-300)">{{ s.n }}</span>
+          <span style="width:34px;height:26px;border-radius:4px;background:repeating-linear-gradient(135deg,var(--color-neutral-900) 0 4px,var(--color-neutral-800) 4px 8px)"></span>
+          <div style="display:flex;flex-direction:column;min-width:0"><span style="font:11.5px 'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.title }}</span><span style="font:10.5px 'JetBrains Mono',monospace;color:var(--color-neutral-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.url }}</span></div>
+          <span style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-300)">{{ s.price }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:6px 10px;font-size:11px;color:var(--color-neutral-400);display:flex"><span>+ 21 more</span><span style="flex:1"></span><span style="color:var(--color-accent-300)">Show all</span></div>
+    </div>
+    <sc-if value="{{ isItemsOnly }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Container<span style="flex:1"></span><span style="letter-spacing:0;text-transform:none;font-weight:400;color:var(--color-neutral-500)">↑ ↓ broader / narrower</span></div>
+      <div style="margin:0 14px;display:flex;flex-direction:column;gap:2px">
+        <div style="display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;padding:0 8px;border-radius:6px;color:var(--color-neutral-400)"><i class="ph ph-arrow-up"></i><span style="font:11.5px 'JetBrains Mono',monospace">div.grid</span><span style="font:11px 'JetBrains Mono',monospace">1 match</span></div>
+        <div style="display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;padding:0 8px;border-radius:6px;background:var(--color-accent-900);box-shadow:inset 0 0 0 1px var(--color-accent-700);color:var(--color-accent-200)"><i class="ph ph-check"></i><span style="font:11.5px 'JetBrains Mono',monospace">article.pc</span><span style="font:11px 'JetBrains Mono',monospace">24 matches</span></div>
+        <div style="display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:center;height:28px;padding:0 8px;border-radius:6px;color:var(--color-neutral-400)"><i class="ph ph-arrow-down"></i><span style="font:11.5px 'JetBrains Mono',monospace">a.pc__link</span><span style="font:11px 'JetBrains Mono',monospace">24 matches</span></div>
+      </div>
+      <div style="margin:10px 14px 0;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--color-neutral-900)">
+        <span style="width:26px;height:14px;border-radius:7px;background:var(--color-accent-600);position:relative;flex:none"><span style="position:absolute;right:2px;top:2px;width:10px;height:10px;border-radius:50%;background:var(--color-neutral-100)"></span></span>
+        <span>Exclude 2 sponsored tiles</span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">div.promo-tile</span>
+      </div>
+      <div style="margin:14px 14px 0;display:flex;gap:8px">
+        <button class="btn btn-primary" style="flex:1;height:30px;font-size:12px">Confirm 24 items <span style="display:inline-flex;align-items:center;min-width:18px;height:16px;padding:0 4px;border-radius:4px;font:500 10px/1 'JetBrains Mono',monospace;color:var(--color-accent-200);background:var(--color-accent-900)">⏎</span></button>
+        <button class="btn btn-secondary" style="height:30px;font-size:12px">Adjust container</button>
+      </div>
+      <div style="margin:10px 14px 0;font-size:11px;color:var(--color-neutral-500)">After confirming, “title” becomes a per-item field. Picks inside an item are scoped to it.</div>
+    </sc-if>
+    <sc-if value="{{ isHostile }}" hint-placeholder-val="{{ false }}">
+      <div style="margin:14px 14px 0;display:flex;gap:8px">
+        <button class="btn btn-primary" style="flex:1;height:30px;font-size:12px">Confirm 24 items ⏎</button>
+        <button class="btn btn-secondary" style="height:30px;font-size:12px">Adjust container</button>
+      </div>
+      <div style="margin:16px 14px 0;padding:10px;border-radius:8px;background:var(--color-neutral-900);display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--color-neutral-300)">
+        <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Host interference</span>
+        <span style="display:flex;gap:6px"><i class="ph ph-shield-check" style="color:#9fdcbc"></i>Cookie modal (z 2147483000) · picks pass through</span>
+        <span style="display:flex;gap:6px"><i class="ph ph-shield-check" style="color:#9fdcbc"></i>Fixed header (z 99) · offset for scroll-to</span>
+        <span style="display:flex;gap:6px"><i class="ph ph-shield-check" style="color:#9fdcbc"></i>Page font overrides blocked by shadow root</span>
+      </div>
+    </sc-if>
+  </sc-if>
+
+  <!-- e. FIELDS -->
+  <sc-if value="{{ isFields }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:10px 14px 0;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:8px;background:var(--color-neutral-900)">
+      <i class="ph ph-squares-four" style="color:var(--color-accent-300)"></i><span style="font-weight:500">Item</span>
+      <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-300);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">article[data-testid=product-card]</span>
+      <span style="flex:1"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-accent-300)">× 24</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:14px 8px 6px 14px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Fields<span style="font-family:'JetBrains Mono',monospace;letter-spacing:0;color:var(--color-neutral-500)">6</span><span style="flex:1"></span><button class="btn btn-ghost" style="font-size:11px;height:24px;letter-spacing:0;text-transform:none"><i class="ph ph-plus"></i>Pick field</button></div>
+    <div style="margin:0 8px;display:flex;flex-direction:column;position:relative">
+      <sc-for list="{{ fields }}" as="f" hint-placeholder-count="6">
+        <div style="position:relative">
+          <sc-if value="{{ f.dropBefore }}" hint-placeholder-val="{{ false }}"><div style="height:2px;margin:1px 6px;border-radius:1px;background:var(--color-accent);box-shadow:0 0 6px var(--color-accent)"></div></sc-if>
+          <div style="display:grid;grid-template-columns:16px minmax(0,1fr) auto auto 22px;gap:6px;align-items:center;padding:6px 6px 7px 4px;border-radius:8px;background:{{ f.bg }};box-shadow:{{ f.shadow }};transform:{{ f.transform }}">
+            <i class="ph ph-dots-six-vertical" style="font-size:14px;color:var(--color-neutral-600)"></i>
+            <span style="display:flex;align-items:center;gap:6px;min-width:0">
+              <sc-if value="{{ f.warn }}" hint-placeholder-val="{{ false }}"><i class="ph ph-warning" style="font-size:14px;color:#e58c8c"></i></sc-if>
+              <span style="font:500 12px 'JetBrains Mono',monospace;white-space:nowrap">{{ f.name }}</span>
+            </span>
+            <span style="position:relative;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;border-radius:4px;background:var(--color-surface);box-shadow:inset 0 0 0 1px {{ f.selRing }};font-size:11px;color:var(--color-neutral-200)">{{ f.type }}<i class="ph ph-caret-down" style="font-size:10px;color:var(--color-neutral-500)"></i>
+              <sc-if value="{{ f.menu }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;top:calc(100% + 4px);right:0;z-index:20;width:150px;padding:4px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-md);display:flex;flex-direction:column">
+                  <sc-for list="{{ typeOpts }}" as="t" hint-placeholder-count="6">
+                    <div style="display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border-radius:5px;background:{{ t.bg }};color:{{ t.fg }}"><i class="{{ t.icon }}" style="font-size:13px"></i><span>{{ t.label }}</span><span style="flex:1"></span><span style="font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">{{ t.k }}</span></div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </span>
+            <span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;white-space:nowrap;background:{{ f.scopeBg }};color:{{ f.scopeFg }}">{{ f.scope }}</span>
+            <i class="{{ f.keyIcon }}" style="font-size:14px;color:{{ f.keyColor }};justify-self:center"></i>
+            <span style="grid-column:2 / -1;display:flex;gap:8px;align-items:baseline;min-width:0">
+              <span style="flex:1;min-width:0;font:11px 'JetBrains Mono',monospace;color:{{ f.sampleColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.sample }}</span>
+              <span style="font:10.5px 'JetBrains Mono',monospace;color:{{ f.mColor }}">{{ f.m }}</span>
+            </span>
+            <sc-if value="{{ f.warn }}" hint-placeholder-val="{{ false }}">
+              <span style="grid-column:2 / -1;display:flex;gap:6px;margin-top:2px"><button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 8px"><i class="ph ph-crosshair"></i>Re-pick</button><button class="btn btn-ghost" style="height:22px;font-size:11px">Make optional</button></span>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="flex:1"></div>
+    <div style="margin:0 14px 12px;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--color-neutral-500)"><span>⋮⋮ drag to reorder</span><span><i class="ph-fill ph-key"></i> key = dedup across pages</span><span>⏎ rename · Del remove</span></div>
+  </sc-if>
+
+  <!-- f. PAGINATION -->
+  <sc-if value="{{ isPagination }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:10px 14px 0;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:8px;background:var(--color-neutral-900)">
+      <i class="ph ph-list-bullets" style="color:var(--color-neutral-400)"></i><span>6 fields</span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">title price url image rating …</span><span style="flex:1"></span><i class="ph ph-caret-right" style="color:var(--color-neutral-500)"></i>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Pagination target</div>
+    <div style="margin:0 14px;padding:10px 12px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px"><i class="ph ph-arrow-line-right" style="font-size:15px;color:var(--color-accent-300)"></i><span style="font-size:13px;font-weight:500">Next ›</span><span style="color:var(--color-neutral-500)">link “Next page”</span><span style="flex:1"></span><button class="btn btn-ghost" style="height:22px;font-size:11px"><i class="ph ph-crosshair"></i>Re-pick</button></div>
+      <div style="font:11.5px 'JetBrains Mono',monospace;color:var(--color-neutral-200)">a[rel="next"]</div>
+      <div style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">href …?page=2 · increments <span style="padding:0 4px;border-radius:3px;background:var(--color-accent-800);color:var(--color-accent-200)">{n}</span> · pager shows 3 pages</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Kind</div>
+    <div style="margin:0 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <div style="display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--color-accent);background:color-mix(in srgb,var(--color-accent) 10%,transparent);color:var(--color-accent-200)"><i class="ph ph-brackets-curly"></i>URL param<span style="flex:1"></span><span style="height:16px;padding:0 5px;border-radius:4px;display:inline-flex;align-items:center;font-size:9.5px;font-weight:500;background:var(--color-accent-800);color:var(--color-accent-100)">detected</span></div>
+      <div style="display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--color-divider);color:var(--color-neutral-300)"><i class="ph ph-link"></i>Next link<span style="flex:1"></span><span style="font-size:10px;color:var(--color-neutral-500)">also works</span></div>
+      <div style="display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--color-divider);color:var(--color-neutral-500)"><i class="ph ph-plus-circle"></i>Load more</div>
+      <div style="display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--color-divider);color:var(--color-neutral-500)"><i class="ph ph-arrows-down-up"></i>Infinite scroll</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Scope</div>
+    <div style="margin:0 14px;display:flex;border:1px solid var(--color-divider);border-radius:8px;overflow:hidden">
+      <span style="flex:1;text-align:center;padding:6px 0;color:var(--color-neutral-300)">First page</span>
+      <span style="flex:1;text-align:center;padding:6px 0;border-left:1px solid var(--color-divider);color:var(--color-accent-200);box-shadow:inset 0 0 0 1px var(--color-accent)">First N pages</span>
+      <span style="flex:1;text-align:center;padding:6px 0;border-left:1px solid var(--color-divider);color:var(--color-neutral-300)">All pages</span>
+    </div>
+    <div style="margin:10px 14px 0;display:flex;align-items:center;gap:10px">
+      <span style="color:var(--color-neutral-400);width:40px">N</span>
+      <div style="display:flex;align-items:center;height:28px;border-radius:6px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider)">
+        <span style="width:28px;text-align:center;color:var(--color-neutral-400)"><i class="ph ph-minus"></i></span>
+        <span style="width:36px;text-align:center;font:500 12px 'JetBrains Mono',monospace;box-shadow:inset 1px 0 0 var(--color-divider),inset -1px 0 0 var(--color-divider);line-height:28px">5</span>
+        <span style="width:28px;text-align:center;color:var(--color-neutral-400)"><i class="ph ph-plus"></i></span>
+      </div>
+      <span style="font-size:11px;color:var(--color-neutral-500)">≈ 120 items · pager reports 3, stops early</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Stop &amp; pace</div>
+    <div style="margin:0 14px;display:flex;flex-direction:column;gap:8px">
+      <span style="display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:4px;background:var(--color-accent-600);display:flex;align-items:center;justify-content:center;color:var(--color-neutral-100)"><i class="ph ph-check" style="font-size:10px"></i></span>Stop when a page yields 0 items</span>
+      <span style="display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:4px;background:var(--color-accent-600);display:flex;align-items:center;justify-content:center;color:var(--color-neutral-100)"><i class="ph ph-check" style="font-size:10px"></i></span>Stop when first item repeats</span>
+      <span style="display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:4px;box-shadow:inset 0 0 0 1.5px var(--color-neutral-600)"></span>Delay between pages<span style="flex:1"></span><span style="font:11.5px 'JetBrains Mono',monospace;padding:2px 8px;border-radius:4px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-divider)">1500 ms</span></span>
+    </div>
+  </sc-if>
+
+  <!-- 6. TEST RUN -->
+  <sc-if value="{{ isTestrun }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:12px 14px 0;padding:10px 12px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px"><i class="ph ph-check-circle" style="font-size:16px;color:#9fdcbc"></i><span style="font-size:13px;font-weight:500">Test run finished</span><span style="flex:1"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">dry run · nothing saved</span></div>
+      <div style="display:flex;gap:18px;font:12px 'JetBrains Mono',monospace;color:var(--color-neutral-300)"><span><span style="color:var(--color-text);font-weight:500">3</span>/3 pages</span><span><span style="color:var(--color-text);font-weight:500">72</span> items</span><span><span style="color:var(--color-text);font-weight:500">8.4</span> s</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Per-field status</div>
+    <div style="margin:0 14px;display:flex;flex-direction:column">
+      <sc-for list="{{ status }}" as="s" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) auto 56px;gap:8px;align-items:center;min-height:32px;padding:4px 0;border-bottom:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)">
+          <div style="display:flex;flex-direction:column;min-width:0"><span style="font:500 12px 'JetBrains Mono',monospace">{{ s.name }}</span><span style="font:10.5px 'JetBrains Mono',monospace;color:var(--color-neutral-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.note }}</span></div>
+          <span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:500;background:{{ s.bg }};color:{{ s.fg }}"><i class="{{ s.icon }}" style="font-size:11px"></i>{{ s.label }}</span>
+          <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-300);text-align:right">{{ s.m }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="position:absolute;left:10px;right:10px;bottom:64px;display:flex;flex-direction:column;gap:6px;z-index:5">
+      <div style="position:relative;overflow:hidden;display:flex;gap:10px;padding:10px 6px 12px 12px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-md)">
+        <i class="ph ph-bandaids" style="font-size:17px;color:var(--color-accent-300);margin-top:1px"></i>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:12px;font-weight:500">Field healed via fuzzy match</span>
+          <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">price: span.pc__price → span.price-now · 0.86</span>
+          <div style="display:flex;gap:4px;margin-top:4px"><button class="btn btn-ghost" style="height:22px;font-size:11px">Review</button><button class="btn btn-ghost" style="height:22px;font-size:11px">Accept</button></div>
+        </div>
+        <button class="btn btn-ghost" style="width:24px;height:24px;padding:0;color:var(--color-neutral-500)"><i class="ph ph-x" style="font-size:12px"></i></button>
+        <div style="position:absolute;left:0;bottom:0;height:2px;width:62%;background:var(--color-accent)"></div>
+      </div>
+      <div style="display:flex;gap:10px;padding:10px 6px 10px 12px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-md)">
+        <i class="ph ph-arrow-fat-lines-up" style="font-size:17px;color:#9fdcbc;margin-top:1px"></i>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:12px;font-weight:500">3 candidates promoted</span>
+          <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">title, url, image → [data-testid] · stable 5 runs</span>
+        </div>
+        <button class="btn btn-ghost" style="height:22px;font-size:11px">Undo</button>
+        <button class="btn btn-ghost" style="width:24px;height:24px;padding:0;color:var(--color-neutral-500)"><i class="ph ph-x" style="font-size:12px"></i></button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 4. GUARD (sidebar during unattended run) -->
+  <sc-if value="{{ isGuard }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:12px 14px 0;display:flex;flex-direction:column;gap:4px">
+      <span style="font-size:13px;font-weight:500">nightly-laptops</span>
+      <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">run #184 · scheduled 02:00 · profile default</span>
+    </div>
+    <div style="margin:12px 14px 0;padding:10px 12px;border-radius:8px;background:#3b3222;display:flex;gap:10px">
+      <i class="{{ guardIcon }}" style="font-size:16px;color:#e6c98f;margin-top:1px"></i>
+      <div style="display:flex;flex-direction:column;gap:3px"><span style="font-weight:500;color:#f3e2bd">Paused · waiting for you</span><span style="color:#e6c98f">{{ guardReason }}</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Run log</div>
+    <div style="margin:0 14px;display:flex;flex-direction:column;gap:1px">
+      <sc-for list="{{ log }}" as="l" hint-placeholder-count="5">
+        <div style="display:grid;grid-template-columns:58px 14px minmax(0,1fr);gap:6px;align-items:baseline;padding:4px 0;font:11px/1.45 'JetBrains Mono',monospace">
+          <span style="color:var(--color-neutral-600)">{{ l.t }}</span>
+          <i class="{{ l.icon }}" style="font-size:11px;color:{{ l.c }}"></i>
+          <span style="color:{{ l.fg }}">{{ l.msg }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="margin:14px 14px 0;font-size:11px;color:var(--color-neutral-400);text-wrap:pretty">Solve it in the page. Continue re-checks the guard, then resumes at <span style="font-family:'JetBrains Mono',monospace">?page=3</span>. On timeout the run is marked <span style="font-family:'JetBrains Mono',monospace">needs-attention</span>, not failed.</div>
+  </sc-if>
+
+  <!-- 5. RE-PICK -->
+  <sc-if value="{{ isRepick }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:12px 14px 0;font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">nightly-laptops · run #185 · page 1 · auto-heal failed</div>
+    <div style="margin:10px 14px 0;display:flex;flex-direction:column;gap:6px">
+      <span style="font:500 18px/1.25 var(--font-heading);letter-spacing:-.01em">Click the new location of <span style="font-family:'JetBrains Mono',monospace;font-size:16px;padding:1px 6px;border-radius:4px;background:var(--color-accent-800);color:var(--color-accent-200)">price</span></span>
+      <span style="color:var(--color-neutral-400)">Pick it in any item; webscoop applies it to all 24.</span>
+    </div>
+    <div style="margin:14px 14px 0;border-radius:8px;background:var(--color-surface);box-shadow:inset 0 0 0 1px #d9b46a,0 0 0 3px rgba(217,180,106,.14);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--color-divider)"><span style="font:500 13px 'JetBrains Mono',monospace">price</span><span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:var(--color-neutral-800);color:var(--color-neutral-200)">number</span><span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:var(--color-accent-900);color:var(--color-accent-200)">per item</span><span style="flex:1"></span><span style="height:18px;padding:0 6px;border-radius:4px;display:inline-flex;align-items:center;font-size:10px;font-weight:500;background:#42262b;color:#f0a9a9">0 matches</span></div>
+      <div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:6px 10px;padding:10px 12px;font:11.5px 'JetBrains Mono',monospace">
+        <span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">old selector</span><span style="color:var(--color-neutral-400);text-decoration:line-through;text-decoration-color:#e58c8c">span.pc__price</span>
+        <span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">last sample</span><span>1249.00 <span style="color:var(--color-neutral-500)">· run #184</span></span>
+      </div>
+      <div style="padding:0 12px 10px;display:flex;flex-direction:column;gap:5px">
+        <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Fingerprint</span>
+        <div style="display:grid;grid-template-columns:78px minmax(0,1fr);gap:4px 10px;font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-300)">
+          <span style="color:var(--color-neutral-500)">tag</span><span>span</span>
+          <span style="color:var(--color-neutral-500)">text</span><span>/^\$[\d,]+\.\d{2}$/</span>
+          <span style="color:var(--color-neutral-500)">position</span><span>3rd child of div.pc__meta</span>
+          <span style="color:var(--color-neutral-500)">neighbour</span><span>after h3.pc__title</span>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:16px 14px 8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Auto-heal attempts</div>
+    <div style="margin:0 14px;display:flex;flex-direction:column;gap:4px;font:11px 'JetBrains Mono',monospace">
+      <span style="display:flex;gap:6px;color:var(--color-neutral-300)"><i class="ph ph-x-circle" style="color:#e58c8c"></i>fuzzy best 0.41 &lt; 0.70 · span.badge-sale</span>
+      <span style="display:flex;gap:6px;color:var(--color-neutral-300)"><i class="ph ph-x-circle" style="color:#e58c8c"></i>text pattern · 2 candidates, ambiguous</span>
+    </div>
+    <div style="margin:14px 14px 0;padding:9px 10px;border-radius:8px;background:var(--color-accent-900);box-shadow:inset 0 0 0 1px var(--color-accent-700);display:flex;flex-direction:column;gap:3px">
+      <span style="display:flex;gap:6px;align-items:center;color:var(--color-accent-200);font-weight:500"><i class="ph ph-crosshair"></i>Hovering span.price-now</span>
+      <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-accent-300)">“$1,249.00” · matches fingerprint 0.93 · 24/24</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="margin:0 14px 10px;font-size:11px;color:var(--color-neutral-500)">Other fields wait: title, url, image, rating, category_name</div>
+  </sc-if>
+
+  </div>
+
+  <!-- g. FOOTER -->
+  <sc-if value="{{ showFooter }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:none;border-top:1px solid var(--color-divider);padding:10px 14px;display:flex;align-items:center;gap:8px;background:var(--color-bg);position:relative;z-index:6">
+      <div style="flex:1;display:flex;flex-direction:column;gap:1px;min-width:0">
+        <span style="font:500 12px 'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ fieldCount }} fields · {{ itemCount }} items</span>
+        <span style="font-size:10.5px;color:var(--color-neutral-500);white-space:nowrap">{{ footerNote }}</span>
+      </div>
+      <button class="btn btn-secondary" style="height:30px;font-size:12px;padding:0 10px" disabled="{{ noFields }}"><i class="ph ph-play"></i>Test run</button>
+      <button class="btn btn-primary" style="height:30px;font-size:12px;padding:0 10px" disabled="{{ noFields }}"><i class="ph ph-floppy-disk"></i>Save recipe</button>
+    </div>
+  </sc-if>
+  <sc-if value="{{ isRepick }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:none;border-top:1px solid var(--color-divider);padding:10px 14px;display:flex;align-items:center;gap:8px">
+      <span style="flex:1;font-size:11px;color:var(--color-neutral-500)">Click to use · <span style="font-family:'JetBrains Mono',monospace">S</span> skip · <span style="font-family:'JetBrains Mono',monospace">Esc</span> abort</span>
+      <button class="btn btn-secondary" style="height:30px;font-size:12px;padding:0 10px">Skip field</button>
+      <button class="btn btn-ghost" style="height:30px;font-size:12px;padding:0 10px;color:#f0a9a9">Abort run</button>
+    </div>
+  </sc-if>
+  <sc-if value="{{ isGuard }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:none;border-top:1px solid var(--color-divider);padding:10px 14px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--color-neutral-500)">
+      <i class="ph ph-robot"></i><span style="flex:1">Unattended run · actions are in the banner</span><span style="font-family:'JetBrains Mono',monospace">48 of ~120 items</span>
+    </div>
+  </sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;picking&quot;,&quot;selected&quot;,&quot;items&quot;,&quot;fields&quot;,&quot;pagination&quot;,&quot;testrun&quot;,&quot;guard-login&quot;,&quot;guard-captcha&quot;,&quot;repick&quot;,&quot;hostile&quot;],&quot;default&quot;:&quot;idle&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const st = this.props.state ?? 'idle';
+    const is = s => st === s;
+    const P = [
+      ['Halcyon 13 Air, 16 GB, 512 GB', 'Halcyon 13 Air…', '$999.00', '4.4 (318)'],
+      ['Kestrel 14 Ultra OLED, 32 GB', 'Kestrel 14 Ultra…', '$1,249.00', '4.7 (212)'],
+      ['Brisk 15 Creator, RTX 4060', 'Brisk 15 Creator', '$1,599.00', '4.5 (97)'],
+      ['Norrin 16 Workstation, 64 GB', 'Norrin 16…', '$2,349.00', '4.8 (41)'],
+      ['Pico 11 Chromebook, 8 GB', 'Pico 11…', '$329.00', '4.1 (560)'],
+      ['Vanta 14 Gaming, RTX 4070', 'Vanta 14 Gaming', '$1,899.00', '4.6 (133)'],
+      ['Lumen 13 Flip, touch, 16 GB', 'Lumen 13 Flip', '$849.00', '4.2 (288)'],
+      ['Ostra 15 Business, 16 GB', 'Ostra 15…', '$1,099.00', '4.3 (74)'],
+      ['Tern 14 Slim, 16 GB', 'Tern 14 Slim', '$899.00', '4.0 (51)'],
+      ['Mako 17 Pro, 32 GB', 'Mako 17 Pro', '$2,099.00', '4.6 (38)'],
+      ['Rook 13 Student, 8 GB', 'Rook 13…', '$549.00', '4.2 (402)'],
+      ['Quill 14 Studio, 32 GB', 'Quill 14 Studio', '$1,749.00', '4.7 (66)'],
+    ];
+    const hostile = is('hostile');
+    const guard = is('guard-login') || is('guard-captcha');
+    let products = P.map((p, i) => ({
+      title: p[0], short: p[1], price: p[2], rating: p[3], n: String(i + 1).padStart(2, '0'),
+      titleHover: (is('picking') && i === 1) || (hostile && i === 5),
+      titleSel: (is('selected') || is('items')) && i === 1,
+      sib: is('items') || hostile,
+      faint: is('fields'),
+      priceHover: is('repick') && i === 1,
+    }));
+    if (is('pagination')) products = products.slice(4, 12);
+
+    const mode = {
+      idle: ['Idle', 'n'], picking: ['Picking', 'a'], selected: ['Selected', 'a'], items: ['Items found', 'a'],
+      fields: ['Editing', 'n'], pagination: ['Editing', 'n'], testrun: ['Test run', 'o'],
+      'guard-login': ['Paused', 'w'], 'guard-captcha': ['Paused', 'w'], repick: ['Re-pick', 'w'], hostile: ['Items found', 'a'],
+    }[st] || ['Idle', 'n'];
+
+    const counts = {
+      idle: ['0', '—', 'nothing picked yet'], picking: ['0', '—', 'picking…'], selected: ['0', '—', '1 element selected'],
+      items: ['0', '24', 'confirm items to scope fields'], hostile: ['0', '24', 'confirm items to scope fields'],
+      fields: ['6', '24', '1 field needs attention · key: title'], pagination: ['6', '24/page', 'url param {n} · first 5 pages'],
+      testrun: ['6', '72', 'last test 8.4 s ago · 1 healed · 1 missing'],
+    }[st] || ['0', '—', ''];
+
+    const crumbs = [
+      { label: 'main', role: true }, { label: 'div.grid', tag: true }, { label: 'article', name: '', role: true },
+      { label: 'link', name: '“Kestrel 14…”', role: true }, { label: 'heading', name: 'h3', active: true },
+    ].map((c, i, a) => ({ name: '', role: false, tag: false, active: false, ...c, sep: i < a.length - 1 }));
+
+    const stab = {
+      stable: ['Stable', '#1e3830', '#9fdcbc'], medium: ['Medium', '#3b3222', '#e6c98f'],
+      fragile: ['Fragile', '#42262b', '#f0a9a9'], none: ['n/a', 'var(--color-neutral-900)', 'var(--color-neutral-500)'],
+    };
+    const selectors = [
+      ['role+name', "getByRole('heading', { name: 'Kestrel 14 Ultra OLED…' })", 'stable', '1', true],
+      ['test id', '[data-testid="product-title"]', 'stable', '24'],
+      ['id', 'no id on element or 3 ancestors', 'none', '—'],
+      ['text', 'text="Kestrel 14 Ultra OLED, 32 GB"', 'fragile', '1'],
+      ['css', 'article.pc > a > h3.pc__title', 'medium', '24'],
+      ['xpath', '//main/div[2]/article[2]//h3', 'fragile', '1'],
+    ].map(([strat, sel, s, m, on]) => ({
+      strat, sel, m, stabLabel: stab[s][0], bBg: stab[s][1], bFg: stab[s][2],
+      op: s === 'none' ? 0.55 : 1,
+      color: s === 'none' ? 'var(--color-neutral-500)' : 'var(--color-text)',
+      bg: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
+      ring: on ? 'inset 0 0 0 1px var(--color-accent-600)' : 'none',
+      dotRing: on ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+      dotFill: on ? 'radial-gradient(circle, var(--color-accent) 0 3px, transparent 3.5px)' : 'transparent',
+    }));
+
+    const samples = [
+      { n: '01', title: 'Halcyon 13 Air, 16 GB, 512 GB', url: '/p/halcyon-13-air', price: '999.00' },
+      { n: '02', title: 'Kestrel 14 Ultra OLED, 32 GB', url: '/p/kestrel-14-ultra', price: '1249.00' },
+      { n: '03', title: 'Brisk 15 Creator, RTX 4060', url: '/p/brisk-15-creator', price: '1599.00' },
+    ];
+
+    const F = [
+      { name: 'title', type: 'text', item: true, key: true, sample: 'Halcyon 13 Air, 16 GB, 512 GB', m: '24/24' },
+      { name: 'price', type: 'number', item: true, sample: '999.00', m: '24/24', dropBefore: true },
+      { name: 'url', type: 'url', item: true, sample: 'https://shop.voltmart.io/p/halcyon-13-air', m: '24/24', lifted: true },
+      { name: 'image', type: 'image', item: true, sample: 'https://cdn.voltmart.io/i/1a07.webp', m: '24/24' },
+      { name: 'rating', type: 'number', item: true, sample: 'resolved 0 elements · span.rating-stars', m: '0/24', warn: true },
+      { name: 'category_name', type: 'text', item: false, sample: 'Laptops', m: '1/1', menu: true },
+    ];
+    const fields = F.map(f => ({
+      dropBefore: false, warn: false, menu: false, ...f,
+      scope: f.item ? 'per item' : 'page',
+      scopeBg: f.item ? 'var(--color-accent-900)' : 'var(--color-neutral-800)',
+      scopeFg: f.item ? 'var(--color-accent-200)' : 'var(--color-neutral-200)',
+      keyIcon: f.key ? 'ph-fill ph-key' : 'ph ph-key',
+      keyColor: f.key ? 'var(--color-accent-400)' : 'var(--color-neutral-700)',
+      sampleColor: f.warn ? '#f0a9a9' : 'var(--color-neutral-400)',
+      mColor: f.warn ? '#f0a9a9' : 'var(--color-neutral-500)',
+      bg: f.lifted ? 'var(--color-surface)' : f.warn ? 'color-mix(in srgb, #e58c8c 8%, transparent)' : 'transparent',
+      shadow: f.lifted ? 'var(--shadow-md)' : f.warn ? 'inset 0 0 0 1px rgba(229,140,140,.35)' : 'none',
+      transform: f.lifted ? 'translate(6px,-2px) rotate(-0.6deg)' : 'none',
+      selRing: f.menu ? 'var(--color-accent)' : 'var(--color-divider)',
+    }));
+    const typeOpts = [['text', 'ph ph-text-t', 'T'], ['number', 'ph ph-hash', 'N'], ['url', 'ph ph-link', 'U'], ['image', 'ph ph-image', 'I'], ['date', 'ph ph-calendar-blank', 'D'], ['html', 'ph ph-code', 'H']]
+      .map(([label, icon, k]) => ({ label, icon, k, bg: label === 'text' ? 'var(--color-accent-900)' : 'transparent', fg: label === 'text' ? 'var(--color-accent-200)' : 'var(--color-text)' }));
+
+    const S = { ok: ['ok', '#1e3830', '#9fdcbc', 'ph ph-check'], healed: ['healed', 'var(--color-accent-800)', 'var(--color-accent-100)', 'ph ph-bandaids'], missing: ['missing', '#42262b', '#f0a9a9', 'ph ph-warning'] };
+    const status = [
+      ['title', 'ok', '72/72', '[data-testid=product-title] · promoted'],
+      ['price', 'healed', '72/72', 'span.pc__price → span.price-now'],
+      ['url', 'ok', '72/72', 'a.pc__link@href · promoted'],
+      ['image', 'ok', '72/72', 'img@src · promoted'],
+      ['rating', 'missing', '0/72', 'span.rating-stars · 0 on all pages'],
+      ['category_name', 'ok', '3/3', 'h1 · page level'],
+    ].map(([name, s, m, note]) => ({ name, m, note, label: S[s][0], bg: S[s][1], fg: S[s][2], icon: S[s][3] }));
+
+    const dot = { ok: '#7cc6a0', healed: 'var(--color-accent)', missing: '#e58c8c' };
+    const columns = [['title', 'text', 'ok', 230], ['price', 'number', 'healed', 92], ['url', 'url', 'ok', 190], ['image', 'image', 'ok', 170], ['rating', 'number', 'missing', 92], ['category_name', 'text', 'ok', 150]]
+      .map(([name, type, s, w]) => ({ name, type, w, dot: dot[s] }));
+    const R = [
+      ['Halcyon 13 Air, 16 GB, 512 GB', '999.00', '/p/halcyon-13-air', 'cdn…/i/1a07.webp'],
+      ['Kestrel 14 Ultra OLED, 32 GB', '1249.00', '/p/kestrel-14-ultra', 'cdn…/i/8f2a.webp'],
+      ['Brisk 15 Creator, RTX 4060', '1599.00', '/p/brisk-15-creator', 'cdn…/i/c3d9.webp'],
+      ['Norrin 16 Workstation, 64 GB', '2349.00', '/p/norrin-16-ws', 'cdn…/i/77b1.webp'],
+      ['Pico 11 Chromebook, 8 GB', '329.00', '/p/pico-11-cb', 'cdn…/i/0e4c.webp'],
+    ];
+    const rows = R.map((r, i) => ({
+      i: String(i + 1),
+      cells: [...r.map(v => ({ v, color: 'var(--color-text)' })), { v: 'null', color: '#e58c8c' }, { v: 'Laptops', color: 'var(--color-neutral-300)' }],
+    }));
+    rows.forEach(r => { r.cells[1].color = 'var(--color-accent-300)'; r.cells[2].color = 'var(--color-neutral-300)'; r.cells[3].color = 'var(--color-neutral-300)'; });
+
+    const ok = ['ph ph-check', '#7cc6a0', 'var(--color-neutral-300)'];
+    const wn = ['ph ph-warning', '#d9b46a', '#e6c98f'];
+    const wt = ['ph ph-pause', 'var(--color-accent-300)', 'var(--color-accent-200)'];
+    const L = is('guard-captcha') ? [
+      ['02:00:12', 'open …/c/laptops?page=1 · 24 items', ok], ['02:00:15', 'open …?page=2 · 24 items', ok],
+      ['02:00:19', 'open …?page=3 → 403 challenge', wn], ['02:00:19', 'guard: iframe[src*="challenge"]', wn], ['02:00:19', 'paused · timeout in 01:12', wt],
+    ] : [
+      ['02:00:12', 'open …/c/laptops?page=1 · 24 items', ok], ['02:00:15', 'open …?page=2 · 24 items', ok],
+      ['02:00:19', 'open …?page=3 → 302 /account/login', wn], ['02:00:19', 'guard: input[type=password] visible', wn], ['02:00:19', 'paused · timeout in 04:37', wt],
+    ];
+    const log = L.map(([t, msg, s]) => ({ t, msg, icon: s[0], c: s[1], fg: s[2] }));
+
+    const pins = hostile ? [{ n: '1', x: 1000, y: 18 }, { n: '2', x: 1000, y: 64 }, { n: '3', x: 1000, y: 820 }, { n: '4', x: 520, y: 300 }] : [];
+
+    const labels = { idle: '2a Idle', picking: '2b Picking', selected: '2c Selected', items: '2d Items', fields: '2e Fields', pagination: '2f Pagination', testrun: '6 Test run', 'guard-login': '4 Guard login', 'guard-captcha': '4 Guard captcha', repick: '5 Re-pick', hostile: '3 Hostile host' };
+
+    return {
+      screenLabel: labels[st] || st,
+      isIdle: is('idle'), isPicking: is('picking'), isSelected: is('selected'), isItemsOnly: is('items'),
+      showItems: is('items') || hostile, isFields: is('fields'), isPagination: is('pagination'), notPagination: !is('pagination'),
+      isTestrun: is('testrun'), isGuard: guard, isGuardLogin: is('guard-login'), isGuardCaptcha: is('guard-captcha'),
+      isRepick: is('repick'), isHostile: hostile,
+      hostListing: !guard && !hostile, showContainer: is('items'),
+      compactRecipe: !is('idle') && !is('repick') && !guard,
+      showFooter: !is('repick') && !guard,
+      modeLabel: mode[0], pillNeutral: mode[1] === 'n', pillAccent: mode[1] === 'a', pillOk: mode[1] === 'o', pillWarn: mode[1] === 'w',
+      fieldCount: counts[0], itemCount: counts[1], footerNote: counts[2], noFields: counts[0] === '0',
+      guardText: is('guard-captcha') ? 'solve the captcha to continue' : 'log in to continue',
+      guardIcon: is('guard-captcha') ? 'ph ph-puzzle-piece' : 'ph ph-sign-in',
+      guardReason: is('guard-captcha') ? 'Challenge page detected on ?page=3 (third-party iframe).' : 'Redirected to /account/login · session cookie expired.',
+      products, crumbs, selectors, samples, fields, typeOpts, status, columns, rows, log, pins,
+    };
+  }
+}
+</script>
+</body>
+</html>
