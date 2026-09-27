@@ -303,3 +303,18 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: Export a multi-table recipe
 - **WHEN** `webscoop export results` is executed and `results` declares two tables
 - **THEN** stdout holds a script that declares both tables and the exit code is 0
+
+### Requirement: Warning for encoded variable values
+Variable values are URL-encoded when they are substituted into the URL template. When `record`, `run`, or `test` receives a `--var` value that contains a `+`, or a `%` followed by two hexadecimal digits, and the template uses that variable, the command SHALL print one warning line on stderr per such variable and SHALL continue. The warning SHALL name the variable and say that the value is encoded again. For a `+` it SHALL suggest the value with spaces in place of each `+`; for `%XX` escapes it SHALL suggest the decoded value. No warning SHALL be printed for variables that only `type` steps use, because step values are typed as is.
+
+#### Scenario: Plus sign in a URL variable
+- **WHEN** `webscoop record 'https://www.google.com/search?q={query}' --var query=top+llms` is executed
+- **THEN** stderr warns that `query` is URL-encoded so `+` stays a literal plus, suggests `top llms`, and the session starts
+
+#### Scenario: Percent escape in a URL variable
+- **WHEN** `webscoop run shop --var category=red%20shoes` is executed and the template uses `{category}`
+- **THEN** stderr warns that `category` would be encoded again, suggests `red shoes`, and the run continues
+
+#### Scenario: Step-only variable is not flagged
+- **WHEN** `--var login_email=a+b@acme.dev` is passed and only a `type` step uses `{login_email}`
+- **THEN** no warning is printed

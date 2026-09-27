@@ -45,11 +45,79 @@ The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, th
 - **THEN** the table header reads `results` and "List · 11 rows"
 
 ### Requirement: URL template and variables
-The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. The panel SHALL show the template with each variable rendered as a chip, its current value, and allow editing values and reopening.
+The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be URL-encoded when substituted into the template, as the runner does.
+
+The expanded Recipe section SHALL show:
+- the URL template as an editable text input, with each `{name}` variable highlighted inside it;
+- below the input, a read-only rendered URL: the exact URL the template opens with the current values;
+- a variables table with one row per variable, holding its name, its value, and a remove control, plus a control to add a variable;
+- a "Use current page URL" control and a "Reopen" control.
+
+A variable name SHALL be a letter or underscore followed by letters, digits, or underscores. Literal braces SHALL be written as `%7B` and `%7D`; the recorder SHALL NOT offer another escape syntax.
+
+Template edits:
+- A template edit SHALL be committed on Enter or when the input loses focus.
+- A committed template that has a brace outside a `{name}` variable, or that does not form an absolute `http` or `https` URL once its variables are filled, SHALL be refused with an inline error, and the previous template SHALL stay in effect. The refusal SHALL use the same rule and message as the command line.
+- A committed template that uses a new variable SHALL add that variable to the table with an empty value.
+
+The variables table:
+- It SHALL list every variable used by the template or by a `type` step value, plus any variable the user added that nothing uses yet.
+- Each row SHALL say where the variable is used: "used in URL", "used in step N" for each `type` step whose value references it, "not in URL" when steps use it but the template does not, or "not used".
+- Editing a value SHALL change the rendered URL at once, without navigating.
+- Renaming a variable SHALL rename every `{old}` reference in the template and in `type` step values to `{new}`. A name that is invalid, or taken by another variable, SHALL be refused with an inline error.
+- Removing a variable that nothing uses SHALL remove it at once. Removing a variable still used by the template or by a step SHALL first ask for confirmation, naming where it is used. Confirming SHALL replace each reference with the variable's current value (URL-encoded in the template, raw in step values), then remove the variable.
+- A variable that nothing uses SHALL NOT be saved in the recipe.
+
+"Use current page URL" SHALL set the template to the URL of the page that is open now. Each variable with a non-empty value whose encoded value appears exactly once in that URL SHALL be put back as its `{name}` placeholder. The encoded value is the URL-encoded form or the form encoding with `+` for spaces. Other variables SHALL be left out of the template.
+
+When the rendered URL differs from the URL the session last opened (at start or on the last Reopen), the panel SHALL:
+- mark the template "edited";
+- show an accent and a changed dot on "Reopen";
+- show a line "Open page differs" with the part of the URL that differs.
+
+Reopen SHALL navigate to the rendered URL, which then becomes the last opened URL. Navigation inside the page, such as clicks or recorded steps, SHALL NOT mark the template as edited.
+
+A collapsed Recipe section SHALL keep showing the recipe name and the current template with each variable as a chip holding its value.
 
 #### Scenario: Template with one variable
 - **WHEN** the session starts with `http://host/catalog?cat={category}` and no default
-- **THEN** the user is asked for `category` before the page opens, and the panel shows `{category}` as a chip with that value
+- **THEN** the user is asked for `category` before the page opens, and the panel shows the template with `{category}` highlighted and a `category` row holding that value
+
+#### Scenario: Edit the template and add a variable
+- **WHEN** the template is `https://www.google.com/search?q={query}` and the user commits `https://www.google.com/search?q={query}&hl={lang}`
+- **THEN** a `lang` row with an empty value is added, marked "used in URL", and the rendered URL ends with `&hl=`
+
+#### Scenario: Invalid template is refused
+- **WHEN** the user commits `https://shop.test/c/{category`
+- **THEN** an inline error names the unmatched brace, and the previous template stays in effect
+
+#### Scenario: Rendered URL is encoded
+- **WHEN** the template is `https://www.google.com/search?q={query}` and `query` is `top llms`
+- **THEN** the rendered URL is `https://www.google.com/search?q=top%20llms`
+
+#### Scenario: Rename a variable used in a step
+- **WHEN** a `type` step has value `{login_email}` and the user renames `login_email` to `email`
+- **THEN** the step value becomes `{email}`, and the row is named `email` with the same value
+
+#### Scenario: Remove a used variable
+- **WHEN** the template is `https://shop.test/c/{category}` with `category` set to `shoes`, and the user removes `category` and confirms
+- **THEN** the template becomes `https://shop.test/c/shoes` and the `category` row is gone
+
+#### Scenario: Add a variable for a later step
+- **WHEN** the user adds a variable `email` with value `me@acme.dev` and no step uses it yet
+- **THEN** the row shows "not used", and saving the recipe does not declare `email`
+
+#### Scenario: Use the current page URL
+- **WHEN** the template is `https://shop.test/search?q={query}` with `query` set to `red shoes`, and the open page is `https://shop.test/search?q=red+shoes&page=2`
+- **THEN** the template becomes `https://shop.test/search?q={query}&page=2`
+
+#### Scenario: Changed template flags Reopen
+- **WHEN** the session opened `https://www.google.com/search?q=top%20llms` and the user changes the template to add `&hl=en`
+- **THEN** "Reopen" shows the changed dot, the template is marked "edited", and the panel shows that the open page differs by `&hl=en`
+
+#### Scenario: Navigation in the page does not flag Reopen
+- **WHEN** the user clicks a link on the page and nothing in the template or values changed
+- **THEN** "Reopen" shows no changed dot
 
 ### Requirement: Picking mode
 The panel SHALL offer a picking mode. While picking, hovering an element SHALL draw a highlight box around it with a tag showing its tag name, role when present, and a short text excerpt. When the hover target repeats among its siblings, the tag SHALL also say how many similar elements repeat at its level ("N similar siblings", N counting the target, shown when N is at least 2), using the similarity the sibling inference uses. Clicking SHALL select the hover target and leave picking mode. Esc SHALL leave picking mode without selecting. Alt+click SHALL select the element under the cursor even when a host overlay or modal backdrop covers it. Host page click handlers SHALL NOT fire during picking. Key presses aimed at the page SHALL NOT reach the page's own handlers during picking; Esc, the hover walk keys, and the panel's Ctrl+S SHALL keep working. Key presses typed into a panel input SHALL be left alone.
