@@ -22,7 +22,7 @@ Starting a recording session SHALL open the target URL in a headed persistent br
 - **THEN** the panel reappears on the new page with the same two fields
 
 ### Requirement: Panel layout and sections
-The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, the mode pill, and the end session control; a Recipe section; a Steps section; a Pagination section; the table tab bar; the content of the active table; and a fixed footer with the test run control, the field and step counts, the save status, and the save control. The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Steps, and Pagination sections SHALL apply to the whole recipe. The content of the active table SHALL hold, in order: a table header with the table's name, its kind (a list with its row count when the table has an item container, a page table otherwise) and a "…" menu; a Rows section showing the item container when one is set; a Pick section; and a Fields section. Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Steps, and Pagination sections SHALL be collapsible with a chevron in their header. A collapsed Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values; a collapsed Steps section SHALL show the step count and a summary of the first steps; a collapsed Pagination section SHALL show the pagination kind and limit, or that pagination is off. The Pagination section SHALL start collapsed; the Recipe and Steps sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
+The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, the mode pill, and the end session control; a Recipe section; a Steps section; a Pagination section; the table tab bar; the content of the active table; and a fixed footer with the test run control, the field and step counts, the save status, and the save control. The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Steps, and Pagination sections SHALL apply to the whole recipe. The content of the active table SHALL hold, in order: a table header with the table's name, its mode ("List · N rows" for a list with its row count, "Page · 1 row" for a page table, "No mode yet" for a table with neither fields nor item container) and a "…" menu; a Rows section showing the item container when one is set; a Pick section; and a Fields section. Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Steps, and Pagination sections SHALL be collapsible with a chevron in their header. A collapsed Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values; a collapsed Steps section SHALL show the step count and a summary of the first steps; a collapsed Pagination section SHALL show the pagination kind and limit, or that pagination is off. The Pagination section SHALL start collapsed; the Recipe and Steps sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
 
 #### Scenario: Sections in order
 - **WHEN** the panel shows a draft with two steps, pagination set, and tables `results` and `page`
@@ -39,6 +39,10 @@ The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, th
 #### Scenario: Footer stays visible
 - **WHEN** the active table has enough fields that the panel content scrolls
 - **THEN** the header and the footer with the save control stay visible while the content scrolls
+
+#### Scenario: Header shows the mode
+- **WHEN** the active table `results` is a list with 11 containers
+- **THEN** the table header reads `results` and "List · 11 rows"
 
 ### Requirement: URL template and variables
 The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. The panel SHALL show the template with each variable rendered as a chip, its current value, and allow editing values and reopening.
@@ -89,33 +93,47 @@ For the selected element the panel SHALL list every generated selector candidate
 - **THEN** the saved candidates are listed in saved order with no miss badge
 
 ### Requirement: Item inference from one pick
-When a selection is made and the active table has no item container, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. When found, the panel SHALL show a proposal block with two prefilled fields: the list parent and the item container, each with its top selector candidate. It SHALL state the number of matches and the number of siblings skipped as dissimilar, highlight every match on the page, outline the list parent, show the first three matched items' text as samples, and offer to confirm, pick a broader or narrower container level with its match count, or cancel. Confirming SHALL set the active table's item container with `within` from the list parent field and make the original selection an item scoped field of the active table. When the active table already has an item container, no proposal SHALL be shown; the user adds a table to record a second list.
+When a selection is made in a table that has no item container, the recorder SHALL look for a repeating structure as defined by the selector-generation capability. The recorder SHALL NOT open the list setup or change the table on its own. When the table has no fields and a repeating structure is found, the Pick section SHALL show, below the field form and above "Add field", a list suggestion card saying how many times the element repeats on the page and asking whether to make the table a list, with the text of the first three matched items and a "+ N more" line, "Set up list" (key `L`), and "No, single value". "Set up list" SHALL open the list setup seeded with the proposed list parent and item container, as defined in "List setup". "No, single value" SHALL hide the card for this selection. "Add field" SHALL stay available and SHALL say that adding makes the table a page table. When the table has no fields and no repeating structure is found, the Pick section SHALL offer a quiet "Set up list manually…" link that opens the list setup with empty list parent and item rows. When the table is a page table and a repeating structure is found, the Pick section SHALL show one quiet line saying how many times the element repeats with a "start a list table" action, which SHALL create a new table, activate it, keep the selection, and open the list setup there.
 
-The item container candidates of every level (proposed, broader, narrower) SHALL be relative to the list parent when one is set, and their match counts SHALL be counted inside the list parent. The stated number of matches SHALL agree with the item set the samples come from.
+The item container candidates of every level SHALL be relative to the list parent when one is set, and their match counts SHALL be counted inside the list parent. The stated number of matches SHALL agree with the item set the samples come from. The number of siblings skipped as dissimilar SHALL be shown in the list setup.
+
+When the active table is a list, no suggestion SHALL be shown for picks inside its containers; picks outside them are handled as defined in "Picks outside the active list".
 
 #### Scenario: Catalog title infers 24 items
-- **WHEN** the user picks one product title on the tier 0 catalog
-- **THEN** the panel proposes the product list as list parent and the product card as container with 24 matches and all 24 cards are highlighted
+- **WHEN** the user picks one product title on the tier 0 catalog in an empty table
+- **THEN** the Pick section shows the title selected and a suggestion card saying it repeats 24 times, with three product samples, and the table still has no item container
+
+#### Scenario: Setup seeded from the suggestion
+- **WHEN** the user chooses "Set up list" on that card
+- **THEN** the list setup proposes the product list as list parent and the product card as item container with 24 items, and all 24 cards are highlighted
 
 #### Scenario: Broader level
-- **WHEN** the proposal is the inner link element with 24 matches and the user chooses the broader level
-- **THEN** the container becomes the card element with 24 matches and the highlights update
+- **WHEN** the list setup proposes the inner link element with 24 matches and the user chooses the card element above it in "Adjust item level"
+- **THEN** the item container becomes the card element with 24 matches and the highlights update
 
 #### Scenario: No repetition
-- **WHEN** the user picks the page heading
-- **THEN** no container is proposed and the field is offered with scope `page`
+- **WHEN** the user picks the page heading in an empty table
+- **THEN** no suggestion card is shown, the Pick section offers "Set up list manually…", and the field is offered with scope `page`
+
+#### Scenario: Single value chosen
+- **WHEN** the suggestion card is shown and the user chooses "No, single value" and then "Add field"
+- **THEN** the card is gone, the field is added with scope `page`, and the table is a page table
 
 #### Scenario: Skipped siblings shown
-- **WHEN** the picked title sits in a result list with 8 results and one dissimilar block
-- **THEN** the proposal shows 8 matches and 1 skipped
+- **WHEN** the picked title sits in a result list with 8 results and one dissimilar block, and the user opens the list setup
+- **THEN** the setup shows 8 items and 1 skipped
 
 #### Scenario: Search results under an id anchored list parent
-- **WHEN** the user picks a result title on a page where the results sit under `div#rso` inside anchored wrappers, with hashed classes on each result
-- **THEN** the proposal's list parent is `id` `rso`, the item container's top candidate matches every result inside it, and the count is greater than 0 and equal to the number of samples' item set
+- **WHEN** the user picks a result title on a page where the results sit under `div#rso` inside anchored wrappers, with hashed classes on each result, and opens the list setup
+- **THEN** the list parent is `id` `rso`, the item container's top candidate matches every result inside it, and the count is greater than 0 and equal to the number of samples' item set
+
+#### Scenario: Page table with a repeating pick
+- **WHEN** the page table `summary` has two fields and the user picks a result title that repeats 11 times
+- **THEN** the Pick section shows one line saying it repeats 11 times with "start a list table", and choosing it creates and activates a new table with the list setup open for the title
 
 #### Scenario: Second list in a new table
-- **WHEN** `products` has 24 containers, the user adds a table `questions` and picks a heading inside one `mixed-questions` block
-- **THEN** the panel proposes the questions blocks as containers of `questions`, and confirming leaves `products` unchanged
+- **WHEN** `products` has 24 containers, the user adds a table `questions`, picks a heading inside one `mixed-questions` block, and sets up the list
+- **THEN** the list setup proposes the questions blocks as containers of `questions`, and accepting leaves `products` unchanged
 
 ### Requirement: Exclusions
 While the item container is proposed or set, the user SHALL be able to add an exclusion selector. Containers matching it SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list.
@@ -125,10 +143,10 @@ While the item container is proposed or set, the user SHALL be able to add an ex
 - **THEN** the count shows 22 and those 2 cards lose their highlight
 
 ### Requirement: Add as field
-The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), scope (`item` when the element is inside the table's container, else `page`), optional flag, and dedup key flag. The field SHALL go to the active table: the Pick section lives inside the active table's tab and offers no other target table. When a pick is outside every container of the active table and a table without an item container exists, the recorder SHALL activate that table, compute the selection for it, and say so in the Pick section. Activating another tab while an element is selected SHALL recompute the selection for that table. Adding the `+` tab while an element is selected SHALL create the table, activate it, and recompute the selection for it. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down.
+The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), optional flag, and dedup key flag. The field's scope SHALL follow the table's mode as defined in "One mode per table", and the form SHALL offer no scope choice. The field SHALL go to the active table: the Pick section lives inside the active table's tab and offers no other target table. When the active table is a list, "Add field" SHALL be available only for a selection inside one of its containers. Activating another tab while an element is selected SHALL recompute the selection for that table. Adding the `+` tab while an element is selected SHALL create the table, activate it, and recompute the selection for it. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down. The Pick section SHALL also offer to mark the selection as the pagination target and to record it as a step.
 
 #### Scenario: Link becomes url field
-- **WHEN** the user adds a product link as a field
+- **WHEN** the table is a list and the user adds a product link inside a card as a field
 - **THEN** the field defaults to type `url`, attribute `href`, and scope `item`
 
 #### Scenario: Duplicate name is rejected inline
@@ -143,13 +161,17 @@ The user SHALL be able to turn the selection into a field with a name (defaultin
 - **WHEN** the user selects a price, sets the name to `amount`, the type to `number`, and turns on optional, then adds the field
 - **THEN** the field list shows `amount` as a `number` field marked optional
 
+#### Scenario: No scope choice
+- **WHEN** an element is selected
+- **THEN** the field form offers name, type, attribute, optional, and key, and no scope choice
+
 #### Scenario: Pick outside the list goes to the page table
-- **WHEN** `products` is active with 24 containers, a table `page` without item exists, and the user picks the category heading
-- **THEN** the `page` tab becomes active with the heading selected with scope `page`, and adding puts the field under `page`
+- **WHEN** `products` is the active list with 24 containers, a table `page` without item exists, and the user picks the category heading
+- **THEN** "Add field" is unavailable for `products`, the banner for picks outside the list is shown, and only choosing "Add to page" activates `page` with the heading selected with scope `page`
 
 #### Scenario: Pick outside the list with no page table
 - **WHEN** `products` is the only table and the user picks the category heading
-- **THEN** `products` stays active and the form offers scope `page`
+- **THEN** `products` stays active, "Add field" is unavailable, and the banner offers "New page table"
 
 #### Scenario: New tab while selected
 - **WHEN** an element is selected and the user clicks the `+` tab
@@ -230,11 +252,19 @@ The recorder UI SHALL render inside a shadow root with all inherited styles rese
 - **THEN** the panel renders with its own font and colors, above the fixed header and the cookie modal
 
 ### Requirement: Keyboard
-The panel SHALL support: `p` to start picking, Esc to cancel picking, close a menu, cancel a field edit, or clear the selection when not picking, Enter to confirm the current proposal, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Alt+Left and Alt+Right to move the focused table tab, F2 to rename the focused table tab, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel a tab rename, cancel picking, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
+The panel SHALL support: `p` to start picking, `L` to open the list setup from the list suggestion, Esc to cancel picking, close a menu, close the list setup, cancel a field edit, or clear the selection when not picking, Enter to accept the list setup, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Alt+Left and Alt+Right to move the focused table tab, F2 to rename the focused table tab, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel a tab rename, cancel picking, close the list setup, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
 
 #### Scenario: Enter confirms items
-- **WHEN** the item proposal is shown and the user presses Enter
-- **THEN** the container is confirmed
+- **WHEN** the list setup is shown and the user presses Enter
+- **THEN** the item container is set
+
+#### Scenario: L opens the list setup
+- **WHEN** the list suggestion card is shown and the user presses `L`
+- **THEN** the list setup opens seeded from the suggestion
+
+#### Scenario: Esc closes the list setup
+- **WHEN** the list setup is open, picking is off, and the user presses Esc
+- **THEN** the setup closes, the table is unchanged, and the selection with its suggestion is shown again
 
 #### Scenario: Esc clears the selection
 - **WHEN** an element is selected, picking is off, and the user presses Esc
@@ -315,10 +345,10 @@ The panel SHALL list steps in order with kind, target summary, value, `when`, an
 - **THEN** the search box on the live page contains the step's value
 
 ### Requirement: Editing the proposal fields
-While the proposal is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
+While the list setup is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. When the list setup has no original selection (opened manually or from Rows > Edit), picking for the item container SHALL accept any element inside the list parent, or anywhere on the page when no list parent is set, and picking for the list parent SHALL accept any element when no item container is set yet. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
 
 #### Scenario: Pick a wider list parent
-- **WHEN** the proposal names `div.row` as list parent with 4 items and the user picks `div.grid` for the list parent
+- **WHEN** the list setup names `div.row` as list parent with 4 items and the user picks `div.grid` for the list parent
 - **THEN** the item count becomes 24, all 24 cards are highlighted, and the item container candidates no longer mention `div.row`
 
 #### Scenario: Type a role selector for the item
@@ -333,6 +363,10 @@ While the proposal is shown, the user SHALL be able to change the list parent or
 - **WHEN** the user clears the list parent field
 - **THEN** the item container candidates become document relative and are counted on the whole page
 
+#### Scenario: Pick the item in a manual setup
+- **WHEN** the list setup was opened manually with empty rows and the user picks one product card for the item row
+- **THEN** the item container is computed from that card, the items that match it on the page are counted and highlighted, and Accept becomes available
+
 ### Requirement: Include all siblings
 The proposal block SHALL offer an "include all siblings" toggle. When on, every element under the list parent on the item's level with the item's tag SHALL count as an item regardless of similarity, and the skipped count SHALL read 0. Toggling off SHALL restore the similarity filter. The toggle SHALL not be saved in the recipe; its effect is the item selector chosen on confirm.
 
@@ -341,22 +375,22 @@ The proposal block SHALL offer an "include all siblings" toggle. When on, every 
 - **THEN** the proposal shows 9 matches and 0 skipped
 
 ### Requirement: Saved list parent
-Confirming a proposal SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent field. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. Setting an item container manually from a selection SHALL leave `within` absent unless the user then sets a list parent from the item block. The item block in the panel SHALL show the list parent with its match count and allow re-picking or clearing it after confirmation. Setting, re-picking, or typing a list parent for a confirmed item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
+Accepting the list setup SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. The Rows section SHALL show the list parent with its match count and allow re-picking or clearing it after the list is set. Setting, re-picking, or typing a list parent for a set item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
 
 #### Scenario: Within saved on confirm
-- **WHEN** the user confirms a proposal whose list parent is the product list
+- **WHEN** the user accepts a list setup whose list parent is the product list
 - **THEN** the draft's `item.within` lists the list's candidates, `item.selectors` resolve the cards inside that list, and the saved recipe carries both
 
 #### Scenario: Cleared list parent
-- **WHEN** the user clears the list parent field and confirms
+- **WHEN** the user clears the list parent in the list setup and accepts
 - **THEN** the saved recipe's `item` has no `within`
 
 #### Scenario: List parent set after confirming
-- **WHEN** the user sets the item container from a selection with a document relative selector and then picks the product list as list parent
+- **WHEN** the user set up a list manually with a document relative item selector and no list parent, and then picks the product list as list parent from the Rows section
 - **THEN** `item.selectors` are rewritten relative to the product list and the item count stays 24
 
 #### Scenario: Highlights follow the list parent
-- **WHEN** a confirmed item has `within` and relative `item.selectors` that would also match elements outside the list parent
+- **WHEN** a set item container has `within` and relative `item.selectors` that would also match elements outside the list parent
 - **THEN** only the containers inside the list parent are highlighted, and a pick inside one of them is item scoped
 
 #### Scenario: Recorded recipe runs
@@ -423,22 +457,22 @@ The selection panel SHALL offer a clear control. Clearing SHALL remove the selec
 - **THEN** the proposal and the inspector disappear, no item container is set, and the draft's fields are unchanged
 
 ### Requirement: Typed selector for the selection
-The selection panel SHALL accept selector text through the selector input, in the same `strategy=value` form as the list parent and item container fields. With scope `item`, the text SHALL be resolved inside each item container; with scope `page`, against the document. When it matches, the typed candidate SHALL become the primary candidate, shown with its stability and match count, and the first element it matches (in the first container that holds a match for item scope) SHALL become the selected element with its inspector. For item scope the panel SHALL show the number of containers holding at least one match out of the container count. A candidate that matches in only some containers SHALL be accepted, and the panel SHALL offer to mark the field optional. Text that is invalid or matches nothing SHALL show an inline error and leave the previous selection in effect. The same input SHALL be available in the Pick section when nothing is selected and the active table has an item container.
+The selection panel SHALL accept selector text through the selector input, in the same `strategy=value` form as the list parent and item container fields. When the active table is a list, the text SHALL be resolved inside each item container and the selection SHALL have scope `item`; otherwise it SHALL be resolved against the document with scope `page`. When it matches, the typed candidate SHALL become the primary candidate, shown with its stability and match count, and the first element it matches (in the first container that holds a match for a list) SHALL become the selected element with its inspector. For a list the panel SHALL show the number of containers holding at least one match out of the container count. A candidate that matches in only some containers SHALL be accepted, and the panel SHALL offer to mark the field optional. Text that is invalid or matches nothing SHALL show an inline error and leave the previous selection in effect. The same input SHALL be available in the Pick section when nothing is selected and the active table is a list.
 
 #### Scenario: Typed item selector
-- **WHEN** 24 product cards are confirmed and the user types `css=h3` with no element selected
-- **THEN** the first card's `h3` becomes the selection, the primary candidate is `css=h3` with 24 matches, the scope is `item`, and the panel shows `24 / 24 items`
+- **WHEN** 24 product cards are set and the user types `css=h3` with no element selected
+- **THEN** the first card's `h3` becomes the selection, the primary candidate is `css=h3` with 24 matches, the scope is `item`, and the panel shows `24/24` coverage
 
 #### Scenario: Partial match
-- **WHEN** 10 result containers are confirmed and the user types a selector that matches in 7 of them
-- **THEN** the panel shows `7 / 10 items` and offers to mark the field optional, and the field can be added
+- **WHEN** 10 result containers are set and the user types a selector that matches in 7 of them
+- **THEN** the panel shows `7/10` coverage and offers to mark the field optional, and the field can be added
 
 #### Scenario: Matches nothing
 - **WHEN** the user types `css=.no-such-class`
 - **THEN** an inline error says the selector matches nothing and the previous selection stays
 
 ### Requirement: Edit a saved field
-The panel SHALL offer an edit action on each field in the list, by clicking the field's summary or an Edit button. Editing SHALL open the field in the selection panel, prefilled with its name, type, attribute, scope, optional flag, dedup key flag, its saved selector candidates with current match counts, and its primary candidate. The element the field's primary selector resolves to (inside the first container that holds a match for item scope) SHALL be selected and inspected, and every match SHALL be highlighted. When the field resolves nothing on the current page, the panel SHALL show the saved values with a zero-match notice and no selected element. While editing, a new pick or a typed selector SHALL replace the selection for the edited field, and the field options SHALL keep their edited values. "Update field" SHALL replace the field at its position with the edited values and selectors, the chosen candidate first, and refresh its fingerprint from the selected element. "Cancel" SHALL leave the field unchanged. Both SHALL return the panel to the empty state. The field being edited SHALL be marked in the field list, and other panel actions that act on the selection (use as item container, pagination target, record as step) SHALL be unavailable while editing.
+The panel SHALL offer an edit action on each field in the list, by clicking the field's summary or an Edit button. Editing SHALL open the field in the selection panel, prefilled with its name, type, attribute, optional flag, dedup key flag, its saved selector candidates with current match counts, and its primary candidate; the field keeps its scope. The element the field's primary selector resolves to (inside the first container that holds a match for item scope) SHALL be selected and inspected, and every match SHALL be highlighted. When the field resolves nothing on the current page, the panel SHALL show the saved values with a zero-match notice and no selected element. While editing, a new pick or a typed selector SHALL replace the selection for the edited field, and the field options SHALL keep their edited values. "Update field" SHALL replace the field at its position with the edited values and selectors, the chosen candidate first, and refresh its fingerprint from the selected element. "Cancel" SHALL leave the field unchanged. Both SHALL return the panel to the empty state. The field being edited SHALL be marked in the field list, and other panel actions that act on the selection (list suggestion, list setup, pagination target, record as step) SHALL be unavailable while editing.
 
 #### Scenario: Open a field for editing
 - **WHEN** the draft has an item scoped `price` field of type `number`, marked optional, with a `testid` primary, and the user clicks its Edit button
@@ -461,44 +495,56 @@ The panel SHALL offer an edit action on each field in the list, by clicking the 
 - **THEN** the panel shows the field's saved values and candidates with 0 matches, a zero-match notice, and no selected element
 
 ### Requirement: Edit the item container
-The confirmed item card SHALL offer an Edit action. Editing SHALL reopen the item proposal block seeded from the confirmed item: the saved list parent and item container as the prefilled fields with their candidates and current match counts, the saved exclusions, the number of siblings skipped as dissimilar, the first three matched items' text as samples, and the broader and narrower levels around the confirmed container when they exist. While editing, the same edits SHALL be available as during the first inference: pick or type the list parent and the item container, choose a primary candidate, choose a broader or narrower level, include all siblings, and add or remove exclusions. Every match SHALL be highlighted and the list parent outlined.
+The Rows section of a list SHALL offer an Edit action. Editing SHALL open the list setup seeded from the set item container: the saved list parent and item container with their candidates and current match counts, the saved exclusions, the number of siblings skipped as dissimilar, and the first three matched items' text as samples, with no "your pick" row. The screen SHALL be titled for editing, SHALL show the item count before the edit next to the current one, and SHALL name the accept action "Update list". While editing, the same edits SHALL be available as in any list setup: pick or type the list parent and the item container, choose a primary candidate, adjust the item level and the list parent from the ladders, include all siblings, and add or remove exclusions. While the edited container differs from the saved one, the screen SHALL list every field of the table whose primary candidate would match in fewer of the new containers than there are, with its coverage against them, and SHALL say when a field would read nothing.
 
-"Update items" SHALL replace the draft's item container, list parent, and exclusions with the edited values, refresh the item fingerprint, and keep every field with its name, scope, and options. Field match counts SHALL be refreshed against the new containers, and a field that no longer matches SHALL show the zero-match warning. Updating SHALL NOT add a field. "Cancel" SHALL leave the item unchanged. Both SHALL close the proposal block and return the panel to the empty state.
+"Update list" SHALL replace the table's item container, list parent, and exclusions with the edited values, refresh the item fingerprint, and keep every field with its name, scope, and options. Field match counts SHALL be refreshed against the new containers, and a field that no longer matches SHALL show the zero-match warning. Updating SHALL NOT add a field. "Cancel" SHALL leave the item unchanged. Both SHALL close the list setup and return the panel to the empty state.
 
-When the confirmed item container matches nothing on the current page, the card SHALL say so and SHALL NOT offer Edit; Remove and the list parent re-pick SHALL stay available.
+The Rows section SHALL offer Remove only while the table has no fields. When the set item container matches nothing on the current page, the Rows section SHALL say so and SHALL NOT offer Edit; the list parent re-pick SHALL stay available, and Remove SHALL stay available while the table has no fields.
 
-Selection actions that would change the item (use as item container) and field editing SHALL be unavailable while the item is being edited.
+Field editing SHALL be unavailable while the list setup is open.
 
 #### Scenario: Open the confirmed item for editing
-- **WHEN** 24 product cards are confirmed with the product list as list parent and the user clicks Edit on the item card
-- **THEN** the proposal block shows the list parent and the card container prefilled with 24 matches, all 24 cards highlighted, and Update items and Cancel actions
+- **WHEN** 24 product cards are set with the product list as list parent and the user clicks Edit in the Rows section
+- **THEN** the list setup shows the list parent and the card container with 24 items, all 24 cards highlighted, and Update list and Cancel actions
 
 #### Scenario: Move to the broader level and update
-- **WHEN** the user edits the items, chooses the broader level with 12 matches, and clicks Update items
-- **THEN** the draft's item container is the broader element with 12 matches, the field list is unchanged in names and count, and each field shows its refreshed match count
+- **WHEN** the user edits the list, chooses a level with 12 matches in "Adjust item level", and clicks Update list
+- **THEN** the table's item container is that element with 12 matches, the field list is unchanged in names and count, and each field shows its refreshed match count
+
+#### Scenario: Previous count shown
+- **WHEN** the user edits a list of 11 items and chooses a level with 13 matches
+- **THEN** the screen shows 13 items and that it was 11
+
+#### Scenario: Field that would read nothing
+- **WHEN** the user edits the list to a level under which the `rating` field's primary candidate matches in none of the 13 new containers and `title` matches in 11
+- **THEN** the screen says 1 field would read nothing and lists `rating` with `0/13` and `title` with `11/13`
 
 #### Scenario: Include all siblings after confirming
-- **WHEN** 8 results were confirmed with 1 sibling skipped as dissimilar, the user edits the items and turns on include all siblings, then updates
+- **WHEN** 8 results were set with 1 sibling skipped as dissimilar, the user edits the list and turns on include all siblings, then updates
 - **THEN** the item container matches 9 elements and no sibling is reported as skipped
 
 #### Scenario: Re-pick the item container while editing
-- **WHEN** the user edits the items and picks a different element that holds the first item
-- **THEN** the proposal shows that element as the item container with its match count, and the draft is unchanged until Update items
+- **WHEN** the user edits the list and picks a different element that holds the first item for the item row
+- **THEN** the setup shows that element as the item container with its match count, and the draft is unchanged until Update list
 
 #### Scenario: Update breaks a field
-- **WHEN** the user updates the items to a level under which the `price` field's selector matches nothing
+- **WHEN** the user updates the list to a level under which the `price` field's selector matches nothing
 - **THEN** `price` stays in the field list with the zero-match warning offering re-pick or mark optional
 
 #### Scenario: Cancel keeps the item
-- **WHEN** the user edits the items, changes the item selector, and clicks Cancel
+- **WHEN** the user edits the list, changes the item selector, and clicks Cancel
 - **THEN** the item container, list parent, exclusions, and fields are as they were before Edit
 
 #### Scenario: Item not on this page
-- **WHEN** the confirmed item container matches nothing after a navigation
-- **THEN** the item card shows a zero-match notice, Edit is absent, and Remove is available
+- **WHEN** the set item container matches nothing after a navigation
+- **THEN** the Rows section shows a zero-match notice and Edit is absent
+
+#### Scenario: No remove once locked
+- **WHEN** the list `results` has a field
+- **THEN** the Rows section offers Edit and no Remove
 
 ### Requirement: Table tab bar
-The panel SHALL show a table tab bar with one tab per table of the draft, in recipe order, each with the table's name, its row count on the current page when known, an icon for its kind (list when it has an item container, page otherwise), and an error dot when the table has a validation error. One tab SHALL be active. A new draft SHALL start with one table named `items`. A pinned `+` tab at the end SHALL add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`) and activate it. When the tabs do not fit, the bar SHALL scroll horizontally and end with a "N more" control listing the hidden tables. Double-clicking a tab, pressing F2 on a focused tab, or choosing Rename in the table's "…" menu SHALL rename the table inline; a name that is not kebab-case or not unique SHALL be refused with an error and the previous name kept. The table's "…" menu SHALL offer Rename, Move left, Move right, Use for pagination, and Remove table. Remove table SHALL be offered only when the draft has more than one table and SHALL remove the table's item container and fields. Tabs SHALL be reorderable by dragging a tab, by Alt+Left and Alt+Right on a focused tab, and by Move left and Move right; the `+` tab SHALL NOT move and SHALL NOT be a drop target. The order of the tabs SHALL be the order of the recipe's tables. Use for pagination SHALL move the table in front of every other table with an item container; it SHALL be unavailable for a table without an item container and for the table that already drives pagination. When the draft's pagination kind is not `none`, the tab of the primary table (the first table with an item container) SHALL carry a "drives pagination" badge, and when a reorder changes the primary table, the panel SHALL show a toast naming the new primary table. Reordering SHALL NOT offer undo. The active table SHALL receive picks, item inference, added fields, field edits, and item edits. Switching and reordering tabs SHALL be unavailable while the item proposal is being edited.
+The panel SHALL show a table tab bar with one tab per table of the draft, in recipe order, each with the table's name, its row count on the current page when known, an icon for its mode (a list icon for a list, a page icon for a page table, and a neutral icon for a table with no mode yet), and an error dot when the table has a validation error. One tab SHALL be active. A new draft SHALL start with one table named `items`. A pinned `+` tab at the end SHALL add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`) and activate it. When the tabs do not fit, the bar SHALL scroll horizontally and end with a "N more" control listing the hidden tables. Double-clicking a tab, pressing F2 on a focused tab, or choosing Rename in the table's "…" menu SHALL rename the table inline; a name that is not kebab-case or not unique SHALL be refused with an error and the previous name kept. The table's "…" menu SHALL offer Rename, Move left, Move right, Use for pagination, Clear table, and Remove table, and SHALL show the mode lock as defined in "Clear table". Remove table SHALL be offered only when the draft has more than one table and SHALL remove the table's item container and fields. Tabs SHALL be reorderable by dragging a tab, by Alt+Left and Alt+Right on a focused tab, and by Move left and Move right; the `+` tab SHALL NOT move and SHALL NOT be a drop target. The order of the tabs SHALL be the order of the recipe's tables. Use for pagination SHALL move the table in front of every other table with an item container; it SHALL be unavailable for a table without an item container and for the table that already drives pagination. When the draft's pagination kind is not `none`, the tab of the primary table (the first table with an item container) SHALL carry a "drives pagination" badge, and when a reorder changes the primary table, the panel SHALL show a toast naming the new primary table. Reordering SHALL NOT offer undo. The active table SHALL receive picks, list suggestions, list setups, added fields, field edits, and item edits. Switching and reordering tabs SHALL be unavailable while the list setup is open.
 
 #### Scenario: Add a page table
 - **WHEN** the draft has the table `products` with 24 containers and the user clicks the `+` tab
@@ -531,6 +577,14 @@ The panel SHALL show a table tab bar with one tab per table of the draft, in rec
 #### Scenario: Overflowing tabs
 - **WHEN** the draft has more tables than fit in the tab bar
 - **THEN** the bar ends with a "N more" control that lists the hidden tables and activates the one chosen
+
+#### Scenario: Mode icons
+- **WHEN** the draft has a list `results`, a page table `summary`, and an empty table `table-3`
+- **THEN** `results` shows the list icon, `summary` the page icon, and `table-3` the neutral icon
+
+#### Scenario: Tabs locked during list setup
+- **WHEN** the list setup is open on `results`
+- **THEN** the other tabs cannot be activated and the tabs cannot be reordered
 
 ### Requirement: Host snapshots on deep pages
 When the host needs the page's DOM snapshot without a pick, such as when the confirmed item container is edited, the snapshot SHALL succeed regardless of the document's nesting depth. The page SHALL attach its own snapshot to the item edit message, and a snapshot the host requests directly from the browser SHALL be transported in a form that does not depend on nesting depth.
@@ -567,3 +621,126 @@ The page highlight of item containers SHALL cover the same elements the runner r
 #### Scenario: Scope prefixed container selector
 - **WHEN** the list parent is `id=rso` and the item container is `css=:scope > div > div > div` matching 11 elements
 - **THEN** all 11 elements are highlighted as items
+
+### Requirement: One mode per table
+Each table of the draft SHALL be in one of three modes, derived from its content: a *list* when it has an item container, a *page table* when it has fields and no item container, and *no mode yet* when it has neither. Every field the recorder adds to a list SHALL have scope `item`, and every field it adds to a page table or to a table with no mode yet SHALL have scope `page`; the recorder SHALL NOT offer a scope choice. While a table has no fields, its item container MAY be set, edited, or removed. Once a table has a field, its mode SHALL be locked: the item container of a list SHALL stay editable but SHALL NOT be removable, and a page table SHALL NOT get an item container. When a table's first field is added and the table still has the name it was created with by default (`items` for the draft's first table, or the name the `+` tab gave it), the table SHALL be renamed `page` if it became a page table or `items` if it became a list, unless another table already has that name; a name the user typed SHALL NOT be changed.
+
+A draft loaded from a saved recipe whose list holds `page` scoped fields SHALL keep those fields as they are and SHALL save, test, and run them as before. The panel SHALL mark each such field with a warning that it is read once from the page and SHALL offer "Move to page table", which moves the field with its selectors and options to the first table without an item container, creating a table named `page` (or the first free `table-N`) when none exists.
+
+#### Scenario: Empty table has no mode
+- **WHEN** a new draft starts
+- **THEN** its table `items` has no item container, no fields, and the table header reads "No mode yet"
+
+#### Scenario: First field makes a page table
+- **WHEN** the table `items` has no mode yet and the user adds the page heading as a field
+- **THEN** the field has scope `page`, the table is renamed `page`, and its header reads "Page · 1 row"
+
+#### Scenario: First field locks a list
+- **WHEN** the table `results` has an item container with 11 items and no fields, and the user adds a title field
+- **THEN** the field has scope `item`, the header reads "List · 11 rows", and the Rows section offers Edit but no Remove
+
+#### Scenario: User name is kept
+- **WHEN** the user renamed the empty table to `search-info` and then adds a field without setting up a list
+- **THEN** the table is still named `search-info`
+
+#### Scenario: Old mixed table
+- **WHEN** the user opens a saved recipe whose `products` list has an item field `title` and a page field `category`
+- **THEN** `category` is shown with a warning and "Move to page table", and a test run still repeats `category` on every `products` row
+
+#### Scenario: Move a page field out of a list
+- **WHEN** the user chooses "Move to page table" on `category` and the draft has no table without an item container
+- **THEN** a table `page` is created holding `category` with its selectors and options, and `products` keeps only its item fields
+
+### Requirement: List setup
+The panel SHALL offer a list setup screen in the Pick section of the active table. It SHALL open from the list suggestion ("Set up list" or the `L` key), from "Set up list manually…", from "Repeats N× — start a list table" and "New list table" (in the new table), and from Edit in the Rows section. It SHALL show, top to bottom: a header naming the table with a back control; the number of items on the page and where they come from; a selector stack with the list parent, the item container, and, when opened from a pick, the pick as a greyed "your pick" row with its coverage; the text of the first three items as samples, with a separator between the text parts of each item and a "+ N more · show all on page" line; the exclusions with their counts and an input to add one; two collapsed controls, "Adjust item level" and "Adjust list parent", each with a one-line summary; and the actions Accept and Cancel. While the screen is open every item container SHALL be highlighted on the page and the list parent outlined.
+
+Clicking the list parent or item row of the stack SHALL turn it into a selector input with a strategy choice, the value, the live match count, a pick control, and the candidate list, as defined for the selector input; a typed or picked value SHALL be applied as defined in "Editing the proposal fields".
+
+"Adjust item level", when opened, SHALL list the pick and its ancestors up to the list parent, each with its distance from the pick (`↑1`, `↑2`, …), its top selector as a chip, and the number of matches of that level inside the list parent; the level the recorder proposes SHALL be marked "likely item"; a level whose matched elements are the same as another listed level SHALL be folded into a line naming that level; the "include all siblings" toggle SHALL be offered here. "Adjust list parent", when opened, SHALL list the ancestors of the item container, each with its chip and the number of children like the item, with the proposed one marked "likely list parent". Hovering a row of either list SHALL outline that element on the page; clicking it SHALL make it the item container or the list parent and recompute the items as defined in "Editing the proposal fields".
+
+When the list parent or the item container resolves nothing, the screen SHALL show 0 items and name the level that matches nothing, and Accept SHALL be unavailable. Accept (or Enter) SHALL set the active table's item container, list parent, and exclusions and close the screen. When the screen was opened from a pick inside the new containers, the panel SHALL return to the selected element, now computed with scope `item` inside the containers and showing its coverage, without adding a field. When the pick is itself an item container, or is not inside one, the panel SHALL return to the empty Pick state with the message "List ready — pick fields inside an item". Cancel (or Esc) SHALL close the screen, leave the table unchanged, and return to the state it was opened from, including the list suggestion. Other tabs, the table's "…" menu, and field edits SHALL be unavailable while the screen is open.
+
+#### Scenario: Open the setup from the suggestion
+- **WHEN** the user picks a result title in an empty table, the suggestion says it repeats 11 times, and the user presses `L`
+- **THEN** the list setup shows 11 items, the list parent `#rso`, the item container, the title as "your pick" with `11/11`, and three samples, and the 11 items are highlighted on the page
+
+#### Scenario: Accept returns to the pick
+- **WHEN** the user accepts the setup
+- **THEN** the table has an item container with 11 items and no fields, and the Pick section shows the title selected with scope `item`, `11/11` coverage, and "Add field"
+
+#### Scenario: Cancel keeps the table empty
+- **WHEN** the user opens the setup from the suggestion and presses Esc
+- **THEN** the table has no item container and the Pick section shows the title selected with the suggestion card again
+
+#### Scenario: Pick is the item itself
+- **WHEN** the user picked a whole result block, set up the list with that block as the item container, and accepts
+- **THEN** the table has its item container, no field is selected, and the Pick section says "List ready — pick fields inside an item"
+
+#### Scenario: Adjust the item level
+- **WHEN** the user opens "Adjust item level" and chooses the level `↑4` with 13 matches
+- **THEN** the item container becomes that level, the count reads 13, the samples and highlights update, and the stack shows the new item selector
+
+#### Scenario: Same elements folded
+- **WHEN** the levels `↑2` and `↑3` above the pick match the same 11 elements
+- **THEN** "Adjust item level" lists `↑3` with its count and shows `↑2` as a line saying it matches the same elements as `↑3`
+
+#### Scenario: Type the list parent by hand
+- **WHEN** the user clicks the list parent row, chooses `id` in the strategy choice, and types `search`
+- **THEN** the items are recomputed inside `#search`, the count and samples update
+
+#### Scenario: List parent matches nothing
+- **WHEN** the user types a list parent selector that matches nothing
+- **THEN** the setup shows 0 items, says the list parent matches nothing, and Accept is unavailable
+
+#### Scenario: Manual setup
+- **WHEN** the user picks the page heading in an empty table, where nothing repeats, and chooses "Set up list manually…"
+- **THEN** the list setup opens with empty list parent and item rows ready for input and Accept unavailable until the item matches at least one element
+
+### Requirement: Picks outside the active list
+When the active table is a list and a pick is outside every item container of the table, the Pick section SHALL show the selected element and a banner "Outside the <table> list", and "Add field" SHALL be unavailable for the active table. The banner SHALL offer "Add to <table>" naming the first table without an item container when one exists, else "New page table" with an editable name prefilled with the default new table name, and "Re-pick". When the picked element repeats on its own outside the list, the banner SHALL also say how many times it repeats and offer "New list table". When the pick is inside an item container of another list table, the banner SHALL instead say "Belongs to the <table> list", show that table's list parent and item container as a selector stack with the number of the item holding the pick, and offer "Switch to <table>" and "Re-pick". "Add to <table>", "New page table", and "Switch to <table>" SHALL activate (or create and activate) that table and recompute the kept selection for it, without adding a field. "New list table" SHALL create and activate a new table and open the list setup there from the kept selection. "Re-pick" SHALL start picking. These banners SHALL NOT be shown while a field is being edited or re-picked.
+
+#### Scenario: Pick outside with a page table
+- **WHEN** `results` is an active list with 11 items, a page table `summary` exists, and the user picks the result count line
+- **THEN** the banner says "Outside the results list", "Add field" is unavailable, and choosing "Add to summary" activates `summary` with the line selected with scope `page`
+
+#### Scenario: Pick outside with no page table
+- **WHEN** `results` is the only table and the user picks the result count line
+- **THEN** the banner offers "New page table" prefilled with `page`, and choosing it creates `page`, activates it, and keeps the line selected
+
+#### Scenario: Repeating element outside the list
+- **WHEN** the user picks a related search link that repeats 9 times outside the `results` containers
+- **THEN** the banner says it repeats 9 times and offers "New list table", which creates a table and opens the list setup for the links
+
+#### Scenario: Pick inside another list
+- **WHEN** `results` is active, `ads` is a list with 2 items, and the user picks the title inside the first ad
+- **THEN** the banner says "Belongs to the ads list", names item 1 of 2, and "Switch to ads" activates `ads` with the title selected with scope `item`
+
+#### Scenario: No field added silently
+- **WHEN** the user chooses "Add to summary" from the banner
+- **THEN** `summary` has the same fields as before until the user adds the selection
+
+### Requirement: Clear table
+The table's "…" menu SHALL show the table's mode and, when the table has fields, a disabled line saying the mode is locked and that Clear table changes it. The menu SHALL offer Clear table when the table has fields or an item container. Clear table SHALL remove the table's fields, item container, list parent, and exclusions, keep its name and position, and leave the table with no mode. Clear table SHALL be unavailable while the list setup is open or a field is being edited.
+
+#### Scenario: Locked mode hint
+- **WHEN** the user opens the "…" menu of the list `results` with 3 fields
+- **THEN** the menu shows that the mode is locked to list and offers Clear table
+
+#### Scenario: Clear a list
+- **WHEN** the user chooses Clear table on `results`
+- **THEN** `results` has no fields and no item container, its header reads "No mode yet", and the next repeating pick in it shows the list suggestion
+
+### Requirement: List outlines on the page
+While picking with a list as the active table, the page overlay SHALL outline the active table's list parent in the list parent level color and each of its item containers in the item level color, the same colors the selector chips use for those levels, and SHALL lightly dim the rest of the page. The item containers of other list tables SHALL get a muted dashed outline with a label naming the table and "list". The hover tag SHALL say "item k of N" when the hovered element is inside the k-th of the active table's N containers, and SHALL say "outside <table> list" in the warning color when it is outside all of them. With a page table or a table with no mode active, picking SHALL look as before. The overlay SHALL NOT use a color per table.
+
+#### Scenario: Hover inside the list
+- **WHEN** `results` is active with 11 containers, picking is on, and the user hovers the title in the third result
+- **THEN** the 11 containers are outlined in the item color, the list parent in the list parent color, the rest of the page is dimmed, and the tag says "item 3 of 11"
+
+#### Scenario: Hover outside the list
+- **WHEN** the user hovers the result count line above the results
+- **THEN** the tag says "outside results list" in the warning color
+
+#### Scenario: Other list muted
+- **WHEN** `results` is active and `ads` is a list with 2 containers
+- **THEN** the 2 ad containers have a muted dashed outline labeled `ads · list`
