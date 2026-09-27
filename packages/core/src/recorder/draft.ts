@@ -364,6 +364,8 @@ export type DraftAction =
   /** Remove the active table; the last table stays. */
   | { type: 'removeTable' }
   | { type: 'selectTable'; index: number }
+  /** Move a table to another position; the active table stays the same table. */
+  | { type: 'moveTable'; from: number; to: number }
   | { type: 'addField'; field: NewField }
   | { type: 'updateField'; index: number; patch: FieldPatch }
   /** Replace the field at `index` in place: options, selectors, fingerprint, and counts. */
@@ -488,6 +490,12 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       if (!draft.tables[action.index] || action.index === at) return draft;
       next = { ...draft, activeTable: action.index };
       break;
+    case 'moveTable': {
+      if (!draft.tables[action.from] || action.from === action.to) return draft;
+      const tables = move(draft.tables, action.from, action.to);
+      next = { ...draft, tables, activeTable: tables.indexOf(draft.tables[at]!) };
+      break;
+    }
     case 'addField': {
       const field = toDraftField(action.field);
       let fields = [...table.fields, field];

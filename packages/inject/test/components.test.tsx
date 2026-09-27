@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MODE_TONE, ModePill } from '../src/ui/shell';
 import { AncestorBreadcrumb } from '../src/ui/picking';
 import { baseState, hostStates, newDraft, renderPanel, withTable } from './panel';
+import type { RecorderState } from '@webscoop/core';
 import type { Mode } from '../src/store';
 
 afterEach(cleanup);
@@ -125,7 +126,7 @@ describe('item detection', () => {
 
     fireEvent.change(p.q('exclude-input')!, { target: { value: '.sponsored' } });
     fireEvent.submit(p.q('exclude-input')!.closest('form')!);
-    expect(p.sent).toEqual([{ kind: 'draft.addExclusion', selector: '.sponsored' }]);
+    expect(p.sent).toEqual([{ kind: 'draft.addExclusion', selector: 'css=.sponsored' }]);
     const proposal = proposed.proposal!;
     act(() =>
       p.store.setHost({
@@ -146,8 +147,10 @@ describe('item detection', () => {
   it('prefills the list parent and item fields, edits them, and toggles include all', async () => {
     const { proposed } = await hostStates();
     const p = renderPanel(proposed);
-    expect((p.q('level-input-within') as HTMLInputElement).value).toBe('role=list');
-    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('role=article');
+    expect((p.q('level-input-within-strategy') as HTMLSelectElement).value).toBe('role');
+    expect((p.q('level-input-within') as HTMLInputElement).value).toBe('list');
+    expect((p.q('level-input-item-strategy') as HTMLSelectElement).value).toBe('role');
+    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('article');
     expect(p.q('items-skipped')!.textContent).toBe('0 skipped as dissimilar');
 
     fireEvent.change(p.q('level-input-item')!, { target: { value: 'role=listitem' } });
@@ -162,7 +165,7 @@ describe('item detection', () => {
 
     // Candidates of a level, and the primary choice on the chosen rung.
     fireEvent.click(p.q('level-broader')!);
-    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('role=listitem');
+    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('listitem');
     fireEvent.click(p.q('level-more-item')!);
     const rows = p.q('level-candidates-item')!.querySelectorAll('[data-ws="candidate"]');
     fireEvent.click(rows[1]!);
@@ -192,8 +195,10 @@ describe('item detection', () => {
       total: 24,
     };
     const p = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item }) });
-    expect(p.q('within-selector')!.textContent).toBe('role=list');
-    expect(p.q('within-count')!.textContent).toBe('1');
+    expect(p.q('within-selector')!.dataset.selector).toBe('role=list');
+    const list = p.qa('stack-level').find((l) => l.dataset.level === 'list')!;
+    expect(list.querySelector('[data-ws="selector-chip"]')!.getAttribute('data-selector')).toBe('role=list');
+    expect(list.querySelector('[data-ws="stack-count"]')!.textContent).toBe('1');
     fireEvent.click(p.q('within-repick')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.pickLevel', level: 'within' });
     fireEvent.click(p.q('within-clear')!);
@@ -201,7 +206,8 @@ describe('item detection', () => {
 
     const { within: _w, withinCount: _c, ...bare } = item;
     const none = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item: bare }) });
-    expect(none.qa('within-selector').at(-1)!.textContent).toBe('none');
+    expect(none.qa('within-selector').at(-1)!.textContent).toMatch(/No list parent/);
+    expect(none.qa('stack-level').map((l) => l.dataset.level)).toEqual(['item']);
     expect(none.qa('within-clear')).toHaveLength(0);
     expect(none.qa('within-repick').at(-1)!.textContent).toBe('Pick');
   });
@@ -282,18 +288,22 @@ describe('fields', () => {
     });
     const p = renderPanel(baseState(draft));
     const [desc, heading] = p.qa('field');
-    const chips = Array.from(desc!.querySelectorAll('[data-ws="field-path"] [data-ws="path-chip"]'));
-    expect(chips.map((c) => c.textContent)).toEqual(['id=rso', 'css=:scope > div > div', `class=${longClass}`]);
-    expect(chips.map((c) => c.getAttribute('title'))).toEqual(['list parent', 'item', 'field']);
-    // Whole values, wrapped, never ellipsized; chips are not focusable controls.
-    for (const chip of chips) {
-      expect(chip.className).not.toContain('ws-ellipsis');
-      expect(chip.tagName).toBe('SPAN');
-      expect(chip.hasAttribute('tabindex')).toBe(false);
-    }
-    expect(desc!.querySelector('[data-ws="field-coverage"]')!.textContent).toBe('9 / 11 items');
+    // One chip for the field's own selector, not the list parent or item.
+    const chips = Array.from(desc!.querySelectorAll('[data-ws="selector-chip"]')) as HTMLElement[];
+    expect(chips.map((c) => c.dataset.selector)).toEqual([`class=${longClass}`]);
+    expect(chips[0]!.dataset.level).toBe('field');
+    expect(chips[0]!.title).toBe(`class=${longClass} · medium stability`);
+    expect(chips[0]!.querySelector('[data-ws="selector-value"]')!.className).toContain('ws-sel-value');
+    expect(chips[0]!.tagName).toBe('SPAN');
+    expect(chips[0]!.hasAttribute('tabindex')).toBe(false);
+    expect(desc!.querySelector('[data-ws="field-summary"]')!.getAttribute('data-chain')).toBe(`id=rso » css=:scope > div > div » class=${longClass}`);
+    const coverage = desc!.querySelector('[data-ws="field-coverage"]') as HTMLElement;
+    expect(coverage.textContent).toBe('9/11');
+    expect(coverage.dataset.partial).toBe('true');
+    expect(coverage.title).toMatch(/Items holding a match/);
     expect(heading!.querySelector('[data-ws="field-coverage"]')).toBeNull();
-    expect(Array.from(heading!.querySelectorAll('[data-ws="path-chip"]')).map((c) => c.textContent)).toEqual(['css=.heading']);
+    const pageChips = Array.from(heading!.querySelectorAll('[data-ws="selector-chip"]')) as HTMLElement[];
+    expect(pageChips.map((c) => [c.dataset.selector, c.dataset.level])).toEqual([['css=.heading', 'page']]);
 
     const toggle = desc!.querySelector('[data-ws="field-fallback"]')!;
     expect(toggle.getAttribute('aria-checked')).toBe('false');
@@ -308,13 +318,27 @@ describe('fields', () => {
     const row = { sent: [...p.sent], ui: p.store.get().ui };
     cleanup();
     const q = renderPanel(baseState(draft));
-    fireEvent.click(q.q('path-chip')!);
+    fireEvent.click(q.q('field')!.querySelector('[data-ws="selector-chip"]')!);
     expect(q.sent).toEqual(row.sent);
     expect(q.store.get().ui).toEqual(row.ui);
   });
 });
 
+const expanded = (state: RecorderState): RecorderState => ({ ...state, panel: { collapsed: { recipe: false, steps: false, pagination: false } } });
+
 describe('pagination', () => {
+  it('starts collapsed with its kind and limit, or off', () => {
+    const off = renderPanel(baseState(newDraft()));
+    expect(off.q('section-pagination')!.dataset.collapsed).toBe('true');
+    expect(off.q('pagination-summary')!.textContent).toBe('off');
+    expect(off.q('pagination')).toBeNull();
+    fireEvent.click(off.q('section-pagination')!.querySelector('[data-ws="section-toggle"]')!);
+    expect(off.sent).toEqual([{ kind: 'panel.setCollapsed', section: 'pagination', collapsed: false }]);
+    cleanup();
+    const draft = { ...newDraft(), pagination: { kind: 'next' as const, limit: 5, stopRules: [], delayMs: 0 } };
+    expect(renderPanel(baseState(draft)).q('pagination-summary')!.textContent).toBe('Next · 5 pages');
+  });
+
   it('selects "first 3 pages" and emits limit 3', () => {
     const draft = {
       ...newDraft(),
@@ -328,7 +352,7 @@ describe('pagination', () => {
         delayMs: 0,
       },
     };
-    const p = renderPanel(baseState(draft));
+    const p = renderPanel(expanded(baseState(draft)));
     expect(p.q('pagination-param')!.textContent).toContain('page');
     expect(p.q('kind-url')!.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(p.q('seg-n')!);
@@ -345,7 +369,7 @@ describe('pagination', () => {
       fields: [field('title')],
       pagination: { kind: 'next' as const, limit: 'all' as const, stopRules: [], delayMs: 200 },
     };
-    const p = renderPanel(baseState(draft));
+    const p = renderPanel(expanded(baseState(draft)));
     const delay = p.q('pagination-delay')!;
     expect(delay.querySelector('input')!.value).toBe('200');
     fireEvent.click(delay.querySelector('[aria-label^="Increase"]')!);

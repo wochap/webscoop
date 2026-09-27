@@ -16,8 +16,10 @@ async function renameLast(r: Recording, name: string): Promise<void> {
   await r.until((s) => s.host && currentTable(s.host.draft).fields.at(-1)?.name === name);
 }
 
-/** Rename the active table and wait for the host to take it. */
+/** Rename the active table from its menu and wait for the host to take it. */
 async function renameTable(r: Recording, name: string): Promise<void> {
+  await r.clickPanel('[data-ws="tab-menu"]');
+  await r.clickPanel('[data-ws="menu-rename"]');
   await r.fill('[data-ws="table-name"]', name);
   await r.until((s) => s.host && currentTable(s.host.draft).name === name);
 }
@@ -52,7 +54,8 @@ test('records products, the page heading, and the questions blocks as three tabl
   expect(currentTable((await r.state()).host!.draft).name).toBe('page');
   const heading = await r.pick('h1.category-heading');
   expect(heading.host!.selected).toMatchObject({ scope: 'page', table: 1 });
-  expect((await r.query('[data-ws="form-table"]'))!.value).toBe('1');
+  // The active tab is the target: no table choice in the form.
+  expect(await r.count('[data-ws="form-table"]')).toBe(0);
   await r.fill('[data-ws="form-name"]', 'category');
   await r.clickPanel('[data-ws="add-field"]');
   await r.until((s) => s.host?.draft.tables[1]!.fields.length === 1);
@@ -62,7 +65,7 @@ test('records products, the page heading, and the questions blocks as three tabl
   await renameTable(r, 'questions');
   const question = await r.pick('h3.questions-title', 0);
   expect(question.mode).toBe('items');
-  await r.submit('[data-ws="level-input-item"]', '.mixed-questions');
+  await r.submit('[data-ws="level-input-item"]', 'css=.mixed-questions');
   const proposal = await r.until((s) => (s.host?.proposal?.proposed.count === 6 ? s.host.proposal : undefined));
   expect(proposal.proposed.selectors[0]!.value).toBe('.mixed-questions');
   // Focus is still in the selector input, where Enter does not confirm.
@@ -77,8 +80,10 @@ test('records products, the page heading, and the questions blocks as three tabl
     ['questions', 6, [['title', 'item', 6]]],
   ]);
   expect(await r.count('[data-ws="table-tab"]')).toBe(3);
-  // The inactive tables are collapsed to their fields.
-  expect(await r.count('[data-ws="table-card"]')).toBe(2);
+  // Only the active table's content shows; the tabs stand for the others.
+  expect(await r.count('[data-ws="table-card"]')).toBe(0);
+  expect((await r.query('[data-ws="table-content"]'))!.attrs['data-table']).toBe('questions');
+  expect(await r.count('[data-ws="field"]')).toBe(1);
 
   await r.clickPanel('[data-ws="test-run"]');
   const results = await r.until((s) => s.host?.test);
@@ -145,4 +150,64 @@ test('record --edit --repick questions.title replaces only that field', async ({
   const { tables: _a, ...restAfter } = after;
   const { tables: _b, ...restBefore } = before;
   expect(restAfter).toEqual(restBefore);
+});
+
+test('tabs reorder by drag, a new primary table is announced, and section collapse survives a navigation', async ({ scoop }) => {
+  const port = scoop.playground.port;
+  const r = await scoop.record([template(port), '--var', 'tier=0', '--name', 'catalog-tabs']);
+
+  // products, then questions: two lists.
+  await r.pick('h2.product-title', 0);
+  await r.key('Enter');
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24);
+  await renameTable(r, 'products');
+  await addTable(r);
+  await renameTable(r, 'questions');
+  await r.pick('h3.questions-title', 0);
+  await r.submit('[data-ws="level-input-item"]', 'css=.mixed-questions');
+  await r.until((s) => s.host?.proposal?.proposed.count === 6);
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => s.host?.draft.tables[1]!.item?.count === 6);
+
+  // Pagination on: the first list drives it.
+  await r.page.evaluate(() => {
+    const link = document.createElement('a');
+    link.id = 'next-page';
+    link.href = '/catalog?tier=0&mixed=1&page=2';
+    link.textContent = 'Next page';
+    document.querySelector('main')!.append(link);
+  });
+  await r.pick('#next-page');
+  await r.clickPanel('[data-ws="mark-pagination"]');
+  await r.until((s) => s.host?.draft.pagination);
+  const badge = (table: string) => r.count(`[data-ws="table-tab"][data-table="${table}"] [data-ws="drives-pagination"]`);
+  expect(await badge('products')).toBe(1);
+  expect(await badge('questions')).toBe(0);
+
+  // Drag questions before products: the order is saved, and the new primary table is announced.
+  const from = (await r.query('[data-ws="table-tab"]', 1))!.rect;
+  const to = (await r.query('[data-ws="table-tab"]', 0))!.rect;
+  await r.page.mouse.move(from.x + from.w / 2, from.y + from.h / 2);
+  await r.page.mouse.down();
+  await r.page.mouse.move(to.x + 6, to.y + to.h / 2, { steps: 8 });
+  await r.page.mouse.move(to.x + 4, to.y + to.h / 2, { steps: 2 });
+  await r.page.mouse.up();
+  await r.until((s) => s.host?.draft.tables.map((t) => t.name).join() === 'questions,products');
+  expect(await badge('questions')).toBe(1);
+  expect(await badge('products')).toBe(0);
+  await expect.poll(async () => (await r.query('[data-ws="toast"]'))?.text ?? '').toContain('questions now drives pagination');
+
+  // Collapse Steps, then navigate: the panel comes back with Steps still collapsed.
+  await r.clickPanel('[data-ws="section-steps"] [data-ws="section-toggle"]');
+  await r.until((s) => s.host?.panel.collapsed.steps === true);
+  await r.page.goto(`http://127.0.0.1:${port}/catalog?tier=1&mixed=1`);
+  await r.until((s) => s.host?.url.includes('tier=1'));
+  await expect.poll(async () => (await r.query('[data-ws="section-steps"]'))?.attrs['data-collapsed'] ?? null).toBe('true');
+
+  await r.key('Control+s');
+  const saved = await r.until((s) => s.host?.saved);
+  expect((await r.closeWindow()).code).toBe(0);
+  const recipe = loadRecipe(await readFile(saved.path!, 'utf8'));
+  expect(tablesOf(recipe).map((t) => t.name)).toEqual(['questions', 'products']);
+  expect(JSON.stringify(recipe)).not.toMatch(/collapsed/);
 });

@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import type { ProtocolCandidate } from '@webscoop/core/page';
+import { SelectorChip, type SelectorLevel } from './selector-chip';
 
 export function StabilityBadge({ stability }: { stability: ProtocolCandidate['stability'] }) {
   return (
@@ -14,10 +14,13 @@ export function SelectorRow({
   primary,
   onChoose,
   containers = null,
+  level = 'field',
 }: {
   candidate: ProtocolCandidate;
   primary: boolean;
   onChoose: () => void;
+  /** The level the candidate is for, which colors its chip. */
+  level?: SelectorLevel;
   /** Item container count, for the coverage of an item scoped candidate. */
   containers?: number | null;
 }) {
@@ -40,9 +43,8 @@ export function SelectorRow({
       data-primary={primary}
       data-hit={candidate.hit === undefined ? undefined : String(candidate.hit)}
     >
-      <span className="ws-strategy">{candidate.strategy}</span>
-      <span className="ws-mono-sm ws-ellipsis ws-spacer" title={candidate.value}>
-        {candidate.value}
+      <span className="ws-row ws-spacer">
+        <SelectorChip candidate={candidate} level={level} />
       </span>
       <span className={`ws-num${count === 0 ? ' ws-num-zero' : ''}`} data-ws="candidate-count" title="Matches on this page, counted by the browser">
         {count ?? '…'}
@@ -67,10 +69,12 @@ export function SelectorCandidateList({
   primary,
   onPrimary,
   containers = null,
+  level = 'field',
 }: {
   candidates: ProtocolCandidate[];
   primary: number;
   onPrimary: (index: number) => void;
+  level?: SelectorLevel;
   /** Item container count, for the coverage of item scoped candidates. */
   containers?: number | null;
 }) {
@@ -83,41 +87,9 @@ export function SelectorCandidateList({
       </div>
       <div className="ws-list" role="listbox" aria-label="Selector candidates" data-ws="candidates">
         {candidates.map((c, i) => (
-          <SelectorRow key={`${c.strategy}=${c.value}`} candidate={c} primary={i === primary} containers={containers} onChoose={() => onPrimary(i)} />
+          <SelectorRow key={`${c.strategy}=${c.value}`} candidate={c} primary={i === primary} containers={containers} level={level} onChoose={() => onPrimary(i)} />
         ))}
       </div>
-    </div>
-  );
-}
-
-/** Typed selector text for the selection, in the `strategy=value` syntax. */
-export function SelectorInput({ scope, error, onSubmit }: { scope: 'item' | 'page'; error: string | null; onSubmit: (text: string) => void }) {
-  const [text, setText] = useState('');
-  const submit = () => {
-    if (text.trim()) onSubmit(text.trim());
-  };
-  return (
-    <div className="ws-col" data-ws="selector-input">
-      <div className="ws-row">
-        <input
-          className={`ws-input ws-input-sm ws-mono-sm ws-spacer${error ? ' ws-invalid' : ''}`}
-          value={text}
-          placeholder={scope === 'item' ? 'Selector inside each item, e.g. css=h3' : 'Selector on the page, e.g. css=h1'}
-          aria-label="Selection selector"
-          aria-invalid={error ? true : undefined}
-          data-ws="selection-selector"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
-        />
-        <button type="button" className="ws-btn ws-btn-sm" onClick={submit} data-ws="selection-selector-go" disabled={!text.trim()}>
-          Select
-        </button>
-      </div>
-      {error && (
-        <span className="ws-error" data-ws="selector-error">
-          {error}
-        </span>
-      )}
     </div>
   );
 }

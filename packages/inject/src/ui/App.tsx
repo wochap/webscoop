@@ -5,16 +5,17 @@ import { modeOf, type Actions, type Snapshot } from '../store';
 import { useActions, useSnapshot } from './context';
 import { FieldList } from './fields';
 import { GuardBanner, GuardPanel } from './guard';
-import { ItemDetectCard, ItemSummary } from './items';
-import { PaginationEditor } from './pagination';
+import { ItemActions, ItemDetectCard, ItemSummary } from './items';
+import { PaginationSection } from './pagination';
 import { PickModeStrip } from './picking';
 import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
-import { SelectionPanel } from './selection';
+import { Section } from './section';
+import { MovedNotice, SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
-import { ActiveTableBar, CollapsedTables, TableStrip } from './tables';
+import { TabBar, TableHeader } from './tables';
 
 /** Carry out a shortcut against the current state. */
 export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions): void {
@@ -84,6 +85,27 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
     case 'clearSelection':
       void actions.send({ kind: 'selection.clear' });
       return;
+    case 'moveTabLeft':
+    case 'moveTabRight': {
+      const from = ui.focusedTab;
+      const count = host?.draft.tables.length ?? 0;
+      if (from === null) return;
+      const to = shortcut === 'moveTabLeft' ? from - 1 : from + 1;
+      if (to < 0 || to >= count) return;
+      void actions.send({ kind: 'draft.moveTable', from, to });
+      actions.setUi({ focusedTab: to });
+      return;
+    }
+    case 'renameTab': {
+      const index = ui.focusedTab;
+      if (index === null || !host) return;
+      if (index !== host.draft.activeTable) void actions.send({ kind: 'draft.selectTable', index });
+      actions.setUi({ renamingTab: index });
+      return;
+    }
+    case 'cancelRename':
+      actions.setUi({ renamingTab: null });
+      return;
   }
 }
 
@@ -102,6 +124,9 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     browsing: snap.ui.browsing,
     repicking: Boolean(snap.host?.repickContext),
     editing: Boolean(snap.host?.editing),
+    focusedTab: snap.ui.focusedTab,
+    renaming: snap.ui.renamingTab !== null,
+    tabsLocked: Boolean(snap.host?.proposal?.editing),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions);
@@ -175,9 +200,11 @@ export function ScoopRoot() {
   const table = currentTable(draft);
   const fieldCount = draft.tables.reduce((sum, t) => sum + t.fields.length, 0);
   const locked = Boolean(proposal?.editing);
-  const edit = (index: number, other?: number) => {
+  const collapsed = host.panel.collapsed;
+  const collapse = (section: 'recipe' | 'steps' | 'pagination') => (on: boolean) => void actions.send({ kind: 'panel.setCollapsed', section, collapsed: on });
+  const edit = (index: number) => {
     if (ui.picking) actions.cancelPicking();
-    void actions.send({ kind: 'draft.editField', index, ...(other !== undefined ? { table: other } : {}) });
+    void actions.send({ kind: 'draft.editField', index });
   };
   return (
     <div onKeyDown={onKeyDown} style={{ display: 'contents' }} data-ws="panel">
@@ -198,38 +225,12 @@ export function ScoopRoot() {
           />
         }
       >
-        <RecipeBar draft={draft} editingVar={ui.editingVar} setEditingVar={(editingVar) => actions.setUi({ editingVar })} />
-        <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
-        <SelectionPanel host={host} trail={ui.trail} />
-        <TableStrip draft={draft} locked={locked} />
-        <ActiveTableBar draft={draft} />
-        {proposal && (
-          <ItemDetectCard
-            proposal={proposal}
-            level={proposal[ui.level] ? ui.level : 'proposed'}
-            onLevel={(level) => actions.setUi({ level })}
-            highlight={ui.highlight}
-            onHighlight={(highlight) => actions.setUi({ highlight })}
-          />
-        )}
-        {table.item && !proposal && <ItemSummary item={table.item} />}
-        <FieldList
-          fields={table.fields}
-          item={table.item}
-          focused={ui.focusedField}
-          repick={host.repick}
-          editing={host.editing?.index ?? null}
-          editLocked={locked}
-          onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null })}
-          onEdit={(index) => edit(index)}
-        />
-        <CollapsedTables
+        <RecipeBar
           draft={draft}
-          locked={locked}
-          onEdit={(other, index) => {
-            actions.setUi({ focusedField: null });
-            edit(index, other);
-          }}
+          editingVar={ui.editingVar}
+          setEditingVar={(editingVar) => actions.setUi({ editingVar })}
+          collapsed={collapsed.recipe}
+          onCollapse={collapse('recipe')}
         />
         <StepList
           steps={draft.steps}
@@ -237,9 +238,49 @@ export function ScoopRoot() {
           focused={ui.focusedStep}
           repick={host.repickStep}
           browsing={ui.browsing}
-          onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null })}
+          onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null, focusedTab: null })}
+          collapsed={collapsed.steps}
+          onCollapse={collapse('steps')}
         />
-        {draft.pagination && <PaginationEditor pagination={draft.pagination} />}
+        <PaginationSection pagination={draft.pagination} collapsed={collapsed.pagination} onCollapse={collapse('pagination')} />
+        <TabBar draft={draft} locked={locked} />
+        <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
+          <TableHeader draft={draft} locked={locked} />
+          {(table.item || proposal) && (
+            <Section id="rows" title="Rows" count={proposal ? null : (table.item?.count ?? null)} actions={table.item && !proposal ? <ItemActions item={table.item} /> : undefined}>
+              {proposal ? (
+                <ItemDetectCard
+                  proposal={proposal}
+                  level={proposal[ui.level] ? ui.level : 'proposed'}
+                  onLevel={(level) => actions.setUi({ level })}
+                  highlight={ui.highlight}
+                  onHighlight={(highlight) => actions.setUi({ highlight })}
+                />
+              ) : (
+                table.item && <ItemSummary item={table.item} />
+              )}
+            </Section>
+          )}
+          <Section id="pick" title="Pick">
+            <MovedNotice host={host} />
+            <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
+            <SelectionPanel host={host} trail={ui.trail} />
+          </Section>
+          <Section id="fields" title="Fields" count={table.fields.length > 0 ? table.fields.length : null}>
+            <div className="ws-col" data-ws="fields">
+              <FieldList
+                fields={table.fields}
+                item={table.item}
+                focused={ui.focusedField}
+                repick={host.repick}
+                editing={host.editing?.index ?? null}
+                editLocked={locked}
+                onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null, focusedTab: null })}
+                onEdit={(index) => edit(index)}
+              />
+            </div>
+          </Section>
+        </div>
         {draft.errors.length > 0 && fieldCount > 0 && (
           <div className="ws-col" data-ws="draft-errors">
             {draft.errors.map((e, i) => (

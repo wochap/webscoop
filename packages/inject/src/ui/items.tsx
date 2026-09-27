@@ -1,44 +1,16 @@
 import { useState } from 'react';
 import type { DraftItem, LevelKind, LevelView, ProposalView, ProtocolCandidate } from '@webscoop/core/page';
-import { CHAIN_LABELS, chainLevels, type ChainLevel } from '../chain';
-import { SelectorPath } from './selector-path';
 import { SelectorRow } from './candidates';
 import { useActions } from './context';
+import { Icon } from './icons';
+import { SelectorChip } from './selector-chip';
+import { SelectorInput } from './selector-input';
+import { SelectorStack, stackLevels } from './selector-stack';
 import { Kbd } from './shell';
 
 export type LevelName = 'proposed' | 'broader' | 'narrower';
 
 const selectorText = (c: ProtocolCandidate | undefined) => (c ? `${c.strategy}=${c.value}` : '');
-
-/** Selector text input: shows the primary candidate, submits typed text. */
-function SelectorInput({ level, value, onSubmit }: { level: LevelKind; value: string; onSubmit: (text: string) => void }) {
-  const [text, setText] = useState(value);
-  const [shown, setShown] = useState(value);
-  // Follow the host's value when it changes (a pick, a new primary), keeping the user's typing otherwise.
-  if (shown !== value) {
-    setShown(value);
-    setText(value);
-  }
-  return (
-    <form
-      className="ws-row ws-spacer"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const trimmed = text.trim();
-        if (trimmed && trimmed !== value) onSubmit(trimmed);
-      }}
-    >
-      <input
-        className="ws-input ws-input-sm ws-mono-sm ws-spacer"
-        value={text}
-        placeholder={level === 'within' ? 'none: containers anywhere on the page' : 'role=listitem'}
-        aria-label={level === 'within' ? 'List parent selector' : 'Item selector'}
-        data-ws={`level-input-${level}`}
-        onChange={(e) => setText(e.target.value)}
-      />
-    </form>
-  );
-}
 
 /**
  * One proposal field (list parent or item container): the primary selector,
@@ -62,39 +34,35 @@ export function LevelField({
   const actions = useActions();
   const [open, setOpen] = useState(false);
   const primary = view?.selectors[view.primary];
+  const value = selectorText(primary);
   return (
     <div className="ws-col" data-ws={`level-field-${level}`}>
       <div className="ws-row ws-row-between">
         <span className="ws-caps">{label}</span>
         {view && <span className="ws-meta ws-mono-sm ws-ellipsis">{view.label}</span>}
       </div>
-      <div className="ws-row">
-        <SelectorInput level={level} value={selectorText(primary)} onSubmit={(selector) => void actions.send({ kind: 'draft.setLevel', level, by: 'selector', selector })} />
-        <button
-          type="button"
-          className="ws-btn ws-btn-sm"
-          title={level === 'within' ? 'Pick the element that holds every item' : 'Pick one item inside the list parent'}
-          onClick={() => void actions.send({ kind: 'draft.pickLevel', level })}
-          data-ws={`level-pick-${level}`}
-        >
-          Pick
-        </button>
-        {view && view.selectors.length > 1 && (
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-expanded={open} onClick={() => setOpen(!open)} data-ws={`level-more-${level}`}>
-            {view.selectors.length}
-          </button>
-        )}
-        {onClear && view && (
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Clear ${label.toLowerCase()}`} onClick={onClear} data-ws={`level-clear-${level}`}>
-            ×
-          </button>
-        )}
-      </div>
-      {error && (
-        <span className="ws-error" data-ws={`level-error-${level}`}>
-          {error}
-        </span>
-      )}
+      <SelectorInput
+        label={level === 'within' ? 'List parent selector' : 'Item selector'}
+        testId={`level-input-${level}`}
+        errorTestId={`level-error-${level}`}
+        value={value}
+        count={view?.count ?? null}
+        error={error}
+        placeholder={level === 'within' ? 'none: containers anywhere on the page' : 'listitem, or paste strategy=value'}
+        onSubmit={(selector) => {
+          if (selector !== value) void actions.send({ kind: 'draft.setLevel', level, by: 'selector', selector });
+        }}
+        onPick={() => void actions.send({ kind: 'draft.pickLevel', level })}
+        pickTestId={`level-pick-${level}`}
+        {...(view && view.selectors.length > 1 ? { candidates: view.selectors.length, candidatesOpen: open, onCandidates: () => setOpen(!open), candidatesTestId: `level-more-${level}` } : {})}
+        extra={
+          onClear && view ? (
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Clear ${label.toLowerCase()}`} onClick={onClear} data-ws={`level-clear-${level}`}>
+              <Icon name="x" size={11} />
+            </button>
+          ) : undefined
+        }
+      />
       {open && view && (
         <div className="ws-list" role="listbox" aria-label={`${label} candidates`} data-ws={`level-candidates-${level}`}>
           {view.selectors.map((c, i) => (
@@ -102,22 +70,12 @@ export function LevelField({
               key={`${c.strategy}=${c.value}`}
               candidate={c}
               primary={i === view.primary}
+              level={level === 'within' ? 'list' : 'item'}
               onChoose={() => void actions.send({ kind: 'draft.setPrimary', level, index: i, ...(rung && rung !== 'proposed' ? { rung } : {}) })}
             />
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-/** The composed chain of primary selectors, from the list parent down; display only. */
-export function SelectorChain({ levels }: { levels: readonly ChainLevel[] }) {
-  if (levels.length === 0) return null;
-  return (
-    <div className="ws-row" data-ws="selector-chain">
-      <span className="ws-caps">Chain</span>
-      <SelectorPath levels={levels} testId="selector-chain-path" className="ws-spacer" />
     </div>
   );
 }
@@ -178,44 +136,33 @@ export function ContainerLadder({ proposal, level, onChoose }: { proposal: Propo
 
 export function ExclusionInput({ exclude }: { exclude: ProtocolCandidate[] }) {
   const actions = useActions();
-  const [value, setValue] = useState('');
-  const submit = () => {
-    const selector = value.trim();
-    if (!selector) return;
-    void actions.send({ kind: 'draft.addExclusion', selector });
-    setValue('');
-  };
   return (
     <div className="ws-col">
       <span className="ws-caps">Exclude</span>
       {exclude.map((c, i) => (
         <div key={`${c.value}-${i}`} className="ws-row" data-ws="exclusion">
-          <span className="ws-mono-sm ws-spacer ws-ellipsis">{c.value}</span>
+          <span className="ws-spacer ws-row">
+            <SelectorChip candidate={c} level="item" />
+          </span>
           <span className="ws-num">{c.count ?? '…'}</span>
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Remove exclusion ${c.value}`} onClick={() => void actions.send({ kind: 'draft.removeExclusion', index: i })}>
-            ×
+          <button
+            type="button"
+            className="ws-btn ws-btn-ghost ws-btn-sm"
+            aria-label={`Remove exclusion ${c.value}`}
+            onClick={() => void actions.send({ kind: 'draft.removeExclusion', index: i })}
+          >
+            <Icon name="x" size={11} />
           </button>
         </div>
       ))}
-      <form
-        className="ws-row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
-        <input
-          className="ws-input ws-input-sm ws-mono-sm"
-          placeholder=".sponsored"
-          value={value}
-          aria-label="Exclusion selector"
-          data-ws="exclude-input"
-          onChange={(e) => setValue(e.target.value)}
-        />
-        <button type="submit" className="ws-btn ws-btn-sm" data-ws="exclude-add">
-          Exclude
-        </button>
-      </form>
+      <SelectorInput
+        label="Exclusion selector"
+        testId="exclude-input"
+        placeholder="sponsored, or paste strategy=value"
+        clearOnSubmit
+        submitLabel="Exclude"
+        onSubmit={(selector) => void actions.send({ kind: 'draft.addExclusion', selector })}
+      />
     </div>
   );
 }
@@ -265,7 +212,9 @@ export function ItemDetectCard({
         onClear={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
       />
       <LevelField level="item" label="Item" view={chosen} error={error('item')} rung={level} />
-      <SelectorChain levels={chainLevels([proposal.within?.selectors[proposal.within.primary], chosen.selectors[chosen.primary]], CHAIN_LABELS)} />
+      <SelectorStack
+        levels={stackLevels(proposal.within?.selectors[proposal.within.primary], chosen.selectors[chosen.primary], { within: proposal.within?.count ?? null, item: chosen.count })}
+      />
       <div className="ws-row">
         <span className="ws-meta ws-spacer">Include all siblings</span>
         <Toggle on={proposal.includeAll} onChange={() => void actions.send({ kind: 'draft.toggleIncludeAll' })} label="Include all siblings" testId="include-all" />
@@ -285,22 +234,17 @@ export function ItemDetectCard({
   );
 }
 
-/** The confirmed item's list parent: its selector and match count, re-pick, and clear. */
+/** The confirmed item's list parent: re-pick and clear. */
 export function WithinSummary({ item }: { item: DraftItem }) {
   const actions = useActions();
   const primary = item.within?.[0];
   return (
     <div className="ws-row" data-ws="within-summary">
-      <span className="ws-caps">List parent</span>
-      <span className="ws-mono-sm ws-ellipsis ws-spacer" data-ws="within-selector">
-        {primary ? selectorText(primary) : 'none'}
+      <span className="ws-meta ws-spacer" data-ws="within-selector" data-selector={primary ? selectorText(primary) : undefined}>
+        {primary ? 'List parent' : 'No list parent: containers anywhere on the page'}
       </span>
-      {primary && (
-        <span className="ws-num" data-ws="within-count" title="Matches of the list parent selector on this page">
-          {item.withinCount ?? '…'}
-        </span>
-      )}
       <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.pickLevel', level: 'within' })} data-ws="within-repick">
+        <Icon name="crosshair-simple" size={12} />
         {primary ? 'Re-pick' : 'Pick'}
       </button>
       {primary && (
@@ -311,40 +255,24 @@ export function WithinSummary({ item }: { item: DraftItem }) {
           onClick={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
           data-ws="within-clear"
         >
-          ×
+          <Icon name="x" size={11} />
         </button>
       )}
     </div>
   );
 }
 
-/** The confirmed item container, with its list parent and exclusions. */
+/** The Rows section's content: the confirmed item container as a stack under its list parent, with its exclusions. */
 export function ItemSummary({ item }: { item: DraftItem }) {
-  const actions = useActions();
   const primary = item.selectors[0]!;
   return (
-    <section className="ws-card" data-ws="item-summary">
-      <div className="ws-row ws-row-between">
-        <span className="ws-caps">Items</span>
-        <span className="ws-row">
-          {item.count !== null && item.count > 0 && (
-            <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.editItem' })} data-ws="edit-item">
-              Edit
-            </button>
-          )}
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="clear-item">
-            Remove
-          </button>
-        </span>
-      </div>
+    <div className="ws-col" data-ws="item-summary">
+      <SelectorStack levels={stackLevels(item.within?.[0], primary, { within: item.withinCount ?? null, item: item.count ?? '…' })} testId="rows-stack" />
       <div className="ws-row">
-        <span className="ws-count" data-ws="item-count">
-          {item.count ?? '…'}
+        <span className="ws-meta" data-ws="item-count" data-count={item.count ?? undefined}>
+          {item.count ?? '…'} rows
         </span>
-        <div className="ws-col">
-          <span className="ws-mono-sm ws-ellipsis">{`${primary.strategy}=${primary.value}`}</span>
-          {item.total !== null && item.total !== item.count && <span className="ws-meta">{item.total} before exclusions</span>}
-        </div>
+        {item.total !== null && item.total !== item.count && <span className="ws-meta">· {item.total} before exclusions</span>}
       </div>
       {item.count === 0 && (
         <span className="ws-error" data-ws="item-zero">
@@ -352,8 +280,26 @@ export function ItemSummary({ item }: { item: DraftItem }) {
         </span>
       )}
       <WithinSummary item={item} />
-      <SelectorChain levels={chainLevels([item.within?.[0], primary], CHAIN_LABELS)} />
       <ExclusionInput exclude={item.exclude} />
-    </section>
+    </div>
+  );
+}
+
+/** Edit and Remove for the confirmed item container, in the Rows section header. */
+export function ItemActions({ item }: { item: DraftItem }) {
+  const actions = useActions();
+  return (
+    <>
+      {item.count !== null && item.count > 0 && (
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.editItem' })} data-ws="edit-item">
+          <Icon name="pencil-simple" size={12} />
+          Edit
+        </button>
+      )}
+      <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearItem' })} data-ws="clear-item">
+        <Icon name="trash" size={12} />
+        Remove
+      </button>
+    </>
   );
 }

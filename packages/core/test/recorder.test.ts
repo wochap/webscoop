@@ -53,6 +53,7 @@ const sampleState: RecorderState = {
   saved: null,
   busy: null,
   error: null,
+  panel: { collapsed: { recipe: false, steps: false, pagination: true } },
 };
 
 const selection = {
@@ -118,6 +119,8 @@ describe('protocol', () => {
     { kind: 'draft.renameTable', name: 'questions' },
     { kind: 'draft.removeTable' },
     { kind: 'draft.selectTable', index: 1 },
+    { kind: 'draft.moveTable', from: 1, to: 0 },
+    { kind: 'panel.setCollapsed', section: 'steps', collapsed: true },
     { kind: 'draft.setName', name: 'shop' },
     { kind: 'draft.setVar', name: 'tier', value: '1' },
     { kind: 'draft.reopen' },

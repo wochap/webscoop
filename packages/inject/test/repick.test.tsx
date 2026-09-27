@@ -37,7 +37,7 @@ describe('re-pick panel', () => {
     const p = renderPanel(repickState(), { hoverScore: 0.83 });
     expect(p.q('mode')!.dataset.mode).toBe('repick');
     expect(p.q('repick-prompt')!.textContent).toContain('Click the new location of price');
-    expect(p.q('old-selector')!.textContent).toBe('testid=price');
+    expect(p.q('old-selector')!.dataset.selector).toBe('testid=price');
     expect(p.q('old-sample')!.textContent).toBe('$24.99');
     expect(p.q('fp-tag')!.textContent).toBe('p · paragraph');
     expect(p.q('fp-text')!.textContent).toBe('$24.99');
@@ -58,7 +58,7 @@ describe('re-pick panel', () => {
 
   it('shows the pick waiting for confirmation and confirms it', () => {
     const p = renderPanel(repickState({ picked: { score: 0.91, sample: '24.99', selector: { strategy: 'css', value: 'p.x1', stability: 'medium' } } }));
-    expect(p.q('picked-selector')!.textContent).toBe('css=p.x1');
+    expect(p.q('picked-selector')!.dataset.selector).toBe('css=p.x1');
     expect(p.q('picked-sample')!.textContent).toBe('24.99');
     fireEvent.click(p.q('repick-confirm')!);
     expect(p.sent).toEqual([{ kind: 'repick.confirm' }]);

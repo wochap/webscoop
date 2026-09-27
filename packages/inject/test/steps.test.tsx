@@ -28,9 +28,21 @@ describe('steps list', () => {
   it('lists steps with kind, target, and count, and counts them in the footer', () => {
     const p = renderPanel(withSteps([step('click'), step('type', { value: 'mouse', target: { selectors: [{ strategy: 'css', value: 'input', stability: 'medium' }] }, count: 1 })]));
     expect(p.qa('step').map((r) => r.dataset.kind)).toEqual(['click', 'type']);
-    expect(p.qa('step-target').map((t) => t.textContent)).toEqual(['button "Accept all"', 'css=input']);
+    expect(p.qa('step-target').map((t) => t.title)).toEqual(['button "Accept all"', 'css=input']);
+    expect(p.qa('step-target')[1]!.querySelector('[data-ws="selector-chip"]')!.getAttribute('data-selector')).toBe('css=input');
     expect(p.q('footer-count')!.textContent).toBe('1 field · 2 steps');
-    expect(p.q('steps')!.textContent).toContain('Steps · 2');
+    expect(p.q('section-steps')!.querySelector('[data-ws="section-count"]')!.textContent).toBe('2');
+  });
+
+  it('collapses to the step count and the first steps', () => {
+    const steps = [step('click'), step('type', { value: 'mouse', target: { selectors: [{ strategy: 'css', value: 'input', stability: 'medium' }] }, count: 1 }), step('click')];
+    const state = withSteps(steps);
+    const p = renderPanel({ ...state, panel: { collapsed: { recipe: false, steps: true, pagination: true } } });
+    expect(p.q('steps')).toBeNull();
+    expect(p.q('section-steps')!.querySelector('[data-ws="section-count"]')!.textContent).toBe('3');
+    expect(p.q('section-steps')!.querySelector('[data-ws="section-summary"]')!.textContent).toBe('click button "Accept all", type css=input, …');
+    fireEvent.click(p.q('section-steps')!.querySelector('[data-ws="section-toggle"]')!);
+    expect(p.sent).toEqual([{ kind: 'panel.setCollapsed', section: 'steps', collapsed: false }]);
   });
 
   it('edits the value, inserts a variable chip, and toggles every page and optional', () => {

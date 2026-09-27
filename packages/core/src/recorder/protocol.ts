@@ -220,6 +220,10 @@ export const DraftSchema = z.object({
   errors: z.array(ErrorEntrySchema),
 });
 
+/** Panel sections that collapse. */
+export const PANEL_SECTIONS = ['recipe', 'steps', 'pagination'] as const;
+export type PanelSection = (typeof PANEL_SECTIONS)[number];
+
 export const SelectedSchema = z.object({
   selection: SelectionSchema,
   scope: z.enum(FIELD_SCOPES),
@@ -234,6 +238,8 @@ export const SelectedSchema = z.object({
   primary: index(),
   /** Table the selection's scope and candidates are computed for; null for a new table. */
   table: z._default(z.nullable(index()), 0),
+  /** Set when the pick moved the active table: the table it left, and why. */
+  moved: z.optional(z.object({ from: z.string(), reason: z.string() })),
 });
 
 /** The options of a field, as the selection panel's form shows them. */
@@ -344,6 +350,8 @@ export const RecorderStateSchema = z.object({
   saved: z.nullable(z.object({ name: z.string(), path: z.optional(z.string()), at: z.string() })),
   busy: z.nullable(z.string()),
   error: z.nullable(z.string()),
+  /** Panel state kept for the session, across navigations; never saved in the recipe. */
+  panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, steps: false, pagination: true } }),
 });
 
 const FieldPatchSchema = z.object({
@@ -450,7 +458,12 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.renameTable', { name: z.string() }),
   /** Remove the active table with its item container and fields; the last table stays. */
   msg('draft.removeTable', {}),
+  /** Activate a table; a selection is kept and computed for it. */
   msg('draft.selectTable', { index: index() }),
+  /** Move a table to another position; the saved recipe keeps the order. */
+  msg('draft.moveTable', { from: index(), to: index() }),
+  /** Collapse or expand a panel section; session state only. */
+  msg('panel.setCollapsed', { section: z.enum(PANEL_SECTIONS), collapsed: z.boolean() }),
   msg('draft.setName', { name: z.string() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
   msg('draft.reopen', {}),

@@ -2,6 +2,7 @@ import {
   currentTable,
   HOST_BINDING,
   parseHostMessage,
+  parseSelector,
   scoreFingerprint,
   type HostMessage,
   type PageMessage,
@@ -91,6 +92,19 @@ export class Runtime implements Actions {
       if (reply.kind === 'draft.state' && reply.state.error && reply.state.error === before) this.toast('danger', reply.state.error);
     } catch (error) {
       this.toast('danger', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Count a selector's matches through the host, without changing any state; null when the host cannot count it. */
+  async countSelector(selector: string, scope: 'item' | 'page'): Promise<number | null> {
+    const fn = this.hostFn();
+    if (!fn) return null;
+    try {
+      const { strategy, value, stability } = parseSelector(selector);
+      const reply = parseHostMessage(await fn({ kind: 'inspect.count', candidate: { strategy, value, stability }, scope }));
+      return reply.kind === 'inspect.countResult' ? reply.count : null;
+    } catch {
+      return null;
     }
   }
 

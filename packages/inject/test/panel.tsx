@@ -18,7 +18,7 @@ export function withTable(draft: Draft, patch: Partial<DraftTable>): Draft {
 }
 
 export function baseState(draft: Draft = newDraft()): RecorderState {
-  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, repick: null, repickStep: null, repickContext: null, guardContext: null, test: null, saved: null, busy: null, error: null };
+  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, repick: null, repickStep: null, repickContext: null, guardContext: null, test: null, saved: null, busy: null, error: null, panel: { collapsed: { recipe: false, steps: false, pagination: true } } };
 }
 
 /** Real host states from the controller on the tier 0 fake page. */
@@ -35,6 +35,7 @@ export function renderPanel(host: RecorderState | null, ui: Partial<UiState> = {
   store.setUi(ui);
   const sent: PageMessage[] = [];
   const selected: Path[] = [];
+  const toasts: string[] = [];
   const actions: Actions = {
     send: async (msg) => {
       sent.push(msg);
@@ -47,7 +48,9 @@ export function renderPanel(host: RecorderState | null, ui: Partial<UiState> = {
       selected.push(path);
     },
     setUi: (patch) => store.setUi(patch),
-    toast: () => {},
+    toast: (_tone, text) => {
+      toasts.push(text);
+    },
     dismissToast: () => {},
   };
   const view = render(
@@ -57,5 +60,5 @@ export function renderPanel(host: RecorderState | null, ui: Partial<UiState> = {
   );
   const q = (ws: string) => view.container.querySelector(`[data-ws="${ws}"]`) as HTMLElement | null;
   const qa = (ws: string) => Array.from(view.container.querySelectorAll(`[data-ws="${ws}"]`)) as HTMLElement[];
-  return { ...view, store, sent, selected, actions, q, qa };
+  return { ...view, store, sent, selected, toasts, actions, q, qa };
 }

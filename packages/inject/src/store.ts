@@ -18,6 +18,10 @@ export interface UiState {
   focusedField: number | null;
   /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
   focusedStep: number | null;
+  /** Table tab that has keyboard focus, for Alt+Left, Alt+Right, and F2. */
+  focusedTab: number | null;
+  /** Table tab being renamed inline. */
+  renamingTab: number | null;
   /** Open menu id (for example a type select); Esc closes it. */
   menu: string | null;
   drawerOpen: boolean;
@@ -38,6 +42,8 @@ export const initialUi: UiState = {
   trail: [],
   focusedField: null,
   focusedStep: null,
+  focusedTab: null,
+  renamingTab: null,
   menu: null,
   drawerOpen: false,
   drawerView: 'table',
@@ -98,6 +104,8 @@ export function modeOf({ host, ui }: Snapshot): Mode {
 /** What the view can ask the page runtime to do. */
 export interface Actions {
   send(msg: PageMessage): Promise<void>;
+  /** Count the matches of `strategy=value` text on the page or inside the item containers; null when it cannot be counted. */
+  countSelector?(selector: string, scope: 'item' | 'page'): Promise<number | null>;
   startPicking(): void;
   cancelPicking(): void;
   /** Turn browse mode on or off. */

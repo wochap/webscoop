@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Draft, VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
+import { Section } from './section';
 
 /** Split a URL template into text runs and `{name}` variables. */
 export function templateParts(template: string): ({ text: string } | { name: string })[] {
@@ -90,23 +91,59 @@ function NameInput({ name, error }: { name: string; error: string | undefined })
   );
 }
 
-export function RecipeBar({ draft, editingVar, setEditingVar }: { draft: Draft; editingVar: string | null; setEditingVar: (name: string | null) => void }) {
+/** The collapsed Recipe summary: the name and the URL template with its variables as chips holding their values. */
+export function RecipeSummary({ draft }: { draft: Draft }) {
+  return (
+    <>
+      <span className="ws-mono-sm" style={{ color: 'var(--ws-text)' }} data-ws="recipe-summary-name">
+        {draft.name}
+      </span>
+      <span className="ws-mono-sm ws-ellipsis" data-ws="recipe-summary-url">
+        {templateParts(draft.url).map((part, i) =>
+          'text' in part ? (
+            <span key={i}>{part.text}</span>
+          ) : (
+            <span key={i} className="ws-chip" data-ws={`summary-var-${part.name}`} title={`{${part.name}}`}>
+              {part.name}
+              <span className="ws-chip-value">{draft.vars.find((v) => v.name === part.name)?.value ?? ''}</span>
+            </span>
+          ),
+        )}
+      </span>
+    </>
+  );
+}
+
+export function RecipeBar({
+  draft,
+  editingVar,
+  setEditingVar,
+  collapsed = false,
+  onCollapse,
+}: {
+  draft: Draft;
+  editingVar: string | null;
+  setEditingVar: (name: string | null) => void;
+  collapsed?: boolean;
+  onCollapse?: (collapsed: boolean) => void;
+}) {
   const actions = useActions();
   const editing = draft.vars.find((v) => v.name === editingVar);
   return (
-    <section className="ws-col" data-ws="recipe-bar">
-      <span className="ws-caps">Recipe</span>
-      <NameInput name={draft.name} error={draft.nameError} />
-      <UrlTemplateInput template={draft.url} vars={draft.vars} onEditVar={setEditingVar} />
-      {editing && <VarRow variable={editing} onDone={() => setEditingVar(null)} />}
-      {draft.vars.length > 0 && (
-        <div className="ws-row">
-          <span className="ws-meta ws-spacer">Change a value and reopen the page.</span>
-          <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.reopen' })} data-ws="reopen">
-            Reopen
-          </button>
-        </div>
-      )}
-    </section>
+    <Section id="recipe" title="Recipe" collapsible collapsed={collapsed} {...(onCollapse ? { onCollapse } : {})} summary={<RecipeSummary draft={draft} />}>
+      <div className="ws-col" data-ws="recipe-bar">
+        <NameInput name={draft.name} error={draft.nameError} />
+        <UrlTemplateInput template={draft.url} vars={draft.vars} onEditVar={setEditingVar} />
+        {editing && <VarRow variable={editing} onDone={() => setEditingVar(null)} />}
+        {draft.vars.length > 0 && (
+          <div className="ws-row">
+            <span className="ws-meta ws-spacer">Change a value and reopen the page.</span>
+            <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.reopen' })} data-ws="reopen">
+              Reopen
+            </button>
+          </div>
+        )}
+      </div>
+    </Section>
   );
 }

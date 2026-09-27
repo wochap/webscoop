@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { classifyToken, attrStability, type Crumb, type ParsedSelection, type Path } from '@webscoop/core/page';
-import type { ChainLevel } from '../chain';
 import { walkTrail } from '../keyboard';
-import { SelectorPath } from './selector-path';
+import { Icon } from './icons';
+import { SelectorStack, type StackLevel } from './selector-stack';
 import { Kbd } from './shell';
 
 export function PickModeStrip({
@@ -27,6 +28,7 @@ export function PickModeStrip({
           </span>
         </div>
         <button type="button" className="ws-btn ws-btn-sm" onClick={onCancel} data-ws="pick-cancel">
+          <Icon name="x" size={11} />
           Cancel
         </button>
       </div>
@@ -36,6 +38,7 @@ export function PickModeStrip({
     <div className="ws-strip" data-ws="pick-strip" data-picking="false">
       <span className="ws-spacer ws-meta">Pick an element on the page to inspect it.</span>
       <button type="button" className="ws-btn ws-btn-primary" onClick={onStart} data-ws="pick">
+        <Icon name="crosshair-simple" size={13} />
         Pick element <Kbd>P</Kbd>
       </button>
     </div>
@@ -101,20 +104,37 @@ export function CrumbChip({ crumb, current, onClick }: { crumb: Crumb; current: 
   );
 }
 
+/** How many crumbs the breadcrumb shows, ending at the current selection, before it is expanded. */
+export const SHOWN_CRUMBS = 3;
+
+/** The crumbs shown: all when expanded, else the last three up to the current selection. The flag says whether some are hidden. */
+export function shownCrumbs(trail: readonly Crumb[], current: Path, expanded: boolean): { crumbs: Crumb[]; hidden: number } {
+  if (expanded) return { crumbs: [...trail], hidden: 0 };
+  const key = current.join('.');
+  const at = trail.findIndex((c) => c.path.join('.') === key);
+  const end = at === -1 ? trail.length : at + 1;
+  const start = Math.max(0, end - SHOWN_CRUMBS);
+  return { crumbs: trail.slice(start, end), hidden: trail.length - (end - start) };
+}
+
 /**
- * Ancestors from body down to the originally picked element. Left and Right
- * (on the breadcrumb or anywhere in the panel) walk up and back down.
+ * Ancestors from body down to the originally picked element: the last three
+ * up to the selection, behind an expander that shows every crumb. Left and
+ * Right (on the breadcrumb or anywhere in the panel) walk up and back down.
  */
 export function AncestorBreadcrumb({ trail, current, onSelect }: { trail: Crumb[]; current: Path; onSelect: (path: Path) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const key = current.join('.');
   const walk = (delta: -1 | 1) => {
     const next = walkTrail(trail, current, delta);
     if (next) onSelect(next.path);
   };
+  const { crumbs, hidden } = shownCrumbs(trail, current, expanded);
   return (
     <div
       className="ws-crumbs"
       data-ws="breadcrumb"
+      data-expanded={expanded || undefined}
       tabIndex={0}
       aria-label="Ancestors"
       onKeyDown={(e) => {
@@ -129,9 +149,14 @@ export function AncestorBreadcrumb({ trail, current, onSelect }: { trail: Crumb[
         }
       }}
     >
-      {trail.map((crumb, i) => (
+      {hidden > 0 && (
+        <button type="button" className="ws-crumb" title={`Show all ${trail.length} crumbs`} aria-label={`Show ${hidden} more ancestors`} onClick={() => setExpanded(true)} data-ws="crumb-expand">
+          …
+        </button>
+      )}
+      {crumbs.map((crumb, i) => (
         <span key={crumb.path.join('.') || 'root'} style={{ display: 'contents' }}>
-          {i > 0 && <span className="ws-crumb-sep">›</span>}
+          {(i > 0 || hidden > 0) && <span className="ws-crumb-sep">›</span>}
           <CrumbChip crumb={crumb} current={crumb.path.join('.') === key} onClick={() => onSelect(crumb.path)} />
         </span>
       ))}
@@ -151,13 +176,13 @@ export function ElementInspector({
   onSelectPath: (path: Path) => void;
   /** Clear the selection, back to the empty state. */
   onClear?: () => void;
-  /** The composed selector chain, for an item scoped selection. */
-  chain?: readonly ChainLevel[];
+  /** The composed selector stack, for an item scoped selection. */
+  chain?: readonly StackLevel[];
 }) {
   return (
     <section className="ws-card" data-ws="inspector">
       <div className="ws-row">
-        <span className="ws-mono" style={{ color: 'var(--ws-accent-300)' }} data-ws="inspector-tag">
+        <span className="ws-mono" style={{ color: 'var(--ws-accent-400)' }} data-ws="inspector-tag">
           {selection.tag}
         </span>
         {selection.role && <span className="ws-meta">{selection.role}</span>}
@@ -168,7 +193,7 @@ export function ElementInspector({
         )}
         {onClear && (
           <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" style={{ marginLeft: 'auto' }} aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear} data-ws="clear-selection">
-            ×
+            <Icon name="x" size={11} />
           </button>
         )}
       </div>
@@ -178,7 +203,7 @@ export function ElementInspector({
         </span>
       )}
       <AttrTable attrs={selection.attrs} />
-      <SelectorPath levels={chain} testId="inspector-chain" />
+      <SelectorStack levels={chain} testId="inspector-chain" />
       <AncestorBreadcrumb trail={trail.length > 0 ? trail : selection.ancestors} current={selection.path} onSelect={onSelectPath} />
     </section>
   );

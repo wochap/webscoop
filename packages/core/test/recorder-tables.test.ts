@@ -38,6 +38,7 @@ describe('protocol: tables', () => {
       { kind: 'draft.renameTable', name: 'products' },
       { kind: 'draft.removeTable' },
       { kind: 'draft.selectTable', index: 1 },
+      { kind: 'draft.moveTable', from: 2, to: 0 },
       { kind: 'selection.retarget', table: 0 },
       { kind: 'selection.retarget', table: null },
       { kind: 'draft.addField', patch: { table: 1 } },
@@ -114,6 +115,22 @@ describe('draft reducer: tables', () => {
     expect(selected.activeTable).toBe(1);
     expect(selected.dirty).toBe(false);
     expect(reduceDraft(draft, { type: 'selectTable', index: 5 })).toBe(draft);
+  });
+
+  it('moves a table, keeps the active table, and marks the draft dirty', () => {
+    const draft = draftWith([
+      { name: 'results', fields: [draftField('title')] },
+      { name: 'summary', fields: [draftField('heading')] },
+      { name: 'ads', fields: [draftField('ad')] },
+    ]);
+    const active = reduceDraft(draft, { type: 'selectTable', index: 1 });
+    const moved = reduceDraft(active, { type: 'moveTable', from: 2, to: 0 });
+    expect(moved.tables.map((t) => t.name)).toEqual(['ads', 'results', 'summary']);
+    expect(currentTable(moved).name).toBe('summary');
+    expect(moved.dirty).toBe(true);
+    expect(draftToRecipe(moved).tables!.map((t) => t.name)).toEqual(['ads', 'results', 'summary']);
+    expect(reduceDraft(active, { type: 'moveTable', from: 1, to: 1 })).toBe(active);
+    expect(reduceDraft(active, { type: 'moveTable', from: 7, to: 0 })).toBe(active);
   });
 
   it('round-trips the shorthand form', () => {
@@ -235,19 +252,74 @@ describe('RecorderController: tables', () => {
     expect(t.controller.state.editing).toMatchObject({ index: 0, options: { name: 'wireless_mouse', scope: 'item' } });
   });
 
-  it('defaults a pick outside the list to the page table and retargets it', async () => {
+  it('activates the page table for a pick outside the list and retargets it', async () => {
     const t = await products();
     await t.send({ kind: 'draft.addTable', name: 'page' });
     await t.send({ kind: 'draft.selectTable', index: 0 });
     await t.pick(byClass(t.page, 'category-heading'));
     const selected = t.controller.state.selected!;
-    expect(selected).toMatchObject({ scope: 'page', table: 1, defaults: { table: 1 } });
+    expect(selected).toMatchObject({ scope: 'page', table: 1, defaults: { table: 1 }, moved: { from: 'products', reason: 'outside the products list' } });
+    expect(t.controller.draft.activeTable).toBe(1);
+    expect(t.controller.state.proposal).toBeNull();
+    await t.send({ kind: 'draft.addField', patch: { name: 'category' } });
+    expect(t.controller.draft.tables[1]!.fields.map((f) => [f.name, f.scope])).toEqual([['category', 'page']]);
+    await t.pick(byClass(t.page, 'category-heading'));
     await t.send({ kind: 'selection.retarget', table: 0 });
     const retargeted = t.controller.state.selected!;
     expect(retargeted).toMatchObject({ scope: 'page', table: 0 });
     expect(retargeted.selection.containerPath).toBeNull();
     expect(retargeted.selection.candidates[0]!.count).toBe(1);
     expect(retargeted.selection.candidates.every((c) => c.items === undefined)).toBe(true);
+  });
+
+  it('keeps the selection and computes it for the tab the user activates', async () => {
+    const t = await products();
+    await t.send({ kind: 'draft.addTable', name: 'page' });
+    const price = byClass(t.page, 'product-price', 0);
+    await t.pick(price);
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 1 });
+    await t.send({ kind: 'draft.selectTable', index: 0 });
+    expect(t.controller.draft.activeTable).toBe(0);
+    expect(t.controller.state.selected).toMatchObject({ scope: 'item', table: 0 });
+    expect(t.controller.state.selected!.moved).toBeUndefined();
+  });
+
+  it('creates, activates, and targets a new tab while an element is selected', async () => {
+    const t = await products();
+    await t.pick(byClass(t.page, 'category-heading'));
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 0 });
+    await t.send({ kind: 'draft.addTable' });
+    expect(t.controller.draft.tables.map((x) => x.name)).toEqual(['products', 'page']);
+    expect(t.controller.draft.activeTable).toBe(1);
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 1 });
+    await t.send({ kind: 'draft.addField', patch: { name: 'category' } });
+    expect(t.controller.draft.tables[1]!.fields.map((f) => f.name)).toEqual(['category']);
+  });
+
+  it('moves tables, following the active table and the selection target', async () => {
+    const t = await products();
+    await t.send({ kind: 'draft.addTable', name: 'page' });
+    await t.pick(byClass(t.page, 'category-heading'));
+    expect(t.controller.state.selected).toMatchObject({ table: 1 });
+    await t.send({ kind: 'draft.moveTable', from: 1, to: 0 });
+    expect(t.controller.draft.tables.map((x) => x.name)).toEqual(['page', 'products']);
+    expect(t.controller.draft.activeTable).toBe(0);
+    expect(t.controller.state.selected).toMatchObject({ table: 0, defaults: { table: 0 } });
+    expect(t.controller.draft.dirty).toBe(true);
+  });
+
+  it('keeps section collapse state for the session, outside the draft', async () => {
+    const t = await products();
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, steps: false, pagination: true });
+    const dirty = t.controller.draft.dirty;
+    await t.send({ kind: 'panel.setCollapsed', section: 'steps', collapsed: true });
+    expect(t.controller.draft.dirty).toBe(dirty);
+    // The page is injected again after a navigation and announces itself.
+    await t.send({ kind: 'session.ready', url: MIXED });
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, steps: true, pagination: true });
+    const reply = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(reply.ok).toBe(true);
+    expect(JSON.stringify(await t.storage.load('shop-catalog'))).not.toMatch(/collapsed/);
   });
 
   it('retargets a pick inside the list to the item scope of its table', async () => {

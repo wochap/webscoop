@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { STOP_RULES, type DraftPagination, type PaginationPatch } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Toggle } from './items';
+import { Section } from './section';
+import { SelectorChip } from './selector-chip';
 
 type Kind = DraftPagination['kind'];
 
@@ -83,8 +85,8 @@ export function TargetSummary({ pagination }: { pagination: DraftPagination }) {
     <div className="ws-col" data-ws="pagination-target">
       <span className="ws-caps">Target</span>
       {primary ? (
-        <span className="ws-mono-sm ws-ellipsis" title={primary.value}>
-          {primary.strategy}={primary.value}
+        <span className="ws-row">
+          <SelectorChip candidate={primary} level="page" />
         </span>
       ) : (
         <span className="ws-meta">{pagination.kind === 'scroll' ? 'No target: the page loads more while scrolling.' : 'No target picked.'}</span>
@@ -106,13 +108,7 @@ export function PaginationEditor({ pagination }: { pagination: DraftPagination }
   const [pages, setPages] = useState(typeof pagination.limit === 'number' && pagination.limit > 1 ? pagination.limit : 3);
   const choice: LimitChoice = pagination.limit === 'all' ? 'all' : pagination.limit === 1 ? 'first' : 'n';
   return (
-    <section className="ws-card" data-ws="pagination">
-      <div className="ws-row ws-row-between">
-        <span className="ws-caps">Pagination</span>
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearPagination' })} data-ws="clear-pagination">
-          Remove
-        </button>
-      </div>
+    <div className="ws-col" data-ws="pagination">
       <div className="ws-kinds">
         {KINDS.map((k) => (
           <KindOption key={k.kind} {...k} active={pagination.kind === k.kind} onChoose={() => update({ kind: k.kind })} />
@@ -167,6 +163,40 @@ export function PaginationEditor({ pagination }: { pagination: DraftPagination }
       <span className="ws-meta">
         Runs walk the pages this way, up to the limit, and stop early when a stop rule fires. Rows repeated from an earlier page are dropped.
       </span>
-    </section>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<Kind, string> = { none: 'off', url: 'URL', next: 'Next', more: 'More', scroll: 'Scroll' };
+
+/** The collapsed Pagination summary: kind and limit, or off. */
+export function paginationSummary(pagination: DraftPagination | null | undefined): string {
+  if (!pagination || pagination.kind === 'none') return 'off';
+  const limit = pagination.limit === 'all' ? 'all pages' : pagination.limit === 1 ? 'first page' : `${pagination.limit} pages`;
+  return `${KIND_LABEL[pagination.kind]} · ${limit}`;
+}
+
+/** The Pagination section: the editor when pagination is set, else how to set it. Starts collapsed. */
+export function PaginationSection({ pagination, collapsed, onCollapse }: { pagination: DraftPagination | null | undefined; collapsed: boolean; onCollapse: (collapsed: boolean) => void }) {
+  const actions = useActions();
+  const on = Boolean(pagination);
+  return (
+    <Section
+      id="pagination"
+      title="Pagination"
+      collapsible
+      collapsed={collapsed}
+      onCollapse={onCollapse}
+      summary={<span data-ws="pagination-summary">{paginationSummary(pagination)}</span>}
+      actions={
+        on ? (
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.clearPagination' })} data-ws="clear-pagination">
+            Remove
+          </button>
+        ) : undefined
+      }
+    >
+      {pagination ? <PaginationEditor pagination={pagination} /> : <span className="ws-meta">Off. Pick a next link or a load more button and choose Pagination target.</span>}
+    </Section>
   );
 }

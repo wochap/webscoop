@@ -1,5 +1,6 @@
 import type { RepickContext } from '@webscoop/core/page';
 import { Kbd } from './shell';
+import { SelectorChip } from './selector-chip';
 
 /** Score as a percentage-like number with two decimals, e.g. `0.87`. */
 export function formatScore(score: number): string {
@@ -33,8 +34,8 @@ export function FingerprintCard({ context, hoverScore }: { context: RepickContex
   return (
     <section className="ws-card ws-col" data-ws="fingerprint">
       <span className="ws-caps">Was</span>
-      <span className="ws-mono-sm ws-ellipsis" title={`${context.oldSelector.strategy}=${context.oldSelector.value}`} data-ws="old-selector">
-        {context.oldSelector.strategy}={context.oldSelector.value}
+      <span className="ws-row" data-ws="old-selector" data-selector={`${context.oldSelector.strategy}=${context.oldSelector.value}`}>
+        <SelectorChip candidate={context.oldSelector} />
       </span>
       <div className="ws-row">
         <span className="ws-meta">sample</span>
@@ -120,8 +121,8 @@ export function RepickPanel({
       {picked && (
         <section className="ws-card ws-card-accent ws-col" data-ws="picked">
           <span className="ws-caps">New</span>
-          <span className="ws-mono-sm ws-ellipsis" data-ws="picked-selector">
-            {picked.selector.strategy}={picked.selector.value}
+          <span className="ws-row" data-ws="picked-selector" data-selector={`${picked.selector.strategy}=${picked.selector.value}`}>
+            <SelectorChip candidate={picked.selector} />
           </span>
           <div className="ws-row">
             <span className="ws-meta">sample</span>

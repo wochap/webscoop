@@ -104,6 +104,34 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
   expect(JSON.parse(run.stdout)).toEqual(expectedRows(scoop.playground.url));
 });
 
+test('walk up to the container: Left twice moves the selection to the grandparent and the short breadcrumb follows', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'walk']);
+  await pickTitlesAsItems(r);
+  const picked = await r.pick('[data-testid="price"]', 0);
+  const path = picked.host!.selected!.selection.path;
+  const crumbs = async () => (await r.count('[data-ws="crumb"]')) as number;
+  expect(await crumbs()).toBe(3);
+  expect(await r.count('[data-ws="crumb-expand"]')).toBe(1);
+  expect((await r.query('[data-ws="crumb"]', 2))!.attrs['data-path']).toBe(path.join('.'));
+  await r.key('ArrowLeft');
+  await r.until((s) => s.host?.selected?.selection.path.length === path.length - 1);
+  await r.key('ArrowLeft');
+  const up = await r.until((s) => (s.host?.selected?.selection.path.length === path.length - 2 ? s.host.selected : undefined));
+  expect(up.selection.path).toEqual(path.slice(0, -2));
+  // The highlight surrounds the grandparent.
+  const box = await r.page.evaluate(() => (window as unknown as { __webscoopTest: { boxes(): { variant: string; rect: { x: number; y: number; w: number; h: number } }[] } }).__webscoopTest.boxes());
+  const price = (await r.page.locator('[data-testid="price"]').first().boundingBox())!;
+  const selectedBox = box.find((b) => b.variant === 'selected')!;
+  expect(selectedBox.rect.x).toBeLessThanOrEqual(price.x);
+  expect(selectedBox.rect.y).toBeLessThanOrEqual(price.y);
+  expect(selectedBox.rect.x + selectedBox.rect.w).toBeGreaterThanOrEqual(price.x + price.width - 1);
+  // The shown crumbs end at the new selection; the expander shows them all.
+  expect((await r.query('[data-ws="crumb"]', 2))!.attrs['data-path']).toBe(path.slice(0, -2).join('.'));
+  await r.clickPanel('[data-ws="crumb-expand"]');
+  expect(await crumbs()).toBeGreaterThan(3);
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
 test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and run the edited recipe', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'edited']);
   await pickTitlesAsItems(r);
@@ -280,7 +308,8 @@ test('rows=4: one title proposes 24 cards under the product list, saved and run'
   const proposal = await r.until((s) => s.host?.proposal);
   expect(proposal.proposed.count).toBe(24);
   expect(proposal.within!.label).toBe('ul.product-list');
-  expect((await r.query('[data-ws="level-input-within"]'))!.value).toBe('role=list');
+  expect((await r.query('[data-ws="level-input-within-strategy"]'))!.value).toBe('role');
+  expect((await r.query('[data-ws="level-input-within"]'))!.value).toBe('list');
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('24');
   await r.key('Enter');
   await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
@@ -403,8 +432,8 @@ test('results under div#rso: the proposal counts every result, and the saved rec
   expect(proposal.within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
   for (const c of proposal.proposed.selectors) expect(c.value).not.toMatch(/main|rso|GyAeWb|s6JM6d|center_col|dURPMd/);
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('8');
-  expect((await r.query('[data-ws="selector-chain-path"]'))!.attrs['data-chain']).toMatch(/^id=rso » /);
-  expect((await r.query('[data-ws="selector-chain-path"] [data-ws="path-chip"]'))!.text).toBe('id=rso');
+  expect((await r.query('[data-ws="selector-stack"]'))!.attrs['data-chain']).toMatch(/^id=rso » /);
+  expect((await r.query('[data-ws="selector-stack"] [data-ws="selector-chip"]'))!.attrs['data-selector']).toBe('id=rso');
   await r.key('Enter');
   await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
@@ -564,8 +593,12 @@ test('results with a questions block among the containers: it is highlighted, an
   const counted = await r.until((s) => (s.host?.draft.tables[0]!.fields[0]!.coverage ? s : undefined));
   expect(counted.host!.draft.tables[0]!.item!.count).toBe(9);
   expect(counted.host!.draft.tables[0]!.fields[0]!.coverage).toEqual({ matched: 8, total: 9 });
-  expect((await r.query('[data-ws="field-coverage"]'))!.text).toBe('8 / 9 items');
-  expect(await r.count('[data-ws="field-path"] [data-ws="path-chip"]')).toBe(3);
+  expect((await r.query('[data-ws="field-coverage"]'))!.text).toBe('8/9');
+  expect((await r.query('[data-ws="field-coverage"]'))!.attrs['data-partial']).toBe('true');
+  // The row shows the field's own chip; the stack is in the Rows section.
+  expect(await r.count('[data-ws="field"] [data-ws="selector-chip"]')).toBe(1);
+  expect((await r.query('[data-ws="field-summary"]'))!.attrs['data-chain']).toMatch(/^id=rso » css=:scope > div > div » /);
+  expect(await r.count('[data-ws="rows-stack"] [data-ws="stack-level"]')).toBe(2);
 
   // Every container the runner resolves is highlighted, the questions block included.
   const highlight = () =>

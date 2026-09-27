@@ -14,6 +14,12 @@ describe('recorder bundle', () => {
     expect(code.length).toBeLessThan(SIZE_BUDGET);
   });
 
+  it('loads nothing remote: no CDN, icon font, or web font URL', async () => {
+    const code = await bundle(false);
+    expect(code).not.toMatch(/unpkg|jsdelivr|fonts\.googleapis|phosphor-icons\/web/);
+    expect(code).not.toMatch(/https?:\/\/[^"'\s]*\.(?:css|woff2?|ttf|svg)\b/);
+  });
+
   it('carries the test hook only in the e2e variant', async () => {
     expect(await bundle(false)).not.toContain('__webscoopTest');
     expect(await bundle(true)).toContain('__webscoopTest');

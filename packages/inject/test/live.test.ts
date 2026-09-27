@@ -156,14 +156,16 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
   it('prefills the list parent and item fields and recounts after an edit', async () => {
     const { page } = await open('tier=0');
     await pickTitle(page, 1);
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-within"]')!.value)).toBe('role=list');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('role=article');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-within-strategy"]')!.value)).toBe('role');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-within"]')!.value)).toBe('list');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('article');
     expect(await hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('24');
     expect((await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'list')).toHaveLength(1);
 
     await hook(page, (h) => h.submit('[data-ws="level-input-item"]', 'css=li.product-item:nth-child(-n+5)'));
     await expect.poll(() => hook(page, (h) => h.query('[data-ws="items-count"]')!.text)).toBe('5');
-    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('css=li.product-item:nth-child(-n+5)');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-item-strategy"]')!.value)).toBe('css');
+    expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('li.product-item:nth-child(-n+5)');
     await expect.poll(async () => (await hook(page, (h) => h.boxes())).filter((b) => b.variant === 'sibling').length).toBe(5);
 
     await hook(page, (h) => h.submit('[data-ws="level-input-item"]', '.no-such-card'));

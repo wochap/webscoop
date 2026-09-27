@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', 'webscoop-recorder-ui/**', 'test-results/**', 'playwright-report/**', 'result/**'],
+    ignores: ['**/dist/**', '**/node_modules/**', 'webscoop-recorder-ui/**', 'webscoop-recorder-ui-v2/**', 'docs/design/**', 'test-results/**', 'playwright-report/**', 'result/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

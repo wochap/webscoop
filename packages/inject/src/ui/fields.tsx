@@ -1,9 +1,10 @@
 import { useEffect, useState, type HTMLAttributes } from 'react';
 import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
-import { CHAIN_LABELS, chainLevels } from '../chain';
+import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
+import { Icon } from './icons';
 import { Toggle } from './items';
-import { SelectorPath } from './selector-path';
+import { SelectorChip } from './selector-chip';
 
 type FieldType = DraftField['type'];
 
@@ -208,7 +209,7 @@ export function FieldRow({
   const steps = useSnapshot().host?.draft.steps.length ?? 0;
   const update = (patch: FieldPatch) => void actions.send({ kind: 'draft.updateField', index, patch });
   const primary = field.selectors[0]!;
-  const levels = field.scope === 'item' && item ? chainLevels([item.within?.[0], item.selectors[0], primary], CHAIN_LABELS) : chainLevels([primary], ['field']);
+  const chain = field.scope === 'item' && item ? selectorChain([item.within?.[0], item.selectors[0], primary]) : selectorChain([primary]);
   const coverage = field.scope === 'item' ? field.coverage : null;
   // One step at a time: each send resolves after the host answers with the step's result.
   const replay = async () => {
@@ -228,7 +229,7 @@ export function FieldRow({
     >
       <div className="ws-row">
         <span className="ws-handle" aria-hidden="true" title="Drag to reorder (Alt+Up, Alt+Down)">
-          ⋮⋮
+          <Icon name="dots-six-vertical" size={12} />
         </span>
         <NameField field={field} index={index} />
         <TypeSelect value={field.type} onChange={(type) => update({ type })} />
@@ -236,6 +237,16 @@ export function FieldRow({
         <span className={`ws-num${field.count === 0 ? ' ws-num-zero' : ''}`} data-ws="field-count" title="Matches of the primary selector on this page">
           {field.count ?? '…'}
         </span>
+        {coverage && (
+          <span
+            className="ws-coverage"
+            data-partial={coverage.matched < coverage.total}
+            title={`Items holding a match: ${coverage.matched} of ${coverage.total}`}
+            data-ws="field-coverage"
+          >
+            {coverage.matched}/{coverage.total}
+          </span>
+        )}
         <button
           type="button"
           className="ws-btn ws-btn-ghost ws-btn-sm"
@@ -249,10 +260,10 @@ export function FieldRow({
           }}
           data-ws="field-edit"
         >
-          {editing ? 'Editing' : 'Edit'}
+          {editing ? 'Editing' : <Icon name="pencil-simple" size={12} />}
         </button>
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Remove field ${field.name}`} onClick={() => void actions.send({ kind: 'draft.removeField', index })} data-ws="field-remove">
-          ×
+          <Icon name="x" size={11} />
         </button>
       </div>
       {field.error && (
@@ -260,24 +271,22 @@ export function FieldRow({
           {field.error}
         </span>
       )}
-      <div className={`ws-row${editLocked ? '' : ' ws-clickable'}`} data-ws="field-summary" title={editLocked ? undefined : 'Edit this field'} onClick={editLocked ? undefined : onEdit}>
-        <SelectorPath levels={levels} testId="field-path" className="ws-spacer" />
+      <div
+        className={`ws-row${editLocked ? '' : ' ws-clickable'}`}
+        data-ws="field-summary"
+        data-chain={chain}
+        title={editLocked ? undefined : 'Edit this field'}
+        onClick={editLocked ? undefined : onEdit}
+      >
+        <span className="ws-row ws-spacer">
+          <SelectorChip candidate={primary} level={field.scope === 'item' ? 'field' : 'page'} />
+        </span>
         <span className="ws-meta ws-ellipsis" style={{ maxWidth: 140 }} title={field.sample ?? ''} data-ws="field-sample">
           {field.sample ?? ''}
         </span>
       </div>
       <div className="ws-row">
-        {coverage ? (
-          <span
-            className={`ws-meta ws-spacer${coverage.matched < coverage.total ? ' ws-num-zero' : ''}`}
-            title="Item containers in which the primary selector matches"
-            data-ws="field-coverage"
-          >
-            {coverage.matched} / {coverage.total} items
-          </span>
-        ) : (
-          <span className="ws-spacer" />
-        )}
+        <span className="ws-spacer" />
         <span className="ws-row">
           <span className="ws-meta">optional</span>
           <Toggle on={field.optional} onChange={(optional) => update({ optional })} label="Optional" testId="field-optional" />
@@ -329,17 +338,9 @@ export function FieldList({
 }) {
   const actions = useActions();
   const [dragging, setDragging] = useState<number | null>(null);
-  if (fields.length === 0) {
-    return (
-      <section className="ws-col" data-ws="fields">
-        <span className="ws-caps">Fields</span>
-        <span className="ws-meta">No fields yet. Pick an element and add it as a field.</span>
-      </section>
-    );
-  }
+  if (fields.length === 0) return <span className="ws-meta">No fields yet. Pick an element and add it as a field.</span>;
   return (
-    <section className="ws-col" data-ws="fields">
-      <span className="ws-caps">Fields · {fields.length}</span>
+    <div className="ws-col" data-ws="field-list">
       {fields.map((field, index) => (
         <FieldRow
           key={`${index}-${field.name}`}
@@ -372,6 +373,6 @@ export function FieldList({
           }}
         />
       ))}
-    </section>
+    </div>
   );
 }

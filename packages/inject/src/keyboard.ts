@@ -15,7 +15,11 @@ export type Shortcut =
   | 'skip'
   | 'abort'
   | 'cancelEdit'
-  | 'clearSelection';
+  | 'clearSelection'
+  | 'moveTabLeft'
+  | 'moveTabRight'
+  | 'renameTab'
+  | 'cancelRename';
 
 export interface KeyLike {
   key: string;
@@ -41,6 +45,12 @@ export interface ShortcutContext {
   repicking?: boolean;
   /** A saved field is open in the selection panel. */
   editing?: boolean;
+  /** Table tab that has keyboard focus. */
+  focusedTab?: number | null;
+  /** A table tab is being renamed. */
+  renaming?: boolean;
+  /** The item proposal is being edited: tabs do not switch or move. */
+  tabsLocked?: boolean;
 }
 
 /** Whether the event target is a place the user types into. */
@@ -61,7 +71,8 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * Esc closes a menu, cancels picking, leaves browse mode, cancels a field
  * edit, or clears the selection, the first that applies; Enter confirms
  * the item proposal, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
- * reorder the focused field or step, Ctrl+S saves.
+ * reorder the focused field or step, Alt+Left and Alt+Right move the
+ * focused table tab, F2 renames it, Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
  * Nothing fires while typing.
  */
@@ -71,6 +82,7 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (mod && !e.altKey && e.key.toLowerCase() === 's') return 'save';
   if (e.key === 'Escape') {
     if (ctx.menuOpen) return 'closeMenu';
+    if (ctx.renaming) return 'cancelRename';
     if (ctx.picking) return 'cancel';
     if (ctx.browsing) return 'stopBrowse';
     if (ctx.repicking) return 'abort';
@@ -80,6 +92,12 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   }
   if (mod) return null;
   if (ctx.repicking && !e.altKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) return 'skip';
+  const tab = ctx.focusedTab ?? null;
+  if (e.key === 'F2' && !e.altKey && !e.shiftKey) return tab !== null && !ctx.tabsLocked ? 'renameTab' : null;
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    if (tab === null || ctx.tabsLocked) return null;
+    return e.key === 'ArrowLeft' ? 'moveTabLeft' : 'moveTabRight';
+  }
   if (e.altKey) {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return null;
     const up = e.key === 'ArrowUp';

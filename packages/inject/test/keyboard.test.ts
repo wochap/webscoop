@@ -32,6 +32,18 @@ describe('shortcuts', () => {
     expect(shortcutFor(key('S', { meta: true }), ctx())).toBe('save');
   });
 
+  it('moves and renames the focused table tab, unless the item proposal is being edited', () => {
+    expect(shortcutFor(key('ArrowLeft', { alt: true }), ctx({ focusedTab: 1 }))).toBe('moveTabLeft');
+    expect(shortcutFor(key('ArrowRight', { alt: true }), ctx({ focusedTab: 1 }))).toBe('moveTabRight');
+    expect(shortcutFor(key('F2'), ctx({ focusedTab: 0 }))).toBe('renameTab');
+    expect(shortcutFor(key('ArrowLeft', { alt: true }), ctx())).toBeNull();
+    expect(shortcutFor(key('F2'), ctx())).toBeNull();
+    expect(shortcutFor(key('ArrowLeft', { alt: true }), ctx({ focusedTab: 1, tabsLocked: true }))).toBeNull();
+    expect(shortcutFor(key('F2'), ctx({ focusedTab: 1, tabsLocked: true }))).toBeNull();
+    expect(shortcutFor(key('Escape'), ctx({ renaming: true, picking: true }))).toBe('cancelRename');
+    expect(shortcutFor(key('Escape'), ctx({ renaming: true, menuOpen: true }))).toBe('closeMenu');
+  });
+
   it('suppresses every shortcut while typing', () => {
     const typing = ctx({ typing: true, hasProposal: true, hasSelection: true, focusedField: 0, picking: true });
     for (const k of [key('p'), key('Escape'), key('Enter'), key('ArrowLeft'), key('ArrowUp', { alt: true }), key('s', { ctrl: true })]) {

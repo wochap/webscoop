@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import { STEP_KINDS, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { ZeroMatchWarning } from './fields';
+import { Icon } from './icons';
 import { Toggle } from './items';
+import { Section } from './section';
+import { SelectorChip } from './selector-chip';
 import { Kbd } from './shell';
 
 type StepKind = DraftStep['kind'];
@@ -27,15 +30,27 @@ export function KindSelect({ value, onChange }: { value: StepKind; onChange: (ki
   );
 }
 
-/** Short description of what a step acts on: role and name, else tag and text, else the primary selector. */
-export function targetSummary(step: DraftStep): string {
+/** Short description of what a step acts on: role and name, else tag and text, else null when only the selector says. */
+export function targetLabel(step: DraftStep): string | null {
   const target = step.target;
   if (!target) return step.kind === 'press' ? 'focused element' : 'no target';
   const fp = target.fingerprint;
   if (fp?.role && fp.name) return `${fp.role} "${fp.name}"`;
   if (fp?.textSample) return `${fp.tag} "${fp.textSample.slice(0, 40)}"`;
-  const primary = target.selectors[0]!;
-  return `${primary.strategy}=${primary.value}`;
+  return null;
+}
+
+/** Short description of what a step acts on, as text: the label, else the primary selector as `strategy=value`. */
+export function targetSummary(step: DraftStep): string {
+  const primary = step.target?.selectors[0];
+  return targetLabel(step) ?? (primary ? `${primary.strategy}=${primary.value}` : 'no target');
+}
+
+/** The collapsed Steps summary: the first steps as kind and target. */
+export function stepsSummary(steps: readonly DraftStep[], shown = 2): string {
+  if (steps.length === 0) return 'no steps';
+  const first = steps.slice(0, shown).map((s) => `${s.kind} ${targetSummary(s)}`);
+  return `${first.join(', ')}${steps.length > shown ? ', …' : ''}`;
 }
 
 /** The step's value, edited as text; variable chips insert `{name}` at the caret. */
@@ -121,14 +136,14 @@ export function StepRow({
     >
       <div className="ws-row">
         <span className="ws-handle" aria-hidden="true" title="Drag to reorder (Alt+Up, Alt+Down)">
-          ⋮⋮
+          <Icon name="dots-six-vertical" size={12} />
         </span>
         <span className="ws-num" aria-hidden="true">
           {index + 1}
         </span>
         <KindSelect value={step.kind} onChange={(kind) => update({ kind })} />
-        <span className="ws-meta ws-ellipsis ws-spacer" title={targetSummary(step)} data-ws="step-target">
-          {targetSummary(step)}
+        <span className="ws-meta ws-ellipsis ws-spacer ws-row" title={targetSummary(step)} data-ws="step-target">
+          {targetLabel(step) ?? <SelectorChip candidate={step.target!.selectors[0]!} level="page" />}
         </span>
         {step.target && (
           <span className={`ws-num${step.count === 0 ? ' ws-num-zero' : ''}`} data-ws="step-count" title="Matches of the target on this page">
@@ -136,10 +151,10 @@ export function StepRow({
           </span>
         )}
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Replay step ${index + 1}`} title="Run this step on the page" onClick={() => void actions.send({ kind: 'draft.replayStep', index })} data-ws="step-replay">
-          ▶
+          <Icon name="play" size={11} />
         </button>
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Remove step ${index + 1}`} onClick={() => void actions.send({ kind: 'draft.removeStep', index })} data-ws="step-remove">
-          ×
+          <Icon name="x" size={11} />
         </button>
       </div>
       {hasValue && <ValueField step={step} index={index} vars={vars} />}
@@ -181,6 +196,8 @@ export function StepList({
   repick,
   browsing,
   onFocus,
+  collapsed = false,
+  onCollapse,
 }: {
   steps: DraftStep[];
   vars: VarValue[];
@@ -188,24 +205,34 @@ export function StepList({
   repick: number | null;
   browsing: boolean;
   onFocus: (index: number | null) => void;
+  collapsed?: boolean;
+  onCollapse?: (collapsed: boolean) => void;
 }) {
   const actions = useActions();
   const [dragging, setDragging] = useState<number | null>(null);
   const toggle = browsing ? (
     <button type="button" className="ws-btn ws-btn-sm ws-btn-primary" onClick={actions.stopBrowsing} data-ws="browse-stop">
+      <Icon name="stop" size={11} />
       Stop recording <Kbd>B</Kbd>
     </button>
   ) : (
     <button type="button" className="ws-btn ws-btn-sm" onClick={actions.startBrowsing} data-ws="browse">
+      <Icon name="record" size={11} />
       Record steps <Kbd>B</Kbd>
     </button>
   );
   return (
-    <section className="ws-col" data-ws="steps" data-browsing={browsing}>
-      <div className="ws-row ws-row-between">
-        <span className="ws-caps">Steps{steps.length > 0 ? ` · ${steps.length}` : ''}</span>
-        {toggle}
-      </div>
+    <Section
+      id="steps"
+      title="Steps"
+      count={steps.length > 0 ? steps.length : null}
+      actions={toggle}
+      collapsible
+      collapsed={collapsed && !browsing}
+      {...(onCollapse ? { onCollapse } : {})}
+      summary={stepsSummary(steps)}
+    >
+      <div className="ws-col" data-ws="steps" data-browsing={browsing}>
       {browsing && <span className="ws-meta">Use the page: clicks, typing, choices, and Enter are recorded. Esc stops.</span>}
       {steps.length === 0 && !browsing && <span className="ws-meta">No steps. Record the clicks and typing a page needs before its data shows.</span>}
       {steps.map((step, index) => (
@@ -237,6 +264,7 @@ export function StepList({
           }}
         />
       ))}
-    </section>
+      </div>
+    </Section>
   );
 }

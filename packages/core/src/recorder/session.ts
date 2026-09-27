@@ -58,6 +58,7 @@ import {
   type LevelKind,
   type LevelPick,
   type RecorderState,
+  type SelectedView,
   type Rung,
   type RepickContext,
   type TestResults,
@@ -150,6 +151,12 @@ function orderForSave(candidates: readonly ProtocolCandidate[], primary: number)
   return [first, ...rest];
 }
 
+/** The selection without the note that it moved the active table. */
+function withoutMoved(selected: SelectedView): SelectedView {
+  const { moved: _moved, ...rest } = selected;
+  return rest;
+}
+
 /**
  * The host side of one recording session: owns the draft recipe, answers the
  * page's messages, verifies every selector count through `Session.resolve`,
@@ -227,6 +234,7 @@ export class RecorderController {
       saved: null,
       busy: null,
       error: null,
+      panel: { collapsed: { recipe: false, steps: false, pagination: true } },
     };
     this.closedPromise = new Promise((resolve) => (this.closedResolve = resolve));
     this.repickPromise = new Promise((resolve) => (this.repickResolve = resolve));
@@ -510,7 +518,10 @@ export class RecorderController {
         return this.replayStep(msg.index);
       case 'draft.markPagination':
         this.notEditing();
-        return void this.markPagination();
+        await this.markPagination();
+        // The collapsed Pagination section opens on what was just set.
+        if (this.draft.pagination) this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, pagination: false } } };
+        return;
       case 'draft.updatePagination':
         this.apply({ type: 'updatePagination', patch: msg.patch });
         this.emitter.emit('recorder.paginationSet', { kind: this.draft.pagination!.kind });
@@ -523,8 +534,11 @@ export class RecorderController {
         const name = msg.name?.trim() || defaultTableName(this.draft);
         const error = tableNameError(this.draft, name);
         if (error) throw new Error(error);
-        this.clearSelection();
+        // A selection is kept and computed for the new table; anything else belongs to the previous one.
+        const keep = this.current.selected !== null && !this.current.editing;
+        if (!keep) this.clearSelection();
         this.apply({ type: 'addTable', name });
+        if (keep) await this.retarget(this.draft.activeTable);
         return;
       }
       case 'draft.renameTable': {
@@ -542,7 +556,28 @@ export class RecorderController {
         return;
       case 'draft.selectTable':
         this.notEditingItem();
+        if (this.current.selected && !this.current.editing && this.draft.tables[msg.index]) {
+          // The selection follows the active tab: computed again for the table.
+          this.current = { ...this.current, repick: null, repickStep: null };
+          this.apply({ type: 'selectTable', index: msg.index });
+          await this.retarget(msg.index);
+          return;
+        }
         this.activate(msg.index);
+        return;
+      case 'draft.moveTable': {
+        this.notEditingItem();
+        const { from, to } = msg;
+        if (!this.draft.tables[from] || !this.draft.tables[to]) throw new Error(`no table at index ${this.draft.tables[from] ? to : from}`);
+        const order = this.draft.tables.map((_, i) => i);
+        order.splice(to, 0, order.splice(from, 1)[0]!);
+        this.apply({ type: 'moveTable', from, to });
+        const selected = this.current.selected;
+        if (selected && selected.table !== null) this.current = { ...this.current, selected: { ...selected, table: order.indexOf(selected.table), defaults: { ...selected.defaults, table: order.indexOf(selected.defaults.table) } } };
+        return;
+      }
+      case 'panel.setCollapsed':
+        this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, [msg.section]: msg.collapsed } } };
         return;
       case 'draft.setName':
         this.apply({ type: 'setName', name: msg.name });
@@ -800,8 +835,11 @@ export class RecorderController {
     }
 
     // A pick outside the active table's containers defaults to a table without containers, when there is one.
+    // It becomes the active table, and the panel says so.
     const active = this.draft.activeTable;
     const pageTable = !containerNode && this.table().item && !editing && !typed ? this.draft.tables.findIndex((t) => t.item === null) : -1;
+    const moved = pageTable === -1 ? undefined : { from: this.table().name, reason: `outside the ${this.table().name} list` };
+    if (pageTable !== -1) this.apply({ type: 'selectTable', index: pageTable });
     const table = pageTable === -1 ? active : pageTable;
     const taken = this.draft.tables[table]!.fields.map((f) => f.name);
     const defaults = fieldDefaults(
@@ -810,7 +848,7 @@ export class RecorderController {
     );
     this.current = {
       ...this.current,
-      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table },
+      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table, ...(moved ? { moved } : {}) },
       proposal: null,
       levelPick: null,
       pendingSelect: null,
@@ -850,7 +888,7 @@ export class RecorderController {
       return;
     }
 
-    if (!this.table().item && !typed) {
+    if (!this.table().item && !typed && !moved) {
       const proposal = inferItems(node);
       if (proposal) {
         this.proposal = proposal;
@@ -1005,7 +1043,7 @@ export class RecorderController {
     if (scope === 'page') candidates = rank(await this.withCounts(dedupe(generate(node)), 'page', []));
     this.current = {
       ...this.current,
-      selected: { ...selected, scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
+      selected: { ...withoutMoved(selected), scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
     };
   }
 
@@ -1653,7 +1691,8 @@ export class RecorderController {
   private async addExclusion(selector: string): Promise<void> {
     const proposal = this.current.proposal;
     if (!this.table().item && !proposal) throw new Error('find or set an item container before adding an exclusion');
-    const candidate: ProtocolCandidate = { strategy: 'css', value: selector.trim(), stability: 'medium' };
+    // Typed as `strategy=value` by the selector input; bare text is CSS.
+    const candidate: ProtocolCandidate = parseSelector(selector);
     let matches: number;
     try {
       matches = (await this.session.resolve(candidate)).length;

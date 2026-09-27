@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Mode, Toast as ToastData } from '../store';
 import { useActions } from './context';
+import { Icon } from './icons';
 
 export const MODE_LABEL: Record<Mode, string> = {
   idle: 'Idle',
@@ -47,6 +48,7 @@ export function PanelHeader({ mode, onEnd }: { mode: Mode; onEnd: () => void }) 
       <ModePill mode={mode} />
       <span className="ws-spacer" />
       <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onEnd} title="End the recording session" data-ws="end">
+        <Icon name="sign-out" size={12} />
         End session
       </button>
     </header>
@@ -85,6 +87,7 @@ export function PanelFooter({
   return (
     <footer className="ws-footer">
       <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest} data-ws="test-run">
+        <Icon name="play" size={12} />
         Test run
       </button>
       <span className="ws-meta" data-ws="footer-count">
@@ -110,7 +113,7 @@ export function Toast({ toast }: { toast: ToastData }) {
     <div className={`ws-toast ws-toast-${toast.tone}`} role="status" data-ws="toast" data-tone={toast.tone}>
       <span style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{toast.text}</span>
       <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => actions.dismissToast(toast.id)} aria-label="Dismiss">
-        ×
+        <Icon name="x" size={11} />
       </button>
     </div>
   );
