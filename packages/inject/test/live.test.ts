@@ -139,7 +139,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     await expect.poll(() => hook(page, (h) => h.state().host?.selected?.selection.tag)).toBe('h2');
     const state = await hook(page, (h) => h.state().host!);
     expect(state.selected!.selection.text).toBe('Mechanical Keyboard');
-    expect(state.proposal!.proposed.count).toBe(24);
+    expect(state.selected!.suggestion!.count).toBe(24);
     expect(await page.evaluate(() => (window as unknown as { __hostClicks: unknown[] }).__hostClicks)).toEqual([]);
     expect(await page.locator('#cookie-backdrop').count()).toBe(1);
   });
@@ -150,12 +150,16 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     const title = (await page.locator('h2.product-title').nth(nth).boundingBox())!;
     await page.mouse.move(title.x + 8, title.y + title.height / 2);
     await page.mouse.click(title.x + 8, title.y + title.height / 2);
+    await expect.poll(() => hook(page, (h) => h.state().host?.selected?.suggestion?.count ?? null)).toBe(24);
+    await page.keyboard.press('l');
     await expect.poll(() => hook(page, (h) => h.state().host?.proposal?.proposed.count ?? null)).toBe(24);
   }
 
   it('prefills the list parent and item fields and recounts after an edit', async () => {
     const { page } = await open('tier=0');
     await pickTitle(page, 1);
+    await hook(page, (h) => h.click('[data-ws="setup-row-within"]'));
+    await hook(page, (h) => h.click('[data-ws="setup-row-item"]'));
     expect(await hook(page, (h) => h.query('[data-ws="level-input-within-strategy"]')!.value)).toBe('role');
     expect(await hook(page, (h) => h.query('[data-ws="level-input-within"]')!.value)).toBe('list');
     expect(await hook(page, (h) => h.query('[data-ws="level-input-item"]')!.value)).toBe('article');
@@ -177,6 +181,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
   it('picks the list parent only among ancestors of the item and says why others are refused', async () => {
     const { page } = await open('tier=0');
     await pickTitle(page, 1);
+    await hook(page, (h) => h.click('[data-ws="setup-row-within"]'));
     await hook(page, (h) => h.click('[data-ws="level-pick-within"]'));
     await expect.poll(() => hook(page, (h) => h.state().ui.picking)).toBe(true);
     expect(await hook(page, (h) => h.state().host!.levelPick?.level)).toBe('within');

@@ -2,7 +2,7 @@ import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
 import { detach, elementChildren, emptyDraft, nodeAt, rank, type AnnotatedNode, type Draft, type HostMessage, type ProtocolCandidate } from '../src';
 import { h } from '../src/testing';
-import { byClass, cardPath, harness, type Harness } from './recorder-helpers';
+import { acceptList, byClass, cardPath, harness, openList, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
 
 function newDraft(): Draft {
@@ -14,8 +14,8 @@ const STRICT_SPAN = 'p.product-note:nth-of-type(4) > span';
 /** The twins catalog with the item container confirmed from the first title. */
 async function twins(): Promise<Harness> {
   const t = await harness(tier0Snapshot({ twins: true }), newDraft());
-  await t.pick(byClass(t.page, 'product-title', 0));
-  await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+  await openList(t, byClass(t.page, 'product-title', 0));
+  await acceptList(t);
   return t;
 }
 

@@ -19,6 +19,23 @@ const key = (k: string, mods: { alt?: boolean; ctrl?: boolean; meta?: boolean; s
 });
 
 describe('shortcuts', () => {
+  it('opens the list setup with L from the suggestion, and Enter confirms items only while they match', () => {
+    expect(shortcutFor(key('l'), ctx({ canSetupList: true }))).toBe('setupList');
+    expect(shortcutFor(key('L'), ctx({ canSetupList: true }))).toBe('setupList');
+    expect(shortcutFor(key('l'), ctx())).toBeNull();
+    expect(shortcutFor(key('l'), ctx({ canSetupList: true, hasProposal: true }))).toBeNull();
+    expect(shortcutFor(key('l'), ctx({ canSetupList: true, typing: true }))).toBeNull();
+    expect(shortcutFor(key('Enter'), ctx({ hasProposal: true, canConfirm: true }))).toBe('confirm');
+    expect(shortcutFor(key('Enter'), ctx({ hasProposal: true, canConfirm: false }))).toBeNull();
+  });
+
+  it('closes the list setup with Esc after cancelling picking and before the rest', () => {
+    expect(shortcutFor(key('Escape'), ctx({ hasProposal: true, picking: true }))).toBe('cancel');
+    expect(shortcutFor(key('Escape'), ctx({ hasProposal: true, hasSelection: true, browsing: true, editing: true }))).toBe('closeSetup');
+    expect(shortcutFor(key('Escape'), ctx({ hasProposal: true, menuOpen: true }))).toBe('closeMenu');
+    expect(shortcutFor(key('Escape'), ctx({ hasSelection: true }))).toBe('clearSelection');
+  });
+
   it('maps every panel shortcut', () => {
     expect(shortcutFor(key('p'), ctx())).toBe('pick');
     expect(shortcutFor(key('Escape'), ctx({ picking: true }))).toBe('cancel');

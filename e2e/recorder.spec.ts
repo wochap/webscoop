@@ -16,7 +16,6 @@ function expectedRows(baseUrl: string, products = dataset) {
     url: new URL(p.url, baseUrl).href,
     image: new URL(p.image, baseUrl).href,
     rating: p.rating,
-    category: p.category,
   }));
 }
 
@@ -41,12 +40,29 @@ async function addField(r: Recording, selector: string, name: string, index = 0)
   await renameLast(r, name);
 }
 
-async function pickTitlesAsItems(r: Recording, index = 0): Promise<void> {
-  const picked = await r.pick('h2.product-title', index);
-  expect(picked.mode).toBe('items');
+/** Pick an element that repeats and open the list setup from its suggestion with `L`. */
+async function setUpList(r: Recording, selector: string, index = 0): Promise<void> {
+  const picked = await r.pick(selector, index);
+  expect(picked.mode).toBe('selected');
+  expect(picked.host!.selected!.suggestion).not.toBeNull();
+  expect(await r.count('[data-ws="list-suggestion"]')).toBe(1);
+  await r.key('l');
+  await r.until((s) => s.host?.proposal);
+}
+
+/** Accept the list setup with Enter, then add the pick, now read inside its item, as a field. */
+async function acceptAndAdd(r: Recording, name: string): Promise<void> {
   await r.key('Enter');
-  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
-  await renameLast(r, 'title');
+  await r.until((s) => (s.host?.draft.tables[0]!.item && !s.host.proposal && s.host.selected?.scope === 'item' ? s : undefined));
+  expect(await r.count('[data-ws="list-setup"]')).toBe(0);
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields.length === 1);
+  await renameLast(r, name);
+}
+
+async function pickTitlesAsItems(r: Recording, index = 0): Promise<void> {
+  await setUpList(r, 'h2.product-title', index);
+  await acceptAndAdd(r, 'title');
 }
 
 async function save(r: Recording): Promise<string> {
@@ -79,7 +95,12 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
   await addField(r, 'a.product-link', 'url');
   await addField(r, 'img.product-image', 'image');
   await addField(r, '[data-testid="rating"]', 'rating');
-  await addField(r, 'h1.category-heading', 'category');
+  // The page heading is outside the list: Add field waits for a page table.
+  await r.pick('h1.category-heading');
+  expect(await r.count('[data-ws="outside-banner"]')).toBe(1);
+  expect((await r.query('[data-ws="add-field"]'))!.attrs['disabled']).toBeDefined();
+  await r.key('Escape');
+  await r.until((s) => s.host?.selected === null);
 
   const { draft } = (await r.state()).host!;
   expect(draft.tables[0]!.fields.map((f) => [f.name, f.type, f.scope, f.count])).toEqual([
@@ -88,7 +109,6 @@ test('click one title, confirm 24 items, add fields, save, and run the saved rec
     ['url', 'url', 'item', 24],
     ['image', 'image', 'item', 24],
     ['rating', 'number', 'item', 24],
-    ['category', 'text', 'page', 1],
   ]);
   expect(draft.tables[0]!.fields.every((f) => f.error === undefined)).toBe(true);
   const path = await save(r);
@@ -210,7 +230,7 @@ test('hostile chrome: the panel sits above the header and modal, and Alt+click p
   const picked = await r.pick('h2.product-title', 4, { alt: true });
   expect(picked.host!.selected!.selection.tag).toBe('h2');
   expect(picked.host!.selected!.selection.text).toBe(dataset[4]!.title);
-  expect(picked.host!.proposal!.proposed.count).toBe(24);
+  expect(picked.host!.selected!.suggestion!.count).toBe(24);
   expect(await page.evaluate(() => (window as unknown as { __hostClicks: unknown[] }).__hostClicks)).toEqual([]);
   expect(await page.locator('#cookie-backdrop').count()).toBe(1);
   const result = await r.closeWindow();
@@ -220,7 +240,7 @@ test('hostile chrome: the panel sits above the header and modal, and Alt+click p
 test('sponsored=2: excluding .sponsored leaves 22 items in the recipe and the run', async ({ scoop }) => {
   const port = scoop.playground.port;
   const r = await scoop.record([template(port, '&sponsored=2'), '--var', 'tier=0', '--name', 'no-ads']);
-  await r.pick('h2.product-title', 5);
+  await setUpList(r, 'h2.product-title', 5);
   await r.until((s) => s.host?.proposal?.proposed.count === 24);
   await r.submit('[data-ws="exclude-input"]', '.sponsored');
   await r.until((s) => s.host?.proposal?.proposed.count === 22);
@@ -230,7 +250,9 @@ test('sponsored=2: excluding .sponsored leaves 22 items in the recipe and the ru
   expect(boxes.filter((b) => b.variant === 'sibling')).toHaveLength(22);
   // Focus is still in the exclusion input, where Enter adds another exclusion; confirm with the button.
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 22 && s.host.draft.tables[0]!.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 22 && s.host.selected?.scope === 'item');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -303,16 +325,19 @@ test('--edit shows six fields with counts, test runs 24 rows, and Ctrl+S saves i
 
 test('rows=4: one title proposes 24 cards under the product list, saved and run', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port, '&rows=4'), '--var', 'tier=0', '--name', 'rows']);
-  const picked = await r.pick('h2.product-title', 5);
-  expect(picked.mode).toBe('items');
-  const proposal = await r.until((s) => s.host?.proposal);
+  await setUpList(r, 'h2.product-title', 5);
+  const proposal = (await r.state()).host!.proposal!;
   expect(proposal.proposed.count).toBe(24);
   expect(proposal.within!.label).toBe('ul.product-list');
+  // A stack row turns into the selector input.
+  await r.clickPanel('[data-ws="setup-row-within"]');
   expect((await r.query('[data-ws="level-input-within-strategy"]'))!.value).toBe('role');
   expect((await r.query('[data-ws="level-input-within"]'))!.value).toBe('list');
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('24');
-  await r.key('Enter');
-  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.selected?.scope === 'item');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -331,11 +356,17 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
   expect((await r.state()).host!.draft.tables[0]!.item!.fingerprint!.tag).toBe('article');
 
   await r.clickPanel('[data-ws="edit-item"]');
-  const editing = await r.until((s) => (s.host?.proposal?.editing ? s.host.proposal : null));
+  const editing = await r.until((s) => (s.host?.proposal?.origin === 'edit' ? s.host.proposal : null));
   expect(editing.proposed.count).toBe(24);
-  expect(editing.broader).toMatchObject({ tag: 'li', count: 24 });
-  expect((await r.query('[data-ws="confirm-items"]'))!.text).toContain('Update items');
-  await r.clickPanel('[data-ws="level-broader"]');
+  expect((await r.query('[data-ws="confirm-items"]'))!.text).toContain('Update list');
+  expect((await r.query('[data-ws="items-was"]'))!.text).toContain('was 24');
+  // The card is the only child of its list entry: the ladder folds it into the entry.
+  await r.clickPanel('[data-ws="adjust-item-toggle"]');
+  const ladder = await r.until((s) => s.host?.proposal?.itemLadder);
+  expect(ladder[0]).toMatchObject({ distance: 0, likely: true, sameAs: 1 });
+  expect(await r.count('[data-ws="ladder-folded"]')).toBe(1);
+  await r.clickPanel('[data-ws="ladder-row"][data-distance="1"]');
+  await r.until((s) => s.host?.proposal?.proposed.tag === 'li');
   await r.clickPanel('[data-ws="confirm-items"]');
   await r.until((s) => !s.host?.proposal && s.host?.draft.tables[0]!.item?.fingerprint?.tag === 'li');
   const updated = (await r.state()).host!.draft;
@@ -346,7 +377,7 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
   ]);
 
   await r.clickPanel('[data-ws="edit-item"]');
-  await r.until((s) => s.host?.proposal?.editing);
+  await r.until((s) => s.host?.proposal?.origin === 'edit');
   await r.clickPanel('[data-ws="cancel-items"]');
   await r.until((s) => !s.host?.proposal);
   const after = (await r.state()).host!.draft;
@@ -367,17 +398,21 @@ test('edit items: move the confirmed cards to the broader level, update, cancel 
 
 test('mixed=1: 24 cards with 6 skipped, include all shows 30, and the saved recipe runs 24 rows', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port, '&mixed=1'), '--var', 'tier=0', '--name', 'mixed']);
-  await r.pick('h2.product-title', 2);
+  await setUpList(r, 'h2.product-title', 2);
   await r.until((s) => s.host?.proposal?.proposed.count === 24);
   expect((await r.state()).host!.proposal!.skipped).toBe(6);
   expect((await r.query('[data-ws="items-skipped"]'))!.text).toBe('6 skipped as dissimilar');
+  // Include all siblings sits inside "Adjust item level".
+  await r.clickPanel('[data-ws="adjust-item-toggle"]');
   await r.clickPanel('[data-ws="include-all"]');
   await r.until((s) => s.host?.proposal?.proposed.count === 30 && s.host.proposal.skipped === 0);
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('30');
   await r.clickPanel('[data-ws="include-all"]');
   await r.until((s) => s.host?.proposal?.proposed.count === 24 && s.host.proposal.skipped === 6);
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24 && s.host.draft.tables[0]!.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24 && s.host.selected?.scope === 'item');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -391,20 +426,26 @@ test('mixed=1: 24 cards with 6 skipped, include all shows 30, and the saved reci
 
 test('tier 1: a recipe recorded with the role-only item candidate runs on tier 3 without healing the container', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=1', '--name', 'by-role']);
-  await r.pick('h2', 3);
-  await r.until((s) => s.host?.proposal?.broader);
+  await setUpList(r, 'h2', 3);
   // The list entry, which keeps its tag on every tier, with its role as the primary selector.
-  await r.clickPanel('[data-ws="level-broader"]');
-  const broader = (await r.state()).host!.proposal!.broader!;
+  await r.clickPanel('[data-ws="adjust-item-toggle"]');
+  const ladder = await r.until((s) => s.host?.proposal?.itemLadder);
+  const likely = ladder.find((row) => row.likely)!;
+  const entry = likely.sameAs ?? likely.distance + 1;
+  await r.clickPanel(`[data-ws="ladder-row"][data-distance="${entry}"]`);
+  const broader = await r.until((s) => (s.host?.proposal?.proposed.tag === 'li' ? s.host.proposal.proposed : undefined));
   const role = broader.selectors.findIndex((c) => c.strategy === 'role' && c.value === 'listitem');
   expect(role).toBeGreaterThanOrEqual(0);
   if (broader.primary !== role) {
+    await r.clickPanel('[data-ws="setup-row-item"]');
     await r.clickPanel('[data-ws="level-more-item"]');
     await r.clickPanel(`[data-ws="level-candidates-item"] [data-ws="candidate"]:nth-child(${role + 1})`);
-    await r.until((s) => s.host?.proposal?.broader?.primary === role);
+    await r.until((s) => s.host?.proposal?.proposed.primary === role);
   }
   await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.draft.tables[0]!.fields.length === 1);
+  await r.until((s) => s.host?.draft.tables[0]!.item && s.host.selected?.scope === 'item');
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host?.draft.tables[0]!.fields.length === 1);
   await renameLast(r, 'title');
   const path = await save(r);
   expect((await r.closeWindow()).code).toBe(0);
@@ -423,20 +464,18 @@ test('tier 1: a recipe recorded with the role-only item candidate runs on tier 3
 test('results under div#rso: the proposal counts every result, and the saved recipe runs one row per result without healing', async ({ scoop }) => {
   const url = `http://127.0.0.1:${scoop.playground.port}/results`;
   const r = await scoop.record([url, '--name', 'serp']);
-  const picked = await r.pick('h3.LC20lb', 1);
-  expect(picked.mode).toBe('items');
-  const proposal = await r.until((s) => s.host?.proposal);
+  await setUpList(r, 'h3.LC20lb', 1);
+  const proposal = (await r.state()).host!.proposal!;
   expect(proposal.proposed.count).toBeGreaterThan(0);
   expect(proposal.proposed.count).toBe(8);
   expect(proposal.skipped).toBe(1);
   expect(proposal.within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso' });
   for (const c of proposal.proposed.selectors) expect(c.value).not.toMatch(/main|rso|GyAeWb|s6JM6d|center_col|dURPMd/);
   expect((await r.query('[data-ws="items-count"]'))!.text).toBe('8');
-  expect((await r.query('[data-ws="selector-stack"]'))!.attrs['data-chain']).toMatch(/^id=rso » /);
-  expect((await r.query('[data-ws="selector-stack"] [data-ws="selector-chip"]'))!.attrs['data-selector']).toBe('id=rso');
-  await r.key('Enter');
-  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1);
-  await renameLast(r, 'title');
+  expect((await r.query('[data-ws="setup-row-within"] [data-ws="selector-chip"]'))!.attrs['data-selector']).toBe('id=rso');
+  expect((await r.query('[data-ws="setup-pick"]'))!.text).toContain('8/8');
+  await acceptAndAdd(r, 'title');
+  expect((await r.state()).host!.draft.tables[0]!.item!.count).toBe(8);
   await addField(r, 'div.VwiC3b span', 'snippet', 2);
   const { draft } = (await r.state()).host!;
   expect(draft.tables[0]!.fields.map((f) => [f.name, f.scope, f.count])).toEqual([
@@ -464,16 +503,17 @@ test('results link: walking up from the heading offers role=link with its long n
   const url = `http://127.0.0.1:${scoop.playground.port}/results`;
   const r = await scoop.record([url, '--name', 'serp-links']);
   await r.pick('h3.LC20lb', 1);
-  await r.until((s) => s.host?.proposal);
   await r.key('ArrowLeft');
-  const selected = await r.until((s) => (s.host?.selected?.selection.tag === 'a' ? s.host.selected : undefined));
+  const selected = await r.until((s) => (s.host?.selected?.selection.tag === 'a' && s.host.selected.suggestion ? s.host.selected : undefined));
   const role = selected.selection.candidates.find((c) => c.strategy === 'role')!;
   // The name runs past 80 characters and the page spells the breadcrumb without the space Playwright keeps.
   expect(role.value.startsWith(`link|${dataset[1]!.title} `)).toBe(true);
   expect(role.value.length).toBeGreaterThan(85);
   expect(role.value).toContain('example›');
   expect(role.count).toBe(1);
-  await r.key('Enter');
+  await r.key('l');
+  await r.until((s) => s.host?.proposal);
+  await acceptAndAdd(r, 'link');
   const draft = await r.until((s) => (s.host?.draft.tables[0]!.item?.count === 8 && s.host.draft.tables[0]!.fields.length === 1 ? s.host.draft : undefined));
   const field = draft.tables[0]!.fields[0]!;
   expect(field.scope).toBe('item');

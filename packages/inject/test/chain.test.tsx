@@ -2,7 +2,7 @@
 import { cleanup } from '@testing-library/react';
 import { emptyDraft, pathOf } from '@webscoop/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { byClass, harness, RESULTS } from '../../core/test/recorder-helpers';
+import { acceptList, byClass, harness, openList, RESULTS } from '../../core/test/recorder-helpers';
 import { resultsSnapshot } from '../../core/test/snapshot';
 import { selectorChain } from '../src/chain';
 import { renderPanel } from './panel';
@@ -26,19 +26,17 @@ describe('selector chain', () => {
     expect(selectorChain([undefined, undefined])).toBe('');
   });
 
-  it('shows the stack in the proposal card, the Rows section, and the inspector of an item scoped pick', async () => {
+  it('shows the stack in the list setup, the Rows section, and the inspector of an item scoped pick', async () => {
     const t = await harness(resultsSnapshot(), emptyDraft({ name: 'search-results', url: RESULTS, vars: [] }), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 0));
+    await openList(t, byClass(t.page, 'LC20lb', 0));
     const proposed = renderPanel(t.controller.state);
     const p = t.controller.state.proposal!;
     const item = p.proposed.selectors[0]!;
-    expect(levels(proposed.q('items-card')!.querySelector('[data-ws="selector-stack"]'))).toEqual([
-      ['list', 'id=rso'],
-      ['item', `${item.strategy}=${item.value}`],
-    ]);
+    const chip = (ws: string) => (proposed.q(ws)!.querySelector('[data-ws="selector-chip"]') as HTMLElement).dataset.selector;
+    expect([chip('setup-row-within'), chip('setup-row-item'), chip('setup-pick')]).toEqual(['id=rso', `${item.strategy}=${item.value}`, `${p.pick!.selector!.strategy}=${p.pick!.selector!.value}`]);
     cleanup();
 
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await acceptList(t);
     const other = byClass(t.page, 'LC20lb', 3);
     let container = other;
     while (container.attrs.class !== 'Mjj4Yd') container = container.parent!;
@@ -65,9 +63,9 @@ describe('selector chain', () => {
 
   it('starts the stack at the item container without a list parent, and shows none for a page scoped pick', async () => {
     const t = await harness(resultsSnapshot(), emptyDraft({ name: 'search-results', url: RESULTS, vars: [] }), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 0));
+    await openList(t, byClass(t.page, 'LC20lb', 0));
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await acceptList(t);
     await t.pick(byClass(t.page, 'gLFyf'));
     const panel = renderPanel(t.controller.state);
     const saved = t.controller.state.draft.tables[0]!.item!.selectors[0]!;
@@ -77,8 +75,8 @@ describe('selector chain', () => {
 
   it('shows one chip per field row, and the stack does nothing on click', async () => {
     const t = await harness(resultsSnapshot(), emptyDraft({ name: 'search-results', url: RESULTS, vars: [] }), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 0));
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    await acceptList(t);
     const panel = renderPanel(t.controller.state);
     const row = panel.qa('field')[0]!;
     const chips = Array.from(row.querySelectorAll('[data-ws="selector-chip"]')) as HTMLElement[];

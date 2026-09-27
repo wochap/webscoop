@@ -55,13 +55,14 @@ export function PanelHeader({ mode, onEnd }: { mode: Mode; onEnd: () => void }) 
   );
 }
 
-export function PanelShell({ header, footer, children }: { header: ReactNode; footer: ReactNode; children: ReactNode }) {
+export function PanelShell({ header, footer, bar, children }: { header: ReactNode; footer: ReactNode; /** Fixed actions above the footer, such as the list setup's. */ bar?: ReactNode; children: ReactNode }) {
   return (
     <>
       {header}
       <div className="ws-body" data-ws="body">
         {children}
       </div>
+      {bar}
       {footer}
     </>
   );

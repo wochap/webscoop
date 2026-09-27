@@ -2,7 +2,7 @@ import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
 import { annotate, detach, emptyDraft, extractPage, loadRecipe, pathOf, selectionOf, type Draft, type LevelView, type RecorderState } from '../src';
 import { FakeBrowser, h } from '../src/testing';
-import { byClass, harness, RESULTS } from './recorder-helpers';
+import { acceptList, byClass, harness, manualList, openList, RESULTS } from './recorder-helpers';
 import { resultsSnapshot, tier0Snapshot } from './snapshot';
 
 function resultsDraft(): Draft {
@@ -14,13 +14,12 @@ const proposal = (t: { controller: { state: RecorderState } }) => t.controller.s
 /** Tokens of the elements at and above `div#rso`, which no item candidate relative to it may mention. */
 const ABOVE_LIST = /\bmain\b|rso|GyAeWb|s6JM6d|center_col|dURPMd|html|body/;
 
-const levels = (t: { controller: { state: RecorderState } }): LevelView[] =>
-  [proposal(t).proposed, proposal(t).broader, proposal(t).narrower].filter((l): l is LevelView => l !== null);
+const levels = (t: { controller: { state: RecorderState } }): LevelView[] => [proposal(t).proposed];
 
 describe('item containers relative to the list parent', () => {
   it('proposes the results under div#rso with a count that agrees with the samples', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 2));
+    await openList(t, byClass(t.page, 'LC20lb', 2));
     const p = proposal(t);
     expect(p.within!.selectors[0]).toMatchObject({ strategy: 'id', value: 'rso', count: 1 });
     expect(p.proposed.count).toBeGreaterThan(0);
@@ -36,7 +35,7 @@ describe('item containers relative to the list parent', () => {
 
   it('anchors css item candidates at the list parent, so they keep the item depth', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 2));
+    await openList(t, byClass(t.page, 'LC20lb', 2));
     const css = proposal(t).proposed.selectors.find((c) => c.strategy === 'css')!;
     // Unanchored, `div > div` would also match every result's own inner divs.
     expect(css.value).toBe(':scope > div > div');
@@ -54,6 +53,7 @@ describe('item containers relative to the list parent', () => {
     const page = annotate(snap);
     const title = page.children[0]!.type === 'element' ? byClass(page, 'card', 0).children.find((c) => c.type === 'element')! : null;
     await t.send({ kind: 'picker.select', url: RESULTS, selection: selectionOf(title as never, { containerPath: null }), snapshot: detach(page) });
+    await t.send({ kind: 'list.open', from: 'suggestion' });
     const p = proposal(t);
     expect(p.within!.label).toBe('section.list');
     expect(p.error).toMatchObject({ level: 'item', message: expect.stringContaining('whole page') });
@@ -65,7 +65,7 @@ describe('item containers relative to the list parent', () => {
   it('drops the old list parent from the item candidates when a wider one is picked', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
     const title = byClass(t.page, 'LC20lb', 5);
-    await t.pick(title);
+    await openList(t, title);
     let group = title.parent!;
     while (group.attrs.class !== 'hlcw0c') group = group.parent!;
     expect(group.attrs.class).toBe('hlcw0c');
@@ -78,7 +78,7 @@ describe('item containers relative to the list parent', () => {
     for (const c of proposal(t).proposed.selectors) expect(c.value).not.toMatch(/hlcw0c|rso/);
 
     const rows = await harness(tier0Snapshot({ rows: 4 }), resultsDraft(), RESULTS);
-    await rows.pick(byClass(rows.page, 'product-title', 5));
+    await openList(rows, byClass(rows.page, 'product-title', 5));
     await rows.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(rows.page, 'product-row', 1)) });
     expect(proposal(rows).proposed.count).toBe(4);
     await rows.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(rows.page, 'product-list')) });
@@ -88,7 +88,7 @@ describe('item containers relative to the list parent', () => {
 
   it('makes the item candidates document relative, counted on the page, when the list parent is cleared', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 0));
+    await openList(t, byClass(t.page, 'LC20lb', 0));
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
     const p = proposal(t);
     expect(p.within).toBeNull();
@@ -101,10 +101,11 @@ describe('item containers relative to the list parent', () => {
 
   it('rewrites the selectors of a confirmed item relative to a list parent set afterwards, and back when it is cleared', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
-    await t.pick(byClass(t.page, 'Mjj4Yd', 1));
-    const cls = t.controller.state.selected!.selection.candidates.findIndex((c) => c.strategy === 'class');
-    await t.send({ kind: 'inspect.primary', index: cls });
-    await t.send({ kind: 'draft.setItem' });
+    await t.send({ kind: 'list.open', from: 'manual' });
+    await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(byClass(t.page, 'Mjj4Yd', 1)) });
+    const cls = proposal(t).proposed.selectors.findIndex((c) => c.strategy === 'class');
+    await t.send({ kind: 'draft.setPrimary', level: 'item', index: cls });
+    await t.send({ kind: 'draft.confirmItems' });
     expect(t.controller.draft.tables[0]!.item!.selectors[0]).toMatchObject({ strategy: 'class', value: 'div.main div.Mjj4Yd' });
     expect(t.controller.draft.tables[0]!.item).toMatchObject({ count: 8 });
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'dURPMd')), snapshot: t.snapshot });
@@ -128,8 +129,7 @@ describe('item containers relative to the list parent', () => {
   it('keeps a tier 0 item count when the product list is set as list parent after confirming', async () => {
     const t = await harness(tier0Snapshot(), resultsDraft(), RESULTS);
     const card = byClass(t.page, 'product-card', 3);
-    await t.pick(card);
-    await t.send({ kind: 'draft.setItem' });
+    await manualList(t, card);
     const before = t.controller.draft.tables[0]!.item!;
     expect(before.count).toBe(24);
     await t.send({ kind: 'draft.setLevel', level: 'within', by: 'pick', path: pathOf(byClass(t.page, 'product-list')), snapshot: t.snapshot });
@@ -140,8 +140,8 @@ describe('item containers relative to the list parent', () => {
 
   it('runs a recipe recorded on the results page with one row per result', async () => {
     const t = await harness(resultsSnapshot(), resultsDraft(), RESULTS);
-    await t.pick(byClass(t.page, 'LC20lb', 0));
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await openList(t, byClass(t.page, 'LC20lb', 0));
+    await acceptList(t);
     expect(t.controller.draft.tables[0]!.fields[0]).toMatchObject({ scope: 'item', count: 8 });
     await t.send({ kind: 'save.request' });
     const recipe = loadRecipe(t.storage.files.get('search-results')!);

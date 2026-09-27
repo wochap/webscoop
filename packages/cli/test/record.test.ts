@@ -100,8 +100,9 @@ describe('webscoop record', () => {
     const title = descendantsOf(page).find((n: AnnotatedNode) => n.attrs.class === 'product-title')!;
     await session.callHost({ kind: 'session.ready', url: PAGE });
     await session.callHost({ kind: 'picker.select', url: PAGE, selection: selectionOf(title), snapshot: detach(page) });
-    await session.callHost({ kind: 'draft.confirmItems', level: 'proposed' });
-    await session.callHost({ kind: 'draft.updateField', index: 0, patch: { name: 'title' } });
+    await session.callHost({ kind: 'list.open', from: 'suggestion' });
+    await session.callHost({ kind: 'draft.confirmItems' });
+    await session.callHost({ kind: 'draft.addField', patch: { name: 'title' } });
     const saved = (await session.callHost({ kind: 'save.request' })) as { ok: boolean };
     expect(saved.ok).toBe(true);
     await session.userClose();

@@ -115,3 +115,22 @@ export const cardPath = (node: AnnotatedNode): number[] => {
   while (cur && cur.attrs['data-testid'] !== 'product-card') cur = cur.parent;
   return pathOf(cur!);
 };
+
+/** Pick an element in a table without a list and open the list setup from its suggestion. */
+export async function openList(t: Harness, node: AnnotatedNode): Promise<void> {
+  await t.pick(node);
+  await t.send({ kind: 'list.open', from: 'suggestion' });
+}
+
+/** Accept the list setup, then add the pick as a field when it came back selected inside an item. */
+export async function acceptList(t: Harness, patch: Record<string, unknown> = {}): Promise<void> {
+  await t.send({ kind: 'draft.confirmItems' });
+  if (t.controller.state.selected) await t.send({ kind: 'draft.addField', patch });
+}
+
+/** Set a list up manually with `node` as the item container, and accept it. */
+export async function manualList(t: Harness, node: AnnotatedNode): Promise<void> {
+  await t.send({ kind: 'list.open', from: 'manual' });
+  await t.send({ kind: 'draft.setLevel', level: 'item', by: 'path', path: pathOf(node) });
+  await t.send({ kind: 'draft.confirmItems' });
+}

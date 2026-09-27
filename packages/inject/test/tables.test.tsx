@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent } from '@testing-library/react';
 import { emptyDraft, validateDraft, type Draft, type DraftField, type DraftTable, type RecorderState, type TestResults } from '@webscoop/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { byClass, harness, type Harness } from '../../core/test/recorder-helpers';
+import { acceptList, byClass, harness, openList, type Harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
 import { clippedTabs, dropIndex } from '../src/ui/tables';
 import { baseState, newDraft, renderPanel } from './panel';
@@ -52,9 +52,22 @@ describe('table tab bar', () => {
     ]);
     expect(p.qa('field').map((f) => f.dataset.name)).toEqual(['title', 'price']);
     expect(p.q('table-card')).toBeNull();
-    expect(p.q('table-kind')!.textContent).toBe('list · 24 rows');
+    expect(p.q('table-kind')!.textContent).toBe('List · 24 rows');
     cleanup();
-    expect(renderPanel(baseState(twoTables(1))).q('table-kind')!.textContent).toBe('page table · one row');
+    expect(renderPanel(baseState(twoTables(1))).q('table-kind')!.textContent).toBe('Page · 1 row');
+    cleanup();
+    const empty = renderPanel(baseState(newDraft()));
+    expect(empty.q('table-kind')!.textContent).toBe('No mode yet');
+    expect(empty.q('table-kind')!.dataset.kind).toBe('none');
+  });
+
+  it('shows the mode icon of each tab: list, page, and neutral', () => {
+    const p = renderPanel(baseState(twoTables(0, [{ name: 'results', item, fields: [field('title', { scope: 'item' })] }, { name: 'summary', fields: [field('total')] }, { name: 'table-3' }])));
+    expect(p.qa('table-tab').map((t) => [t.dataset.table, t.querySelector<HTMLElement>('[data-ws="mode-icon"]')!.dataset.mode, t.querySelector('svg')!.dataset.icon])).toEqual([
+      ['results', 'list', 'rows'],
+      ['summary', 'page', 'rectangle'],
+      ['table-3', 'none', 'circle'],
+    ]);
   });
 
   it('adds a table from the pinned + tab', () => {
@@ -130,16 +143,17 @@ describe('table tab bar', () => {
     expect(dropIndex(2, 0)).toBe(0);
   });
 
-  it('locks switching and moving tabs while the item proposal is being edited', async () => {
+  it('locks switching and moving tabs while the list setup is open', async () => {
     const { t } = await headingPicked();
     await t.send({ kind: 'draft.selectTable', index: 0 });
     await t.send({ kind: 'draft.editItem' });
     const p = renderPanel(t.controller.state);
-    expect(p.qa('table-tab').map((x) => (x as HTMLButtonElement).disabled)).toEqual([false, true]);
-    expect((p.q('table-add') as HTMLButtonElement).disabled).toBe(true);
-    expect((p.q('tab-menu') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.focus(p.qa('table-tab')[0]!);
-    fireEvent.keyDown(p.qa('table-tab')[0]!, { key: 'ArrowRight', altKey: true });
+    // The list setup takes over the content: the tabs and the table menu are gone until it closes.
+    expect(p.qa('table-tab')).toHaveLength(0);
+    expect(p.q('table-add')).toBeNull();
+    expect(p.q('tab-menu')).toBeNull();
+    expect(p.q('list-setup')).not.toBeNull();
+    fireEvent.keyDown(p.q('body')!, { key: 'ArrowRight', altKey: true });
     expect(p.sent).toEqual([]);
   });
 
@@ -147,7 +161,7 @@ describe('table tab bar', () => {
     const p = renderPanel(baseState(threeLists(1)));
     fireEvent.click(p.q('tab-menu')!);
     const item = (ws: string) => p.q(ws) as HTMLButtonElement;
-    expect(p.qa('tab-menu-list')[0]!.textContent).toBe('RenameMove leftMove rightUse for paginationRemove table');
+    expect(p.qa('tab-menu-list')[0]!.textContent).toBe('Mode locked — list. Clear table to change.Renamedbl-click tabMove leftAlt ←Move rightAlt →Use for paginationClear tablefields + listRemove table');
     expect(item('menu-move-left').disabled).toBe(false);
     expect(item('menu-pagination').disabled).toBe(false);
     fireEvent.click(item('menu-pagination'));
@@ -160,8 +174,23 @@ describe('table tab bar', () => {
     fireEvent.click(item('table-remove'));
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.removeTable' });
     fireEvent.click(p.q('tab-menu')!);
+    fireEvent.click(item('menu-clear-table'));
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.clearTable' });
+    fireEvent.click(p.q('tab-menu')!);
     fireEvent.click(item('menu-rename'));
     expect((p.q('table-name') as HTMLInputElement).value).toBe('ads');
+  });
+
+  it('shows the page mode lock, and no lock or Clear table for an empty table', () => {
+    const page = renderPanel(baseState(twoTables(1)));
+    fireEvent.click(page.q('tab-menu')!);
+    expect(page.q('menu-mode-locked')!.textContent).toBe('Mode locked — page. Clear table to change.');
+    expect(page.q('menu-clear-table')).not.toBeNull();
+    cleanup();
+    const empty = renderPanel(baseState(newDraft()));
+    fireEvent.click(empty.q('tab-menu')!);
+    expect(empty.q('menu-mode-locked')).toBeNull();
+    expect(empty.q('menu-clear-table')).toBeNull();
   });
 
   it('disables Use for pagination for a page table and for the primary table, and Remove for the last table', () => {
@@ -252,8 +281,8 @@ describe('table errors', () => {
 /** Products confirmed on the mixed catalog, a `page` table added, `products` active again, and the heading picked. */
 async function headingPicked(): Promise<{ t: Harness; state: RecorderState }> {
   const t = await harness(tier0Snapshot({ mixed: true }), emptyDraft({ name: 'shop-catalog', url: MIXED, vars: [] }), MIXED);
-  await t.pick(byClass(t.page, 'product-title', 0));
-  await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+  await openList(t, byClass(t.page, 'product-title', 0));
+  await acceptList(t);
   await t.send({ kind: 'draft.renameTable', name: 'products' });
   await t.send({ kind: 'draft.addTable', name: 'page' });
   await t.send({ kind: 'draft.selectTable', index: 0 });
@@ -262,26 +291,29 @@ async function headingPicked(): Promise<{ t: Harness; state: RecorderState }> {
 }
 
 describe('pick section in the active tab', () => {
-  it('moves a pick outside the list to the page tab, says so, and offers no table choice', async () => {
+  it('keeps a pick outside the list in the list tab with a banner, and offers no table choice', async () => {
     const { state } = await headingPicked();
-    expect(state.draft.activeTable).toBe(1);
+    expect(state.draft.activeTable).toBe(0);
     const p = renderPanel(state);
-    expect(p.q('table-content')!.dataset.table).toBe('page');
-    expect(p.q('moved-notice')!.textContent).toBe('Moved to page: outside the products list');
+    expect(p.q('table-content')!.dataset.table).toBe('products');
+    expect(p.q('outside-banner')!.textContent).toContain('Outside the products list');
     expect(p.q('section-pick')!.contains(p.q('inspector'))).toBe(true);
     expect(p.q('form-table')).toBeNull();
-    expect((p.q('form-scope') as HTMLSelectElement).value).toBe('page');
-    fireEvent.click(p.q('add-field')!);
-    expect(p.sent.at(-1)).toMatchObject({ kind: 'draft.addField', patch: { table: 1, scope: 'page' } });
+    expect(p.q('form-scope')).toBeNull();
+    expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(true);
+    expect(p.q('add-hint')!.textContent).toBe('Pick inside an item of products to add here.');
+    fireEvent.click(p.q('outside-add-to')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.selectTable', index: 1 });
   });
 
   it('keeps the selection when another tab or the + tab is chosen', async () => {
     const { t } = await headingPicked();
-    await t.send({ kind: 'draft.selectTable', index: 0 });
-    expect(t.controller.state.selected).toMatchObject({ table: 0, scope: 'page' });
+    await t.send({ kind: 'draft.selectTable', index: 1 });
+    expect(t.controller.state.selected).toMatchObject({ table: 1, scope: 'page', outside: null });
     const p = renderPanel(t.controller.state);
     expect(p.q('inspector')).not.toBeNull();
-    expect(p.q('moved-notice')).toBeNull();
+    expect(p.q('outside-banner')).toBeNull();
+    expect((p.q('add-field') as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(p.q('table-add')!);
     expect(p.sent).toEqual([{ kind: 'draft.addTable' }]);
   });

@@ -1,6 +1,7 @@
 // zod/mini keeps the injected page bundle small; the recipe schema itself stays on classic zod.
 import * as z from 'zod/mini';
 import type { SerializedElement } from '../ports';
+import type { FieldScope } from '../recipe/schema';
 import {
   FIELD_SCOPES,
   FIELD_TYPES,
@@ -78,8 +79,8 @@ export const SelectionSchema = z.object({
 
 /** The two proposal fields the user edits: the list parent and the item container. */
 export const LEVEL_KINDS = ['within', 'item'] as const;
-/** Item container levels of a proposal: the proposed one and the ladder shortcuts around it. */
-export const RUNGS = ['proposed', 'broader', 'narrower'] as const;
+/** Where a list setup was opened from: a pick's suggestion, empty for manual input, or the set item container. */
+export const PROPOSAL_ORIGINS = ['pick', 'manual', 'edit'] as const;
 
 export const LevelSchema = z.object({
   tag: z.string(),
@@ -96,12 +97,36 @@ export const LevelSchema = z.object({
   samples: z.array(z.string()),
 });
 
+/** One row of "Adjust item level": an ancestor-or-self of the pick (or of the item container) below the list parent. */
+export const ItemLadderRowSchema = z.object({
+  /** Steps up from the pick, or from the item container without a pick. */
+  distance: index(),
+  path: PathSchema,
+  /** The level's top candidate, relative to the list parent; null when none matches. */
+  selector: z.nullable(CandidateSchema),
+  /** Matches of `selector` inside the list parent. */
+  count: count(),
+  /** The level the recorder proposes. */
+  likely: z.boolean(),
+  /** Distance of the listed row that matches the same elements; this row is folded into it. */
+  sameAs: z._default(z.nullable(index()), null),
+});
+
+/** One row of "Adjust list parent": an ancestor of the item container. */
+export const ParentLadderRowSchema = z.object({
+  distance: index(),
+  path: PathSchema,
+  selector: z.nullable(CandidateSchema),
+  /** Children with the item container's tag and a similar structure. */
+  children: count(),
+  likely: z.boolean(),
+});
+
 export const ProposalSchema = z.object({
   /** The list parent, or null when there is none or the user cleared it. */
   within: z._default(z.nullable(LevelSchema), null),
+  /** The item container level; a manual setup starts with an empty one (no selectors, count 0). */
   proposed: LevelSchema,
-  broader: z.nullable(LevelSchema),
-  narrower: z.nullable(LevelSchema),
   /** Elements on the item level under the list parent left out as dissimilar; 0 with `includeAll`. */
   skipped: z._default(count(), 0),
   /** Whether every element on the item level counts, similar or not. Not saved in the recipe. */
@@ -110,8 +135,17 @@ export const ProposalSchema = z.object({
   error: z._default(z.nullable(z.object({ level: z.enum(LEVEL_KINDS), message: z.string() })), null),
   /** Exclusions added before confirming; they move to the item on confirm. */
   exclude: z._default(z.array(CandidateSchema), []),
-  /** Set when the proposal edits the confirmed item: confirming replaces it and adds no field. */
-  editing: z._default(z.boolean(), false),
+  /** `edit` replaces the set item container; `pick` returns to the pick on accept. No accept adds a field. */
+  origin: z._default(z.enum(PROPOSAL_ORIGINS), 'pick'),
+  /** Item count of the set container before an edit. */
+  previousCount: z._default(z.nullable(count()), null),
+  /** The pick read inside the proposed containers: its top relative candidate and coverage. */
+  pick: z._default(z.nullable(z.object({ selector: z.nullable(CandidateSchema), matched: count(), total: count() })), null),
+  /** Filled on `list.ladder`; null until asked. */
+  itemLadder: z._default(z.nullable(z.array(ItemLadderRowSchema)), null),
+  parentLadder: z._default(z.nullable(z.array(ParentLadderRowSchema)), null),
+  /** While editing: item fields whose primary would match in fewer of the new containers than there are. */
+  fieldPreview: z._default(z.array(z.object({ name: z.string(), matched: count(), total: count() })), []),
 });
 
 export const VarValueSchema = z.object({
@@ -196,6 +230,8 @@ export const DraftTableSchema = z.object({
   fields: z.array(DraftFieldSchema),
   /** Why the table does not validate as a whole, such as an invalid name or no fields. */
   error: z.optional(z.string()),
+  /** The recorder chose the name; it follows the mode when the first field is added. Never saved. */
+  defaultName: z.optional(z.boolean()),
 });
 
 /** How the draft is written: the shorthand (top level `item` and `fields`) or the `tables` form. */
@@ -238,8 +274,15 @@ export const SelectedSchema = z.object({
   primary: index(),
   /** Table the selection's scope and candidates are computed for; null for a new table. */
   table: z._default(z.nullable(index()), 0),
-  /** Set when the pick moved the active table: the table it left, and why. */
-  moved: z.optional(z.object({ from: z.string(), reason: z.string() })),
+  /** The pick repeats: how often, the first item texts, and how many more; null when nothing repeats or it was dismissed. */
+  suggestion: z._default(z.nullable(z.object({ count: count(), samples: z.array(z.string()), more: count() })), null),
+  /** The pick is outside every container of the active list: that list, how often the pick repeats, the first page table. */
+  outside: z._default(z.nullable(z.object({ table: index(), repeats: z.nullable(count()), pageTable: z.nullable(index()) })), null),
+  /** The pick is inside a container of another list table: that table, the container's index and count, and its selector stack. */
+  belongs: z._default(
+    z.nullable(z.object({ table: index(), index: index(), of: count(), stack: z.object({ within: z.nullable(CandidateSchema), item: CandidateSchema }) })),
+    null,
+  ),
 });
 
 /** The options of a field, as the selection panel's form shows them. */
@@ -350,6 +393,10 @@ export const RecorderStateSchema = z.object({
   saved: z.nullable(z.object({ name: z.string(), path: z.optional(z.string()), at: z.string() })),
   busy: z.nullable(z.string()),
   error: z.nullable(z.string()),
+  /** A one-shot message for the Pick section, cleared by the next pick. */
+  notice: z._default(z.nullable(z.string()), null),
+  /** While the active table is a list: the containers of every other list table, for muted outlines. */
+  otherLists: z._default(z.array(z.object({ table: index(), paths: z.array(PathSchema) })), []),
   /** Panel state kept for the session, across navigations; never saved in the recipe. */
   panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, steps: false, pagination: true } }),
 });
@@ -409,18 +456,26 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('selection.retarget', { table: z.nullable(index()) }),
   msg('inspect.count', { candidate: SelectorSchema, scope: z.enum(FIELD_SCOPES) }),
   msg('inspect.primary', { index: index() }),
-  msg('draft.confirmItems', { level: z.enum(['proposed', 'broader', 'narrower']) }),
+  /** Accept the list setup with the level in the view. */
+  msg('draft.confirmItems', {}),
+  /** Close the list setup; a pick keeps its selection and suggestion. */
   msg('draft.cancelItems', {}),
+  /** Open the list setup: from the pick's suggestion, empty for manual input, or in a new table from the kept pick. */
+  msg('list.open', { from: z.enum(['suggestion', 'manual', 'newTable']) }),
+  /** Hide the suggestion for this selection ("No, single value"). */
+  msg('list.dismiss', {}),
+  /** Fill one ladder of the list setup. */
+  msg('list.ladder', { which: z.enum(['item', 'parent']) }),
   /** Reopen the confirmed item as a proposal, seeded from its list parent, container, and exclusions. */
   msg('draft.editItem', { snapshot: z.optional(SnapshotSchema) }),
   /**
    * Set the list parent or the item container: from an element picked on the
    * page (with a fresh snapshot when no proposal is shown), from typed
-   * selector text, or clear the list parent.
+   * selector text, from a ladder row's path, or clear the list parent.
    */
   msg('draft.setLevel', {
     level: z.enum(LEVEL_KINDS),
-    by: z.enum(['pick', 'selector', 'clear']),
+    by: z.enum(['pick', 'selector', 'clear', 'path']),
     path: z.optional(PathSchema),
     selector: z.optional(z.string()),
     snapshot: z.optional(SnapshotSchema),
@@ -429,9 +484,13 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.pickLevel', { level: z.enum(LEVEL_KINDS) }),
   msg('draft.toggleIncludeAll', {}),
   /** Choose the candidate saved first for the list parent or an item level. */
-  msg('draft.setPrimary', { level: z.enum(LEVEL_KINDS), index: index(), rung: z.optional(z.enum(RUNGS)) }),
-  msg('draft.setItem', {}),
+  msg('draft.setPrimary', { level: z.enum(LEVEL_KINDS), index: index() }),
+  /** Remove the item container; refused once the table has fields. */
   msg('draft.clearItem', {}),
+  /** Remove the active table's fields, item container, list parent, and exclusions. */
+  msg('draft.clearTable', {}),
+  /** Move a page scoped field of a list to the first table without an item container, creating one when needed. */
+  msg('draft.moveFieldToPage', { index: index() }),
   msg('draft.addExclusion', { selector: z.string().check(z.minLength(1)) }),
   msg('draft.removeExclusion', { index: index() }),
   msg('draft.addField', { patch: z.optional(FieldPatchSchema) }),
@@ -505,7 +564,9 @@ export type LevelView = z.infer<typeof LevelSchema>;
 export type LevelViewInput = z.input<typeof LevelSchema>;
 export type ProposalView = z.infer<typeof ProposalSchema>;
 export type LevelKind = (typeof LEVEL_KINDS)[number];
-export type Rung = (typeof RUNGS)[number];
+export type ProposalOrigin = (typeof PROPOSAL_ORIGINS)[number];
+export type ItemLadderRow = z.infer<typeof ItemLadderRowSchema>;
+export type ParentLadderRow = z.infer<typeof ParentLadderRowSchema>;
 export type LevelPick = z.infer<typeof LevelPickSchema>;
 export type VarValue = z.infer<typeof VarValueSchema>;
 export type DraftField = z.infer<typeof DraftFieldSchema>;
@@ -537,6 +598,19 @@ export type HostMessageKind = HostMessage['kind'];
 /** The table that receives picks and field edits. */
 export function currentTable(draft: Pick<Draft, 'tables' | 'activeTable'>): DraftTable {
   return draft.tables[draft.activeTable] ?? draft.tables[0]!;
+}
+
+export type TableMode = 'list' | 'page' | 'none';
+
+/** A list has an item container, a page table has fields and none, else the table has no mode yet. */
+export function tableMode(table: Pick<DraftTable, 'item' | 'fields'>): TableMode {
+  if (table.item !== null) return 'list';
+  return table.fields.length > 0 ? 'page' : 'none';
+}
+
+/** The scope of a field added to a table: `item` in a list, else `page`. */
+export function scopeForTable(table: Pick<DraftTable, 'item' | 'fields'>): FieldScope {
+  return tableMode(table) === 'list' ? 'item' : 'page';
 }
 
 export class ProtocolError extends Error {

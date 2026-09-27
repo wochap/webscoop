@@ -27,10 +27,6 @@ export interface UiState {
   drawerOpen: boolean;
   drawerView: 'table' | 'json';
   editingVar: string | null;
-  /** Container level chosen in the item proposal. */
-  level: 'proposed' | 'broader' | 'narrower';
-  /** Whether item matches are highlighted on the page. */
-  highlight: boolean;
   /** Fingerprint score of the hovered element while re-picking, null when nothing is hovered. */
   hoverScore: number | null;
   toasts: Toast[];
@@ -48,8 +44,6 @@ export const initialUi: UiState = {
   drawerOpen: false,
   drawerView: 'table',
   editingVar: null,
-  level: 'proposed',
-  highlight: true,
   hoverScore: null,
   toasts: [],
 };
@@ -94,7 +88,7 @@ export function modeOf({ host, ui }: Snapshot): Mode {
   if (ui.browsing) return 'browsing';
   if (host?.repickContext) return 'repick';
   if (ui.drawerOpen && host?.test) return 'test';
-  if (host?.proposal) return 'items';
+  if (host?.proposal) return host.proposal.origin === 'edit' ? 'editing' : 'items';
   if (host?.editing) return 'editing';
   if (host?.selected) return 'selected';
   if (ui.focusedField !== null || ui.focusedStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
@@ -113,6 +107,8 @@ export interface Actions {
   stopBrowsing(): void;
   /** Select the element at a path, keeping the original breadcrumb trail. */
   selectPath(path: Path): void;
+  /** Outline the element at a path on the page while a ladder row is hovered; null clears it. */
+  previewPath?(path: Path | null): void;
   setUi(patch: Partial<UiState>): void;
   toast(tone: Toast['tone'], text: string): void;
   dismissToast(id: number): void;

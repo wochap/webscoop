@@ -2,7 +2,7 @@ import { dataset } from '@webscoop/playground';
 import { describe, expect, it } from 'vitest';
 import { detach, draftFromRecipe, draftToRecipe, emptyDraft, nodeAt, reduceDraft, tablesOf, validateRecipe, type Draft } from '../src';
 import { h } from '../src/testing';
-import { byClass, cardPath, harness, referenceRecipe, type Harness } from './recorder-helpers';
+import { acceptList, byClass, cardPath, harness, manualList, openList, referenceRecipe, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
 
 function newDraft(): Draft {
@@ -12,8 +12,8 @@ function newDraft(): Draft {
 /** A catalog with the item container confirmed and the title added as a field. */
 async function withItems(): Promise<Harness> {
   const t = await harness(tier0Snapshot(), newDraft());
-  await t.pick(byClass(t.page, 'product-title', 0));
-  await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+  await openList(t, byClass(t.page, 'product-title', 0));
+  await acceptList(t);
   return t;
 }
 
@@ -55,14 +55,14 @@ describe('draft replaceField', () => {
 describe('clearing the selection', () => {
   it('drops the pick and its proposal and leaves the draft unchanged', async () => {
     const t = await harness(tier0Snapshot(), newDraft());
-    await t.pick(byClass(t.page, 'product-title', 0));
+    await openList(t, byClass(t.page, 'product-title', 0));
     expect(t.controller.state.proposal).not.toBeNull();
     const draft = t.controller.draft;
     await t.send({ kind: 'selection.clear' });
     expect(t.controller.state).toMatchObject({ selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null });
     expect(t.controller.draft).toBe(draft);
     // Nothing is left to confirm.
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await t.send({ kind: 'draft.confirmItems' });
     expect(t.controller.draft.tables[0]!.item).toBeNull();
   });
 
@@ -101,9 +101,7 @@ describe('typed selection selector', () => {
     const dom = h('html', {}, h('body', {}, h('ul', { class: 'cards' }, ...Array.from({ length: 10 }, (_, i) => card(i)))));
     const url = 'http://127.0.0.1:4777/cards';
     const t = await harness(dom, emptyDraft({ name: 'cards', url, vars: [] }), url);
-    await t.pick(byClass(t.page, 'card', 0));
-    await t.send({ kind: 'draft.setItem' });
-    await t.send({ kind: 'selection.clear' });
+    await manualList(t, byClass(t.page, 'card', 0));
     expect(t.controller.draft.tables[0]!.item!.count).toBe(10);
     await t.send({ kind: 'selection.setSelector', selector: 'css=.badge', snapshot: snapshotOf(t) });
     const pending = t.controller.state.pendingSelect!;

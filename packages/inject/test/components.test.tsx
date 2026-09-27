@@ -51,7 +51,7 @@ describe('recipe bar', () => {
 
 describe('inspector and candidates', () => {
   it('flags attributes stable or hashed and walks two levels up the breadcrumb', async () => {
-    const { proposed } = await hostStates();
+    const { suggested: proposed } = await hostStates();
     const selection = proposed.selected!.selection;
     const p = renderPanel({ ...proposed, selected: { ...proposed.selected!, selection: { ...selection, attrs: { class: 'product-title sc-bdfBwQ', id: 'item-48213' } } } });
     const flags = p.qa('attr-value').map((el) => [el.textContent, el.dataset.stable]);
@@ -80,7 +80,7 @@ describe('inspector and candidates', () => {
   });
 
   it('shows host counts and lets the user change the primary candidate', async () => {
-    const { proposed } = await hostStates();
+    const { suggested: proposed } = await hostStates();
     const p = renderPanel({ ...proposed, proposal: null });
     const rows = p.qa('candidate');
     const counts = p.qa('candidate-count').map((el) => el.textContent);
@@ -92,8 +92,8 @@ describe('inspector and candidates', () => {
     act(() => p.store.setHost({ ...proposed, proposal: null, selected: { ...proposed.selected!, primary: 2 } }));
     expect(p.qa('candidate')[2]!.dataset.primary).toBe('true');
     fireEvent.click(p.q('add-field')!);
-    const { defaults, scope } = proposed.selected!;
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, scope, attr: defaults.attr ?? null, optional: false, key: false, table: 0 } });
+    const { defaults } = proposed.selected!;
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, attr: defaults.attr ?? null, optional: false, key: false } });
   });
 });
 
@@ -115,14 +115,21 @@ describe('candidate verification', () => {
   });
 });
 
-describe('item detection', () => {
-  it('confirms with Enter and updates the count on exclusion', async () => {
+describe('list setup', () => {
+  it('shows the setup from the suggestion, accepts with Enter, and updates the count on exclusion (05a)', async () => {
     const { proposed } = await hostStates({ sponsored: 2 });
     const p = renderPanel(proposed);
     expect(p.q('mode')!.dataset.mode).toBe('items');
+    expect(p.q('list-setup')!.dataset.origin).toBe('pick');
+    expect(p.q('list-setup')!.textContent).toContain('Set up list');
     expect(p.q('items-count')!.textContent).toBe('24');
+    expect(p.q('setup-pick')!.textContent).toContain('24/24');
     expect(p.q('samples')!.textContent).toContain(dataset[0]!.title);
-    expect(p.q('level-broader')!.textContent).toContain('24 matches');
+    expect(p.q('samples-more')!.textContent).toContain('+ 21 more');
+    expect(p.q('confirm-items')!.textContent).toContain('Accept 24 items');
+    // The field form and the Add field action wait until the setup closes.
+    expect(p.q('field-form')).toBeNull();
+    expect(p.q('add-field')).toBeNull();
 
     fireEvent.change(p.q('exclude-input')!, { target: { value: '.sponsored' } });
     fireEvent.submit(p.q('exclude-input')!.closest('form')!);
@@ -138,17 +145,20 @@ describe('item detection', () => {
     expect(p.q('exclusion')!.textContent).toContain('.sponsored');
 
     fireEvent.keyDown(p.q('body')!, { key: 'Enter' });
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.confirmItems', level: 'proposed' });
-    fireEvent.click(p.q('level-broader')!);
-    fireEvent.keyDown(p.q('body')!, { key: 'Enter' });
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.confirmItems', level: 'broader' });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.confirmItems' });
+    fireEvent.click(p.q('setup-back')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.cancelItems' });
   });
 
-  it('prefills the list parent and item fields, edits them, and toggles include all', async () => {
+  it('turns a stack row into the selector input, edits it, and shows a refused edit inline (05c)', async () => {
     const { proposed } = await hostStates();
     const p = renderPanel(proposed);
+    expect(p.q('level-input-within')).toBeNull();
+    expect(p.q('setup-row-within')!.textContent).toContain('list parent');
+    fireEvent.click(p.q('setup-row-within')!);
     expect((p.q('level-input-within-strategy') as HTMLSelectElement).value).toBe('role');
     expect((p.q('level-input-within') as HTMLInputElement).value).toBe('list');
+    fireEvent.click(p.q('setup-row-item')!);
     expect((p.q('level-input-item-strategy') as HTMLSelectElement).value).toBe('role');
     expect((p.q('level-input-item') as HTMLInputElement).value).toBe('article');
     expect(p.q('items-skipped')!.textContent).toBe('0 skipped as dissimilar');
@@ -156,32 +166,77 @@ describe('item detection', () => {
     fireEvent.change(p.q('level-input-item')!, { target: { value: 'role=listitem' } });
     fireEvent.submit(p.q('level-input-item')!.closest('form')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'role=listitem' });
+    fireEvent.click(p.q('level-more-item')!);
+    const rows = p.q('level-candidates-item')!.querySelectorAll('[data-ws="candidate"]');
+    fireEvent.click(rows[1]!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setPrimary', level: 'item', index: 1 });
+    fireEvent.click(p.q('setup-row-done-item')!);
+    fireEvent.click(p.q('setup-row-within')!);
     fireEvent.click(p.q('level-pick-within')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.pickLevel', level: 'within' });
     fireEvent.click(p.q('level-clear-within')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
-    fireEvent.click(p.q('include-all')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.toggleIncludeAll' });
 
-    // Candidates of a level, and the primary choice on the chosen rung.
-    fireEvent.click(p.q('level-broader')!);
-    expect((p.q('level-input-item') as HTMLInputElement).value).toBe('listitem');
-    fireEvent.click(p.q('level-more-item')!);
-    const rows = p.q('level-candidates-item')!.querySelectorAll('[data-ws="candidate"]');
-    fireEvent.click(rows[1]!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setPrimary', level: 'item', index: 1, rung: 'broader' });
-
-    // A refused edit shows inline, and a new host value replaces the text.
     const proposal = proposed.proposal!;
     act(() =>
       p.store.setHost({
         ...proposed,
-        proposal: { ...proposal, skipped: 6, includeAll: false, error: { level: 'item', message: '".nope" matches nothing inside the list parent' } },
+        proposal: { ...proposal, skipped: 6, includeAll: false, error: { level: 'within', message: 'the list parent "css=#nope" matches nothing' } },
       }),
     );
-    expect(p.q('level-error-item')!.textContent).toContain('matches nothing');
-    expect(p.q('level-error-within')).toBeNull();
+    expect(p.q('level-error-within')!.textContent).toContain('matches nothing');
     expect(p.q('items-skipped')!.textContent).toBe('6 skipped as dissimilar');
+  });
+
+  it('shows 0 items, names the level, and disables Accept and Enter when nothing matches (05c2)', () => {
+    const empty = { tag: '', label: '', path: [], selectors: [], primary: 0, count: 0, total: 0, paths: [], samples: [] };
+    const within = { ...empty, tag: 'div', label: 'div#nope', path: [1, 0], selectors: [{ strategy: 'id' as const, value: 'nope', stability: 'stable' as const, count: 0 }], count: 0, total: 0 };
+    const proposal = { within, proposed: empty, skipped: 0, includeAll: false, error: null, exclude: [], origin: 'manual' as const, previousCount: null, pick: null, itemLadder: null, parentLadder: null, fieldPreview: [] };
+    const p = renderPanel({ ...baseState(), proposal });
+    expect(p.q('items-count')!.textContent).toBe('0');
+    expect(p.q('setup-invalid')!.textContent).toBe('list parent matches nothing');
+    expect((p.q('confirm-items') as HTMLButtonElement).disabled).toBe(true);
+    // The empty item row is an input straight away.
+    expect(p.q('level-input-item')).not.toBeNull();
+    fireEvent.keyDown(p.q('body')!, { key: 'Enter' });
+    expect(p.sent).toEqual([]);
+    fireEvent.keyDown(p.q('body')!, { key: 'Escape' });
+    expect(p.sent).toEqual([{ kind: 'draft.cancelItems' }]);
+  });
+
+  it('opens the item ladder lazily, lists the levels, folds same elements, and picks a level (05b)', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    expect(p.q('item-ladder')).toBeNull();
+    fireEvent.click(p.q('adjust-item-toggle')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'list.ladder', which: 'item' });
+    const proposal = proposed.proposal!;
+    const chip = (value: string) => ({ strategy: 'css' as const, value, stability: 'medium' as const, count: 24 });
+    const itemLadder = [
+      { distance: 0, path: [1, 0, 1, 0, 0, 1], selector: chip('h2'), count: 24, likely: false, sameAs: null },
+      { distance: 1, path: [1, 0, 1, 0, 0], selector: chip('article'), count: 24, likely: true, sameAs: 2 },
+      { distance: 2, path: [1, 0, 1, 0], selector: chip('li'), count: 24, likely: false, sameAs: null },
+    ];
+    act(() => p.store.setHost({ ...proposed, proposal: { ...proposal, itemLadder } }));
+    const rows = p.qa('ladder-row');
+    expect(rows.map((r) => r.dataset.distance)).toEqual(['0', '2']);
+    expect(rows[0]!.textContent).toContain('your pick');
+    expect(rows[1]!.textContent).toContain('24 in list');
+    expect(p.q('ladder-folded')!.textContent).toBe('↑1 hidden · same elements as ↑2');
+    expect(p.q('ladder-parent')!.textContent).toContain('is the list parent');
+    fireEvent.click(rows[1]!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'item', by: 'path', path: [1, 0, 1, 0] });
+    fireEvent.click(p.q('include-all')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.toggleIncludeAll' });
+
+    fireEvent.click(p.q('adjust-parent-toggle')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'list.ladder', which: 'parent' });
+    const parentLadder = [{ distance: 1, path: [1, 0, 1], selector: { ...chip('ul'), count: 1 }, children: 24, likely: true }];
+    act(() => p.store.setHost({ ...proposed, proposal: { ...proposal, itemLadder, parentLadder } }));
+    expect(p.q('parent-row')!.textContent).toContain('24 like the item');
+    expect(p.q('parent-row')!.textContent).toContain('likely list parent');
+    fireEvent.click(p.q('parent-row')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'path', path: [1, 0, 1] });
   });
 
   it('shows the list parent of the confirmed item with its count, re-pick, and clear', async () => {
@@ -385,8 +440,8 @@ describe('pagination', () => {
 describe('results drawer', () => {
   it('renders 24 rows and per-field status, and a JSON view', async () => {
     const { t } = await hostStates();
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
-    await t.send({ kind: 'draft.updateField', index: 0, patch: { name: 'title' } });
+    await t.send({ kind: 'draft.confirmItems' });
+    await t.send({ kind: 'draft.addField', patch: { name: 'title' } });
     await t.controller.testRun();
     const p = renderPanel(t.controller.state, { drawerOpen: true });
     expect(p.q('mode')!.dataset.mode).toBe('test');

@@ -13,8 +13,6 @@ export interface RecorderEvents {
     within: string | null;
     /** Elements left out as dissimilar. */
     skipped: number;
-    broader: number | null;
-    narrower: number | null;
   };
   'recorder.itemsConfirmed': { count: number | null; selector: string };
   'recorder.excluded': { selector: string; count: number | null };

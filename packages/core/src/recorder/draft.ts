@@ -16,7 +16,7 @@ import type {
   StepPatch,
   VarValue,
 } from './protocol';
-import { currentTable } from './protocol';
+import { currentTable, tableMode } from './protocol';
 
 /** Strip host-only data (match counts) from a candidate. */
 export function bare(candidate: ProtocolCandidate): SelectorCandidate {
@@ -98,7 +98,7 @@ export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }
     name: opts.name,
     url: opts.url,
     vars: opts.vars,
-    tables: [{ name: SHORTHAND_TABLE, item: null, fields: [] }],
+    tables: [{ name: SHORTHAND_TABLE, item: null, fields: [], defaultName: true }],
     activeTable: 0,
     form: 'shorthand',
     steps: [],
@@ -358,7 +358,16 @@ export interface NewDraftStep {
 
 /** Field and item actions act on the active table; count actions may name another. */
 export type DraftAction =
-  | { type: 'addTable'; name: string }
+  /** Add a table and activate it; `defaultName` marks a name the recorder chose. */
+  | { type: 'addTable'; name: string; defaultName?: boolean }
+  /** Remove the active table's fields and item container; the name and position stay. */
+  | { type: 'clearTable' }
+  /**
+   * Move field `index` of the active table to the first table without an item
+   * container, creating one named `page` (or `table-N`) when none exists. The
+   * active table stays active.
+   */
+  | { type: 'moveFieldToPage'; index: number }
   /** Rename the active table; an invalid or taken name leaves the draft unchanged. */
   | { type: 'renameTable'; name: string }
   /** Remove the active table; the last table stays. */
@@ -459,6 +468,22 @@ function toDraftField(f: NewField): DraftField {
   };
 }
 
+/**
+ * A table that just got its first field: a name the recorder chose becomes
+ * `items` for a list or `page` for a page table, unless one of `others` has it.
+ */
+export function followMode(table: DraftTable, others: readonly DraftTable[]): DraftTable {
+  if (!table.defaultName || table.fields.length === 0) return table;
+  const { defaultName: _d, ...rest } = table;
+  const name = tableMode(table) === 'list' ? SHORTHAND_TABLE : 'page';
+  if (!others.some((t) => t.name === name)) return { ...rest, name };
+  // A default name that says the other mode (a list still called `page`) gives way to a free `table-N`.
+  const wrong = (name === SHORTHAND_TABLE && rest.name === 'page') || (name === 'page' && rest.name === SHORTHAND_TABLE);
+  if (!wrong) return rest;
+  const taken = new Set(others.map((t) => t.name));
+  for (let n = others.length + 1; ; n++) if (!taken.has(`table-${n}`)) return { ...rest, name: `table-${n}` };
+}
+
 /** The draft with table `index` replaced. */
 function withTable(draft: Draft, index: number, table: DraftTable): Draft {
   return { ...draft, tables: draft.tables.map((t, i) => (i === index ? table : t)) };
@@ -473,13 +498,40 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
   switch (action.type) {
     case 'addTable':
       if (tableNameError(draft, action.name)) return draft;
-      next = { ...draft, tables: [...draft.tables, { name: action.name, item: null, fields: [] }], activeTable: draft.tables.length };
+      next = {
+        ...draft,
+        tables: [...draft.tables, { name: action.name, item: null, fields: [], ...(action.defaultName ? { defaultName: true } : {}) }],
+        activeTable: draft.tables.length,
+      };
       break;
-    case 'renameTable':
+    case 'renameTable': {
       if (tableNameError(draft, action.name, at)) return draft;
       if (action.name === table.name) return draft;
-      next = setActive({ name: action.name });
+      const { defaultName: _d, ...rest } = table;
+      next = withTable(draft, at, { ...rest, name: action.name });
       break;
+    }
+    case 'clearTable':
+      next = setActive({ item: null, fields: [] });
+      break;
+    case 'moveFieldToPage': {
+      const field = table.fields[action.index];
+      if (!field) return draft;
+      const { coverage: _c, ...moved } = field;
+      let tables = draft.tables.map((t, i) => (i === at ? { ...t, fields: t.fields.filter((_, j) => j !== action.index) } : t));
+      let target = tables.findIndex((t) => t.item === null);
+      if (target === -1) {
+        tables = [...tables, { name: defaultTableName({ tables }), item: null, fields: [], defaultName: true }];
+        target = tables.length - 1;
+      }
+      const into = tables[target]!;
+      const name = uniqueName(moved.name, into.fields.map((f) => f.name));
+      const fields = [...into.fields, { ...moved, name, scope: 'page' as const, ...(moved.key && into.fields.some((f) => f.key) ? { key: false } : {}) }];
+      const others = tables.filter((_, i) => i !== target);
+      tables = tables.map((t, i) => (i === target ? followMode({ ...into, fields }, others) : t));
+      next = { ...draft, tables };
+      break;
+    }
     case 'removeTable': {
       if (draft.tables.length < 2) return draft;
       const tables = draft.tables.filter((_, i) => i !== at);
@@ -500,7 +552,8 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       const field = toDraftField(action.field);
       let fields = [...table.fields, field];
       if (field.key) fields = fields.map((other, i) => (i === fields.length - 1 ? other : { ...other, key: false }));
-      next = setActive({ fields });
+      const others = draft.tables.filter((_, i) => i !== at);
+      next = withTable(draft, at, followMode({ ...table, fields }, others));
       break;
     }
     case 'replaceField': {

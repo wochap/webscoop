@@ -9,13 +9,6 @@ test.skip(!hasDisplay, 'the recorder needs WAYLAND_DISPLAY or DISPLAY');
 const NAME = 'catalog-tables';
 const template = (port: number) => `http://127.0.0.1:${port}/catalog?tier={tier}&mixed=1`;
 
-/** Rename the active table's last field and wait for the host to take it. */
-async function renameLast(r: Recording, name: string): Promise<void> {
-  const count = await r.count('[data-ws="field-name"]');
-  await r.fill('[data-ws="field-name"]', name, count - 1);
-  await r.until((s) => s.host && currentTable(s.host.draft).fields.at(-1)?.name === name);
-}
-
 /** Rename the active table from its menu and wait for the host to take it. */
 async function renameTable(r: Recording, name: string): Promise<void> {
   await r.clickPanel('[data-ws="tab-menu"]');
@@ -31,6 +24,31 @@ async function addTable(r: Recording): Promise<void> {
   await r.until((s) => s.host?.draft.tables.length === before + 1 && s.host.draft.activeTable === before);
 }
 
+/** Pick an element in a table with no mode, open the list setup from the suggestion (or the item row for `item`), and accept it. */
+async function setUpList(r: Recording, selector: string, item?: string): Promise<void> {
+  const table = (await r.state()).host!.draft.activeTable;
+  const picked = await r.pick(selector, 0);
+  expect(picked.host!.selected!.suggestion).not.toBeNull();
+  await r.key('l');
+  await r.until((s) => s.host?.proposal);
+  if (item) {
+    await r.clickPanel('[data-ws="setup-row-item"]');
+    await r.submit('[data-ws="level-input-item"]', item);
+    await r.until((s) => s.host?.proposal?.proposed.selectors[0]?.value === item.replace(/^css=/, ''));
+  }
+  // Focus may still be in the selector input, where Enter does not accept.
+  await r.clickPanel('[data-ws="confirm-items"]');
+  await r.until((s) => (s.host?.draft.tables[table]!.item && !s.host.proposal ? s : undefined));
+}
+
+/** Add the selection as a field of the active table. */
+async function addSelected(r: Recording, name: string): Promise<void> {
+  const before = currentTable((await r.state()).host!.draft).fields.length;
+  await r.fill('[data-ws="form-name"]', name);
+  await r.clickPanel('[data-ws="add-field"]');
+  await r.until((s) => s.host && currentTable(s.host.draft).fields.length === before + 1 && s.host.selected === null);
+}
+
 /** The recipe recorded by the first scenario, kept for the second. */
 let recorded: Recipe | undefined;
 
@@ -40,12 +58,12 @@ test('records products, the page heading, and the questions blocks as three tabl
   const port = scoop.playground.port;
   const r = await scoop.record([template(port), '--var', 'tier=0', '--name', NAME]);
 
-  // products: one title proposes the product cards.
-  const picked = await r.pick('h2.product-title', 0);
-  expect(picked.mode).toBe('items');
-  await r.key('Enter');
-  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24 && s.host.draft.tables[0]!.fields.length === 1);
-  await renameLast(r, 'title');
+  // products: one title suggests the product cards; accepting returns to the title, read inside each card.
+  await setUpList(r, 'h2.product-title');
+  expect((await r.state()).host!.draft.tables[0]!.item!.count).toBe(24);
+  expect((await r.state()).host!.selected!.scope).toBe('item');
+  await addSelected(r, 'title');
+  expect(currentTable((await r.state()).host!.draft).name).toBe('items');
   await renameTable(r, 'products');
   expect(await r.count('[data-ws="table-tab"]')).toBe(1);
 
@@ -63,15 +81,9 @@ test('records products, the page heading, and the questions blocks as three tabl
   // questions: a new table, one question heading proposes the questions blocks.
   await addTable(r);
   await renameTable(r, 'questions');
-  const question = await r.pick('h3.questions-title', 0);
-  expect(question.mode).toBe('items');
-  await r.submit('[data-ws="level-input-item"]', 'css=.mixed-questions');
-  const proposal = await r.until((s) => (s.host?.proposal?.proposed.count === 6 ? s.host.proposal : undefined));
-  expect(proposal.proposed.selectors[0]!.value).toBe('.mixed-questions');
-  // Focus is still in the selector input, where Enter does not confirm.
-  await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.tables[2]!.item?.count === 6 && s.host.draft.tables[2]!.fields.length === 1);
-  await renameLast(r, 'title');
+  await setUpList(r, 'h3.questions-title', 'css=.mixed-questions');
+  expect((await r.state()).host!.draft.tables[2]!.item!.count).toBe(6);
+  await addSelected(r, 'title');
 
   const { draft } = (await r.state()).host!;
   expect(draft.tables.map((t) => [t.name, t.item?.count ?? null, t.fields.map((f) => [f.name, f.scope, f.count])])).toEqual([
@@ -157,17 +169,14 @@ test('tabs reorder by drag, a new primary table is announced, and section collap
   const r = await scoop.record([template(port), '--var', 'tier=0', '--name', 'catalog-tabs']);
 
   // products, then questions: two lists.
-  await r.pick('h2.product-title', 0);
-  await r.key('Enter');
-  await r.until((s) => s.host?.draft.tables[0]!.item?.count === 24);
+  await setUpList(r, 'h2.product-title');
+  await addSelected(r, 'title');
   await renameTable(r, 'products');
   await addTable(r);
   await renameTable(r, 'questions');
-  await r.pick('h3.questions-title', 0);
-  await r.submit('[data-ws="level-input-item"]', 'css=.mixed-questions');
-  await r.until((s) => s.host?.proposal?.proposed.count === 6);
-  await r.clickPanel('[data-ws="confirm-items"]');
-  await r.until((s) => s.host?.draft.tables[1]!.item?.count === 6);
+  await setUpList(r, 'h3.questions-title', 'css=.mixed-questions');
+  await addSelected(r, 'title');
+  expect((await r.state()).host!.draft.tables[1]!.item!.count).toBe(6);
 
   // Pagination on: the first list drives it.
   await r.page.evaluate(() => {
@@ -210,4 +219,54 @@ test('tabs reorder by drag, a new primary table is announced, and section collap
   const recipe = loadRecipe(await readFile(saved.path!, 'utf8'));
   expect(tablesOf(recipe).map((t) => t.name)).toEqual(['questions', 'products']);
   expect(JSON.stringify(recipe)).not.toMatch(/collapsed/);
+});
+
+test('records a list and a page table through the suggestion and the outside banner, clears and redoes the list, and runs it', async ({ scoop }) => {
+  const port = scoop.playground.port;
+  const r = await scoop.record([`http://127.0.0.1:${port}/catalog?tier={tier}`, '--var', 'tier=0', '--name', 'list-and-page']);
+  expect((await r.query('[data-ws="table-kind"]'))!.text).toBe('No mode yet');
+
+  // A first list, then Clear table from the menu: the table has no mode again.
+  await setUpList(r, 'h2.product-title');
+  await addSelected(r, 'wrong');
+  await r.clickPanel('[data-ws="tab-menu"]');
+  expect((await r.query('[data-ws="menu-mode-locked"]'))!.text).toContain('Mode locked — list');
+  await r.clickPanel('[data-ws="menu-clear-table"]');
+  await r.until((s) => s.host?.draft.tables[0]!.item === null && s.host.draft.tables[0]!.fields.length === 0);
+  expect((await r.query('[data-ws="table-kind"]'))!.text).toBe('No mode yet');
+
+  // The list again, from the suggestion.
+  await setUpList(r, 'h2.product-title');
+  await addSelected(r, 'title');
+  await r.pick('[data-testid="price"]', 0);
+  await addSelected(r, 'price');
+  expect((await r.query('[data-ws="table-kind"]'))!.text).toBe('List · 24 rows');
+
+  // The heading is outside the list: the banner makes a page table and keeps the pick.
+  await r.pick('h1.category-heading');
+  expect((await r.query('[data-ws="outside-banner"]'))!.text).toContain('Outside the items list');
+  expect((await r.query('[data-ws="outside-table-name"]'))!.value).toBe('page');
+  await r.clickPanel('[data-ws="outside-new-page"]');
+  const moved = await r.until((s) => (s.host?.draft.activeTable === 1 && s.host.selected?.table === 1 ? s.host : undefined));
+  expect(moved.draft.tables[1]!.fields).toHaveLength(0);
+  expect(moved.selected!.scope).toBe('page');
+  await addSelected(r, 'category');
+  expect((await r.query('[data-ws="table-kind"]'))!.text).toBe('Page · 1 row');
+
+  await r.key('Control+s');
+  const saved = await r.until((s) => s.host?.saved);
+  expect((await r.closeWindow()).code).toBe(0);
+  const recipe = loadRecipe(await readFile(saved.path!, 'utf8'));
+  const tables = tablesOf(recipe);
+  expect(tables.map((t) => [t.name, Boolean(t.item), t.fields.map((f) => [f.name, f.scope])])).toEqual([
+    ['items', true, [['title', 'item'], ['price', 'item']]],
+    ['page', false, [['category', 'page']]],
+  ]);
+
+  const run = await scoop.run(['run', 'list-and-page']);
+  expect(run.code, run.stderr).toBe(0);
+  const out = JSON.parse(run.stdout) as Record<string, Record<string, unknown>[]>;
+  expect(out.items!.map((row) => row.title)).toEqual(dataset.map((p) => p.title));
+  expect(out.items!.map((row) => row.price)).toEqual(dataset.map((p) => p.price));
+  expect(out.page).toEqual([{ _page: 1, _index: 0, category: 'Electronics' }]);
 });

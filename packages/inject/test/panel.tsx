@@ -18,15 +18,17 @@ export function withTable(draft: Draft, patch: Partial<DraftTable>): Draft {
 }
 
 export function baseState(draft: Draft = newDraft()): RecorderState {
-  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, repick: null, repickStep: null, repickContext: null, guardContext: null, test: null, saved: null, busy: null, error: null, panel: { collapsed: { recipe: false, steps: false, pagination: true } } };
+  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, repick: null, repickStep: null, repickContext: null, guardContext: null, notice: null, otherLists: [], test: null, saved: null, busy: null, error: null, panel: { collapsed: { recipe: false, steps: false, pagination: true } } };
 }
 
 /** Real host states from the controller on the tier 0 fake page. */
 export async function hostStates(opts: { sponsored?: number } = {}) {
   const t = await harness(tier0Snapshot(opts), emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?tier={tier}', vars: [{ name: 'tier', value: '0' }] }));
   await t.pick(byClass(t.page, 'product-title', 0));
+  const suggested = t.controller.state;
+  await t.send({ kind: 'list.open', from: 'suggestion' });
   const proposed = t.controller.state;
-  return { t, proposed };
+  return { t, suggested, proposed };
 }
 
 export function renderPanel(host: RecorderState | null, ui: Partial<UiState> = {}) {

@@ -1,3 +1,4 @@
+import { Icon } from './icons';
 import type { ProtocolCandidate } from '@webscoop/core/page';
 import { SelectorChip, type SelectorLevel } from './selector-chip';
 
@@ -126,44 +127,46 @@ export function EditActions({ onUpdate, onCancel, canUpdate }: { onUpdate: () =>
 }
 
 export function PickActionGrid({
-  scope,
   onAddField,
   onRecordStep,
-  onUseAsItems,
   onPagination,
-  onDismiss,
-  hasItem,
+  onDismiss: _onDismiss,
   repicking,
   canAdd = true,
+  hint,
 }: {
-  scope: 'item' | 'page';
   onAddField: () => void;
   onRecordStep: () => void;
-  onUseAsItems: () => void;
   onPagination: () => void;
   onDismiss: () => void;
-  hasItem: boolean;
   repicking: boolean;
-  /** False while the field options have an error, such as a duplicate name. */
+  /** False while the field options have an error, or the pick cannot go to the active table. */
   canAdd?: boolean;
+  /** What adding does, or why it is unavailable. */
+  hint?: string;
 }) {
   return (
-    <div className="ws-grid2" data-ws="actions">
-      <button type="button" className="ws-btn ws-btn-primary" onClick={onAddField} data-ws="add-field" disabled={repicking || !canAdd}>
-        Add as {scope} field
+    <div className="ws-col ws-actions" data-ws="actions">
+      <button type="button" className="ws-btn ws-btn-outline ws-btn-wide" onClick={onAddField} data-ws="add-field" disabled={repicking || !canAdd}>
+        <Icon name="plus" size={12} />
+        Add field
       </button>
-      <button type="button" className="ws-btn" onClick={onUseAsItems} data-ws="use-as-items">
-        {hasItem ? 'Replace item container' : 'Use as item container'}
-      </button>
-      <button type="button" className="ws-btn" onClick={onPagination} data-ws="mark-pagination">
-        Pagination target
-      </button>
-      <button type="button" className="ws-btn" onClick={onRecordStep} data-ws="record-step" title="Add a step that acts on this element, without acting now">
-        Record as step
-      </button>
-      <button type="button" className="ws-btn ws-btn-ghost" onClick={onDismiss} data-ws="dismiss">
-        Pick another
-      </button>
+      {hint && (
+        <span className="ws-meta ws-center" data-ws="add-hint">
+          {hint}
+        </span>
+      )}
+      <div className="ws-row ws-also">
+        <span className="ws-meta">Also</span>
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onPagination} data-ws="mark-pagination">
+          <Icon name="arrow-right" size={12} />
+          Pagination target
+        </button>
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onRecordStep} data-ws="record-step" title="Add a step that acts on this element, without acting now">
+          <Icon name="record" size={12} />
+          Record as step
+        </button>
+      </div>
     </div>
   );
 }

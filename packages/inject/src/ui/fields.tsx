@@ -1,5 +1,5 @@
 import { useEffect, useState, type HTMLAttributes } from 'react';
-import { defaultAttr, FIELD_SCOPES, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
+import { defaultAttr, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
 import { Icon } from './icons';
@@ -17,14 +17,6 @@ export function TypeSelect({ value, onChange, testId = 'field-type' }: { value: 
         </option>
       ))}
     </select>
-  );
-}
-
-export function ScopeBadge({ scope }: { scope: DraftField['scope'] }) {
-  return (
-    <span className={`ws-badge ws-scope ${scope === 'item' ? 'ws-tone-accent' : 'ws-tone-neutral'}`} data-ws="scope">
-      {scope}
-    </span>
   );
 }
 
@@ -71,9 +63,9 @@ export function ZeroMatchWarning({
   );
 }
 
-/** The form's values as a field patch: every option set, an empty attribute cleared. */
+/** The form's values as a field patch: every option set, an empty attribute cleared. The scope follows the table, so it is not sent. */
 export function formPatch(form: FieldOptions): FieldPatch {
-  return { name: form.name.trim(), type: form.type, scope: form.scope, attr: form.attr?.trim() || null, optional: form.optional, key: form.key };
+  return { name: form.name.trim(), type: form.type, attr: form.attr?.trim() || null, optional: form.optional, key: form.key };
 }
 
 /** Why the form's name cannot be saved, or null: empty, or taken by another field. */
@@ -83,18 +75,8 @@ export function nameProblem(name: string, taken: readonly string[]): string | nu
   return taken.includes(trimmed) ? `another field is already named ${trimmed}` : null;
 }
 
-/** Name, type, attribute, scope, optional, and dedup key of the field the selection becomes. */
-export function FieldOptionsForm({
-  value,
-  onChange,
-  nameError,
-  hasItem,
-}: {
-  value: FieldOptions;
-  onChange: (next: FieldOptions) => void;
-  nameError: string | null;
-  hasItem: boolean;
-}) {
+/** Name, type, attribute, optional, and dedup key of the field the selection becomes; the scope follows the table's mode. */
+export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldOptions; onChange: (next: FieldOptions) => void; nameError: string | null }) {
   const set = (patch: Partial<FieldOptions>) => onChange({ ...value, ...patch });
   return (
     <section className="ws-col" data-ws="field-form">
@@ -117,19 +99,6 @@ export function FieldOptionsForm({
             set(followed ? { type, attr: attr ?? '' } : { type });
           }}
         />
-        <select
-          className="ws-select"
-          value={value.scope}
-          aria-label="Field scope"
-          data-ws="form-scope"
-          onChange={(e) => set({ scope: e.target.value as FieldOptions['scope'] })}
-        >
-          {FIELD_SCOPES.map((scope) => (
-            <option key={scope} value={scope} disabled={scope === 'item' && !hasItem}>
-              {scope}
-            </option>
-          ))}
-        </select>
       </div>
       {nameError && (
         <span className="ws-error" data-ws="form-name-error">
@@ -233,7 +202,6 @@ export function FieldRow({
         </span>
         <NameField field={field} index={index} />
         <TypeSelect value={field.type} onChange={(type) => update({ type })} />
-        <ScopeBadge scope={field.scope} />
         <span className={`ws-num${field.count === 0 ? ' ws-num-zero' : ''}`} data-ws="field-count" title="Matches of the primary selector on this page">
           {field.count ?? '…'}
         </span>
@@ -270,6 +238,15 @@ export function FieldRow({
         <span className="ws-error" data-ws="field-error">
           {field.error}
         </span>
+      )}
+      {item && field.scope === 'page' && (
+        <div className="ws-warning" role="alert" data-ws="misplaced">
+          <Icon name="warning" weight="bold" size={12} />
+          <span className="ws-spacer">Read once from the page, repeated on every row.</span>
+          <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.moveFieldToPage', index })} data-ws="move-to-page">
+            Move to page table
+          </button>
+        </div>
       )}
       <div
         className={`ws-row${editLocked ? '' : ' ws-clickable'}`}

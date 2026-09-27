@@ -1,7 +1,32 @@
 import { roleOf } from './dom';
 import { SANS, MONO } from './fonts';
+import { DIM, LEVEL_COLORS, MAX_DIM_CONTAINERS, MUTED_OUTLINE, WARN } from './levels';
 
-export type BoxVariant = 'hover' | 'selected' | 'sibling' | 'container' | 'excluded' | 'list' | 'blocked' | 'match';
+export type BoxVariant =
+  | 'hover'
+  | 'selected'
+  | 'sibling'
+  | 'container'
+  | 'excluded'
+  | 'list'
+  | 'blocked'
+  | 'match'
+  | 'list-parent'
+  | 'item'
+  | 'other-list'
+  | 'dim';
+
+/** Where the hovered element sits while picking in a list table. */
+export type HoverPlace = { kind: 'item'; index: number; of: number } | { kind: 'outside'; table: string };
+
+/** What to outline while picking in a list table: the active list parent and containers, and other lists' containers. */
+export interface ListOutlines {
+  /** Name of the active list table, for its label. */
+  table?: string;
+  parent: Element | null;
+  items: readonly Element[];
+  others: readonly { table: string; items: readonly Element[] }[];
+}
 
 export const OVERLAY_CSS = `
 :host { all: initial; }
@@ -15,6 +40,13 @@ export const OVERLAY_CSS = `
 .ws-box-list { outline: 2px dotted #e6c98f; outline-offset: 3px; border-radius: 6px; }
 .ws-box-blocked { border: 2px dashed #f0a9a9; background: rgba(240, 169, 169, 0.08); }
 .ws-box-match { border: 1px solid #9fdcbc; background: rgba(159, 220, 188, 0.12); }
+.ws-box-list-parent { border: 2px solid ${LEVEL_COLORS.list}; border-radius: 6px; }
+.ws-box-item { border: 1.5px dashed ${LEVEL_COLORS.item}; border-radius: 5px; }
+.ws-box-other-list { border: 1px dashed ${MUTED_OUTLINE}; border-radius: 5px; }
+.ws-list-label { position: absolute; top: -16px; right: -1px; padding: 0 5px; border-radius: 3px 3px 0 0; background: ${MUTED_OUTLINE}; color: #161826; font: 500 9.5px/15px '${MONO}', ui-monospace, monospace; white-space: nowrap; }
+.ws-box-list-parent .ws-list-label { background: ${LEVEL_COLORS.item}; }
+.ws-box-dim { inset: 0; background: ${DIM}; border-radius: 0; }
+.ws-box-hover.ws-outside { border-color: ${WARN}; background: rgba(230, 201, 143, 0.12); }
 .ws-halo-dark.ws-box-hover, .ws-halo-dark.ws-box-sibling { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), inset 0 0 0 1px rgba(14, 15, 24, 0.6); }
 .ws-halo-light.ws-box-hover, .ws-halo-light.ws-box-sibling { box-shadow: 0 0 0 1px rgba(243, 245, 254, 0.95), inset 0 0 0 1px rgba(243, 245, 254, 0.7); }
 .ws-halo-dark.ws-box-selected { box-shadow: 0 0 0 1px rgba(14, 15, 24, 0.9), 0 0 0 4px rgba(181, 171, 252, 0.25); }
@@ -25,7 +57,8 @@ export const OVERLAY_CSS = `
 .ws-tag { position: fixed; padding: 2px 6px; border-radius: 4px; background: #161826; color: #e9e9ed; font: 500 10px/14px '${MONO}', ui-monospace, monospace; box-shadow: 0 0 0 1px #9184d9; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .ws-tag b { color: #b5abfc; font-weight: 500; }
 .ws-tag i { color: #b2b6ca; font-style: normal; font-family: '${SANS}', system-ui, sans-serif; }
-.ws-tag em { color: #e6c98f; font-style: normal; }
+.ws-tag em { color: ${WARN}; font-style: normal; }
+.ws-tag em.ws-in-item { color: ${LEVEL_COLORS.item}; }
 .ws-tag em.ws-likely { color: #9fdcbc; }
 .ws-tag em.ws-refused { color: #f0a9a9; }
 `;
@@ -54,6 +87,7 @@ export function isLightHost(el: Element): boolean {
 }
 
 interface Tracked {
+  /** The element the box follows; the page root for the dim. */
   el: Element;
   box: HTMLDivElement;
   variant: BoxVariant;
@@ -70,6 +104,10 @@ export class Overlay {
   private list: Tracked | null = null;
   private groups: Tracked[] = [];
   private matches: Tracked[] = [];
+  private outlines: Tracked[] = [];
+  private dim: Tracked | null = null;
+  /** Containers cut out of the dim. */
+  private holes: Element[] = [];
   private readonly tag: HTMLDivElement;
   private tagText = '';
   private frame = 0;
@@ -119,10 +157,13 @@ export class Overlay {
    * re-picking) is appended to the tag; a refusal reason (while picking a
    * list level) marks the element as not selectable.
    */
-  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }, refused?: string): void {
-    if (this.hover?.el === el && this.hover.variant === (refused ? 'blocked' : 'hover')) return;
+  setHover(el: Element | null, text = '', score?: { value: number; likely: boolean }, refused?: string, place?: HoverPlace): void {
+    const key = place ? (place.kind === 'item' ? `item:${place.index}/${place.of}` : `outside:${place.table}`) : '';
+    if (this.hover?.el === el && this.hover.variant === (refused ? 'blocked' : 'hover') && this.hoverKey === key) return;
     this.drop(this.hover);
+    this.hoverKey = key;
     this.hover = el ? this.make(el, refused ? 'blocked' : 'hover') : null;
+    if (this.hover && place?.kind === 'outside') this.hover.box.classList.add('ws-outside');
     if (el) {
       const role = roleOf(el);
       const tag = el.tagName.toLowerCase();
@@ -130,10 +171,62 @@ export class Overlay {
         ? ` <em class="ws-refused">${escape(refused)}</em>`
         : score
           ? ` <em class="ws-score${score.likely ? ' ws-likely' : ''}">${score.value.toFixed(2)}${score.likely ? ' likely' : ''}</em>`
-          : '';
+          : place?.kind === 'item'
+            ? ` <em class="ws-in-item">item ${place.index + 1} of ${place.of}</em>`
+            : place?.kind === 'outside'
+              ? ` <em class="ws-outside">outside ${escape(place.table)} list</em>`
+              : '';
       this.tagText = `<b>${escape(tag)}</b>${role ? ` ${escape(role)}` : ''}${text ? ` <i>${escape(text)}</i>` : ''}${suffix}`;
     }
     this.schedule();
+  }
+
+  private hoverKey = '';
+
+  /**
+   * While picking in a list table: the list parent and each container in
+   * their level colors, other lists' containers muted with a label, and a
+   * light dim over the rest of the page (skipped for very many containers).
+   * Null clears them.
+   */
+  setOutlines(lists: ListOutlines | null): void {
+    const same =
+      lists !== null &&
+      this.outlines.length === (lists.parent ? 1 : 0) + lists.items.length + lists.others.reduce((n, o) => n + o.items.length, 0) &&
+      [...(lists.parent ? [lists.parent] : []), ...lists.items, ...lists.others.flatMap((o) => o.items)].every((el, i) => this.outlines[i]!.el === el);
+    if (same && Boolean(this.dim) === lists.items.length <= MAX_DIM_CONTAINERS && lists.items.length > 0) return;
+    for (const t of this.outlines) t.box.remove();
+    this.drop(this.dim);
+    this.dim = null;
+    this.outlines = [];
+    this.holes = [];
+    if (lists) {
+      if (lists.items.length > 0 && lists.items.length <= MAX_DIM_CONTAINERS) {
+        this.dim = this.make(this.layer.ownerDocument.documentElement, 'dim');
+        this.holes = [...lists.items];
+      }
+      if (lists.parent) {
+        const t = this.make(lists.parent, 'list-parent');
+        if (lists.table) this.label(t, `${lists.table} · list · ${lists.items.length}`);
+        this.outlines.push(t);
+      }
+      for (const el of lists.items) this.outlines.push(this.make(el, 'item'));
+      for (const other of lists.others) {
+        other.items.forEach((el, i) => {
+          const t = this.make(el, 'other-list');
+          if (i === 0) this.label(t, `${other.table} · list · ${other.items.length}`);
+          this.outlines.push(t);
+        });
+      }
+    }
+    this.schedule();
+  }
+
+  private label(t: Tracked, text: string): void {
+    const label = this.layer.ownerDocument.createElement('span');
+    label.className = 'ws-list-label';
+    label.textContent = text;
+    t.box.appendChild(label);
   }
 
   /** Current tag markup, for tests. */
@@ -180,11 +273,12 @@ export class Overlay {
     this.setList(null);
     this.setItems([], 'sibling');
     this.setMatches([]);
+    this.setOutlines(null);
   }
 
   /** Current boxes, for tests and the e2e hook. */
   boxes(): { variant: BoxVariant; light: boolean; el: Element }[] {
-    return [this.hover, this.selected, this.list, ...this.groups, ...this.matches]
+    return [this.dim, ...this.outlines, this.hover, this.selected, this.list, ...this.groups, ...this.matches]
       .filter((t): t is Tracked => t !== null)
       .map(({ variant, light, el }) => ({ variant, light, el }));
   }
@@ -200,8 +294,29 @@ export class Overlay {
 
   /** Reposition every box now. */
   update(): void {
-    for (const t of [this.hover, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
+    for (const t of [...this.outlines, this.hover, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
+    if (this.dim) this.placeDim(this.dim);
     this.placeTag();
+  }
+
+  /** The dim covers the viewport with the active containers cut out, one path per frame. */
+  private placeDim(dim: Tracked): void {
+    const win = this.layer.ownerDocument.defaultView!;
+    const w = win.innerWidth;
+    const h = win.innerHeight;
+    const s = dim.box.style;
+    s.top = '0px';
+    s.left = '0px';
+    s.width = `${w}px`;
+    s.height = `${h}px`;
+    s.display = 'block';
+    let path = `M0 0H${w}V${h}H0Z`;
+    for (const el of this.holes) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      path += `M${Math.round(r.left)} ${Math.round(r.top)}h${Math.round(r.width)}v${Math.round(r.height)}h${-Math.round(r.width)}Z`;
+    }
+    s.clipPath = `path(evenodd, '${path}')`;
   }
 
   private placeTag(): void {

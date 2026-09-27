@@ -59,6 +59,7 @@ describe('runtime with a list parent', () => {
       setList: () => {},
       setHover: () => {},
       setMatches: () => {},
+      setOutlines: () => {},
       setItems: (items: readonly Element[], _variant: string, excluded: readonly Element[] = []) => calls.push({ items: [...items], excluded: [...excluded] }),
     } as unknown as Overlay;
     const sent: PageMessage[] = [];

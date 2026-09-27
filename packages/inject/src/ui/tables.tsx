@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Draft, DraftTable } from '@webscoop/core/page';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { tableMode, type Draft, type DraftTable, type TableMode } from '@webscoop/core/page';
 import { useActions, useSnapshot } from './context';
-import { Icon } from './icons';
+import { Icon, type IconName } from './icons';
+import { Kbd } from './shell';
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -18,6 +19,26 @@ export function newTableName(tables: readonly DraftTable[]): string {
   const taken = tables.map((t) => t.name);
   if (tables.every((t) => t.item !== null) && !taken.includes('page')) return 'page';
   for (let n = tables.length + 1; ; n++) if (!taken.includes(`table-${n}`)) return `table-${n}`;
+}
+
+const MODE_ICON = { list: 'rows', page: 'rectangle', none: 'circle' } as const;
+const MODE_TITLE = { list: 'list', page: 'page table', none: 'no mode yet' } as const;
+
+/** The mode icon of a table: a list, a page table, or neutral while it has no mode. */
+export function ModeIcon({ table }: { table: Pick<DraftTable, 'item' | 'fields'> }) {
+  const mode = tableMode(table);
+  return (
+    <span className="ws-mode-icon" title={MODE_TITLE[mode]} data-ws="mode-icon" data-mode={mode}>
+      <Icon name={MODE_ICON[mode]} size={12} />
+    </span>
+  );
+}
+
+/** The table header's mode line: "List · N rows", "Page · 1 row", or "No mode yet". */
+export function modeLabel(table: DraftTable): string {
+  const mode: TableMode = tableMode(table);
+  if (mode === 'list') return `List · ${table.item!.count ?? '…'} rows`;
+  return mode === 'page' ? 'Page · 1 row' : 'No mode yet';
 }
 
 /** Rows the table yields on this page, when known: its container count, or one row for a table without containers. */
@@ -160,11 +181,11 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
             const active = index === draft.activeTable;
             const count = tableRowCount(table);
             const renaming = ui.renamingTab === index && active;
-            const title = table.error ?? table.fields.find((f) => f.error)?.error ?? (locked && !active ? 'Finish editing the items first' : undefined);
+            const title = table.error ?? table.fields.find((f) => f.error)?.error ?? (locked && !active ? 'Finish the list setup first' : undefined);
             if (renaming) {
               return (
                 <div key={table.name} className="ws-tab" role="tab" aria-selected data-ws="table-tab" data-table={table.name} data-active>
-                  <Icon name={table.item ? 'rows' : 'rectangle'} size={12} />
+                  <ModeIcon table={table} />
                   <RenameInput
                     table={table}
                     index={index}
@@ -224,7 +245,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                 data-table={table.name}
                 data-active={active || undefined}
               >
-                <Icon name={table.item ? 'rows' : 'rectangle'} size={12} title={table.item ? 'list' : 'page'} />
+                <ModeIcon table={table} />
                 <span className="ws-tab-name">{table.name}</span>
                 {count !== null && (
                   <span className="ws-tab-count" data-ws="table-count">
@@ -271,7 +292,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                     data-ws="tabs-more-item"
                     data-table={draft.tables[i]!.name}
                   >
-                    <Icon name={draft.tables[i]!.item ? 'rows' : 'rectangle'} size={12} />
+                    <ModeIcon table={draft.tables[i]!} />
                     {draft.tables[i]!.name}
                   </button>
                 ))}
@@ -301,7 +322,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   );
 }
 
-/** The active table's "…" menu: Rename, Move left, Move right, Use for pagination, Remove table. */
+/** The active table's "…" menu: the mode lock, Rename, Move left, Move right, Use for pagination, Clear table, Remove table. */
 export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) {
   const actions = useActions();
   const { ui } = useSnapshot();
@@ -310,7 +331,7 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
   const table = draft.tables[at]!;
   const primary = primaryTable(draft.tables);
   const close = () => actions.setUi({ menu: null });
-  const item = (label: string, ws: string, onClick: () => void, disabled = false, title?: string, danger = false) => (
+  const item = (label: string, ws: string, onClick: () => void, disabled = false, title?: string, danger = false, icon?: IconName, hint?: ReactNode) => (
     <button
       type="button"
       role="menuitem"
@@ -323,9 +344,12 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
       }}
       data-ws={ws}
     >
-      {label}
+      {icon && <Icon name={icon} size={12} />}
+      <span className="ws-spacer">{label}</span>
+      {hint && <span className="ws-menu-hint">{hint}</span>}
     </button>
   );
+  const mode = tableMode(table);
   const pagingTitle = !table.item ? 'Only a table with an item container can drive pagination' : primary === at ? 'This table already drives pagination' : 'Move this table in front of the other lists';
   return (
     <span className="ws-menu-anchor">
@@ -343,24 +367,45 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
       </button>
       {open && (
         <div className="ws-menu" role="menu" style={{ right: 0, top: 24 }} data-ws="tab-menu-list">
-          {item('Rename', 'menu-rename', () => actions.setUi({ renamingTab: at }))}
-          {item('Move left', 'menu-move-left', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at - 1 }), at === 0)}
-          {item('Move right', 'menu-move-right', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at + 1 }), at === draft.tables.length - 1)}
+          {table.fields.length > 0 && (
+            <div className="ws-menu-note" role="note" data-ws="menu-mode-locked">
+              <Icon name="lock-simple" size={11} />
+              Mode locked — {mode}. Clear table to change.
+            </div>
+          )}
+          {item('Rename', 'menu-rename', () => actions.setUi({ renamingTab: at }), false, undefined, false, 'pencil-simple', 'dbl-click tab')}
+          {item('Move left', 'menu-move-left', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at - 1 }), at === 0, undefined, false, 'arrow-left', <Kbd>Alt ←</Kbd>)}
+          {item('Move right', 'menu-move-right', () => void actions.send({ kind: 'draft.moveTable', from: at, to: at + 1 }), at === draft.tables.length - 1, undefined, false, 'arrow-right', <Kbd>Alt →</Kbd>)}
           {item(
             'Use for pagination',
             'menu-pagination',
             () => void actions.send({ kind: 'draft.moveTable', from: at, to: primary }),
             !table.item || primary === at || primary === -1,
             pagingTitle,
+            false,
+            'arrow-right',
+            !table.item ? 'list tables only' : primary === at ? 'already drives it' : undefined,
           )}
-          {draft.tables.length > 1 && item('Remove table', 'table-remove', () => void actions.send({ kind: 'draft.removeTable' }), false, 'Remove this table with its item container and fields', true)}
+          {(table.fields.length > 0 || table.item) && <div className="ws-menu-sep" />}
+          {(table.fields.length > 0 || table.item) &&
+            item(
+              'Clear table',
+              'menu-clear-table',
+              () => void actions.send({ kind: 'draft.clearTable' }),
+              false,
+              table.item ? 'Remove the fields and the list; the table keeps its name' : 'Remove the fields; the table keeps its name',
+              false,
+              'eraser',
+              table.item && table.fields.length > 0 ? 'fields + list' : table.item ? 'list' : 'fields',
+            )}
+          {draft.tables.length > 1 && item('Remove table', 'table-remove', () => void actions.send({ kind: 'draft.removeTable' }), false, 'Remove this table with its item container and fields', true, 'trash')}
         </div>
       )}
     </span>
   );
 }
 
-/** The active table's name, its kind (a list with its row count, or a page table), and its menu, with its validation error. */
+/** The active table's name, its mode (a list with its row count, a page table, or no mode yet), and its menu, with its validation error. */
 export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }) {
   const table = draft.tables[draft.activeTable]!;
   return (
@@ -369,9 +414,9 @@ export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }
         <span className="ws-title ws-mono ws-ellipsis" data-ws="table-title">
           {table.name}
         </span>
-        <span className="ws-table-kind" data-ws="table-kind" data-kind={table.item ? 'list' : 'page'}>
-          <Icon name={table.item ? 'rows' : 'rectangle'} size={12} />
-          {table.item ? `list · ${table.item.count ?? '…'} rows` : 'page table · one row'}
+        <span className="ws-table-kind ws-kind-pill" data-ws="table-kind" data-kind={tableMode(table)}>
+          <ModeIcon table={table} />
+          {modeLabel(table)}
         </span>
         <span className="ws-spacer" />
         <TableMenu draft={draft} locked={locked} />

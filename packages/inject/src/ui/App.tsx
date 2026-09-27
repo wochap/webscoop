@@ -1,18 +1,18 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { currentTable } from '@webscoop/core/page';
+import { currentTable, tableMode } from '@webscoop/core/page';
 import { isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
 import { modeOf, type Actions, type Snapshot } from '../store';
 import { useActions, useSnapshot } from './context';
 import { FieldList } from './fields';
 import { GuardBanner, GuardPanel } from './guard';
-import { ItemActions, ItemDetectCard, ItemSummary } from './items';
+import { ItemActions, ItemSummary, ListSetup, ListSetupActions } from './items';
 import { PaginationSection } from './pagination';
 import { PickModeStrip } from './picking';
 import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
 import { Section } from './section';
-import { MovedNotice, SelectionPanel } from './selection';
+import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
 import { TabBar, TableHeader } from './tables';
@@ -37,7 +37,13 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
       actions.setUi({ menu: null });
       return;
     case 'confirm':
-      if (host?.proposal) void actions.send({ kind: 'draft.confirmItems', level: host.proposal[ui.level] ? ui.level : 'proposed' });
+      if (host?.proposal && (host.proposal.proposed.count ?? 0) > 0) void actions.send({ kind: 'draft.confirmItems' });
+      return;
+    case 'setupList':
+      void actions.send({ kind: 'list.open', from: 'suggestion' });
+      return;
+    case 'closeSetup':
+      void actions.send({ kind: 'draft.cancelItems' });
       return;
     case 'walkUp':
     case 'walkDown': {
@@ -113,11 +119,15 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
 export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot, actions: Actions): boolean {
   // While a run waits on a guard, every key belongs to the page (the user is logging in).
   if (snap.host?.guardContext) return false;
+  const host = snap.host;
+  const selected = host?.selected;
   const shortcut = shortcutFor(e, {
     typing: isTypingTarget(target),
     picking: snap.ui.picking,
     menuOpen: snap.ui.menu !== null,
     hasProposal: Boolean(snap.host?.proposal),
+    canConfirm: (snap.host?.proposal?.proposed.count ?? 0) > 0,
+    canSetupList: Boolean(host && selected?.suggestion && !host.editing && host.repick === null && tableMode(currentTable(host.draft)) === 'none'),
     hasSelection: Boolean(snap.host?.selected),
     focusedField: snap.ui.focusedField,
     focusedStep: snap.ui.focusedStep,
@@ -126,7 +136,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     editing: Boolean(snap.host?.editing),
     focusedTab: snap.ui.focusedTab,
     renaming: snap.ui.renamingTab !== null,
-    tabsLocked: Boolean(snap.host?.proposal?.editing),
+    tabsLocked: Boolean(snap.host?.proposal),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions);
@@ -199,7 +209,7 @@ export function ScoopRoot() {
   const { draft, proposal } = host;
   const table = currentTable(draft);
   const fieldCount = draft.tables.reduce((sum, t) => sum + t.fields.length, 0);
-  const locked = Boolean(proposal?.editing);
+  const locked = Boolean(proposal);
   const collapsed = host.panel.collapsed;
   const collapse = (section: 'recipe' | 'steps' | 'pagination') => (on: boolean) => void actions.send({ kind: 'panel.setCollapsed', section, collapsed: on });
   const edit = (index: number) => {
@@ -210,6 +220,7 @@ export function ScoopRoot() {
     <div onKeyDown={onKeyDown} style={{ display: 'contents' }} data-ws="panel">
       <PanelShell
         header={<PanelHeader mode={mode} onEnd={() => void actions.send({ kind: 'session.end' })} />}
+        bar={proposal ? <ListSetupActions proposal={proposal} /> : undefined}
         footer={
           <PanelFooter
             dirty={draft.dirty}
@@ -225,62 +236,61 @@ export function ScoopRoot() {
           />
         }
       >
-        <RecipeBar
-          draft={draft}
-          editingVar={ui.editingVar}
-          setEditingVar={(editingVar) => actions.setUi({ editingVar })}
-          collapsed={collapsed.recipe}
-          onCollapse={collapse('recipe')}
-        />
-        <StepList
-          steps={draft.steps}
-          vars={draft.vars}
-          focused={ui.focusedStep}
-          repick={host.repickStep}
-          browsing={ui.browsing}
-          onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null, focusedTab: null })}
-          collapsed={collapsed.steps}
-          onCollapse={collapse('steps')}
-        />
-        <PaginationSection pagination={draft.pagination} collapsed={collapsed.pagination} onCollapse={collapse('pagination')} />
-        <TabBar draft={draft} locked={locked} />
-        <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
-          <TableHeader draft={draft} locked={locked} />
-          {(table.item || proposal) && (
-            <Section id="rows" title="Rows" count={proposal ? null : (table.item?.count ?? null)} actions={table.item && !proposal ? <ItemActions item={table.item} /> : undefined}>
-              {proposal ? (
-                <ItemDetectCard
-                  proposal={proposal}
-                  level={proposal[ui.level] ? ui.level : 'proposed'}
-                  onLevel={(level) => actions.setUi({ level })}
-                  highlight={ui.highlight}
-                  onHighlight={(highlight) => actions.setUi({ highlight })}
-                />
-              ) : (
-                table.item && <ItemSummary item={table.item} />
+        {proposal ? (
+          // The list setup takes over the content; tabs, the table menu, and field edits wait.
+          <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
+            {host.levelPick && <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick.level} />}
+            <ListSetup proposal={proposal} table={table.name} pick={host.selected?.selection.path ?? null} onPreview={(path) => actions.previewPath?.(path)} />
+          </div>
+        ) : (
+          <>
+            <RecipeBar
+              draft={draft}
+              editingVar={ui.editingVar}
+              setEditingVar={(editingVar) => actions.setUi({ editingVar })}
+              collapsed={collapsed.recipe}
+              onCollapse={collapse('recipe')}
+            />
+            <StepList
+              steps={draft.steps}
+              vars={draft.vars}
+              focused={ui.focusedStep}
+              repick={host.repickStep}
+              browsing={ui.browsing}
+              onFocus={(focusedStep) => actions.setUi({ focusedStep, focusedField: null, focusedTab: null })}
+              collapsed={collapsed.steps}
+              onCollapse={collapse('steps')}
+            />
+            <PaginationSection pagination={draft.pagination} collapsed={collapsed.pagination} onCollapse={collapse('pagination')} />
+            <TabBar draft={draft} locked={locked} />
+            <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
+              <TableHeader draft={draft} locked={locked} />
+              {table.item && (
+                <Section id="rows" title="Rows" count={table.item.count ?? null} actions={<ItemActions item={table.item} locked={table.fields.length > 0} />}>
+                  <ItemSummary item={table.item} />
+                </Section>
               )}
-            </Section>
-          )}
-          <Section id="pick" title="Pick">
-            <MovedNotice host={host} />
-            <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
-            <SelectionPanel host={host} trail={ui.trail} />
-          </Section>
-          <Section id="fields" title="Fields" count={table.fields.length > 0 ? table.fields.length : null}>
-            <div className="ws-col" data-ws="fields">
-              <FieldList
-                fields={table.fields}
-                item={table.item}
-                focused={ui.focusedField}
-                repick={host.repick}
-                editing={host.editing?.index ?? null}
-                editLocked={locked}
-                onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null, focusedTab: null })}
-                onEdit={(index) => edit(index)}
-              />
+              <Section id="pick" title="Pick">
+                <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} />
+                <SelectionPanel host={host} trail={ui.trail} />
+              </Section>
+              <Section id="fields" title="Fields" count={table.fields.length > 0 ? table.fields.length : null}>
+                <div className="ws-col" data-ws="fields">
+                  <FieldList
+                    fields={table.fields}
+                    item={table.item}
+                    focused={ui.focusedField}
+                    repick={host.repick}
+                    editing={host.editing?.index ?? null}
+                    editLocked={locked}
+                    onFocus={(focusedField) => actions.setUi({ focusedField, focusedStep: null, focusedTab: null })}
+                    onEdit={(index) => edit(index)}
+                  />
+                </div>
+              </Section>
             </div>
-          </Section>
-        </div>
+          </>
+        )}
         {draft.errors.length > 0 && fieldCount > 0 && (
           <div className="ws-col" data-ws="draft-errors">
             {draft.errors.map((e, i) => (

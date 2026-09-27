@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   currentTable,
   defaultTableName,
+  descendantsOf,
   draftErrors,
   draftFromRecipe,
   draftToRecipe,
@@ -9,8 +10,11 @@ import {
   loadRecipe,
   parseHostMessage,
   parsePageMessage,
+  pathOf,
   RecorderController,
   reduceDraft,
+  saveRecipe,
+  tableMode,
   validateRecipe,
   type Draft,
   type DraftField,
@@ -18,7 +22,7 @@ import {
   type NewField,
   type RecipeInput,
 } from '../src';
-import { byClass, cardPath, draftWith, harness, MemoryStorage, referenceRecipe, type Harness } from './recorder-helpers';
+import { acceptList, byClass, cardPath, draftWith, harness, MemoryStorage, openList, referenceRecipe, type Harness } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
 
 const MIXED = 'http://127.0.0.1:4777/catalog?mixed=1';
@@ -72,7 +76,7 @@ describe('protocol: tables', () => {
 
 describe('draft reducer: tables', () => {
   it('adds a table and makes it active', () => {
-    let draft = reduceDraft(newDraft(), { type: 'addField', field: field('title') });
+    let draft = reduceDraft(draftWith({}), { type: 'addField', field: field('title') });
     expect(defaultTableName(draft)).toBe('table-2');
     draft = reduceDraft(draft, { type: 'addTable', name: 'page' });
     expect(draft.tables.map((t) => t.name)).toEqual(['items', 'page']);
@@ -168,12 +172,80 @@ describe('draft reducer: tables', () => {
   });
 
   it('saves a single renamed table in the tables form', () => {
-    let draft = reduceDraft(newDraft(), { type: 'addField', field: field('title') });
+    let draft = reduceDraft(draftWith({}), { type: 'addField', field: field('title') });
     expect(draftToRecipe(draft).tables).toBeUndefined();
     draft = reduceDraft(draft, { type: 'renameTable', name: 'products' });
     const out = draftToRecipe(draft);
     expect(out.fields).toBeUndefined();
     expect(out.tables!.map((t) => t.name)).toEqual(['products']);
+  });
+});
+
+describe('draft reducer: table modes', () => {
+  const item = { selectors: [css('.card')], exclude: [], count: null, total: null };
+
+  it('derives the mode from the item container and the fields', () => {
+    expect(tableMode({ item: null, fields: [] })).toBe('none');
+    expect(tableMode({ item: null, fields: [draftField('heading')] })).toBe('page');
+    expect(tableMode({ item, fields: [] })).toBe('list');
+    expect(tableMode({ item, fields: [{ ...draftField('title'), scope: 'item' }] })).toBe('list');
+  });
+
+  it('marks recorder chosen names and never saves the mark', () => {
+    let draft = newDraft();
+    expect(draft.tables[0]).toMatchObject({ name: 'items', defaultName: true });
+    draft = reduceDraft(draft, { type: 'addTable', name: 'table-2', defaultName: true });
+    draft = reduceDraft(draft, { type: 'addTable', name: 'summary' });
+    expect(draft.tables.map((t) => t.defaultName ?? false)).toEqual([true, true, false]);
+    expect(JSON.stringify(draftToRecipe(draft))).not.toMatch(/defaultName/);
+    // A rename clears it; a loaded recipe has none.
+    const renamed = reduceDraft({ ...draft, activeTable: 0 }, { type: 'renameTable', name: 'results' });
+    expect(renamed.tables[0]!.defaultName).toBeUndefined();
+    expect(draftFromRecipe(referenceRecipe()).tables[0]!.defaultName).toBeUndefined();
+  });
+
+  it('names a default named table after its mode on the first field', () => {
+    const page = reduceDraft(newDraft(), { type: 'addField', field: field('heading') });
+    expect(page.tables[0]).toMatchObject({ name: 'page', fields: [{ name: 'heading' }] });
+    expect(page.tables[0]!.defaultName).toBeUndefined();
+    const list = reduceDraft({ ...newDraft(), tables: [{ name: 'table-2', item, fields: [], defaultName: true }] }, { type: 'addField', field: { ...field('title'), scope: 'item' } });
+    expect(list.tables[0]!.name).toBe('items');
+    // The name is taken: the table keeps its own and loses the mark.
+    const taken = reduceDraft(
+      { ...newDraft(), tables: [{ name: 'page', item: null, fields: [draftField('a')] }, { name: 'table-2', item: null, fields: [], defaultName: true }], activeTable: 1 },
+      { type: 'addField', field: field('heading') },
+    );
+    expect(taken.tables.map((t) => [t.name, t.defaultName])).toEqual([
+      ['page', undefined],
+      ['table-2', undefined],
+    ]);
+  });
+
+  it('clears the active table and keeps its name and position', () => {
+    const draft = draftWith([
+      { name: 'results', item, fields: [{ ...draftField('title'), scope: 'item' }] },
+      { name: 'summary', fields: [draftField('heading')] },
+    ]);
+    const cleared = reduceDraft(draft, { type: 'clearTable' });
+    expect(cleared.tables.map((t) => [t.name, t.item, t.fields.length])).toEqual([
+      ['results', null, 0],
+      ['summary', null, 1],
+    ]);
+  });
+
+  it('moves a page field of a list to a new page table and keeps the list active', () => {
+    const draft = draftWith({ name: 'products', item, fields: [{ ...draftField('title'), scope: 'item' }, { ...draftField('category'), attr: 'title', optional: true, coverage: { matched: 0, total: 24 } }] });
+    const moved = reduceDraft(draft, { type: 'moveFieldToPage', index: 1 });
+    expect(moved.activeTable).toBe(0);
+    expect(moved.tables.map((t) => [t.name, t.fields.map((f) => [f.name, f.scope])])).toEqual([
+      ['products', [['title', 'item']]],
+      ['page', [['category', 'page']]],
+    ]);
+    expect(moved.tables[1]!.fields[0]).toMatchObject({ selectors: [css('.category')], attr: 'title', optional: true });
+    expect(moved.tables[1]!.fields[0]!.coverage).toBeUndefined();
+    // An existing page table receives the next one.
+    const again = reduceDraft({ ...moved, tables: [{ ...moved.tables[0]!, fields: [...moved.tables[0]!.fields, { ...draftField('crumb'), scope: 'page' }] }, moved.tables[1]!] }, { type: 'moveFieldToPage', index: 1 });
+    expect(again.tables.map((t) => t.fields.map((f) => f.name))).toEqual([['title'], ['category', 'crumb']]);
   });
 });
 
@@ -206,8 +278,8 @@ describe('draft errors: tables', () => {
 async function products(): Promise<Harness> {
   const t = await harness(tier0Snapshot({ mixed: true }), newDraft(), MIXED);
   const title = byClass(t.page, 'product-title', 0);
-  await t.pick(title);
-  await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+  await openList(t, title);
+  await acceptList(t);
   await t.send({ kind: 'draft.renameTable', name: 'products' });
   return t;
 }
@@ -230,8 +302,8 @@ describe('RecorderController: tables', () => {
   it('creates a table from the field form', async () => {
     const t = await products();
     await t.pick(byClass(t.page, 'category-heading'));
-    // No table without containers: the active table stays the default, with page scope.
-    expect(t.controller.state.selected).toMatchObject({ scope: 'page', defaults: { table: 0 } });
+    // No table without containers: the active table stays, and the pick is flagged outside its list.
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', defaults: { table: 0 }, outside: { table: 0, pageTable: null } });
     await t.send({ kind: 'draft.addField', patch: { name: 'category', table: { new: 'page' } } });
     expect(t.controller.draft.tables.map((x) => [x.name, x.fields.map((f) => f.name)])).toEqual([
       ['products', ['wireless_mouse']],
@@ -252,15 +324,23 @@ describe('RecorderController: tables', () => {
     expect(t.controller.state.editing).toMatchObject({ index: 0, options: { name: 'wireless_mouse', scope: 'item' } });
   });
 
-  it('activates the page table for a pick outside the list and retargets it', async () => {
+  it('flags a pick outside the list and adds it only after switching to the page table', async () => {
     const t = await products();
     await t.send({ kind: 'draft.addTable', name: 'page' });
     await t.send({ kind: 'draft.selectTable', index: 0 });
     await t.pick(byClass(t.page, 'category-heading'));
     const selected = t.controller.state.selected!;
-    expect(selected).toMatchObject({ scope: 'page', table: 1, defaults: { table: 1 }, moved: { from: 'products', reason: 'outside the products list' } });
-    expect(t.controller.draft.activeTable).toBe(1);
+    expect(selected).toMatchObject({ scope: 'page', table: 0, outside: { table: 0, repeats: null, pageTable: 1 }, belongs: null, suggestion: null });
+    expect(t.controller.draft.activeTable).toBe(0);
     expect(t.controller.state.proposal).toBeNull();
+    // No field is added silently, to either table.
+    await t.send({ kind: 'draft.addField', patch: { name: 'category' } });
+    expect(t.controller.state.error).toMatch(/outside the products list/);
+    expect(t.controller.draft.tables.map((x) => x.fields.length)).toEqual([1, 0]);
+    // "Add to page": the pick is kept and computed for the page table.
+    await t.send({ kind: 'draft.selectTable', index: 1 });
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 1, outside: null });
+    expect(t.controller.draft.tables[1]!.fields).toHaveLength(0);
     await t.send({ kind: 'draft.addField', patch: { name: 'category' } });
     expect(t.controller.draft.tables[1]!.fields.map((f) => [f.name, f.scope])).toEqual([['category', 'page']]);
     await t.pick(byClass(t.page, 'category-heading'));
@@ -280,8 +360,115 @@ describe('RecorderController: tables', () => {
     expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 1 });
     await t.send({ kind: 'draft.selectTable', index: 0 });
     expect(t.controller.draft.activeTable).toBe(0);
-    expect(t.controller.state.selected).toMatchObject({ scope: 'item', table: 0 });
-    expect(t.controller.state.selected!.moved).toBeUndefined();
+    expect(t.controller.state.selected).toMatchObject({ scope: 'item', table: 0, outside: null, belongs: null });
+  });
+
+  it('offers a new page table for a pick outside the only list', async () => {
+    const t = await products();
+    await t.pick(byClass(t.page, 'category-heading'));
+    expect(t.controller.state.selected!.outside).toEqual({ table: 0, repeats: null, pageTable: null });
+    // "New page table" with the default name.
+    await t.send({ kind: 'draft.addTable', name: defaultTableName(t.controller.draft) });
+    expect(t.controller.draft.tables.map((x) => x.name)).toEqual(['products', 'page']);
+    expect(t.controller.state.selected).toMatchObject({ scope: 'page', table: 1, outside: null });
+    expect(t.controller.draft.tables[1]!.fields).toHaveLength(0);
+  });
+
+  it('says how often a pick outside the list repeats and starts a list table for it', async () => {
+    const t = await products();
+    const question = byClass(t.page, 'questions-title', 0);
+    await t.pick(question);
+    const outside = t.controller.state.selected!.outside!;
+    expect(outside).toMatchObject({ table: 0, pageTable: null });
+    expect(outside.repeats).toBeGreaterThan(1);
+    await t.send({ kind: 'list.open', from: 'newTable' });
+    expect(t.controller.draft.tables.map((x) => x.name)).toEqual(['products', 'page']);
+    expect(t.controller.draft.activeTable).toBe(1);
+    const proposal = t.controller.state.proposal!;
+    expect(proposal).toMatchObject({ origin: 'pick' });
+    expect(proposal.proposed.count).toBeGreaterThan(0);
+    expect(t.controller.state.selected).toMatchObject({ table: 1 });
+    // A page table does not start a list in place.
+    await t.send({ kind: 'draft.cancelItems' });
+    expect(t.controller.state.selected!.suggestion!.count).toBe(outside.repeats);
+  });
+
+  it('says a pick belongs to another list, switches to it, and lists the other containers', async () => {
+    const t = await products();
+    await t.send({ kind: 'draft.addTable', name: 'questions' });
+    await openList(t, byClass(t.page, 'questions-title', 0));
+    const own = t.controller.state.proposal!.proposed.selectors.findIndex((c) => c.value === 'article.mixed-questions');
+    await t.send({ kind: 'draft.setPrimary', level: 'item', index: own });
+    await acceptList(t);
+    expect(t.controller.draft.tables[1]!.item!.count).toBe(6);
+    await t.send({ kind: 'draft.selectTable', index: 0 });
+    // The questions containers, for muted outlines while the products list is active.
+    const other = t.controller.state.otherLists;
+    expect(other).toHaveLength(1);
+    expect(other[0]!.table).toBe(1);
+    expect(other[0]!.paths).toHaveLength(6);
+    const blocks = descendantsOf(t.page).filter((n) => (n.attrs.class ?? '').split(' ').includes('mixed-questions'));
+    expect(other[0]!.paths).toEqual(blocks.map(pathOf));
+
+    await t.pick(byClass(t.page, 'questions-title', 1));
+    const belongs = t.controller.state.selected!.belongs!;
+    expect(belongs).toMatchObject({ table: 1, index: 1, of: 6, stack: { item: { value: 'article.mixed-questions' } } });
+    expect(t.controller.state.selected!.outside).toBeNull();
+    await t.send({ kind: 'draft.addField', patch: {} });
+    expect(t.controller.state.error).toMatch(/belongs to the questions list/);
+    await t.send({ kind: 'draft.selectTable', index: 1 });
+    expect(t.controller.state.selected).toMatchObject({ scope: 'item', table: 1, belongs: null });
+    expect(t.controller.state.otherLists.map((x) => x.table)).toEqual([0]);
+  });
+
+  it('shows a page table the repeating pick without setting up a list there', async () => {
+    const t = await harness(tier0Snapshot({ mixed: true }), newDraft(), MIXED);
+    await t.pick(byClass(t.page, 'category-heading'));
+    await t.send({ kind: 'draft.addField', patch: {} });
+    expect(t.controller.draft.tables[0]!.name).toBe('page');
+    await t.pick(byClass(t.page, 'product-title', 0));
+    expect(t.controller.state.selected!.suggestion!.count).toBe(24);
+    await t.send({ kind: 'list.open', from: 'newTable' });
+    expect(t.controller.draft.tables.map((x) => x.name)).toEqual(['page', 'table-2']);
+    expect(t.controller.state.proposal!.proposed.count).toBe(24);
+    await acceptList(t);
+    // The new list takes the default name `items` with its first field.
+    expect(t.controller.draft.tables.map((x) => [x.name, x.item !== null, x.fields.length])).toEqual([
+      ['page', false, 1],
+      ['items', true, 1],
+    ]);
+  });
+
+  it('moves a misplaced page field of a loaded mixed table and saves an untouched one unchanged', async () => {
+    const recipe = loadRecipe({
+      schemaVersion: 1,
+      name: 'mixed',
+      url: MIXED,
+      tables: [
+        {
+          name: 'products',
+          item: { selectors: [{ strategy: 'testid', value: 'product-card', stability: 'stable' }], exclude: [] },
+          fields: [
+            { name: 'title', type: 'text', scope: 'item', selectors: [css('h2')] },
+            { name: 'category', type: 'text', scope: 'page', selectors: [css('.category-heading')] },
+          ],
+        },
+      ],
+    });
+    const untouched = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(recipe), MIXED);
+    await untouched.send({ kind: 'save.request' });
+    expect(untouched.storage.files.get('mixed')).toBe(saveRecipe(recipe));
+    const results = await untouched.controller.testRun();
+    expect(results.tables[0]!.rows.every((r) => r.category === 'Electronics')).toBe(true);
+
+    const t = await harness(tier0Snapshot({ mixed: true }), draftFromRecipe(recipe), MIXED);
+    await t.send({ kind: 'draft.moveFieldToPage', index: 1 });
+    expect(t.controller.draft.activeTable).toBe(0);
+    expect(t.controller.draft.tables.map((x) => [x.name, x.fields.map((f) => [f.name, f.scope])])).toEqual([
+      ['products', [['title', 'item']]],
+      ['page', [['category', 'page']]],
+    ]);
+    expect(t.controller.draft.tables[1]!.fields[0]).toMatchObject({ count: 1, selectors: [css('.category-heading')] });
   });
 
   it('creates, activates, and targets a new tab while an element is selected', async () => {
@@ -342,14 +529,14 @@ describe('RecorderController: tables', () => {
     const t = await products();
     const before = t.controller.draft.tables[0]!;
     await t.send({ kind: 'draft.addTable', name: 'questions' });
-    await t.pick(byClass(t.page, 'questions-title', 0));
+    await openList(t, byClass(t.page, 'questions-title', 0));
     const proposal = t.controller.state.proposal!;
     expect(proposal.proposed.label).toBe('article.mixed-questions');
     // The questions blocks' own class picks them out of the shared list.
     const own = proposal.proposed.selectors.findIndex((c) => c.value === 'article.mixed-questions');
     expect(proposal.proposed.selectors[own]!.count).toBe(6);
     await t.send({ kind: 'draft.setPrimary', level: 'item', index: own });
-    await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+    await acceptList(t);
     const [productsTable, questions] = t.controller.draft.tables;
     expect(productsTable!.item!.selectors).toEqual(before.item!.selectors);
     expect(productsTable!.fields.map((f) => f.name)).toEqual(before.fields.map((f) => f.name));

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent } from '@testing-library/react';
 import { detach, emptyDraft, HOST_BINDING, nodeAt, type PageMessage, type RecorderState } from '@webscoop/core';
 import { dataset, render } from '@webscoop/playground';
 import { afterEach, describe, expect, it } from 'vitest';
-import { byClass, cardPath, harness, type Harness } from '../../core/test/recorder-helpers';
+import { acceptList, byClass, cardPath, harness, openList, type Harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
 import { pathOfElement } from '../src/dom';
 import { Overlay } from '../src/overlay';
@@ -15,8 +15,8 @@ afterEach(cleanup);
 /** Item container confirmed, the title added as a field, and nothing selected. */
 async function withItems(): Promise<Harness> {
   const t = await harness(tier0Snapshot(), emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?tier={tier}', vars: [{ name: 'tier', value: '0' }] }));
-  await t.pick(byClass(t.page, 'product-title', 0));
-  await t.send({ kind: 'draft.confirmItems', level: 'proposed' });
+  await openList(t, byClass(t.page, 'product-title', 0));
+  await acceptList(t);
   return t;
 }
 
@@ -36,14 +36,17 @@ describe('field options form', () => {
     const name = p.q('form-name') as HTMLInputElement;
     expect(name.value).toBe(state.selected!.defaults.name);
     expect((p.q('form-type') as HTMLSelectElement).value).toBe('number');
-    expect((p.q('form-scope') as HTMLSelectElement).value).toBe('item');
+    // No scope choice: the table's mode decides.
+    expect(p.q('form-scope')).toBeNull();
+    expect(p.q('scope')).toBeNull();
+    expect(p.q('add-hint')!.textContent).toBe('Reads inside each of 24 items.');
     expect(toggle(p.q('form-optional'))).toBe('false');
     fireEvent.change(name, { target: { value: 'amount' } });
     fireEvent.change(p.q('form-type')!, { target: { value: 'text' } });
     fireEvent.click(p.q('form-optional')!);
     fireEvent.click(p.q('form-key')!);
     fireEvent.click(p.q('add-field')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', scope: 'item', attr: null, optional: true, key: true, table: 0 } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', attr: null, optional: true, key: true } });
   });
 
   it('follows the type with the attribute and refuses a duplicate name', async () => {
@@ -132,7 +135,7 @@ describe('editing a saved field', () => {
     expect(p.q('update-field')).not.toBeNull();
     fireEvent.change(p.q('form-type')!, { target: { value: 'text' } });
     fireEvent.click(p.q('update-field')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', scope: 'item', attr: null, optional: true, key: false } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', attr: null, optional: true, key: false } });
     fireEvent.click(p.q('cancel-edit')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.cancelEdit' });
     fireEvent.keyDown(p.q('body')!, { key: 'Escape' });

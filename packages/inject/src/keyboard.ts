@@ -3,6 +3,8 @@ export type Shortcut =
   | 'cancel'
   | 'closeMenu'
   | 'confirm'
+  | 'setupList'
+  | 'closeSetup'
   | 'walkUp'
   | 'walkDown'
   | 'moveUp'
@@ -34,7 +36,12 @@ export interface ShortcutContext {
   typing: boolean;
   picking: boolean;
   menuOpen: boolean;
+  /** The list setup is open. */
   hasProposal: boolean;
+  /** The list setup's item level matches at least one element; Enter accepts only then. */
+  canConfirm?: boolean;
+  /** The list suggestion is shown: `L` opens the list setup from it. */
+  canSetupList?: boolean;
   hasSelection: boolean;
   focusedField: number | null;
   /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
@@ -49,7 +56,7 @@ export interface ShortcutContext {
   focusedTab?: number | null;
   /** A table tab is being renamed. */
   renaming?: boolean;
-  /** The item proposal is being edited: tabs do not switch or move. */
+  /** The list setup is open: tabs do not switch or move. */
   tabsLocked?: boolean;
 }
 
@@ -68,9 +75,11 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Map a key press to a panel shortcut: `p` picks, `b` toggles browse mode,
- * Esc closes a menu, cancels picking, leaves browse mode, cancels a field
- * edit, or clears the selection, the first that applies; Enter confirms
- * the item proposal, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
+ * `L` opens the list setup from the list suggestion, Esc closes a menu,
+ * cancels a tab rename, cancels picking, closes the list setup, leaves browse
+ * mode, aborts a re-pick, cancels a field edit, or clears the selection, the
+ * first that applies; Enter accepts the list setup while its item matches
+ * something, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
  * reorder the focused field or step, Alt+Left and Alt+Right move the
  * focused table tab, F2 renames it, Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
@@ -84,6 +93,7 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     if (ctx.menuOpen) return 'closeMenu';
     if (ctx.renaming) return 'cancelRename';
     if (ctx.picking) return 'cancel';
+    if (ctx.hasProposal) return 'closeSetup';
     if (ctx.browsing) return 'stopBrowse';
     if (ctx.repicking) return 'abort';
     if (ctx.editing) return 'cancelEdit';
@@ -109,7 +119,8 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (ctx.picking) return null;
   if (e.key === 'p' || e.key === 'P') return 'pick';
   if ((e.key === 'b' || e.key === 'B') && !ctx.repicking) return ctx.browsing ? 'stopBrowse' : 'browse';
-  if (e.key === 'Enter' && ctx.hasProposal) return 'confirm';
+  if (e.key === 'Enter' && ctx.hasProposal) return ctx.canConfirm === false ? null : 'confirm';
+  if ((e.key === 'l' || e.key === 'L') && ctx.canSetupList && !ctx.hasProposal) return 'setupList';
   if (e.key === 'ArrowLeft' && ctx.hasSelection) return 'walkUp';
   if (e.key === 'ArrowRight' && ctx.hasSelection) return 'walkDown';
   return null;

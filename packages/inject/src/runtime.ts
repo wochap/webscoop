@@ -25,7 +25,7 @@ import {
   resolveLocal,
   snapshotOf,
 } from './dom';
-import type { Overlay } from './overlay';
+import type { HoverPlace, ListOutlines, Overlay } from './overlay';
 import type { ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
 import { handleKey } from './ui/App';
@@ -167,9 +167,6 @@ export class Runtime implements Actions {
     if (next.saved && next.saved.at !== prev?.saved?.at) {
       this.toast('ok', `Saved ${next.saved.name}${next.saved.path ? ` to ${next.saved.path}` : ''}`);
     }
-    if (!next.proposal && prev?.proposal) this.store.setUi({ level: 'proposed' });
-    // A new item level (an edit, include all) starts from the proposed rung again.
-    else if (next.proposal && prev?.proposal && next.proposal.proposed.path.join() !== prev.proposal.proposed.path.join()) this.store.setUi({ level: 'proposed' });
     // Picking a list level opens ready to pick; picking ends when the host clears it.
     if (next.levelPick && !prev?.levelPick && !this.store.get().ui.picking) this.startPicking();
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
@@ -213,12 +210,14 @@ export class Runtime implements Actions {
     if (this.browsing) this.stopBrowsing();
     this.store.setUi({ picking: true, menu: null });
     this.opts.overlay.setHover(null);
+    this.syncOverlay();
   };
 
   cancelPicking = (): void => {
     if (!this.picking) return;
     this.store.setUi({ picking: false });
     this.opts.overlay.setHover(null);
+    this.syncOverlay();
     void this.send({ kind: 'picker.cancel' });
   };
 
@@ -277,7 +276,40 @@ export class Runtime implements Actions {
     return null;
   }
 
+  /**
+   * While picking a field in a list table (not a list level, not in the list
+   * setup, not re-picking): its containers, list parent, and the other
+   * lists' containers, for the outlines and the hover tag.
+   */
+  private listPicking(): { name: string; parent: Element | null; items: Element[]; others: ListOutlines['others'] } | null {
+    const { host, ui } = this.store.get();
+    if (!ui.picking || !host || host.levelPick || host.proposal || host.repickContext || host.repick !== null || host.repickStep !== null) return null;
+    const table = currentTable(host.draft);
+    if (!table.item) return null;
+    const items = containersLocal(table.item, this.doc);
+    const within = table.item.within;
+    const parent = within ? (resolveFirstLocal(within, this.doc)[0] ?? null) : null;
+    const others = host.otherLists.map((o) => ({
+      table: host.draft.tables[o.table]?.name ?? '',
+      items: o.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null),
+    }));
+    return { name: table.name, parent, items, others };
+  }
+
+  /** Outline the element at a path (a hovered ladder row), or clear it. */
+  previewPath = (path: Path | null): void => {
+    const el = path ? elementAt(path, this.doc) : null;
+    this.opts.overlay.setHover(el, el ? excerpt(el) : '');
+  };
+
   hover(el: Element | null): void {
+    const lists = el ? this.listPicking() : null;
+    if (lists && el) {
+      const index = lists.items.findIndex((c) => c === el || c.contains(el));
+      const place: HoverPlace = index === -1 ? { kind: 'outside', table: lists.name } : { kind: 'item', index, of: lists.items.length };
+      this.opts.overlay.setHover(el, excerpt(el), undefined, undefined, place);
+      return;
+    }
     if (this.store.get().host?.levelPick) {
       const refused = el ? this.levelRefusal(el) : null;
       this.opts.overlay.setHover(el, el ? excerpt(el) : '', undefined, refused ?? undefined);
@@ -322,7 +354,7 @@ export class Runtime implements Actions {
       const item = activeItem(this.store.get().host);
       const containers = item ? containersLocal(item, this.doc) : [];
       const { selection, snapshot } = describeSelection(el, containers, this.doc);
-      if (newTrail) this.store.setUi({ trail: selection.ancestors, level: 'proposed' });
+      if (newTrail) this.store.setUi({ trail: selection.ancestors });
       this.opts.overlay.setSelected(el);
       await this.send({ kind: 'picker.select', url: this.win.location.href, selection, snapshot });
     });
@@ -340,20 +372,22 @@ export class Runtime implements Actions {
 
   /** Draw the selection, the proposal's items, or the confirmed containers. */
   syncOverlay(): void {
-    const { host, ui } = this.store.get();
+    const { host } = this.store.get();
     const overlay = this.opts.overlay;
     const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
     overlay.setSelected(selected);
-    if (!host || !ui.highlight || host.guardContext) {
+    const lists = this.listPicking();
+    overlay.setOutlines(lists && { table: lists.name, parent: lists.parent, items: lists.items, others: lists.others });
+    if (!host || host.guardContext) {
       overlay.setList(null);
       overlay.setMatches([]);
       return overlay.setItems([], 'sibling');
     }
     overlay.setMatches(this.editedMatches());
-    overlay.setList(this.listParent());
+    // While picking in a list, the list parent has its level outline instead.
+    overlay.setList(lists ? null : this.listParent());
     if (host.proposal) {
-      const level = host.proposal[ui.level] ?? host.proposal.proposed;
-      const items = level.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);
+      const items = host.proposal.proposed.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);
       return overlay.setItems(items, 'sibling', this.excluded(items, host.proposal.exclude));
     }
     const item = activeItem(host);

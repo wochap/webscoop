@@ -9,6 +9,7 @@ import {
   annotate,
   compoundOf,
   descendantsOf,
+  elementChildren,
   fingerprint,
   generate,
   inferItems,
@@ -19,6 +20,8 @@ import {
   rank,
   refForNode,
   relativize,
+  similarity,
+  SIMILARITY_THRESHOLD,
   textContent,
   type AnnotatedNode,
   type Candidate,
@@ -43,13 +46,18 @@ import {
   currentTable,
   HOST_BINDING,
   parsePageMessage,
+  scopeForTable,
+  tableMode,
   type DraftItem,
   type DraftTable,
   type Draft,
   type FieldPatch,
   type HostMessage,
+  type ItemLadderRow,
   type LevelView,
   type NewStep,
+  type ParentLadderRow,
+  type ProposalOrigin,
   type ParsedPageMessage,
   type ParsedSelection,
   type ProposalView,
@@ -59,7 +67,6 @@ import {
   type LevelPick,
   type RecorderState,
   type SelectedView,
-  type Rung,
   type RepickContext,
   type TestResults,
   type TestTable,
@@ -107,8 +114,17 @@ export interface RecorderOptions {
 const MAX_TEST_ROWS = 200;
 const TOP = new Set(['html', 'body', 'head']);
 
-function excerpt(node: AnnotatedNode, max = 80): string {
-  return normalize(textContent(node)).slice(0, max);
+/** An item's text for a sample: its separate text parts joined with ` · `, so the panel can tell them apart. */
+function sampleOf(node: AnnotatedNode, max = 120): string {
+  const parts: string[] = [];
+  const walk = (n: AnnotatedNode['children'][number]) => {
+    if (n.type === 'text') {
+      const text = normalize(n.text);
+      if (text && parts.at(-1) !== text) parts.push(text);
+    } else if (n.tag !== 'script' && n.tag !== 'style') for (const c of n.children) walk(c);
+  };
+  walk(node);
+  return parts.join(' · ').slice(0, max);
 }
 
 function levelLabel(node: AnnotatedNode): string {
@@ -151,10 +167,30 @@ function orderForSave(candidates: readonly ProtocolCandidate[], primary: number)
   return [first, ...rest];
 }
 
-/** The selection without the note that it moved the active table. */
-function withoutMoved(selected: SelectedView): SelectedView {
-  const { moved: _moved, ...rest } = selected;
-  return rest;
+/** Most rows in a list setup ladder. */
+const MAX_LADDER = 12;
+export const LIST_READY = 'List ready — pick fields inside an item';
+
+/** The inferred list the setup works on; a manual setup has no item container yet. */
+type WorkingList = Omit<ItemProposal, 'container' | 'broader' | 'narrower'> & { container: AnnotatedNode | null };
+
+/** An item container level with no candidates, for a manual setup. */
+const EMPTY_LEVEL: LevelView = { tag: '', label: '', path: [], selectors: [], primary: 0, count: 0, total: 0, paths: [], samples: [] };
+
+/** What the suggestion card shows for an inferred list: at least two items. */
+function suggestionOf(proposal: ItemProposal | null): SelectedView['suggestion'] {
+  if (!proposal || proposal.siblings.length < 2) return null;
+  const count = proposal.siblings.length;
+  return { count, samples: proposal.siblings.slice(0, 3).map((n) => sampleOf(n)), more: Math.max(0, count - 3) };
+}
+
+/** Descendants of `list` on the same tag path as `item`, with a similar structure. */
+function likeItem(list: AnnotatedNode, item: AnnotatedNode): number {
+  const tags: string[] = [];
+  for (let cur: AnnotatedNode | null | undefined = item; cur && cur !== list; cur = cur.parent) tags.unshift(cur.tag);
+  let level = [list];
+  for (const tag of tags) level = level.flatMap((n) => elementChildren(n).filter((c) => c.tag === tag));
+  return level.filter((n) => n === item || similarity(n, item) >= SIMILARITY_THRESHOLD).length;
 }
 
 /**
@@ -168,7 +204,9 @@ export class RecorderController {
   private node: AnnotatedNode | null = null;
   /** Snapshot the last pick came with. */
   private root: AnnotatedNode | null = null;
-  private proposal: ItemProposal | null = null;
+  private proposal: WorkingList | null = null;
+  /** Where the open list setup came from. */
+  private origin: ProposalOrigin = 'pick';
   /** Proposal edits that inference does not know about: typed selectors, a cleared list parent, include all. */
   private edits: { within: Candidate | null; item: Candidate | null; withinCleared: boolean; includeAll: boolean } = {
     within: null,
@@ -230,6 +268,8 @@ export class RecorderController {
       repickStep: null,
       repickContext,
       guardContext: null,
+      notice: null,
+      otherLists: [],
       test: null,
       saved: null,
       busy: null,
@@ -432,12 +472,27 @@ export class RecorderController {
         return;
       }
       case 'draft.confirmItems':
-        return void (await this.confirmItems(msg.level));
+        return void (await this.confirmItems());
       case 'draft.cancelItems':
         // Cancelling an edit of the confirmed item returns to the empty state; the item stays.
-        if (this.current.proposal?.editing) this.clearSelection();
+        // Otherwise the selection comes back with its suggestion.
+        if (this.current.proposal?.origin === 'edit') this.clearSelection();
         else this.dropProposal();
         return;
+      case 'list.open':
+        return void (await this.openList(msg.from));
+      case 'list.dismiss': {
+        const selected = this.current.selected;
+        if (!selected) throw new Error('select an element first');
+        this.current = { ...this.current, selected: { ...selected, suggestion: null } };
+        return;
+      }
+      case 'list.ladder': {
+        if (!this.proposal || !this.current.proposal) throw new Error('no list setup is open');
+        const rows = msg.which === 'item' ? { itemLadder: await this.itemLadder() } : { parentLadder: await this.parentLadder() };
+        this.current = { ...this.current, proposal: { ...this.current.proposal, ...rows } };
+        return;
+      }
       case 'draft.editItem':
         return void (await this.editItem(msg.snapshot));
       case 'draft.setLevel':
@@ -450,15 +505,29 @@ export class RecorderController {
         this.edits = { ...this.edits, includeAll: !this.edits.includeAll };
         return void (await this.showProposal());
       case 'draft.setPrimary':
-        return void (await this.setPrimary(msg.level, msg.index, msg.rung ?? 'proposed'));
-      case 'draft.setItem':
-        this.notEditing();
-        this.notEditingItem();
-        return void (await this.setItemFromSelection());
+        return void (await this.setPrimary(msg.level, msg.index));
       case 'draft.clearItem':
+        this.notEditingItem();
+        if (this.table().fields.length > 0) throw new Error('the list is locked by its fields: use Clear table to start over');
         this.apply({ type: 'setItem', item: null });
         await this.recount();
         return;
+      case 'draft.clearTable':
+        this.notEditing();
+        this.notEditingItem();
+        this.clearSelection();
+        this.apply({ type: 'clearTable' });
+        await this.refreshOtherLists();
+        return;
+      case 'draft.moveFieldToPage': {
+        this.notEditing();
+        this.notEditingItem();
+        const field = this.table().fields[msg.index];
+        if (!field) throw new Error(`no field at index ${msg.index}`);
+        this.apply({ type: 'moveFieldToPage', index: msg.index });
+        await this.recount();
+        return;
+      }
       case 'draft.addExclusion':
         return void (await this.addExclusion(msg.selector));
       case 'draft.removeExclusion':
@@ -531,14 +600,16 @@ export class RecorderController {
         return;
       case 'draft.addTable': {
         this.notEditingItem();
-        const name = msg.name?.trim() || defaultTableName(this.draft);
+        const typed = msg.name?.trim();
+        const name = typed || defaultTableName(this.draft);
         const error = tableNameError(this.draft, name);
         if (error) throw new Error(error);
         // A selection is kept and computed for the new table; anything else belongs to the previous one.
         const keep = this.current.selected !== null && !this.current.editing;
         if (!keep) this.clearSelection();
-        this.apply({ type: 'addTable', name });
+        this.apply({ type: 'addTable', name, defaultName: !typed });
         if (keep) await this.retarget(this.draft.activeTable);
+        await this.refreshOtherLists();
         return;
       }
       case 'draft.renameTable': {
@@ -553,6 +624,7 @@ export class RecorderController {
         this.notEditingItem();
         this.clearSelection();
         this.apply({ type: 'removeTable' });
+        await this.refreshOtherLists();
         return;
       case 'draft.selectTable':
         this.notEditingItem();
@@ -561,9 +633,8 @@ export class RecorderController {
           this.current = { ...this.current, repick: null, repickStep: null };
           this.apply({ type: 'selectTable', index: msg.index });
           await this.retarget(msg.index);
-          return;
-        }
-        this.activate(msg.index);
+        } else this.activate(msg.index);
+        await this.refreshOtherLists();
         return;
       case 'draft.moveTable': {
         this.notEditingItem();
@@ -573,7 +644,20 @@ export class RecorderController {
         order.splice(to, 0, order.splice(from, 1)[0]!);
         this.apply({ type: 'moveTable', from, to });
         const selected = this.current.selected;
-        if (selected && selected.table !== null) this.current = { ...this.current, selected: { ...selected, table: order.indexOf(selected.table), defaults: { ...selected.defaults, table: order.indexOf(selected.defaults.table) } } };
+        if (selected && selected.table !== null) {
+          const at = (i: number | null | undefined) => (i === null || i === undefined ? null : order.indexOf(i));
+          this.current = {
+            ...this.current,
+            selected: {
+              ...selected,
+              table: order.indexOf(selected.table),
+              defaults: { ...selected.defaults, table: order.indexOf(selected.defaults.table) },
+              outside: selected.outside ? { ...selected.outside, table: at(selected.outside.table)!, pageTable: at(selected.outside.pageTable) } : null,
+              belongs: selected.belongs ? { ...selected.belongs, table: at(selected.belongs.table)! } : null,
+            },
+          };
+        }
+        await this.refreshOtherLists();
         return;
       }
       case 'panel.setCollapsed':
@@ -753,6 +837,29 @@ export class RecorderController {
     const stepCounts: (number | null)[] = [];
     for (const step of this.draft.steps) stepCounts.push(step.target ? await this.countPage(step.target.selectors[0]!) : null);
     this.apply({ type: 'setStepCounts', counts: stepCounts });
+    await this.refreshOtherLists();
+  }
+
+  /** While the active table is a list, the paths of every other list table's containers, for muted outlines on the page. */
+  private async refreshOtherLists(): Promise<void> {
+    const active = this.draft.activeTable;
+    const lists = this.draft.tables.flatMap((t, i) => (i !== active && t.item ? [{ item: t.item, table: i }] : []));
+    if (!this.table().item || lists.length === 0) {
+      if (this.current.otherLists.length > 0) this.current = { ...this.current, otherLists: [] };
+      return;
+    }
+    let root: AnnotatedNode;
+    try {
+      root = annotate((await this.session.snapshot()) as SerializedElement);
+    } catch {
+      return;
+    }
+    const otherLists: RecorderState['otherLists'] = [];
+    for (const { item, table } of lists) {
+      const nodes = await this.nodesFor(await this.containersOf(item), root);
+      otherLists.push({ table, paths: nodes.map(pathOf) });
+    }
+    this.current = { ...this.current, otherLists };
   }
 
   private async recountTable(t: number): Promise<void> {
@@ -834,13 +941,8 @@ export class RecorderController {
       scope = editing.options.scope;
     }
 
-    // A pick outside the active table's containers defaults to a table without containers, when there is one.
-    // It becomes the active table, and the panel says so.
-    const active = this.draft.activeTable;
-    const pageTable = !containerNode && this.table().item && !editing && !typed ? this.draft.tables.findIndex((t) => t.item === null) : -1;
-    const moved = pageTable === -1 ? undefined : { from: this.table().name, reason: `outside the ${this.table().name} list` };
-    if (pageTable !== -1) this.apply({ type: 'selectTable', index: pageTable });
-    const table = pageTable === -1 ? active : pageTable;
+    // The pick stays with the active table; a pick outside its list is flagged, never moved.
+    const table = this.draft.activeTable;
     const taken = this.draft.tables[table]!.fields.map((f) => f.name);
     const defaults = fieldDefaults(
       { tag: node.tag, attrs: node.attrs, text: selection.text, ...(selection.role ? { role: selection.role } : {}), ...(selection.name ? { name: selection.name } : {}) },
@@ -848,14 +950,14 @@ export class RecorderController {
     );
     this.current = {
       ...this.current,
-      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table, ...(moved ? { moved } : {}) },
+      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table, suggestion: null, outside: null, belongs: null },
       proposal: null,
       levelPick: null,
       pendingSelect: null,
       selectorError: null,
+      notice: null,
     };
-    this.proposal = null;
-    this.resetEdits();
+    this.dropProposal();
     this.emitter.emit('recorder.selected', { tag: node.tag, path: selection.path, scope, candidates });
     // An edited field takes the new selection when updated; no step, re-pick, or item inference.
     if (editing) return;
@@ -888,22 +990,88 @@ export class RecorderController {
       return;
     }
 
-    if (!this.table().item && !typed && !moved) {
-      const proposal = inferItems(node);
-      if (proposal) {
-        this.proposal = proposal;
-        await this.showProposal();
-        const view = this.current.proposal!;
-        this.emitter.emit('recorder.itemsProposed', {
-          count: view.proposed.count,
-          container: view.proposed.selectors[0]?.value ?? view.proposed.tag,
-          within: view.within?.selectors[0]?.value ?? null,
-          skipped: view.skipped,
-          broader: view.broader?.count ?? null,
-          narrower: view.narrower?.count ?? null,
-        });
-      }
+    if (!typed) await this.classify();
+  }
+
+  /**
+   * Where the selection stands for the table it is computed for: in a table
+   * without an item container, whether it repeats (the list suggestion); in a
+   * list, whether it is outside every container, or inside a container of
+   * another list table. Nothing changes tables on its own.
+   */
+  private async classify(): Promise<void> {
+    const selected = this.current.selected;
+    const node = this.node;
+    const root = this.root;
+    if (!selected || !node || !root) return;
+    const base: SelectedView = { ...selected, suggestion: null, outside: null, belongs: null };
+    const table = selected.table === null ? null : this.draft.tables[selected.table];
+    if (!table?.item) {
+      this.current = { ...this.current, selected: { ...base, suggestion: suggestionOf(inferItems(node)) } };
+      return;
     }
+    if (selected.selection.containerPath !== null) {
+      this.current = { ...this.current, selected: base };
+      return;
+    }
+    for (let t = 0; t < this.draft.tables.length; t++) {
+      const other = this.draft.tables[t]!;
+      if (t === selected.table || !other.item) continue;
+      const containers = await this.containersOf(other.item);
+      const nodes = await this.nodesFor(containers, root);
+      const index = nodes.findIndex((c) => c !== node && isInside(node, c));
+      if (index === -1) continue;
+      const stack = { within: other.item.within?.[0] ?? null, item: other.item.selectors[0]! };
+      this.current = { ...this.current, selected: { ...base, belongs: { table: t, index, of: containers.length, stack } } };
+      return;
+    }
+    const repeats = suggestionOf(inferItems(node))?.count ?? null;
+    const pageTable = this.draft.tables.findIndex((t) => t.item === null);
+    this.current = {
+      ...this.current,
+      selected: { ...base, outside: { table: selected.table!, repeats, pageTable: pageTable === -1 ? null : pageTable } },
+    };
+  }
+
+  /**
+   * Open the list setup: from the pick's inferred list, empty for manual
+   * input, or in a new table (created and activated) from the kept pick.
+   * Only a table with no mode yet can become a list.
+   */
+  private async openList(from: 'suggestion' | 'manual' | 'newTable'): Promise<void> {
+    this.notEditing();
+    if (this.current.proposal) throw new Error('the list setup is already open');
+    if (from === 'newTable') {
+      if (!this.current.selected || !this.node) throw new Error('select an element first');
+      this.current = { ...this.current, repick: null, repickStep: null };
+      this.apply({ type: 'addTable', name: defaultTableName(this.draft), defaultName: true });
+      await this.retarget(this.draft.activeTable);
+      await this.refreshOtherLists();
+    }
+    const mode = tableMode(this.table());
+    if (mode === 'page') throw new Error('a page table cannot become a list: use Clear table to start over');
+    if (mode === 'list') throw new Error('the table is already a list: edit it from the Rows section');
+    if (from === 'manual') {
+      this.origin = 'manual';
+      this.root ??= annotate((await this.session.snapshot()) as SerializedElement);
+      this.proposal = { container: null, siblings: [], all: [], skipped: [], within: null };
+    } else {
+      if (!this.node) throw new Error('select an element first');
+      const inferred = inferItems(this.node);
+      if (!inferred) throw new Error('the selected element does not repeat: set up the list manually');
+      this.origin = 'pick';
+      this.proposal = inferred;
+    }
+    this.resetEdits();
+    this.current = { ...this.current, proposal: null, levelPick: null, notice: null };
+    await this.showProposal();
+    const view = this.current.proposal!;
+    this.emitter.emit('recorder.itemsProposed', {
+      count: view.proposed.count,
+      container: view.proposed.selectors[0]?.value ?? view.proposed.tag,
+      within: view.within?.selectors[0]?.value ?? null,
+      skipped: view.skipped,
+    });
   }
 
   /** Page scoped candidates, counted, verified when picked by hand, and ranked. */
@@ -1043,8 +1211,9 @@ export class RecorderController {
     if (scope === 'page') candidates = rank(await this.withCounts(dedupe(generate(node)), 'page', []));
     this.current = {
       ...this.current,
-      selected: { ...withoutMoved(selected), scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
+      selected: { ...selected, scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
     };
+    if (!this.current.editing) await this.classify();
   }
 
   private resetEdits(): void {
@@ -1053,6 +1222,7 @@ export class RecorderController {
 
   private dropProposal(): void {
     this.proposal = null;
+    this.origin = 'pick';
     this.resetEdits();
     this.current = { ...this.current, proposal: null, levelPick: null };
   }
@@ -1065,15 +1235,16 @@ export class RecorderController {
     this.editSeed = null;
     this.handPicked = false;
     this.dropProposal();
-    this.current = { ...this.current, selected: null, editing: null, pendingSelect: null, selectorError: null };
+    this.current = { ...this.current, selected: null, editing: null, pendingSelect: null, selectorError: null, notice: null };
   }
 
   private notEditing(): void {
     if (this.current.editing) throw new Error('finish editing the field first: update or cancel it');
   }
 
+  /** Tabs, the table menu, and field edits wait while the list setup is open. */
   private notEditingItem(): void {
-    if (this.current.proposal?.editing) throw new Error('finish editing the items first: update or cancel');
+    if (this.current.proposal) throw new Error('finish the list setup first: accept or cancel it');
   }
 
   /**
@@ -1114,16 +1285,14 @@ export class RecorderController {
       all: [containerNode],
       skipped: [],
       within: withinNode ?? null,
-      broader: null,
-      narrower: null,
     };
     this.node = seed;
     this.root = root;
+    this.origin = 'edit';
     this.resetEdits();
     await this.showProposal();
-    let view: ProposalView = { ...this.current.proposal!, editing: true, exclude: item.exclude };
-    if (view.exclude.length > 0) view = await this.recountProposal(view);
-    this.current = { ...this.current, proposal: view };
+    const view: ProposalView = { ...this.current.proposal!, previousCount: item.count, exclude: item.exclude };
+    this.current = { ...this.current, proposal: await this.finishView(view) };
   }
 
   /**
@@ -1284,28 +1453,138 @@ export class RecorderController {
     const withinRef = await this.refOf(withinNode);
     const items = this.edits.includeAll ? p.all : p.siblings;
     const parent = withinNode && withinRef ? { node: withinNode, ref: withinRef } : null;
-    const proposed = await this.levelView({ node: p.container, items }, parent, this.edits.item);
-    // A broader level at the list parent itself has no form relative to it.
-    const broader = p.broader && (!withinNode || (p.broader.node !== withinNode && isInside(p.broader.node, withinNode))) ? await this.levelView(p.broader, parent) : null;
-    const narrower = p.narrower ? await this.levelView(p.narrower, parent) : null;
-    const fellBack = [proposed, broader, narrower].some((l) => l?.fellBack);
+    const proposed = p.container ? await this.levelView({ node: p.container, items }, parent, this.edits.item) : { view: EMPTY_LEVEL, fellBack: false };
     let view: ProposalView = {
       within: withinNode ? await this.withinView(withinNode, this.edits.within) : null,
       proposed: proposed.view,
-      broader: broader?.view ?? null,
-      narrower: narrower?.view ?? null,
       skipped: this.edits.includeAll ? 0 : p.skipped.length,
       includeAll: this.edits.includeAll,
       error:
         error ??
-        (fellBack
+        (proposed.fellBack
           ? { level: 'item', message: 'no item container selector matches inside the list parent; showing selectors for the whole page' }
           : null),
       exclude: previous?.exclude ?? [],
-      editing: previous?.editing ?? false,
+      origin: this.origin,
+      previousCount: previous?.previousCount ?? null,
+      pick: null,
+      itemLadder: null,
+      parentLadder: null,
+      fieldPreview: [],
     };
-    if (view.exclude.length > 0) view = await this.recountProposal(view);
+    view = await this.finishView(view);
+    // Open ladders follow the new levels.
+    if (previous?.itemLadder) view = { ...view, itemLadder: await this.itemLadder() };
+    if (previous?.parentLadder) view = { ...view, parentLadder: await this.parentLadder() };
     this.current = { ...this.current, proposal: view };
+  }
+
+  /** Recount with the pending exclusions, then read the pick and, while editing, the fields inside the proposed containers. */
+  private async finishView(view: ProposalView): Promise<ProposalView> {
+    const counted = view.exclude.length > 0 ? await this.recountProposal(view) : view;
+    const containers = await this.proposalContainers(counted);
+    let pick: ProposalView['pick'] = null;
+    const node = this.origin === 'pick' ? this.node : null;
+    const holder = node ? this.holderOf(node) : null;
+    if (node && holder) {
+      const [top] = rank(await this.withCounts<ProtocolCandidate>(this.relativeTo(node, holder), 'item', containers, true), { itemCount: containers.length });
+      pick = { selector: top ?? null, matched: top?.items ?? 0, total: containers.length };
+    }
+    const fieldPreview: ProposalView['fieldPreview'] = [];
+    if (this.origin === 'edit') {
+      for (const field of this.table().fields) {
+        if (field.scope !== 'item') continue;
+        const { items } = await this.countIn(field.selectors[0]!, containers);
+        if (items < containers.length) fieldPreview.push({ name: field.name, matched: items, total: containers.length });
+      }
+    }
+    return { ...counted, pick, fieldPreview };
+  }
+
+  /** The proposed item container holding a node (not the node itself), among the items in effect. */
+  private holderOf(node: AnnotatedNode): AnnotatedNode | null {
+    const p = this.proposal;
+    if (!p?.container) return null;
+    const items = this.edits.includeAll ? p.all : p.siblings;
+    return [p.container, ...items].find((c) => c !== node && isInside(node, c)) ?? null;
+  }
+
+  /** Live containers of the proposal's item level: its primary resolved inside the list parent, less the exclusions. */
+  private async proposalContainers(view: ProposalView): Promise<ElementRef[]> {
+    const primary = view.proposed.selectors[view.proposed.primary];
+    if (!primary) return [];
+    try {
+      const refs = await this.session.resolve(bare(primary), await this.refOf(this.proposalWithin()));
+      return await excludeContainers(this.session, refs, view.exclude.map(bare));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * "Adjust item level": the pick (or, without one, the item container) and
+   * its ancestors below the list parent, each with its top candidate counted
+   * inside the list parent. A level matching the same elements as a level
+   * above it (the same live elements, or single-child wrappers with the same
+   * count) is folded into the highest such level. The pick itself is never
+   * folded.
+   */
+  private async itemLadder(): Promise<ItemLadderRow[]> {
+    const p = this.proposal;
+    const start = this.origin === 'pick' && this.node ? this.node : (p?.container ?? null);
+    if (!p || !start) return [];
+    const within = this.proposalWithin();
+    const withinRef = await this.refOf(within);
+    const parent = within && withinRef ? { node: within, ref: withinRef } : null;
+    const rows: ItemLadderRow[] = [];
+    const sets: ElementRef[][] = [];
+    const nodes: AnnotatedNode[] = [];
+    let distance = 0;
+    for (let cur: AnnotatedNode | null | undefined = start; cur && cur !== within && !TOP.has(cur.tag) && rows.length < MAX_LADDER; cur = cur.parent, distance++) {
+      const { selectors } = await this.itemCandidates(cur, parent);
+      const top = selectors.find((c) => (c.count ?? 0) > 0) ?? null;
+      let refs: ElementRef[] = [];
+      if (top) {
+        try {
+          refs = await this.session.resolve(bare(top), parent?.ref);
+        } catch {
+          // Counted as nothing.
+        }
+      }
+      rows.push({ distance, path: pathOf(cur), selector: top, count: refs.length, likely: cur === p.container, sameAs: null });
+      sets.push(refs);
+      nodes.push(cur);
+    }
+    const first = this.origin === 'pick' ? 1 : 0;
+    for (let i = first; i < rows.length; i++) {
+      if (rows[i]!.count === 0) continue;
+      let upper = -1;
+      // Single-child wrappers: every step up to the upper level has one element child.
+      for (let j = i + 1; j < rows.length && elementChildren(nodes[j]!).length === 1 && rows[j]!.count === rows[i]!.count; j++) upper = j;
+      for (let j = rows.length - 1; upper === -1 && j > i; j--) if (await this.sameRefs(sets[i]!, sets[j]!)) upper = j;
+      if (upper !== -1) rows[i] = { ...rows[i]!, sameAs: rows[upper]!.distance };
+    }
+    return rows;
+  }
+
+  private async sameRefs(a: readonly ElementRef[], b: readonly ElementRef[]): Promise<boolean> {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!(await this.session.same(a[i]!, b[i]!))) return false;
+    return true;
+  }
+
+  /** "Adjust list parent": the ancestors of the item container, each with the number of children like the item. */
+  private async parentLadder(): Promise<ParentLadderRow[]> {
+    const container = this.proposal?.container;
+    if (!container) return [];
+    const within = this.proposalWithin();
+    const rows: ParentLadderRow[] = [];
+    let distance = 1;
+    for (let cur = container.parent; cur && !TOP.has(cur.tag) && rows.length < MAX_LADDER; cur = cur.parent, distance++) {
+      const [top] = await this.withinCandidates(cur);
+      rows.push({ distance, path: pathOf(cur), selector: top ?? null, children: likeItem(cur, container), likely: cur === within });
+    }
+    return rows;
   }
 
   /** Counts inside the list parent, else on the page. */
@@ -1322,7 +1601,7 @@ export class RecorderController {
   private async itemCandidates(
     node: AnnotatedNode,
     parent: { node: AnnotatedNode; ref: ElementRef } | null,
-    itemCount: number,
+    itemCount?: number,
   ): Promise<{ selectors: Candidate[]; fellBack: boolean }> {
     const generated = generate(node, { positional: false, level: true });
     if (!parent) return { selectors: rank(await this.countWithin(generated, undefined), { itemCount }), fellBack: false };
@@ -1350,7 +1629,7 @@ export class RecorderController {
       count: selectors[0]?.count ?? null,
       total: selectors[0]?.count ?? null,
       paths: level.items.map(pathOf),
-      samples: level.items.slice(0, 3).map((n) => excerpt(n)),
+      samples: level.items.slice(0, 3).map((n) => sampleOf(n)),
     };
     return { view, fellBack };
   }
@@ -1394,13 +1673,6 @@ export class RecorderController {
     };
   }
 
-  private levelNode(level: Rung): AnnotatedNode | null {
-    const p = this.proposal;
-    if (!p) return null;
-    if (level === 'proposed') return p.container;
-    return (level === 'broader' ? p.broader : p.narrower)?.node ?? null;
-  }
-
   /** Snapshot nodes for live elements: same tag, attributes, and leading text, in document order. */
   private async nodesFor(refs: readonly ElementRef[], root: AnnotatedNode): Promise<AnnotatedNode[]> {
     const pool = descendantsOf(root);
@@ -1432,9 +1704,11 @@ export class RecorderController {
   private levelPickFor(level: LevelKind): LevelPick {
     const view = this.current.proposal;
     if (view && this.proposal) {
-      if (level === 'within') return { level, ancestorOf: [view.proposed.path], ofContainers: false, descendantOf: null, containing: null };
+      const container = this.proposal.container;
+      if (level === 'within') return { level, ancestorOf: container ? [pathOf(container)] : [], ofContainers: false, descendantOf: null, containing: null };
       const within = this.proposalWithin();
-      return { level, ancestorOf: [], ofContainers: false, descendantOf: within ? pathOf(within) : null, containing: this.node ? pathOf(this.node) : null };
+      const pick = this.origin === 'pick' ? this.node : null;
+      return { level, ancestorOf: [], ofContainers: false, descendantOf: within ? pathOf(within) : null, containing: pick ? pathOf(pick) : null };
     }
     if (this.table().item && level === 'within') return { level, ancestorOf: [], ofContainers: true, descendantOf: null, containing: null };
     throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
@@ -1442,29 +1716,50 @@ export class RecorderController {
 
   private async setLevel(
     level: LevelKind,
-    by: 'pick' | 'selector' | 'clear',
+    by: 'pick' | 'selector' | 'clear' | 'path',
     msg: { path?: number[] | undefined; selector?: string | undefined; snapshot?: SerializedElement | undefined },
   ): Promise<void> {
     this.current = { ...this.current, levelPick: null };
-    if (this.proposal && this.current.proposal) return this.editProposal(level, by, msg);
-    if (this.table().item && level === 'within') return this.editItemWithin(by, msg);
+    if (this.proposal && this.current.proposal) return this.editProposal(level, by === 'path' ? 'pick' : by, msg);
+    if (this.table().item && level === 'within') return this.editItemWithin(by === 'path' ? 'pick' : by, msg);
     throw new Error(level === 'within' ? 'set an item container before its list parent' : 'no item proposal to change');
   }
 
-  /** Edit a proposal field; a refused edit shows its reason and keeps the previous value. */
+  /**
+   * Edit a proposal field; a refused edit shows its reason and keeps the
+   * previous value. With a pick, the item must hold it and the list parent
+   * must hold the item. Without one (manual, edit), the item may be any
+   * element inside the list parent (or the page), and the list parent any
+   * element while no item is set.
+   */
   private async editProposal(
     level: LevelKind,
     by: 'pick' | 'selector' | 'clear',
     msg: { path?: number[] | undefined; selector?: string | undefined },
   ): Promise<void> {
     const p = this.proposal!;
-    const pick = this.node!;
+    const pick = this.origin === 'pick' ? this.node : null;
     const root = this.root!;
+    const body = root.children.find((c): c is AnnotatedNode => c.type === 'element' && c.tag === 'body') ?? root;
     const refuse = (message: string) => {
       this.current = { ...this.current, proposal: { ...this.current.proposal!, error: { level, message } } };
     };
+    /** A new list parent: items inferred again from the pick, else the item level kept. */
+    const setWithin = (node: AnnotatedNode, typed: Candidate | null, name: string): string | null => {
+      const held = p.container ?? pick;
+      if (!held) {
+        this.proposal = { ...p, within: node };
+      } else {
+        if (node === held || !isInside(held, node)) return `outside the list: ${name}`;
+        const next = pick ? inferItems(pick, { within: node }) : inferItems(held, { within: node, item: held });
+        if (!next) return 'no items like the picked one inside that element';
+        this.proposal = next;
+      }
+      this.edits = { ...this.edits, within: typed, item: null, withinCleared: false };
+      return null;
+    };
     if (by === 'clear') {
-      if (level === 'item') return refuse('the item container cannot be empty; choose "Not a list" instead');
+      if (level === 'item') return refuse('the item container cannot be empty; cancel the list setup instead');
       this.edits = { ...this.edits, within: null, withinCleared: true };
       return this.showProposal();
     }
@@ -1472,18 +1767,14 @@ export class RecorderController {
       const node = msg.path ? nodeAt(root, msg.path) : null;
       if (!node) return refuse('the picked element is not in the page snapshot');
       if (level === 'within') {
-        if (TOP.has(node.tag) || node === p.container || !isInside(p.container, node)) return refuse('outside the list: pick an element that holds the item');
-        const next = inferItems(pick, { within: node });
-        if (!next) return refuse('no items like the picked one inside that element');
-        this.proposal = next;
-        this.edits = { ...this.edits, within: null, item: null, withinCleared: false };
-        return this.showProposal();
+        if (TOP.has(node.tag)) return refuse('outside the list: pick an element that holds the item');
+        const why = setWithin(node, null, 'pick an element that holds the item');
+        return why ? refuse(why) : this.showProposal();
       }
-      const within = this.proposalWithin();
-      const listRoot = within ?? root.children.find((c): c is AnnotatedNode => c.type === 'element' && c.tag === 'body') ?? root;
+      const listRoot = this.proposalWithin() ?? body;
       if (TOP.has(node.tag) || node === listRoot || !isInside(node, listRoot)) return refuse('outside the list: pick an element inside the list parent');
-      if (!isInside(pick, node)) return refuse('pick an element that holds the selected element');
-      const next = inferItems(pick, { within: listRoot, item: node });
+      if (pick && !isInside(pick, node)) return refuse('pick an element that holds the selected element');
+      const next = inferItems(pick ?? node, { within: listRoot, item: node }) ?? (pick ? null : { container: node, siblings: [node], all: [node], skipped: [], within: null });
       if (!next) return refuse('no items at that level');
       this.proposal = { ...next, within: p.within };
       this.edits = { ...this.edits, item: null };
@@ -1500,21 +1791,28 @@ export class RecorderController {
     } catch (error) {
       return refuse(`invalid selector "${text}": ${(error as Error).message.split('\n')[0]}`);
     }
+    if (refs.length === 0 && level === 'within') {
+      // The setup shows the typed list parent with 0 items and refuses Accept; the next edit starts from the inferred list again.
+      const view = this.current.proposal!;
+      const within: LevelView = { tag: '', label: text, path: [], selectors: [{ ...candidate, count: 0 }], primary: 0, count: 0, total: 0, paths: [], samples: [] };
+      this.current = {
+        ...this.current,
+        proposal: { ...view, within, proposed: { ...view.proposed, count: 0, total: 0, paths: [], samples: [] }, pick: null, error: { level, message: 'list parent matches nothing' } },
+      };
+      return;
+    }
     if (refs.length === 0) return refuse(`"${text}" matches nothing${withinRef ? ' inside the list parent' : ''}`);
     if (level === 'within') {
       const [node] = await this.nodesFor([refs[0]!], root);
       if (!node) return refuse(`"${text}" matches an element that is not in the page snapshot`);
-      if (!isInside(pick, node) || node === pick) return refuse('outside the list: the list parent must hold the selected element');
-      const next = inferItems(pick, { within: node });
-      if (!next) return refuse(`no items like the picked one inside "${text}"`);
-      this.proposal = next;
-      this.edits = { ...this.edits, within: candidate, item: null, withinCleared: false };
-      return this.showProposal();
+      if (TOP.has(node.tag)) return refuse('outside the list: the list parent must hold the item');
+      const why = setWithin(node, candidate, pick ? 'the list parent must hold the selected element' : 'the list parent must hold the item');
+      return why ? refuse(why) : this.showProposal();
     }
     const nodes = await this.nodesFor(refs, within ?? root);
-    const container = nodes.find((n) => isInside(pick, n)) ?? nodes[0];
+    const container = (pick ? nodes.find((n) => isInside(pick, n)) : undefined) ?? nodes[0];
     if (!container) return refuse(`"${text}" matches elements that are not in the page snapshot`);
-    this.proposal = { ...p, container, siblings: nodes, all: nodes, skipped: [], broader: null, narrower: null };
+    this.proposal = { ...p, container, siblings: nodes, all: nodes, skipped: [] };
     this.edits = { ...this.edits, item: candidate };
     return this.showProposal();
   }
@@ -1603,14 +1901,13 @@ export class RecorderController {
     return orderForSave(same > 0 ? toFront(ranked, same) : ranked, 0);
   }
 
-  private async setPrimary(level: LevelKind, index: number, rung: Rung): Promise<void> {
+  private async setPrimary(level: LevelKind, index: number): Promise<void> {
     const view = this.current.proposal;
     if (view && this.proposal) {
-      const target = level === 'within' ? view.within : view[rung];
+      const target = level === 'within' ? view.within : view.proposed;
       if (!target || !target.selectors[index]) throw new Error(`no candidate at index ${index}`);
       const updated = { ...target, primary: index, count: target.selectors[index].count ?? null, total: target.selectors[index].count ?? null };
-      this.current = { ...this.current, proposal: level === 'within' ? { ...view, within: updated } : { ...view, [rung]: updated } };
-      if (view.exclude.length > 0) this.current = { ...this.current, proposal: await this.recountProposal(this.current.proposal!) };
+      this.current = { ...this.current, proposal: await this.finishView(level === 'within' ? { ...view, within: updated } : { ...view, proposed: updated }) };
       return;
     }
     const item = this.table().item;
@@ -1625,16 +1922,24 @@ export class RecorderController {
     await this.recount();
   }
 
-  private async confirmItems(level: Rung): Promise<void> {
+  /**
+   * Accept the list setup: set the item container, list parent, and
+   * exclusions. An edit returns to the empty state. A pick inside the new
+   * containers comes back item scoped, ready to add; otherwise the Pick
+   * section says the list is ready. No field is added.
+   */
+  private async confirmItems(): Promise<void> {
     const proposal = this.current.proposal;
-    const view = proposal?.[level];
-    const containerNode = this.levelNode(level);
-    if (!proposal || !view || !containerNode) throw new Error(`no ${level} item level to confirm`);
+    const containerNode = this.proposal?.container;
+    if (!proposal) throw new Error('no list setup to accept');
+    if (!containerNode || !proposal.proposed.count) throw new Error('the item container matches nothing: pick or type one first');
+    const view = proposal.proposed;
     const selectors = orderForSave(view.selectors, view.primary);
     const exclude = proposal.exclude;
     const withinNode = this.proposalWithin();
-    const editing = proposal.editing;
     const within = proposal.within && withinNode ? orderForSave(proposal.within.selectors, proposal.within.primary) : [];
+    const holder = proposal.origin === 'edit' || !this.node ? null : this.holderOf(this.node);
+    const origin = proposal.origin;
     this.apply({
       type: 'setItem',
       item: {
@@ -1650,42 +1955,36 @@ export class RecorderController {
     await this.recount();
     this.emitter.emit('recorder.itemsConfirmed', { count: this.table().item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
     // An edit of the confirmed item keeps the fields as they are; the recount marks the broken ones.
-    if (editing) return this.clearSelection();
+    if (origin === 'edit') return this.clearSelection();
 
-    // The original pick becomes an item scoped field.
+    // The selected element comes back read inside its item.
     const selected = this.current.selected;
     const node = this.node;
-    if (!selected || !node || !isInside(node, containerNode) || node === containerNode) return;
-    const containers = await this.containers();
-    const relative = this.relativeTo(node, containerNode, selected.selection.candidates);
-    let candidates = await this.withCounts(relative, 'item', containers, true);
-    if (candidates.length === 0) return;
-    if (this.handPicked) candidates = await this.verified(candidates, 'item', node, containerNode, containers);
-    candidates = rank(candidates, { itemCount: containers.length });
-    this.current = {
-      ...this.current,
-      selected: {
-        ...selected,
-        scope: 'item',
-        primary: 0,
-        table: this.draft.activeTable,
-        selection: { ...selected.selection, candidates, containerPath: pathOf(containerNode) },
-      },
-    };
-    await this.addField({});
-  }
-
-  private async setItemFromSelection(): Promise<void> {
-    const selected = this.current.selected;
-    if (!selected || !this.node) throw new Error('select an element first');
-    // Container candidates should match every item, not only the pick: rank them unverified. A chosen primary stays first.
-    const unverified = rank(selected.selection.candidates.map(({ hit: _hit, ...c }) => c));
-    const chosen = selected.primary === 0 ? undefined : selected.selection.candidates[selected.primary];
-    const selectors = orderForSave(unverified, chosen ? Math.max(0, unverified.findIndex((c) => sameSelector(c, chosen))) : 0);
-    this.apply({ type: 'setItem', item: { selectors, exclude: [], fingerprint: selected.selection.fingerprint, count: null, total: null } });
-    this.dropProposal();
-    await this.recount();
-    this.emitter.emit('recorder.itemsConfirmed', { count: this.table().item!.count, selector: `${selectors[0]!.strategy}=${selectors[0]!.value}` });
+    if (selected && node && holder) {
+      const containers = await this.containers();
+      const relative = this.relativeTo(node, holder, selected.selection.candidates);
+      let candidates = await this.withCounts(relative, 'item', containers, true);
+      if (candidates.length > 0) {
+        if (this.handPicked) candidates = await this.verified(candidates, 'item', node, holder, containers);
+        candidates = rank(candidates, { itemCount: containers.length });
+        this.current = {
+          ...this.current,
+          selected: {
+            ...selected,
+            scope: 'item',
+            primary: 0,
+            table: this.draft.activeTable,
+            selection: { ...selected.selection, candidates, containerPath: pathOf(holder) },
+            suggestion: null,
+            outside: null,
+            belongs: null,
+          },
+        };
+        return;
+      }
+    }
+    this.clearSelection();
+    this.current = { ...this.current, notice: LIST_READY };
   }
 
   private async addExclusion(selector: string): Promise<void> {
@@ -1706,7 +2005,7 @@ export class RecorderController {
       return;
     }
     const exclude = [...proposal.exclude, { ...candidate, count: matches }];
-    this.current = { ...this.current, proposal: await this.recountProposal({ ...proposal, exclude }) };
+    this.current = { ...this.current, proposal: await this.finishView({ ...proposal, exclude }) };
     this.emitter.emit('recorder.excluded', { selector: candidate.value, count: this.current.proposal!.proposed.count });
   }
 
@@ -1719,31 +2018,23 @@ export class RecorderController {
     }
     this.current = {
       ...this.current,
-      proposal: await this.recountProposal({ ...proposal, exclude: proposal.exclude.filter((_, i) => i !== index) }),
+      proposal: await this.finishView({ ...proposal, exclude: proposal.exclude.filter((_, i) => i !== index) }),
     };
   }
 
-  /** Recount each proposal level with the pending exclusions applied. */
+  /** Recount the item level with the pending exclusions applied. */
   private async recountProposal(proposal: ProposalView): Promise<ProposalView> {
-    const exclude = proposal.exclude.map(bare);
-    const withinRef = await this.refOf(this.proposalWithin());
-    const level = async (view: LevelView | null): Promise<LevelView | null> => {
-      const primary = view?.selectors[view.primary];
-      if (!view || !primary) return view;
-      const refs = await this.session.resolve(bare(primary), withinRef);
-      const kept = await excludeContainers(this.session, refs, exclude);
-      return { ...view, count: kept.length, total: refs.length };
-    };
-    return {
-      ...proposal,
-      proposed: (await level(proposal.proposed))!,
-      broader: await level(proposal.broader),
-      narrower: await level(proposal.narrower),
-    };
+    const view = proposal.proposed;
+    const primary = view.selectors[view.primary];
+    if (!primary) return proposal;
+    const refs = await this.session.resolve(bare(primary), await this.refOf(this.proposalWithin()));
+    const kept = await excludeContainers(this.session, refs, proposal.exclude.map(bare));
+    return { ...proposal, proposed: { ...view, count: kept.length, total: refs.length } };
   }
 
   private async addField(patch: FieldPatch): Promise<void> {
     if (!this.current.selected) throw new Error('select an element first');
+    if (this.current.proposal) throw new Error('finish the list setup first: accept or cancel it');
     // The target table: the form's, else the one the selection was computed for. It becomes active.
     const target = patch.table ?? this.current.selected.table ?? this.draft.activeTable;
     if (typeof target === 'number') {
@@ -1755,6 +2046,12 @@ export class RecorderController {
       if (this.current.selected.table !== null) await this.retarget(null);
     }
     const selected = this.current.selected!;
+    if (selected.outside) throw new Error(`the selection is outside the ${this.draft.tables[selected.outside.table]!.name} list: add it to a page table or re-pick`);
+    if (selected.belongs) throw new Error(`the selection belongs to the ${this.draft.tables[selected.belongs.table]!.name} list: switch to it or re-pick`);
+    // The scope follows the table's mode, never a choice.
+    const into = typeof target === 'number' ? this.draft.tables[target]! : { name: target.new.trim(), item: null, fields: [] };
+    const scope = scopeForTable(into);
+    if (scope === 'item' && selected.scope !== 'item') throw new Error(`pick inside an item of the ${into.name} list`);
     if (typeof target === 'number') {
       if (target !== this.draft.activeTable) this.apply({ type: 'selectTable', index: target });
     } else {
@@ -1764,7 +2061,6 @@ export class RecorderController {
     if (selectors.length === 0) throw new Error('the selection has no selector candidates');
     const type = patch.type ?? selected.defaults.type;
     const attr = patch.attr === null ? undefined : (patch.attr ?? (patch.type && patch.type !== selected.defaults.type ? defaultAttr(type) : selected.defaults.attr));
-    const scope = patch.scope ?? selected.scope;
     const taken = this.table().fields.map((f) => f.name);
     const name = patch.name ?? (taken.includes(selected.defaults.name) ? fieldDefaults({ tag: selected.selection.tag, attrs: selected.selection.attrs, text: selected.selection.text, ...(selected.selection.name ? { name: selected.selection.name } : {}) }, taken).name : selected.defaults.name);
     const containers = scope === 'item' ? await this.containers() : [];
