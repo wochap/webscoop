@@ -52,7 +52,7 @@ The session SHALL accept a URL template with `{name}` variables. Before opening,
 - **THEN** the user is asked for `category` before the page opens, and the panel shows `{category}` as a chip with that value
 
 ### Requirement: Picking mode
-The panel SHALL offer a picking mode. While picking, hovering an element SHALL draw a highlight box around it with a tag showing its tag name, role when present, and a short text excerpt. Clicking SHALL select the element and leave picking mode. Esc SHALL leave picking mode without selecting. Alt+click SHALL select the element under the cursor even when a host overlay or modal backdrop covers it. Host page click handlers SHALL NOT fire during picking.
+The panel SHALL offer a picking mode. While picking, hovering an element SHALL draw a highlight box around it with a tag showing its tag name, role when present, and a short text excerpt. When the hover target repeats among its siblings, the tag SHALL also say how many similar elements repeat at its level ("N similar siblings", N counting the target, shown when N is at least 2), using the similarity the sibling inference uses. Clicking SHALL select the hover target and leave picking mode. Esc SHALL leave picking mode without selecting. Alt+click SHALL select the element under the cursor even when a host overlay or modal backdrop covers it. Host page click handlers SHALL NOT fire during picking. Key presses aimed at the page SHALL NOT reach the page's own handlers during picking; Esc, the hover walk keys, and the panel's Ctrl+S SHALL keep working. Key presses typed into a panel input SHALL be left alone.
 
 #### Scenario: Hover and select
 - **WHEN** picking is active and the user hovers then clicks a product title
@@ -61,6 +61,14 @@ The panel SHALL offer a picking mode. While picking, hovering an element SHALL d
 #### Scenario: Pick through a modal backdrop
 - **WHEN** a host cookie modal covers the catalog and the user Alt+clicks a product title behind it
 - **THEN** the title is selected
+
+#### Scenario: Page keys held back
+- **WHEN** picking is active, the page listens for `j` to jump to the next result, and the user presses `j`
+- **THEN** the page does not react and picking stays active
+
+#### Scenario: Repeat count in the tag
+- **WHEN** picking is active and the user hovers one of 11 similar result blocks under the same parent
+- **THEN** the tag says "11 similar siblings"
 
 ### Requirement: Selected element inspector
 After selection the panel SHALL show: tag name, role and accessible name when present, a text excerpt, and the element's `id`, `data-testid`, `class`, and `aria-*` attributes, each attribute flagged stable or hashed. It SHALL show an ancestor breadcrumb from the document body to the element with role or tag labels. The breadcrumb SHALL show at most the last three crumbs up to the current selection, preceded by an expander that shows every crumb when clicked. The user SHALL be able to move the selection up or down the breadcrumb with Left and Right arrow keys or by clicking a crumb; the highlight and inspector follow, and the shown crumbs follow the selection.
@@ -252,7 +260,7 @@ The recorder UI SHALL render inside a shadow root with all inherited styles rese
 - **THEN** the panel renders with its own font and colors, above the fixed header and the cookie modal
 
 ### Requirement: Keyboard
-The panel SHALL support: `p` to start picking, `L` to open the list setup from the list suggestion, Esc to cancel picking, close a menu, close the list setup, cancel a field edit, or clear the selection when not picking, Enter to accept the list setup, Left and Right to walk the breadcrumb, Alt+Up and Alt+Down to reorder fields, Alt+Left and Alt+Right to move the focused table tab, F2 to rename the focused table tab, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel a tab rename, cancel picking, close the list setup, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input.
+The panel SHALL support: `p` to start picking, `L` to open the list setup from the list suggestion, Esc to cancel picking, close a menu, close the list setup, cancel a field edit, or clear the selection when not picking, Enter to accept the list setup, Left and Right to walk the breadcrumb, Up and Down (and `[` and `]`) to walk the hover target up to its parent and back down while picking, Alt+Up and Alt+Down to reorder fields, Alt+Left and Alt+Right to move the focused table tab, F2 to rename the focused table tab, Ctrl+S to save. Esc SHALL act on the first of these that applies, in this order: close a menu, cancel a tab rename, cancel picking, close the list setup, leave browse mode, abort a re-pick, cancel a field edit, clear the selection. Shortcuts SHALL NOT fire while typing in a panel input. While picking, only Esc, the hover walk keys, and Ctrl+S SHALL act.
 
 #### Scenario: Enter confirms items
 - **WHEN** the list setup is shown and the user presses Enter
@@ -281,6 +289,10 @@ The panel SHALL support: `p` to start picking, `L` to open the list setup from t
 #### Scenario: Rename with F2
 - **WHEN** the `ads` tab has focus and the user presses F2, types `sponsored`, and presses Enter
 - **THEN** the table is named `sponsored`
+
+#### Scenario: Walk keys while focus is in the panel
+- **WHEN** the user clicks "Pick element" in the panel, hovers a result title on the page, and presses Up
+- **THEN** the hover target moves to the title's parent even though keyboard focus is on the panel
 
 ### Requirement: Session end
 Closing the browser window or pressing Ctrl+C SHALL end the session. If the draft has unsaved changes, the CLI SHALL print a warning naming the recipe on stderr. The process SHALL exit 0 after a save and 1 when the session ended with an error.
@@ -375,7 +387,7 @@ The proposal block SHALL offer an "include all siblings" toggle. When on, every 
 - **THEN** the proposal shows 9 matches and 0 skipped
 
 ### Requirement: Saved list parent
-Accepting the list setup SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. The Rows section SHALL show the list parent with its match count and allow re-picking or clearing it after the list is set. Setting, re-picking, or typing a list parent for a set item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
+Accepting the list setup SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. The Rows section SHALL show the list parent with its match count and allow re-picking or clearing it after the list is set; when the list parent is marked inferred, the re-pick control SHALL read "Change". Setting, re-picking, or typing a list parent for a set item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
 
 #### Scenario: Within saved on confirm
 - **WHEN** the user accepts a list setup whose list parent is the product list
@@ -386,7 +398,7 @@ Accepting the list setup SHALL save the list parent's ranked candidates as `item
 - **THEN** the saved recipe's `item` has no `within`
 
 #### Scenario: List parent set after confirming
-- **WHEN** the user set up a list manually with a document relative item selector and no list parent, and then picks the product list as list parent from the Rows section
+- **WHEN** the user set up a list manually, cleared the inferred list parent so the item selector is document relative, accepted, and then picks the product list as list parent from the Rows section
 - **THEN** `item.selectors` are rewritten relative to the product list and the item count stays 24
 
 #### Scenario: Highlights follow the list parent
@@ -396,6 +408,10 @@ Accepting the list setup SHALL save the list parent's ranked candidates as `item
 #### Scenario: Recorded recipe runs
 - **WHEN** a recipe recorded on the id anchored results page is run on the same page
 - **THEN** the run resolves the list parent, finds every result inside it, and returns one row per result
+
+#### Scenario: Change an inferred list parent
+- **WHEN** the Rows section shows the list parent `#rso` marked inferred and the user chooses "Change" and picks `#search`
+- **THEN** the list parent becomes `#search`, the item selectors are rewritten relative to it, and the inferred mark is gone
 
 ### Requirement: Accessibility candidates for levels
 The list parent and item fields SHALL list their candidates like a field does, including role-only candidates, and the user MAY choose which is primary before confirming.
@@ -744,3 +760,76 @@ While picking with a list as the active table, the page overlay SHALL outline th
 #### Scenario: Other list muted
 - **WHEN** `results` is active and `ads` is a list with 2 containers
 - **THEN** the 2 ad containers have a muted dashed outline labeled `ads · list`
+
+### Requirement: Hover walk while picking
+In every picking mode (picking a field, picking a list level, re-picking a field or a step), Up or `[` SHALL move the hover target from the current target to its parent, and Down or `]` SHALL move it one step back toward the element under the pointer (the start element). Down at the start element SHALL do nothing. The walk SHALL stop below `body`. Moving the pointer onto another element SHALL reset the hover target to that element. Clicking while the target is walked up SHALL pick the walked target when the click lands inside it, and the element under the pointer otherwise. Alt+click SHALL use the element under the cursor through overlays as the start element, and the walk SHALL apply from it. A walked target SHALL be treated like a hovered one: while picking a list level it is refused with the same reason when out of range, and while re-picking its fingerprint score is shown. While the target is walked up, the hover tag SHALL show the distance from the start element (`↑1`, `↑2`, …) and the target's size in pixels, and a small marker SHALL label the start element "start".
+
+#### Scenario: Walk up to a wrapper
+- **WHEN** picking is active, the user hovers a result title, and presses Up twice
+- **THEN** the highlight moves to the title's grandparent, the tag shows `↑2`, the repeat count, and the size, and the title carries the "start" marker
+
+#### Scenario: Click picks the walked target
+- **WHEN** the hover target is walked up to the result block and the user clicks the title inside it
+- **THEN** the result block is selected, not the title
+
+#### Scenario: Walk back down
+- **WHEN** the hover target is walked up twice and the user presses Down once
+- **THEN** the highlight moves to the title's parent and the tag shows `↑1`
+
+#### Scenario: Pointer move resets the walk
+- **WHEN** the hover target is walked up and the user moves the pointer onto another result's snippet
+- **THEN** the snippet is the hover target and the tag shows no distance
+
+#### Scenario: Walk while picking a list parent
+- **WHEN** the user picks the list parent in the list setup, hovers a title, and presses Up until the target is the results wrapper
+- **THEN** the wrapper is not refused and clicking selects it as the list parent
+
+#### Scenario: Walk refused level
+- **WHEN** the user picks the item level in the list setup and walks the target up above the list parent
+- **THEN** the tag says the element is outside the list and a click is ignored
+
+### Requirement: Pick hints
+While picking, the page overlay SHALL show a hint strip at the bottom of the viewport reading "Picking", followed by "in <table>" when the active table is a list, with the key hints "↑ ↓ parent / child", "click to pick", "Alt+click through overlays", and "Esc cancel". The strip SHALL NOT take pointer events. While picking, the Pick section of the panel SHALL show "Picking on the page" with a Cancel control and, when an element is hovered, a hovering card with the walk distance when walked up, the repeat count when the target repeats, and a short path from the hover target down to the start element with the start element marked "start". The card SHALL show the hint "Wrappers are hard to click — hover any child and press ↑ until the whole item is outlined." Leaving picking mode SHALL remove the strip and the card.
+
+#### Scenario: Strip in a list table
+- **WHEN** `results` is an active list and the user starts picking
+- **THEN** the bottom of the page shows "Picking in results" with the key hints
+
+#### Scenario: Hovering card follows the walk
+- **WHEN** the user hovers a result title and presses Up twice
+- **THEN** the Pick section shows `↑2`, "11 similar siblings", and a path from the result block down to the title marked "start"
+
+#### Scenario: Hints go away
+- **WHEN** the user presses Esc while picking
+- **THEN** the strip and the hovering card are gone
+
+### Requirement: Inferred list parent
+When a list setup opened from a pick proposes a list parent, and when a list setup opened manually or from a new list table gets an item container while no list parent was set or cleared by the user, the recorder SHALL use as list parent the nearest common ancestor of every matched item container that is below `body`, or no list parent when that ancestor is `body` or the document. The item container candidates SHALL then be computed relative to that list parent, and the item count SHALL not change. Such a list parent SHALL be marked inferred. The mark SHALL be shown as an "inferred" badge on the list parent row of the selector stack in the list setup and in the Rows section, and in the "Adjust list parent" summary. Picking, typing, choosing from the "Adjust list parent" list, or clearing the list parent SHALL remove the mark; a list parent the user cleared SHALL NOT be inferred again during the same list setup. Changing the item level SHALL keep the list parent and its mark. Accepting the list setup SHALL keep the mark on the table's item container for the rest of the session. The mark SHALL NOT be saved in the recipe; a list loaded from a saved recipe SHALL show no mark.
+
+#### Scenario: Inferred from a pick
+- **WHEN** the user picks a result title in an empty table and opens the list setup from the suggestion
+- **THEN** the list parent row shows `#rso` with the "inferred" badge and "Adjust list parent" summarizes `#rso · inferred`
+
+#### Scenario: Inferred in a manual setup
+- **WHEN** the user opens "Set up list manually…" and picks one product card for the item row, and all 24 cards sit in the product grid
+- **THEN** the list parent becomes the product grid marked inferred, the item selector is relative to it, and the count stays 24
+
+#### Scenario: No list parent at body
+- **WHEN** a manual setup's item selector matches elements whose nearest common ancestor is `body`
+- **THEN** the list parent stays empty and nothing is marked inferred
+
+#### Scenario: User choice removes the mark
+- **WHEN** the list parent is inferred and the user types `id=search` in its row
+- **THEN** the list parent is `#search` and shows no "inferred" badge
+
+#### Scenario: Cleared stays cleared
+- **WHEN** the user clears an inferred list parent and then picks another item level
+- **THEN** the list parent stays empty
+
+#### Scenario: Mark kept after accept
+- **WHEN** the user accepts a setup with an inferred list parent
+- **THEN** the Rows section stack shows the list parent with the "inferred" badge and its control reads "Change"
+
+#### Scenario: Not saved
+- **WHEN** the recipe is saved and opened again in a new recording session
+- **THEN** the Rows section shows the list parent without the "inferred" badge and the saved recipe has no field for the mark
