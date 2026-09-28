@@ -319,8 +319,12 @@ Variable values are URL-encoded when they are substituted into the URL template.
 - **WHEN** `--var login_email=a+b@acme.dev` is passed and only a `type` step uses `{login_email}`
 - **THEN** no warning is printed
 
-### Requirement: Quiet runs
-`webscoop run` SHALL accept `--quiet` and its short form `-q`. With it, the run SHALL NOT print informational stderr lines: the run start, page loads, replayed or skipped steps, healed or resolved fields, pagination progress, recipe write-back, language model messages, and the final summary. The run SHALL still print on stderr every error, every warning (including encoded `--var` warnings and dropped-row warnings), every guard line (raised and waiting for the user, cleared, timed out), the desktop notification text when `notify-send` is absent, and every line that asks the user to act in the browser window, such as an interactive re-pick. Stdout content, `--out` files, and exit codes SHALL be the same as without `--quiet`. `--report` SHALL still print the run report when given together with `--quiet`. `webscoop test` and `webscoop record` SHALL NOT accept `--quiet`.
+### Requirement: Quiet runs print only errors and prompts
+`webscoop run` SHALL accept `--quiet` and its short form `-q`. With it, the run SHALL print on stderr only:
+- errors: a failed run, a run that paused and gave up, CLI and config errors, and the line reporting an interrupted run
+- lines that ask the user to act in the browser window: a raised guard waiting for the user, the guard banner hint, an interactive re-pick request, and the desktop notification text when `notify-send` is absent
+
+Every other stderr line SHALL NOT be printed. That covers informational lines (the run start, page loads, replayed or skipped steps, healed or resolved fields, pagination progress, recipe write-back, language model messages, the final summary). It also covers every warning (dropped-row warnings, encoded `--var` warnings, profile warnings, fields reported as partial or fallback), guard cleared and guard timed-out lines, and re-pick outcome lines. Stdout content, `--out` files, and exit codes SHALL be the same as without `--quiet`. `--report` SHALL still print the run report when given together with `--quiet`. `webscoop test` and `webscoop record` SHALL NOT accept `--quiet`.
 
 #### Scenario: Only data on a clean run
 - **WHEN** `webscoop run shop --quiet` succeeds with every field resolved and no warnings
@@ -334,17 +338,21 @@ Variable values are URL-encoded when they are substituted into the URL template.
 - **WHEN** `webscoop run shop --quiet` fails because a required field resolves nowhere
 - **THEN** stderr names the failure and the exit code is 3
 
-#### Scenario: Warnings still print
+#### Scenario: Warnings muted
 - **WHEN** `webscoop run shop --quiet` drops rows that miss a required field
-- **THEN** stderr carries the warning that names the field and the dropped rows, and the exit code is 0
+- **THEN** stderr is empty, stdout carries the kept rows, and the exit code is 0
 
-#### Scenario: Guard still prints
+#### Scenario: Partial fields muted
+- **WHEN** `webscoop run shop --quiet` resolves a field on only some rows
+- **THEN** stderr carries no `field ...: partial` line
+
+#### Scenario: Guard prompt still prints
 - **WHEN** `webscoop run shop --quiet` meets a login wall on page 1
 - **THEN** stderr carries the line that names the guard and says the run waits for the user in the browser window
 
 #### Scenario: Report still prints
 - **WHEN** `webscoop run shop --quiet --report` is executed
-- **THEN** stderr carries the run report and no informational lines
+- **THEN** stderr carries the run report and no informational or warning lines
 
 ### Requirement: `edit` command
 `webscoop edit <recipe> [--repick <field>] [--var name=value]... [--profile <name>] [--timeout <ms>] [--lock-timeout <ms>]` SHALL behave exactly like `webscoop record --edit <recipe>` with the same options: it SHALL open the recipe, by name or path, in a recording session, and with `--repick` it SHALL follow the re-pick behavior of `record --edit --repick`. Exit codes and stderr messages SHALL match `record --edit`. A missing `<recipe>` argument SHALL exit 1. `webscoop record --edit` SHALL keep working unchanged.
