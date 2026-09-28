@@ -60,6 +60,20 @@ function proxyOptions(command: Command): Command {
     .on('option:no-proxy', note('no-proxy'));
 }
 
+/** `--humanize` and `--no-humanize`, which share the `humanize` value and may not be passed together. */
+function humanizeOptions(command: Command): Command {
+  const seen = new Set<string>();
+  const note = (flag: string) => () => {
+    seen.add(flag);
+    if (seen.size === 2) command.error('error: option --humanize cannot be used with option --no-humanize');
+  };
+  return command
+    .option('--humanize', 'move, type, and scroll like a person (slower), whatever the recipe and config say')
+    .option('--no-humanize', 'act at full speed, whatever the recipe and config say')
+    .on('option:humanize', note('humanize'))
+    .on('option:no-humanize', note('no-humanize'));
+}
+
 const EXIT_HELP = `
 Healing:
   run heals selectors that stopped matching and rewrites the recipe after a
@@ -96,7 +110,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     })
     .showHelpAfterError('(run webscoop --help for usage)');
 
-  proxyOptions(program.command('run'))
+  humanizeOptions(proxyOptions(program.command('run')))
     .description('run a recipe and print the extracted rows')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -160,7 +174,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
-  proxyOptions(program.command('test'))
+  humanizeOptions(proxyOptions(program.command('test')))
     .description('check a recipe on its first page: heal without saving and print each field\'s status')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -235,7 +249,7 @@ and export again when the site changes. Needs no display.`,
     )
     .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
 
-  proxyOptions(program.command('bench'))
+  humanizeOptions(proxyOptions(program.command('bench')))
     .description('run a playground recipe on every playground tier and report which rung resolved each field')
     .argument('<recipe>', 'recipe with a {port} variable, e.g. the playground-catalog fixture')
     .option('--tiers <range>', 'tiers to run, e.g. 0-4, 3, or 0,3-4', '0-4')

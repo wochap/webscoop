@@ -258,12 +258,13 @@ export const DraftSchema = z.object({
   pagination: z.nullable(DraftPaginationSchema),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
-  /** The recipe's browser block, kept as loaded; the panel does not edit it. */
+  /** The recipe's browser block, kept as loaded; the panel edits only `humanize`. */
   browser: z.optional(
     z.object({
       proxy: z.optional(z.object({ server: z.string(), bypass: z.optional(z.array(z.string())) })),
       timezone: z.optional(z.string()),
       locale: z.optional(z.string()),
+      humanize: z.optional(z.boolean()),
     }),
   ),
   dirty: z.boolean(),
@@ -544,6 +545,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   /** Collapse or expand a panel section; session state only. */
   msg('panel.setCollapsed', { section: z.enum(PANEL_SECTIONS), collapsed: z.boolean() }),
   msg('draft.setName', { name: z.string() }),
+  /** Turn humanized input on for runs of the recipe, or remove the setting. */
+  msg('draft.setHumanize', { on: z.boolean() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
   msg('draft.reopen', {}),
   /** Replace the URL template; an invalid template is refused into `urlError`. */

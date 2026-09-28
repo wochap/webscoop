@@ -1,5 +1,5 @@
 import { RunEmitter, Runner, templateVariables, type HealOutcome, type Recipe } from '@webscoop/core';
-import { browserSettings, settingsOptions } from '../browser';
+import { browserSettings, resolveHumanize, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
@@ -13,6 +13,8 @@ import { modelRung, testRows } from './run';
 export interface BenchCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
+  /** `--humanize` or `--no-humanize`. */
+  humanize?: boolean;
   tiers: string;
   seed: number;
   json?: boolean;
@@ -102,7 +104,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   const recipe = await storage.load(recipeRef);
   const variables = templateVariables(recipe.url);
   if (!variables.includes('port')) throw new CliError(`recipe ${recipe.name} has no {port} variable in its URL, so bench cannot point it at the playground`);
-  const openOptions = settingsOptions(browserSettings(config, recipe, opts, io.env));
+  const openOptions = settingsOptions({ ...browserSettings(config, recipe, opts, io.env), humanize: resolveHumanize(opts, recipe, config) });
   requireDisplay(io.env);
   const { startPlayground } = await loadPlayground();
 

@@ -22,6 +22,20 @@ describe('recipe bar', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.reopen' });
   });
 
+  it('toggles humanized input from the draft browser block', () => {
+    const p = renderPanel(baseState());
+    const toggle = p.q('recipe-humanize')!;
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(p.q('recipe-humanize-hint')!.textContent).toContain('bot protection');
+    fireEvent.click(toggle);
+    expect(p.sent).toEqual([{ kind: 'draft.setHumanize', on: true }]);
+    cleanup();
+    const on = renderPanel(baseState({ ...newDraft(), browser: { humanize: true } }));
+    expect(on.q('recipe-humanize')!.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(on.q('recipe-humanize')!);
+    expect(on.sent).toEqual([{ kind: 'draft.setHumanize', on: false }]);
+  });
+
   it('renames the recipe on Enter and shows a refused name inline', () => {
     const p = renderPanel(baseState());
     const name = p.q('recipe-name') as HTMLInputElement;

@@ -654,6 +654,35 @@ A recipe carries its own settings in an optional block:
 "browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US" }
 ```
 
+#### Humanized input
+
+Playwright acts faster and more evenly than any person: actions follow each
+other within milliseconds, clicks jump the pointer to the element's centre,
+text lands in one go, and scrolling jumps to the bottom. Behavioural bot
+detection measures exactly that. Humanized input, off by default, makes runs
+act more like a person:
+
+- a long-tailed think time (median about half a second) before each click,
+  typing, key press, option choice, or scroll
+- clicks that move the pointer along a curved path with rising and falling
+  speed to a random point inside the target, then press and release it
+- typing one character at a time with uneven delays
+- scrolling in uneven wheel steps with pauses
+- a short dwell on every loaded page, with small pointer moves or a scroll,
+  before anything is extracted
+
+Turn it on per recipe with the "Humanize input" toggle in the recorder's
+Recipe section, which saves `"browser": { "humanize": true }`. The config's
+`browser.humanize` sets a default for every recipe, and `--humanize` or
+`--no-humanize` on `run`, `test`, and `bench` wins over both. The start line
+says `humanized input` when it is on.
+
+Runs get noticeably slower: roughly 0.5 to 3 s per action, plus about a tenth
+of a second per typed character, plus 1 to 2 s per page. Use it on sites with
+serious bot protection, not everywhere. It complements the Patchright driver
+and a proxy with a matching timezone and locale; it does not replace them, and
+no input model beats every behavioural check.
+
 Browsers never share a profile, because Chrome and Chromium of different
 versions damage each other's profiles. Playwright's Chromium keeps
 `profiles/<name>`, as before; Chrome uses `profiles/<name>@chrome`, and

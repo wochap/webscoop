@@ -14,6 +14,7 @@ import {
   type SettleOptions,
   type SerializedNode,
 } from '@webscoop/core';
+import { Humanizer } from './humanize';
 import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
@@ -165,6 +166,8 @@ export class PlaywrightSession implements InteractiveSession {
     private readonly context: BrowserContext,
     private readonly page: Page,
     private readonly driver: Driver = 'playwright',
+    /** Humanized input, when the run turned it on. */
+    private readonly humanizer?: Humanizer,
   ) {
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) this.navigations++;
@@ -182,6 +185,7 @@ export class PlaywrightSession implements InteractiveSession {
       await this.page
         .waitForLoadState('networkidle', { timeout: Math.max(1, Math.min(SETTLE_IDLE_MS, deadline - Date.now())) })
         .catch(() => {});
+      await this.humanizer?.dwell();
       return { url: this.page.url(), title: await this.page.title(), status: response?.status() ?? null };
     } catch (error) {
       if (isDriverTimeout(error)) {
@@ -228,6 +232,7 @@ export class PlaywrightSession implements InteractiveSession {
   async click(ref: ElementRef): Promise<void> {
     const { locator } = ref as PwRef;
     this.navigationsBefore = this.navigations;
+    if (this.humanizer) return this.humanizer.click(locator);
     await locator.scrollIntoViewIfNeeded();
     await locator.click();
   }
@@ -235,11 +240,13 @@ export class PlaywrightSession implements InteractiveSession {
   async fill(ref: ElementRef, value: string): Promise<void> {
     const { locator } = ref as PwRef;
     this.navigationsBefore = this.navigations;
+    if (this.humanizer) return this.humanizer.type(locator, value);
     await locator.fill(value);
   }
 
   async press(key: string, ref?: ElementRef): Promise<void> {
     this.navigationsBefore = this.navigations;
+    if (this.humanizer) return this.humanizer.press(key, ref ? (ref as PwRef).locator : undefined);
     if (ref) await (ref as PwRef).locator.press(key);
     else await this.page.keyboard.press(key);
   }
@@ -254,11 +261,13 @@ export class PlaywrightSession implements InteractiveSession {
       return hit ? hit.value : null;
     }, value);
     if (option === null) throw new Error(`no option ${JSON.stringify(value)} in ${ref.description}`);
+    if (this.humanizer) return this.humanizer.selectOption(locator, option);
     await locator.selectOption({ value: option });
   }
 
   async scrollToBottom(): Promise<void> {
     this.navigationsBefore = this.navigations;
+    if (this.humanizer) return this.humanizer.scroll();
     await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   }
 
@@ -276,6 +285,7 @@ export class PlaywrightSession implements InteractiveSession {
       if (navigated()) {
         await this.page.waitForLoadState('load', { timeout: left() });
         await this.page.waitForLoadState('networkidle', { timeout: left() });
+        await this.humanizer?.dwell();
       } else {
         // Same document: wait for requests the action started, but never long.
         await this.page.waitForLoadState('networkidle', { timeout: Math.min(SETTLE_IDLE_MS, left()) }).catch(() => {});
@@ -393,7 +403,7 @@ export class PlaywrightBrowser implements BrowserPort {
     try {
       context.setDefaultTimeout(this.options.actionTimeoutMs ?? 5000);
       const page = context.pages()[0] ?? (await context.newPage());
-      return new PlaywrightSession(context, page, driver);
+      return new PlaywrightSession(context, page, driver, opts.humanize ? new Humanizer(page) : undefined);
     } catch (error) {
       await context.close().catch(() => {});
       throw error;

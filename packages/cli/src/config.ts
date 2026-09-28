@@ -49,6 +49,8 @@ export const ConfigSchema = z.object({
       proxy: z.union([ProxyUrlSchema, z.object({ server: ProxyUrlSchema, bypass: z.union([z.string().min(1), z.array(z.string().min(1))]).optional() })]).optional(),
       timezone: TimezoneSchema.optional(),
       locale: LocaleSchema.optional(),
+      /** Humanized input by default for `run`, `test`, and `bench`. */
+      humanize: z.boolean().optional(),
     })
     .default({ driver: 'playwright' }),
   window: z

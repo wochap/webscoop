@@ -174,6 +174,8 @@ export const RecipeBrowserSchema = z.object({
     .optional(),
   timezone: TimezoneSchema.optional(),
   locale: LocaleSchema.optional(),
+  /** Humanized input for runs of this recipe. */
+  humanize: z.boolean().optional(),
 });
 
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));

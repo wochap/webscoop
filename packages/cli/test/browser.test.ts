@@ -5,7 +5,7 @@ import { h, FakeBrowser } from '@webscoop/core/testing';
 import { loadRecipe, saveRecipe, type RecipeInput } from '@webscoop/core';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
-import { browserSettings, maskProxy, resolveBrowser, type BrowserChoice } from '../src/browser';
+import { browserSettings, maskProxy, resolveBrowser, resolveHumanize, type BrowserChoice } from '../src/browser';
 import { ConfigSchema, type Config } from '../src/config';
 import { MARKER_FILE, profileDirFor, profileWarnings } from '../src/profiles';
 import { tempDir, testIo } from './helpers';
@@ -137,6 +137,64 @@ async function home(opts: { config?: Record<string, unknown>; recipe?: RecipeInp
 
 const page = () => new FakeBrowser({ [PAGE]: h('html', {}, h('body', {}, h('h1', {}, 'Shop'))) });
 const CHROME: Partial<BrowserChoice> = { driver: 'playwright', channel: 'chrome', id: 'chrome', path: '/usr/bin/google-chrome-stable', source: 'chrome' };
+
+describe('resolveHumanize', () => {
+  it('takes the flag, then the recipe, then the config, then off', () => {
+    const on = { browser: { humanize: true } };
+    const off = { browser: { humanize: false } };
+    expect(resolveHumanize({}, undefined, config())).toBe(false);
+    expect(resolveHumanize({}, undefined, config({ humanize: true }))).toBe(true);
+    expect(resolveHumanize({}, off, config({ humanize: true }))).toBe(false);
+    expect(resolveHumanize({}, on, config())).toBe(true);
+    expect(resolveHumanize({ humanize: false }, on, config({ humanize: true }))).toBe(false);
+    expect(resolveHumanize({ humanize: true }, off, config({ humanize: false }))).toBe(true);
+  });
+});
+
+describe('humanize flags', () => {
+  it('opens with humanized input and says so in the start line', async () => {
+    const dir = await home();
+    const browser = page();
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--humanize'], t)).toBe(ExitCode.Ok);
+    expect(browser.openOptions[0]).toEqual({ humanize: true });
+    expect(t.err()).toContain('(no proxy, humanized input)');
+    const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page() });
+    expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
+    expect(plain.err()).not.toContain('humanized input');
+  });
+
+  it('lets --no-humanize override the recipe', async () => {
+    const dir = await home({ recipe: shopRecipe({ browser: { humanize: true } }) });
+    const browser = page();
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--no-humanize'], t)).toBe(ExitCode.Ok);
+    expect(browser.openOptions[0]).toEqual({});
+    const test = page();
+    expect(await main(['test', 'shop'], testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: test }))).toBe(ExitCode.Ok);
+    expect(test.openOptions[0]).toMatchObject({ humanize: true });
+  });
+
+  it('rejects --humanize with --no-humanize', async () => {
+    const dir = await home();
+    for (const command of [['run', 'shop'], ['test', 'shop'], ['bench', 'shop']]) {
+      const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+      expect(await main([...command, '--humanize', '--no-humanize'], t)).toBe(ExitCode.Error);
+      expect(t.err()).toContain('--humanize cannot be used with option --no-humanize');
+      expect(t.browserCreated()).toBe(0);
+    }
+  });
+
+  it('is not accepted by record or edit', async () => {
+    const dir = await home();
+    for (const command of [['record', PAGE], ['edit', 'shop']]) {
+      const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+      expect(await main([...command, '--humanize'], t)).toBe(ExitCode.Error);
+      expect(t.err()).toContain("unknown option '--humanize'");
+      expect(t.browserCreated()).toBe(0);
+    }
+  });
+});
 
 describe('run with browser settings', () => {
   it('opens with the resolved proxy, timezone, and locale, and never prints the password', async () => {

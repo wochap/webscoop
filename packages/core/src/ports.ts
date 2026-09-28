@@ -43,6 +43,8 @@ export interface OpenOptions {
   timezone?: string;
   /** BCP 47 locale for `navigator.language` and `Accept-Language`, e.g. `es-ES`. */
   locale?: string;
+  /** Humanized input: curved pointer paths, typing rhythm, wheel scrolling, think times, and a page dwell. */
+  humanize?: boolean;
 }
 
 export interface ProxySettings {

@@ -125,6 +125,8 @@ export interface BrowserSettings {
   proxyShown?: string;
   timezone?: string;
   locale?: string;
+  /** Humanized input; set only by `run`, `test`, and `bench`. */
+  humanize?: boolean;
 }
 
 export interface ProxyFlags {
@@ -191,10 +193,22 @@ export function settingsOptions(settings: BrowserSettings): OpenOptions {
     ...(settings.proxy ? { proxy: settings.proxy } : {}),
     ...(settings.timezone ? { timezone: settings.timezone } : {}),
     ...(settings.locale ? { locale: settings.locale } : {}),
+    ...(settings.humanize ? { humanize: true } : {}),
   };
+}
+
+export interface HumanizeFlags {
+  /** True with `--humanize`, false with `--no-humanize`, absent without either. */
+  humanize?: boolean;
+}
+
+/** Humanized input: flag, then recipe, then config, then off. */
+export function resolveHumanize(flags: HumanizeFlags, recipe: Pick<Recipe, 'browser'> | undefined, config: Config): boolean {
+  return flags.humanize ?? recipe?.browser?.humanize ?? config.browser.humanize ?? false;
 }
 
 /** How the start line names the proxy. */
 export function proxyNote(settings: BrowserSettings): string {
-  return settings.proxyShown ? `proxy ${settings.proxyShown}` : 'no proxy';
+  const proxy = settings.proxyShown ? `proxy ${settings.proxyShown}` : 'no proxy';
+  return settings.humanize ? `${proxy}, humanized input` : proxy;
 }

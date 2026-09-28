@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPagination, emptyDraft, fieldDefaults, isNumericText, reduceDraft, slugName, type Draft } from '../src';
+import { detectPagination, draftToRecipe, emptyDraft, fieldDefaults, isNumericText, reduceDraft, slugName, type Draft } from '../src';
 
 const candidate = { strategy: 'testid', value: 'price', stability: 'stable' } as const;
 
@@ -8,6 +8,19 @@ function newDraft(): Draft {
 }
 
 describe('draft reducer', () => {
+  it('sets humanize, keeps the other browser keys, and drops an empty block when turned off', () => {
+    const on = reduceDraft(newDraft(), { type: 'setHumanize', on: true });
+    expect(on.browser).toEqual({ humanize: true });
+    expect(draftToRecipe(on).browser).toEqual({ humanize: true });
+    const off = reduceDraft(on, { type: 'setHumanize', on: false });
+    expect('browser' in off).toBe(false);
+    expect(draftToRecipe(off).browser).toBeUndefined();
+    const kept = reduceDraft({ ...newDraft(), browser: { proxy: { server: 'http://proxy-b:8080' }, timezone: 'Europe/Madrid' } }, { type: 'setHumanize', on: true });
+    expect(kept.browser).toEqual({ proxy: { server: 'http://proxy-b:8080' }, timezone: 'Europe/Madrid', humanize: true });
+    expect(reduceDraft(kept, { type: 'setHumanize', on: false }).browser).toEqual({ proxy: { server: 'http://proxy-b:8080' }, timezone: 'Europe/Madrid' });
+  });
+
+
   it('defaults links to url/href, images to image/src, numeric text to number', () => {
     expect(fieldDefaults({ tag: 'a', attrs: { href: '/p/1' }, role: 'link', name: 'View details', text: 'View details' }, [])).toEqual({
       name: 'view_details',

@@ -426,6 +426,8 @@ export type DraftAction =
   | { type: 'moveStep'; from: number; to: number }
   | { type: 'setStepCounts'; counts: (number | null)[] }
   | { type: 'setName'; name: string }
+  /** Set `browser.humanize`, or remove it and drop an empty `browser` block. */
+  | { type: 'setHumanize'; on: boolean }
   | { type: 'setVar'; name: string; value: string }
   /** Replace the URL template; an invalid template leaves the draft unchanged. */
   | { type: 'setUrl'; url: string }
@@ -715,6 +717,13 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'setName':
       next = { ...draft, name: action.name };
       break;
+    case 'setHumanize': {
+      const { humanize: _, ...rest } = draft.browser ?? {};
+      const browser = action.on ? { ...rest, humanize: true } : rest;
+      const { browser: __, ...others } = draft;
+      next = Object.keys(browser).length > 0 ? { ...others, browser } : others;
+      break;
+    }
     case 'setVar':
       next = { ...draft, vars: draft.vars.map((v) => (v.name === action.name ? { ...v, value: action.value } : v)) };
       break;

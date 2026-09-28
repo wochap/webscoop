@@ -697,6 +697,9 @@ export class RecorderController {
       case 'draft.setName':
         this.apply({ type: 'setName', name: msg.name });
         return;
+      case 'draft.setHumanize':
+        this.apply({ type: 'setHumanize', on: msg.on });
+        return;
       case 'draft.setVar':
         this.applyVar({ type: 'setVar', name: msg.name, value: msg.value });
         return;

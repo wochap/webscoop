@@ -9,3 +9,4 @@ export {
   type Driver,
   type PlaywrightBrowserOptions,
 } from './playwright-browser';
+export { Humanizer, speedFromEnv, type HumanizerOptions } from './humanize';

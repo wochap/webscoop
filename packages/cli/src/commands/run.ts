@@ -28,7 +28,7 @@ import {
   tablesOf,
   templateVariables,
 } from '@webscoop/core';
-import { browserSettings, proxyNote, settingsOptions, type BrowserSettings } from '../browser';
+import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
@@ -45,6 +45,8 @@ import { windowMode } from '../window';
 export interface RunCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
+  /** `--humanize` or `--no-humanize`. */
+  humanize?: boolean;
   var: string[];
   jsonl?: boolean;
   out?: string;
@@ -315,7 +317,7 @@ interface Prepared {
   createBrowser(): Promise<BrowserPort>;
 }
 
-async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false }): Promise<Prepared> {
+async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean }): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths);
   const storage = new FsStorage(paths.recipesDir, io.cwd);
@@ -334,7 +336,7 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
   }
   const defaults = Object.fromEntries(recipe.vars.flatMap((v) => (v.default !== undefined ? [[v.name, v.default]] : [])));
   for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars })) log(io, warning);
-  const settings = browserSettings(config, recipe, opts, io.env);
+  const settings: BrowserSettings = { ...browserSettings(config, recipe, opts, io.env), humanize: resolveHumanize(opts, recipe, config) };
 
   requireDisplay(io.env);
 
@@ -470,6 +472,8 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
 export interface TestCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
+  /** `--humanize` or `--no-humanize`. */
+  humanize?: boolean;
   var: string[];
   profile?: string;
   timeout: number;

@@ -484,11 +484,16 @@ describe('error collection', () => {
 
 describe('recipe browser block', () => {
   it('validates a proxy, timezone, and locale', () => {
-    const browser = { proxy: { server: 'http://proxy-b:8080', bypass: ['localhost', '*.lan'] }, timezone: 'Europe/Madrid', locale: 'es-ES' };
+    const browser = { proxy: { server: 'http://proxy-b:8080', bypass: ['localhost', '*.lan'] }, timezone: 'Europe/Madrid', locale: 'es-ES', humanize: true };
     const result = validateRecipe(base({ browser }));
     expect(result.ok).toBe(true);
     expect(result.ok && result.recipe.browser).toEqual(browser);
     expect(result.ok && result.recipe.schemaVersion).toBe(1);
+  });
+
+  it('rejects a non-boolean humanize, naming the path', () => {
+    const errors = errorsOf(base({ browser: { humanize: 'yes' as unknown as boolean } }));
+    expect(errors.map((e) => e.path)).toEqual(['$.browser.humanize']);
   });
 
   it('rejects credentials in the proxy server, naming the path', () => {

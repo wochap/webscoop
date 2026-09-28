@@ -109,6 +109,7 @@ describe('protocol', () => {
     { kind: 'draft.moveTable', from: 1, to: 0 },
     { kind: 'panel.setCollapsed', section: 'steps', collapsed: true },
     { kind: 'draft.setName', name: 'shop' },
+    { kind: 'draft.setHumanize', on: true },
     { kind: 'draft.setVar', name: 'tier', value: '1' },
     { kind: 'draft.reopen' },
     { kind: 'draft.setUrl', url: 'http://127.0.0.1:4777/catalog?tier={tier}' },

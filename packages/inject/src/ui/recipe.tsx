@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
 import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type Draft, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Icon } from './icons';
+import { Toggle } from './items';
 import { Section } from './section';
 
 /** Where a variable is used: "used in URL", "used in step N", "not in URL", or "not used". */
@@ -373,6 +374,21 @@ export function RecipeBar({
             Open page differs: <span className="ws-mono-sm ws-ellipsis">{describeUrlDiff(diff)}</span>
           </div>
         )}
+        <div className="ws-col ws-recipe-field">
+          <div className="ws-row">
+            <span className="ws-label">Humanize input</span>
+            <span className="ws-spacer" />
+            <Toggle
+              on={draft.browser?.humanize === true}
+              onChange={(on) => void actions.send({ kind: 'draft.setHumanize', on })}
+              label="Humanize input"
+              testId="recipe-humanize"
+            />
+          </div>
+          <span className="ws-meta" data-ws="recipe-humanize-hint">
+            Slows runs to move, type, and scroll like a person; helps on sites with bot protection.
+          </span>
+        </div>
       </div>
     </Section>
   );

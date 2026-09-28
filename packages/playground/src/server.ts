@@ -82,6 +82,34 @@ class HttpError extends Error {
   }
 }
 
+/**
+ * A search box and a button that log every pointer, key, and wheel event into
+ * `#events` as JSON, so a run can extract how the page was driven.
+ */
+function inputEventsPage(): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Input events</title>
+<style>body{font-family:sans-serif;margin:40px;min-height:3000px}#go{margin:200px 0 0 300px;width:140px;height:44px}</style></head>
+<body>
+<label>Search <input id="q" name="q" autocomplete="off"></label>
+<div><button id="go" type="button">Search</button></div>
+<p id="result"></p>
+<pre id="events">[]</pre>
+<script>
+const events = [];
+const out = document.getElementById('events');
+const go = document.getElementById('go');
+const log = (e) => {
+  const r = go.getBoundingClientRect();
+  events.push({ type: e.type, x: e.clientX, y: e.clientY, key: e.key, inButton: e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom });
+  out.textContent = JSON.stringify(events);
+};
+for (const type of ['mousemove', 'mousedown', 'keydown', 'wheel']) window.addEventListener(type, log, true);
+go.addEventListener('click', () => { document.getElementById('result').textContent = 'searched ' + document.getElementById('q').value; });
+</script>
+</body></html>`;
+}
+
 function send(res: ServerResponse, status: number, body: string, type = 'text/plain; charset=utf-8'): void {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
@@ -294,6 +322,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     if (url.pathname === '/challenge/turnstile') return send(res, 200, turnstileFrame(), 'text/html; charset=utf-8');
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
+    if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/' ) {
       res.writeHead(302, { location: '/catalog' });
       return void res.end();
