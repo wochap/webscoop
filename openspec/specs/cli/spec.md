@@ -318,3 +318,49 @@ Variable values are URL-encoded when they are substituted into the URL template.
 #### Scenario: Step-only variable is not flagged
 - **WHEN** `--var login_email=a+b@acme.dev` is passed and only a `type` step uses `{login_email}`
 - **THEN** no warning is printed
+
+### Requirement: Quiet runs
+`webscoop run` SHALL accept `--quiet` and its short form `-q`. With it, the run SHALL NOT print informational stderr lines: the run start, page loads, replayed or skipped steps, healed or resolved fields, pagination progress, recipe write-back, language model messages, and the final summary. The run SHALL still print on stderr every error, every warning (including encoded `--var` warnings and dropped-row warnings), every guard line (raised and waiting for the user, cleared, timed out), the desktop notification text when `notify-send` is absent, and every line that asks the user to act in the browser window, such as an interactive re-pick. Stdout content, `--out` files, and exit codes SHALL be the same as without `--quiet`. `--report` SHALL still print the run report when given together with `--quiet`. `webscoop test` and `webscoop record` SHALL NOT accept `--quiet`.
+
+#### Scenario: Only data on a clean run
+- **WHEN** `webscoop run shop --quiet` succeeds with every field resolved and no warnings
+- **THEN** stdout carries the JSON array and stderr is empty
+
+#### Scenario: Short form
+- **WHEN** `webscoop run shop -q` is executed
+- **THEN** it behaves exactly like `--quiet`
+
+#### Scenario: Errors still print
+- **WHEN** `webscoop run shop --quiet` fails because a required field resolves nowhere
+- **THEN** stderr names the failure and the exit code is 3
+
+#### Scenario: Warnings still print
+- **WHEN** `webscoop run shop --quiet` drops rows that miss a required field
+- **THEN** stderr carries the warning that names the field and the dropped rows, and the exit code is 0
+
+#### Scenario: Guard still prints
+- **WHEN** `webscoop run shop --quiet` meets a login wall on page 1
+- **THEN** stderr carries the line that names the guard and says the run waits for the user in the browser window
+
+#### Scenario: Report still prints
+- **WHEN** `webscoop run shop --quiet --report` is executed
+- **THEN** stderr carries the run report and no informational lines
+
+### Requirement: `edit` command
+`webscoop edit <recipe> [--repick <field>] [--var name=value]... [--profile <name>] [--timeout <ms>] [--lock-timeout <ms>]` SHALL behave exactly like `webscoop record --edit <recipe>` with the same options: it SHALL open the recipe, by name or path, in a recording session, and with `--repick` it SHALL follow the re-pick behavior of `record --edit --repick`. Exit codes and stderr messages SHALL match `record --edit`. A missing `<recipe>` argument SHALL exit 1. `webscoop record --edit` SHALL keep working unchanged.
+
+#### Scenario: Edit by name
+- **WHEN** `webscoop edit playground-catalog` is executed
+- **THEN** the session opens the recipe's URL with its fields loaded, as with `webscoop record --edit playground-catalog`
+
+#### Scenario: Re-pick through edit
+- **WHEN** `webscoop edit shop --repick price` is executed and the user picks the new price element
+- **THEN** the recipe's `price` selectors and fingerprint are replaced and the exit code is 0
+
+#### Scenario: Invalid recipe
+- **WHEN** `webscoop edit ./broken.json` is executed and the file is not a valid recipe
+- **THEN** stderr reports the recipe error and the exit code is 1
+
+#### Scenario: Help lists the command
+- **WHEN** `webscoop --help` is executed
+- **THEN** the command list includes `edit` with a description that says it edits an existing recipe
