@@ -201,10 +201,13 @@ test('pick helpers: the inferred list parent is marked in the setup and Rows, an
   await panel.acceptList({ enter: true });
   await panel.addField('title');
   expect((await r.query(`${ws('rows-stack')} ${ws('rows-parent-inferred')}`))!.text).toBe('inferred');
-  expect((await r.query(ws('rows-parent-repick')))!.text).toBe('Change');
+  expect((await r.query(ws('rows')))!.text).not.toContain('Change');
 
-  // Change: walk from a title up to the results wrapper's parent, which holds every result.
-  await r.clickPanel(ws('rows-parent-repick'));
+  // Change through Edit: walk from a title up to the results wrapper's parent, which holds every result.
+  await r.clickPanel(ws('rows-edit'));
+  await r.until((s) => s.host?.proposal?.origin === 'edit');
+  await r.clickPanel(ws('list-row-within'));
+  await r.clickPanel(ws('list-pick-within'));
   await r.until((s) => s.ui.picking && s.host?.levelPick);
   expect((await overlayText(r)).strip).toContain('Picking in ');
   await r.hover('h3.LC20lb', 2);
@@ -212,15 +215,16 @@ test('pick helpers: the inferred list parent is marked in the setup and Rows, an
   await r.until((s) => s.ui.hover?.depth === 8);
   expect((await overlayText(r)).tag).not.toContain('ws-refused');
   await r.click('h3.LC20lb', 2);
+  await r.until((s) => (s.host?.proposal && s.host.proposal.within?.selectors[0]?.value !== 'rso' && !s.ui.picking ? true : undefined));
+  await r.clickPanel(ws('list-accept'));
   const item = await r.until((s) => {
     const i = s.host?.draft.tables[0]!.item;
-    return i?.within?.[0]?.value !== 'rso' && !s.ui.picking ? i : undefined;
+    return i?.within?.[0]?.value !== 'rso' && !s.ui.picking && !s.host?.proposal ? i : undefined;
   });
   expect(item.within![0]).toMatchObject({ strategy: 'id', value: 'center_col' });
   expect(item.withinInferred).toBeUndefined();
   await r.until((s) => s.host?.draft.tables[0]!.item?.count === 8);
   expect(await r.count(ws('rows-parent-inferred'))).toBe(0);
-  expect((await r.query(ws('rows-parent-repick')))!.text).toBe('Re-pick');
   expect((await r.closeWindow()).code).toBe(0);
 });
 

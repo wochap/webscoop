@@ -95,27 +95,33 @@ export function Toggle({ on, onChange, label, testId }: { on: boolean; onChange:
   );
 }
 
-export function ExclusionInput({ exclude, title = 'Exclude' }: { exclude: ProtocolCandidate[]; title?: string }) {
-  const actions = useActions();
+/** Exclusion rows with their counts; with `onRemove`, each row has a remove button. */
+export function ExclusionList({ exclude, onRemove }: { exclude: ProtocolCandidate[]; onRemove?: (index: number) => void }) {
   return (
-    <div className="ws-col">
-      <span className="ws-caps">{title}</span>
+    <>
       {exclude.map((c, i) => (
         <div key={`${c.value}-${i}`} className="ws-row" data-ws="list-exclusion">
           <span className="ws-spacer ws-row">
             <SelectorChip candidate={c} level="item" />
           </span>
           <span className="ws-num">{c.count ?? '…'}</span>
-          <button
-            type="button"
-            className="ws-btn ws-btn-ghost ws-btn-sm"
-            aria-label={`Remove exclusion ${c.value}`}
-            onClick={() => void actions.send({ kind: 'draft.removeExclusion', index: i })}
-          >
-            <Icon name="x" size={11} />
-          </button>
+          {onRemove && (
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label={`Remove exclusion ${c.value}`} onClick={() => onRemove(i)}>
+              <Icon name="x" size={11} />
+            </button>
+          )}
         </div>
       ))}
+    </>
+  );
+}
+
+export function ExclusionInput({ exclude, title = 'Exclude' }: { exclude: ProtocolCandidate[]; title?: string }) {
+  const actions = useActions();
+  return (
+    <div className="ws-col">
+      <span className="ws-caps">{title}</span>
+      <ExclusionList exclude={exclude} onRemove={(index) => void actions.send({ kind: 'draft.removeExclusion', index })} />
       <SelectorInput
         label="Exclusion selector"
         testId="list-exclude-input"
@@ -462,34 +468,6 @@ export function ListSetupActions({ proposal }: { proposal: ProposalView }) {
   );
 }
 
-/** The confirmed item's list parent: re-pick and clear. */
-export function WithinSummary({ item }: { item: DraftItem }) {
-  const actions = useActions();
-  const primary = item.within?.[0];
-  return (
-    <div className="ws-row" data-ws="rows-parent">
-      <span className="ws-meta ws-spacer" data-ws="rows-parent-selector" data-selector={primary ? selectorText(primary) : undefined}>
-        {primary ? 'List parent' : 'No list parent: containers anywhere on the page'}
-      </span>
-      <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.pickLevel', level: 'within' })} data-ws="rows-parent-repick">
-        <Icon name="crosshair-simple" size={12} />
-        {primary ? (item.withinInferred ? 'Change' : 'Re-pick') : 'Pick'}
-      </button>
-      {primary && (
-        <button
-          type="button"
-          className="ws-btn ws-btn-ghost ws-btn-sm"
-          aria-label="Clear list parent"
-          onClick={() => void actions.send({ kind: 'draft.setLevel', level: 'within', by: 'clear' })}
-          data-ws="rows-parent-clear"
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
-    </div>
-  );
-}
-
 /** The Rows section's content: the confirmed item container as a stack under its list parent, with its exclusions. */
 export function ItemSummary({ item }: { item: DraftItem }) {
   const primary = item.selectors[0]!;
@@ -512,8 +490,12 @@ export function ItemSummary({ item }: { item: DraftItem }) {
           The item container matches nothing on this page.
         </span>
       )}
-      <WithinSummary item={item} />
-      <ExclusionInput exclude={item.exclude} />
+      {item.exclude.length > 0 && (
+        <div className="ws-col" data-ws="rows-exclusions">
+          <span className="ws-caps">Excluded</span>
+          <ExclusionList exclude={item.exclude} />
+        </div>
+      )}
     </div>
   );
 }

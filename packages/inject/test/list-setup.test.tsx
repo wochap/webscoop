@@ -140,7 +140,7 @@ describe('list setup', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'path', path: [1, 0, 1] });
   });
 
-  it('shows the list parent of the confirmed item with its count, re-pick, and clear', async () => {
+  it('shows the list parent of the confirmed item in its stack, read-only', async () => {
     const { proposed } = await hostStates();
     const item = {
       selectors: [{ strategy: 'role' as const, value: 'article', stability: 'stable' as const, count: 24 }],
@@ -151,21 +151,33 @@ describe('list setup', () => {
       total: 24,
     };
     const p = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item }) });
-    expect(p.q('rows-parent-selector')!.dataset.selector).toBe('role=list');
     const list = p.qa('stack-level').find((l) => l.dataset.level === 'list')!;
     expect(list.querySelector('[data-ws="chip"]')!.getAttribute('data-selector')).toBe('role=list');
     expect(list.querySelector('[data-ws="stack-count"]')!.textContent).toBe('1');
-    fireEvent.click(p.q('rows-parent-repick')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.pickLevel', level: 'within' });
-    fireEvent.click(p.q('rows-parent-clear')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'within', by: 'clear' });
+    expect(p.q('rows')!.querySelector('[aria-label="Clear list parent"]')).toBeNull();
+    expect(p.q('rows')!.textContent).not.toMatch(/Change|Re-pick/);
+    expect(p.q('rows-exclusions')).toBeNull();
+    expect(p.q('list-exclude-input')).toBeNull();
 
     const { within: _w, withinCount: _c, ...bare } = item;
     const none = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item: bare }) });
-    expect(none.qa('rows-parent-selector').at(-1)!.textContent).toMatch(/No list parent/);
     expect(none.qa('stack-level').map((l) => l.dataset.level)).toEqual(['item']);
-    expect(none.qa('rows-parent-clear')).toHaveLength(0);
-    expect(none.qa('rows-parent-repick').at(-1)!.textContent).toBe('Pick');
+  });
+
+  it('lists the exclusions of the confirmed item read-only', async () => {
+    const { proposed } = await hostStates();
+    const item = {
+      selectors: [{ strategy: 'role' as const, value: 'article', stability: 'stable' as const, count: 22 }],
+      exclude: [{ strategy: 'css' as const, value: '.sponsored', stability: 'medium' as const, count: 2 }],
+      count: 22,
+      total: 24,
+    };
+    const p = renderPanel({ ...proposed, proposal: null, draft: withTable(proposed.draft, { item }) });
+    const rows = p.q('rows-exclusions')!.querySelectorAll('[data-ws="list-exclusion"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.querySelector('.ws-num')!.textContent).toBe('2');
+    expect(rows[0]!.querySelector('button')).toBeNull();
+    expect(p.q('list-exclude-input')).toBeNull();
   });
 
   it('does not confirm while typing in the exclusion input', async () => {
@@ -191,7 +203,7 @@ describe('editing the confirmed item container in the panel', () => {
     expect(panel.q('rows-edit')).toBeNull();
     expect(panel.q('rows-zero')!.textContent).toMatch(/matches nothing/);
     expect(panel.q('rows-remove')).not.toBeNull();
-    expect(panel.q('rows-parent-repick')).not.toBeNull();
+    expect(panel.q('rows')!.textContent).not.toMatch(/Change|Re-pick|Pick/);
   });
 
   it('offers no Remove once the list has a field', async () => {

@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
-import { AncestorBreadcrumb, shownCrumbs } from '../src/ui/picking';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AncestorBreadcrumb, AttrTable, attrSelector, shownCrumbs } from '../src/ui/picking';
 import { hostStates, renderPanel } from './panel';
 import type { Crumb } from '@webscoop/core';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 describe('inspector and candidates', () => {
   it('flags attributes stable or hashed and walks two levels up the breadcrumb', async () => {
     const { suggested: proposed } = await hostStates();
@@ -104,5 +108,47 @@ describe('ancestor breadcrumb', () => {
   it('follows the selection as it walks up', () => {
     expect(shownCrumbs(trail, trail[20]!.path, false).crumbs.map((c) => c.label)).toEqual(['div18', 'div19', 'div20']);
     expect(shownCrumbs(trail.slice(0, 2), trail[1]!.path, false)).toEqual({ crumbs: trail.slice(0, 2), hidden: 0 });
+  });
+});
+
+describe('copying inspected attributes', () => {
+  const stubClipboard = (write: (text: string) => Promise<void>) => {
+    vi.stubGlobal('isSecureContext', true);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(write) }, configurable: true });
+    return (navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>);
+  };
+  const cells = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('[data-ws="pick-attr-copy"]')];
+
+  it('formats selectors with escaping', () => {
+    expect(attrSelector('id', 'my-id')).toBe('#my-id');
+    expect(attrSelector('id', 'a:b')).toBe('#a\\:b');
+    expect(attrSelector('class', 'card css-1x2y  featured')).toBe('.card.css-1x2y.featured');
+    expect(attrSelector('data-testid', 'buy button')).toBe('[data-testid="buy button"]');
+    expect(attrSelector('aria-label', 'say "hi" \\ now')).toBe('[aria-label="say \\"hi\\" \\\\ now"]');
+  });
+
+  it('copies every class from the class name, one token from its value, and confirms', async () => {
+    const write = stubClipboard(async () => {});
+    const { container } = render(<AttrTable attrs={{ class: 'card css-1x2y featured', 'data-testid': 'buy button' }} />);
+    const all = cells(container);
+    const name = all.find((el) => el.textContent === 'class')!;
+    expect(name.dataset.copy).toBe('.card.css-1x2y.featured');
+    await act(async () => fireEvent.click(name));
+    expect(write).toHaveBeenLastCalledWith('.card.css-1x2y.featured');
+    expect(container.querySelector('[data-ws="pick-attr-copied"]')!.textContent).toBe('Copied .card.css-1x2y.featured');
+    await act(async () => fireEvent.click(all.find((el) => el.textContent === 'featured')!));
+    expect(write).toHaveBeenLastCalledWith('.featured');
+    await act(async () => fireEvent.keyDown(all.find((el) => el.textContent === 'buy button')!, { key: 'Enter' }));
+    expect(write).toHaveBeenLastCalledWith('[data-testid="buy button"]');
+  });
+
+  it('reports a failure when copying throws', async () => {
+    stubClipboard(async () => {
+      throw new Error('denied');
+    });
+    Object.defineProperty(document, 'execCommand', { value: () => { throw new Error('no'); }, configurable: true });
+    const { container } = render(<AttrTable attrs={{ id: 'my-id' }} />);
+    await act(async () => fireEvent.click(cells(container)[0]!));
+    expect(container.querySelector('[data-ws="pick-attr-copied"]')!.textContent).toBe('Could not copy');
   });
 });

@@ -437,7 +437,7 @@ export class Runtime implements Actions {
       overlay.setMatches([]);
       return overlay.setItems([], 'sibling');
     }
-    overlay.setMatches(this.editedMatches());
+    overlay.setMatches(this.selectionMatches());
     // While picking in a list, the list parent has its level outline instead.
     overlay.setList(lists ? null : this.listParent());
     if (host.proposal) {
@@ -452,18 +452,43 @@ export class Runtime implements Actions {
     overlay.setItems([], 'sibling');
   }
 
-  /** Every match of the edited field's primary candidate: inside each item container for item scope, else on the page. */
-  private editedMatches(): Element[] {
+  /**
+   * The match highlight: every match of the edited field's primary candidate
+   * (inside each item container for item scope, else on the page); else the
+   * pick's relative candidate inside each proposed item while the list setup
+   * is open; else the item scoped selection's primary inside each container.
+   */
+  private selectionMatches(): Element[] {
     const host = this.store.get().host;
-    const editing = host?.editing;
-    if (!host || !editing) return [];
+    if (!host) return [];
     const selected = host.selected;
-    const primary = selected ? selected.selection.candidates[selected.primary] : editing.candidates[editing.primary];
-    if (!primary) return [];
-    const scope = selected?.scope ?? editing.options.scope;
-    if (scope === 'page') return resolveLocal(primary, undefined, this.doc);
+    const editing = host.editing;
+    if (editing) {
+      const primary = selected ? selected.selection.candidates[selected.primary] : editing.candidates[editing.primary];
+      if (!primary) return [];
+      const scope = selected?.scope ?? editing.options.scope;
+      if (scope === 'page') return resolveLocal(primary, undefined, this.doc);
+      const item = activeItem(host);
+      const containers = item ? containersLocal(item, this.doc) : [];
+      return containers.flatMap((c) => resolveLocal(primary, c, this.doc));
+    }
+    const own = selected ? elementAt(selected.selection.path, this.doc) : null;
+    if (host.proposal) {
+      const candidate = host.proposal.pick?.selector;
+      if (!candidate) return [];
+      const all = host.proposal.proposed.paths.map((p) => elementAt(p, this.doc)).filter((e): e is Element => e !== null);
+      const excluded = new Set(this.excluded(all, host.proposal.exclude));
+      const items = all.filter((el) => !excluded.has(el));
+      // A pick that is itself an item container has no item relative match.
+      if (own && items.includes(own)) return [];
+      return items.flatMap((c) => resolveLocal(candidate, c, this.doc));
+    }
+    if (!selected || selected.scope !== 'item') return [];
     const item = activeItem(host);
-    const containers = item ? containersLocal(item, this.doc) : [];
+    const primary = selected.selection.candidates[selected.primary];
+    if (!item || !primary) return [];
+    const containers = containersLocal(item, this.doc);
+    if (own && containers.includes(own)) return [];
     return containers.flatMap((c) => resolveLocal(primary, c, this.doc));
   }
 

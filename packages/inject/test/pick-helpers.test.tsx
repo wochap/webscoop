@@ -372,15 +372,14 @@ describe('pick helpers in the panel', () => {
     expect(p.q('list-adjust-parent')!.textContent).not.toContain('inferred');
   });
 
-  it('marks an inferred list parent in the Rows section and offers Change', () => {
+  it('marks an inferred list parent in the Rows section without controls', () => {
     const p = renderPanel(stateWith(item({ withinInferred: true, withinCount: 1 })));
     const row = p.q('rows-stack')!.querySelector('[data-level="list"]')!;
     expect(row.querySelector('[data-ws="rows-parent-inferred"]')!.textContent).toBe('inferred');
-    expect(p.q('rows-parent-repick')!.textContent).toBe('Change');
+    expect(p.q('rows')!.textContent).not.toContain('Change');
     // A reopened recipe has no mark: the list parent shows without the badge.
     act(() => p.store.setHost(stateWith(item({ withinCount: 1 }))));
     expect(p.q('rows-stack')!.querySelector('[data-level="list"] [data-ws="chip"]')).not.toBeNull();
     expect(p.q('rows-parent-inferred')).toBeNull();
-    expect(p.q('rows-parent-repick')!.textContent).toBe('Re-pick');
   });
 });

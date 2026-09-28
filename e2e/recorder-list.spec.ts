@@ -66,6 +66,22 @@ test('rows=4: one title proposes 24 cards under the product list, kept as the li
   expect((await r.closeWindow()).code).toBe(0);
 });
 
+test('match highlight: a title pick shows one match per item in the setup and after accept', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'green']);
+  const panel = sidebar(r);
+  const matchCount = () =>
+    r.page.evaluate(() => (window as unknown as { __webscoopTest: { boxes(): { variant: string }[] } }).__webscoopTest.boxes().filter((b) => b.variant === 'match').length);
+  await r.pick('h2.product-title', 3);
+  await r.until((s) => s.host?.selected?.suggestion);
+  expect(await matchCount()).toBe(0);
+  await r.key('l');
+  await r.until((s) => s.host?.proposal?.proposed.count === 24 && s.host.proposal.pick?.selector);
+  await expect.poll(matchCount).toBe(24);
+  await panel.acceptList();
+  await expect.poll(matchCount).toBe(24);
+  expect((await r.closeWindow()).code).toBe(0);
+});
+
 test('sponsored=2: excluding .sponsored leaves 22 items in the recipe and the run', async ({ scoop }) => {
   const port = scoop.playground.port;
   const r = await scoop.record([template(port, '&sponsored=2'), '--var', 'tier=0', '--name', 'no-ads']);

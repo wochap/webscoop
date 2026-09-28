@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { classifyToken, attrStability, type Crumb, type ParsedSelection, type Path } from '@webscoop/core/page';
+import { copyText } from '../clipboard';
 import { walkTrail } from '../keyboard';
 import type { HoverInfo } from '../store';
 import { Icon } from './icons';
@@ -96,33 +97,133 @@ function Flag({ stable }: { stable: boolean }) {
   return <span className={`ws-badge ${stable ? 'ws-stable' : 'ws-hashed'}`}>{stable ? 'stable' : 'hashed'}</span>;
 }
 
+/** `CSS.escape`, with a fallback for environments without it (jsdom). */
+function escapeIdent(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return value.replace(/^-?\d|[^\w-]/g, (ch) => (/\d/.test(ch.at(-1)!) ? `${ch.slice(0, -1)}\\${ch.charCodeAt(ch.length - 1).toString(16)} ` : `\\${ch}`));
+}
+
+/** Quote a CSS attribute value: backslashes and double quotes escaped. */
+const quoted = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+/** A selector for one inspected attribute: `#id`, `.a.b` for class tokens, else `[name="value"]`. */
+export function attrSelector(name: string, value: string): string {
+  if (name === 'id') return `#${escapeIdent(value)}`;
+  if (name === 'class')
+    return value
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => `.${escapeIdent(t)}`)
+      .join('');
+  return `[${escapeIdent(name)}=${quoted(value)}]`;
+}
+
+/** How long the copy confirmation stays, in ms. */
+const COPIED_MS = 2000;
+
 export function AttrTable({ attrs }: { attrs: Record<string, string> }) {
+  const [copied, setCopied] = useState<{ text: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), COPIED_MS);
+    return () => clearTimeout(t);
+  }, [copied]);
   const rows = inspectedAttrs(attrs);
   if (rows.length === 0) return <span className="ws-meta">No id, data-testid, class, or aria attributes.</span>;
+  const copy = (text: string, from: Node) => {
+    void copyText(text, from.getRootNode()).then((ok) => setCopied({ text, ok }));
+  };
   return (
-    <div className="ws-attrs" data-ws="pick-attrs">
-      {rows.map(([name, value]) =>
-        name === 'class' ? (
-          value
-            .split(/\s+/)
-            .filter(Boolean)
-            .map((token, i) => (
-              <AttrLine key={`class-${i}`} name={i === 0 ? 'class' : ''} value={token} stable={classifyToken(token) === 'stable'} />
-            ))
-        ) : (
-          <AttrLine key={name} name={name} value={value} stable={attrStability(name, value) === 'stable'} />
-        ),
-      )}
-    </div>
+    <>
+      <div className="ws-attrs" data-ws="pick-attrs">
+        {rows.map(([name, value]) =>
+          name === 'class' ? (
+            value
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((token, i) => (
+                <AttrLine
+                  key={`class-${i}`}
+                  name={i === 0 ? 'class' : ''}
+                  nameCopy={attrSelector('class', value)}
+                  value={token}
+                  valueCopy={attrSelector('class', token)}
+                  stable={classifyToken(token) === 'stable'}
+                  onCopy={copy}
+                />
+              ))
+          ) : (
+            <AttrLine
+              key={name}
+              name={name}
+              nameCopy={attrSelector(name, value)}
+              value={value}
+              valueCopy={attrSelector(name, value)}
+              stable={attrStability(name, value) === 'stable'}
+              onCopy={copy}
+            />
+          ),
+        )}
+      </div>
+      <span className={`ws-meta${copied && !copied.ok ? ' ws-error' : ''}`} aria-live="polite" data-ws="pick-attr-copied">
+        {copied ? (copied.ok ? `Copied ${copied.text}` : 'Could not copy') : ''}
+      </span>
+    </>
   );
 }
 
-function AttrLine({ name, value, stable }: { name: string; value: string; stable: boolean }) {
+/** An attribute cell that copies `copy` on click, Enter, or Space. */
+function CopyCell({ copy, className, onCopy, children }: { copy: string; className: string; onCopy: (text: string, from: Node) => void; children: string }) {
+  const run = (e: MouseEvent<HTMLSpanElement> | KeyboardEvent<HTMLSpanElement>) => onCopy(copy, e.currentTarget);
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      className={`${className} ws-attr-copy`}
+      title={`Copy ${copy}`}
+      data-ws="pick-attr-copy"
+      data-copy={copy}
+      onClick={run}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        run(e);
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function AttrLine({
+  name,
+  nameCopy,
+  value,
+  valueCopy,
+  stable,
+  onCopy,
+}: {
+  name: string;
+  nameCopy: string;
+  value: string;
+  valueCopy: string;
+  stable: boolean;
+  onCopy: (text: string, from: Node) => void;
+}) {
   return (
     <>
-      <span className="ws-mono-sm ws-faint">{name}</span>
-      <span className="ws-mono-sm ws-ellipsis" title={value} data-ws="pick-attr-value" data-stable={stable}>
-        {value}
+      {name ? (
+        <CopyCell copy={nameCopy} className="ws-mono-sm ws-faint" onCopy={onCopy}>
+          {name}
+        </CopyCell>
+      ) : (
+        <span />
+      )}
+      <span className="ws-attr-value-cell" data-ws="pick-attr-value" data-stable={stable}>
+        <CopyCell copy={valueCopy} className="ws-mono-sm ws-ellipsis" onCopy={onCopy}>
+          {value}
+        </CopyCell>
       </span>
       <Flag stable={stable} />
     </>

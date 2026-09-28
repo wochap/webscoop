@@ -347,7 +347,7 @@
 .ws-hover-card { display: flex; flex-direction: column; gap: 6px; }
 .ws-hover-path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-family: var(--ws-mono); font-size: 11px; color: var(--ws-text-muted); }
 .ws-hover-path .ws-hover-current { color: var(--ws-text); font-weight: 600; }
-.ws-attrs { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; }
+.ws-attrs { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; }
 .ws-crumbs { display: flex; flex-wrap: wrap; gap: 3px; }
 .ws-crumb {
   height: 22px;
@@ -387,7 +387,7 @@
   cursor: pointer;
 }
 .ws-list-row:hover { background: var(--ws-surface-2); }
-.ws-list-row-selected { background: var(--ws-accent-tint); box-shadow: inset 2px 0 0 var(--ws-accent); }
+.ws-list-row-selected { background: var(--ws-accent-tint); }
 .ws-badge {
   display: inline-flex;
   align-items: center;
@@ -737,7 +737,7 @@
 .ws-ladder-list { gap: 2px; }
 .ws-ladder-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 6px; border: 0; border-radius: var(--ws-r-sm); background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .ws-ladder-row:hover:not(:disabled) { background: var(--ws-neutral-900); }
-.ws-ladder-row[aria-pressed='true'] { background: var(--ws-accent-900); box-shadow: inset 0 0 0 1px var(--ws-accent-700); }
+.ws-ladder-row[aria-pressed='true'] { background: var(--ws-accent-900); }
 .ws-ladder-row:disabled { opacity: 0.45; cursor: default; }
 .ws-ladder-d { flex: none; width: 22px; font-family: var(--ws-mono); font-size: 10.5px; color: var(--ws-text-faint); }
 .ws-ladder-folded, [data-ws='ladder-parent'] { display: flex; align-items: center; gap: 5px; padding-left: 34px; }
@@ -753,3 +753,6 @@
 .ws-stack-edit > .ws-row .ws-stack-label { min-width: 0; }
 .ws-stack-edit > .ws-row .ws-stack-label { flex: 1; }
 [data-ws='tab-menu-list'] { min-width: 240px; }
+.ws-attr-value-cell { display: flex; min-width: 0; }
+.ws-attr-copy { cursor: pointer; border-radius: var(--ws-r-sm); padding: 0 2px; }
+.ws-attr-copy:hover, .ws-attr-copy:focus-visible { background: var(--ws-neutral-800); outline: none; }
