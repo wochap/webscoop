@@ -540,7 +540,27 @@ Wherever the panel shows a saved or candidate selector outside an input, it SHAL
 - **THEN** the full `strategy=value` text and its stability are shown
 
 ### Requirement: Selector input
-Every place where the panel accepts selector text (the list parent and item container fields, the typed selector for the selection, and exclusions) SHALL use one selector input: a strategy dropdown listing `role`, `testid`, `id`, `class`, `text`, `css`, and `xpath` with their tags, a value box, the live match count of the entered selector, and, where the place supports it, a pick control and a control that lists the candidates. Text pasted or typed as `strategy=value` with a known strategy SHALL set the dropdown to that strategy and keep only the value in the box. A value starting with `/` or `./` while the dropdown is on `css` SHALL switch the dropdown to `xpath`. Submitting SHALL send the selector in the `strategy=value` form. A selector that is invalid or matches nothing SHALL mark the input as invalid with an inline error. Picking an element on the page for that place SHALL fill both the dropdown and the value from the picked element's primary candidate.
+Every place where the panel accepts selector text SHALL use one selector input. These places are the list parent and item container fields, the typed selector for the selection, and exclusions. The selector input SHALL have:
+- a strategy dropdown, as defined in "Panel dropdown menus"
+- a value box
+- the live match count of the entered selector
+- where the place supports it, a pick control and a control that lists the candidates
+
+The strategy trigger SHALL show the strategy's tag and name. The strategy menu SHALL list `role`, `testid`, `id`, `class`, `text`, `css`, and `xpath`, in that order. Each row SHALL show the strategy's tag, its name, and a grey example:
+
+| Strategy | Example |
+|---|---|
+| `role` | `button "Buy"` |
+| `testid` | `data-testid` |
+| `id` | `main` |
+| `class` | `card` |
+| `text` | `"Next"` |
+| `css` | `div > a` |
+| `xpath` | `ul/li` |
+
+The menu SHALL end with a footer that says pasting `strategy=value` switches the strategy automatically.
+
+Text pasted or typed as `strategy=value` with a known strategy SHALL set the dropdown to that strategy and keep only the value in the box. A value starting with `/` or `./` while the dropdown is on `css` SHALL switch the dropdown to `xpath`. Submitting SHALL send the selector in the `strategy=value` form. A selector that is invalid or matches nothing SHALL mark the input as invalid with an inline error. Picking an element on the page for that place SHALL fill both the dropdown and the value from the picked element's primary candidate.
 
 #### Scenario: Paste switches the strategy
 - **WHEN** the dropdown is on `css` and the user pastes `xpath=//ol/li` into the value box
@@ -549,6 +569,10 @@ Every place where the panel accepts selector text (the list parent and item cont
 #### Scenario: Typed role selector
 - **WHEN** the user chooses `role` in the dropdown, types `listitem` in the item container input, and submits
 - **THEN** the recorder receives `role=listitem` and the count shows the `listitem` elements inside the list parent
+
+#### Scenario: Strategy menu content
+- **WHEN** the user opens the strategy menu while the input is on `id`
+- **THEN** the menu lists the seven strategies with their tags and examples, `id` has the accent background, and the footer mentions pasting `id=…`
 
 ### Requirement: Selector stack display
 Where the panel shows an item container, it SHALL show the levels of the composed selector as a selector stack: one row per level, outermost first (list parent, then item container, then the field when one is shown), each row indented below the previous one with a connector, holding the level's name, the level's primary selector as a selector chip with that level's stripe color, and the level's match count (for a field, the containers holding a match out of the container count). Levels that are not set SHALL be omitted. The stack SHALL be used in the Rows section, the item proposal, the inspector of an item scoped selection, and the editor of an item scoped field. A field row in the field list SHALL show only the field's own chip, not the stack. The stack SHALL be display only. The recipe SHALL keep one scoped selector list per level.
@@ -978,3 +1002,54 @@ The highlight SHALL follow the selection: it SHALL update when the user walks th
 #### Scenario: Excluded container
 - **WHEN** the list is set with the exclusion `.sponsored` and the user picks a title inside a normal item
 - **THEN** titles inside the sponsored containers show no match highlight
+
+### Requirement: Panel dropdown menus
+The panel SHALL render its choice menus (the selector input's strategy choice and the field type choice) as panel menus in the panel's theme, not as browser-native select menus.
+
+**Trigger**
+- The trigger SHALL show the current value.
+- It SHALL open the menu on click, Enter, Space, ArrowDown, or ArrowUp.
+
+**Menu**
+- The menu SHALL float below the trigger, or above it when there is not enough room below inside the panel.
+- It SHALL NOT be clipped by the section that contains the trigger.
+- It SHALL mark the current value with the accent background and SHALL focus it on open.
+
+**Keys in an open menu**
+- ArrowDown and ArrowUp SHALL move the active row, wrapping at the ends.
+- Home and End SHALL jump to the first and last row.
+- Typing a letter SHALL move to the next row whose name starts with it.
+- Enter or Space SHALL choose the active row and close the menu.
+- Escape SHALL close the menu without changing the value and SHALL NOT trigger any other panel or page shortcut, such as cancelling picking or the list setup.
+- Tab SHALL close the menu.
+
+**Mouse**
+- Clicking a row SHALL choose it.
+- Clicking outside the menu SHALL close it.
+
+**Focus and roles**
+- Choosing a row or closing the menu SHALL return focus to the trigger.
+- The trigger SHALL expose a button role with an expanded state, and the menu SHALL expose listbox and option roles with the selected option marked.
+
+#### Scenario: Choose with the keyboard
+- **WHEN** the field type trigger shows `text`, the user focuses it, presses ArrowDown to open the menu, presses ArrowDown once, and presses Enter
+- **THEN** the field type becomes `number` and focus is on the trigger
+
+#### Scenario: Escape only closes the menu
+- **WHEN** the list setup is open and the user opens the strategy menu of the item container input and presses Escape
+- **THEN** the menu closes, the strategy is unchanged, and the list setup stays open
+
+#### Scenario: Outside click closes
+- **WHEN** a menu is open and the user clicks elsewhere in the panel
+- **THEN** the menu closes and the value is unchanged
+
+#### Scenario: Menu near the panel bottom
+- **WHEN** the trigger is near the bottom of the panel and the menu would not fit below it
+- **THEN** the menu opens above the trigger, fully visible
+
+### Requirement: Field type menu content
+The field type menu SHALL list `text`, `number`, `url`, `image`, `date`, and `html`, in that order. Each row SHALL show a glyph, the type name, and a short grey example of what the type reads.
+
+#### Scenario: Type rows
+- **WHEN** the user opens the field type menu
+- **THEN** it lists the six types in order, each with a glyph and an example, and the current type has the accent background
