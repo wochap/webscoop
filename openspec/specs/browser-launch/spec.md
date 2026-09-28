@@ -104,3 +104,44 @@ The profile lock SHALL apply per profile directory.
 #### Scenario: Marker written
 - **WHEN** any command opens a profile
 - **THEN** the profile directory contains `.webscoop-browser.json` naming the driver, channel, binary, and version used
+
+### Requirement: Humanized input
+A browser session SHALL support a humanized input mode. Whether it is on SHALL be decided by the first setting present:
+1. the `--humanize` or `--no-humanize` flag
+2. the recipe's `browser.humanize`
+3. the config's `browser.humanize`
+4. otherwise off
+
+With the mode off, the session's clicks, typing, key presses, option choices, and scrolling SHALL behave as without this capability.
+
+With the mode on:
+- **Think time.** Before each click, typing, key press, option choice, or scroll, the session SHALL wait a think time drawn from a long-tailed distribution. The median SHALL be between 300 and 900 ms, and every wait SHALL be at most 5 s. Waits SHALL NOT be drawn from a uniform distribution.
+- **Clicks.**
+  - A click SHALL scroll the target into view, then move the pointer from its current position along a curved path of several intermediate points with speed that rises and falls.
+  - The path SHALL end at a random point inside the target's box, away from its edges, not at its exact centre every time.
+  - The click SHALL press and release the button with a hold of 40 to 200 ms.
+- **Typing.** Typing SHALL focus the target by a humanized click, clear it, and type the value one character at a time. Inter-key delays SHALL come from a long-tailed distribution with a median between 60 and 180 ms. For values longer than 200 characters, delays MAY be shortened so that typing one value takes at most 20 s.
+- **Scrolling.** Scrolling to the bottom SHALL use several wheel steps of varying size with pauses between them.
+- **Dwell.** After each page load and each navigation caused by an action, the session SHALL dwell before extraction for a long-tailed time with a median between 800 and 2500 ms. During that time it SHALL make at least one small pointer move or scroll.
+
+Timeouts SHALL apply to the underlying element waits only, not to the added human delays. A humanized action SHALL succeed or fail on the same targets as a plain action.
+
+#### Scenario: Off by default
+- **WHEN** neither a flag, the recipe, nor the config sets humanize and `webscoop run shop` is executed
+- **THEN** clicks, typing, and scrolling behave exactly as before this change
+
+#### Scenario: Recipe turns it on
+- **WHEN** the recipe sets `browser.humanize` to `true` and `webscoop run shop` replays a `type` step with the value `shoes`
+- **THEN** the input receives five separate key events with pauses between them, and the typed value is `shoes`
+
+#### Scenario: Flag overrides recipe
+- **WHEN** the recipe sets `browser.humanize` to `true` and `webscoop run shop --no-humanize` is executed
+- **THEN** actions run without humanized input
+
+#### Scenario: Curved pointer path
+- **WHEN** humanized input is on and a step clicks a button
+- **THEN** the page receives several `mousemove` events on a path that is not a straight line before the `mousedown` inside the button, and the button is clicked
+
+#### Scenario: Page dwell
+- **WHEN** humanized input is on and a page finishes loading
+- **THEN** at least one pointer move or scroll event reaches the page before fields are extracted

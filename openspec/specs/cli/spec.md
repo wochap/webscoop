@@ -395,3 +395,14 @@ A missing browser binary or a missing `patchright` package for the configured dr
 #### Scenario: Profiles listed with their browser
 - **WHEN** profiles `shop` (Chromium) and `shop@chrome` (Chrome) exist with markers
 - **THEN** doctor lists both with their driver, channel, and version
+
+### Requirement: Humanize flags
+`webscoop run`, `webscoop test`, and `webscoop bench` SHALL accept `--humanize` and `--no-humanize`, with the meaning defined in "Humanized input" of the `browser-launch` capability. Passing both SHALL exit 1. The config file MAY declare `browser.humanize` as a boolean. When humanized input is on, the start line of a run SHALL say so. `webscoop record` and `webscoop edit` SHALL NOT accept these flags.
+
+#### Scenario: Turn on from the command line
+- **WHEN** `webscoop run shop --humanize` is executed for a recipe without `browser.humanize`
+- **THEN** the run uses humanized input and its start line says so
+
+#### Scenario: Conflicting flags
+- **WHEN** `webscoop run shop --humanize --no-humanize` is executed
+- **THEN** stderr reports the conflict and the exit code is 1

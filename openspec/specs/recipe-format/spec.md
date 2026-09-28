@@ -162,11 +162,12 @@ A recipe MAY contain a `browser` block with these optional keys:
 - `proxy`: an object with `server`, a proxy URL with scheme `http`, `https`, or `socks5` and no user info, and optionally `bypass`, a list of host patterns
 - `timezone`: an IANA timezone identifier
 - `locale`: a BCP 47 language tag
+- `humanize`: a boolean that turns humanized input on or off for runs of this recipe
 
-A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. An absent block SHALL mean no recipe-level browser settings. The block SHALL NOT change the schema version.
+A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. A non-boolean `humanize` SHALL fail validation naming `browser.humanize`. An absent block or key SHALL mean no recipe-level setting for it. The block SHALL NOT change the schema version.
 
 #### Scenario: Browser block validates
-- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, and `locale` `es-ES`
+- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, `locale` `es-ES`, and `humanize` `true`
 - **THEN** validation succeeds
 
 #### Scenario: Credentials rejected
@@ -176,3 +177,7 @@ A proxy URL with user info SHALL fail validation with a message saying that cred
 #### Scenario: Recipe without the block
 - **WHEN** a recipe has no `browser` block
 - **THEN** validation succeeds and the run uses the config and flag settings
+
+#### Scenario: Invalid humanize value
+- **WHEN** a recipe declares `browser.humanize` as `"yes"`
+- **THEN** validation fails naming `browser.humanize`

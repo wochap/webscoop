@@ -1053,3 +1053,18 @@ The field type menu SHALL list `text`, `number`, `url`, `image`, `date`, and `ht
 #### Scenario: Type rows
 - **WHEN** the user opens the field type menu
 - **THEN** it lists the six types in order, each with a glyph and an example, and the current type has the accent background
+
+### Requirement: Humanize toggle
+The Recipe section SHALL offer a "Humanize input" toggle with a short hint that it slows runs to look like a person and that it helps on sites with bot protection. The toggle SHALL show the draft's `browser.humanize`, off when it is absent. Turning it on SHALL set `browser.humanize` to `true` in the draft. Turning it off SHALL remove the key, and an empty `browser` block SHALL then be removed too. Saving SHALL write the value to the recipe. Editing a recipe SHALL keep its other `browser` keys (`proxy`, `timezone`, `locale`) unchanged. The recording session itself SHALL NOT use humanized input.
+
+#### Scenario: Turn on and save
+- **WHEN** the user turns on "Humanize input" and saves
+- **THEN** the saved recipe has `browser.humanize` set to `true`
+
+#### Scenario: Other browser keys kept
+- **WHEN** a recipe with `browser.proxy` and `browser.timezone` is edited, the toggle is turned on, and the recipe is saved
+- **THEN** the saved recipe keeps `browser.proxy` and `browser.timezone` and adds `browser.humanize` set to `true`
+
+#### Scenario: Turn off removes the key
+- **WHEN** a recipe whose `browser` block holds only `humanize: true` is edited, the toggle is turned off, and the recipe is saved
+- **THEN** the saved recipe has no `browser` block
