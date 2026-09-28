@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -6,6 +6,8 @@ const root = join(import.meta.dirname, '../../..');
 const NAME = /^(panel|footer|section|recipe|var|steps?|pagination|tabs?|table|rows|pick|list|fields?|chip|stack|input|results|repick|guard)(-[a-z0-9]+)*$/;
 
 function files(dir: string, ext: RegExp): string[] {
+  // The nix package build copies only `packages/`, so `e2e/` may be absent.
+  if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return name === 'node_modules' ? [] : files(path, ext);
