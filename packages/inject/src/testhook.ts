@@ -46,6 +46,15 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
     },
     texts: (selector: string) => all(selector).map((el) => el.textContent ?? ''),
     click: (selector: string, index = 0) => one(selector, index).click(),
+    /** Viewport rect of a panel element, for real mouse clicks. */
+    rect: (selector: string, index = 0) => {
+      const el = one(selector, index);
+      const view = el.getBoundingClientRect();
+      // Scroll only when needed: a scroll closes an open panel menu.
+      if (view.top < 0 || view.bottom > win.innerHeight) el.scrollIntoView({ block: 'nearest' });
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    },
     focus: (selector: string, index = 0) => one(selector, index).focus(),
     fill: (selector: string, value: string, index = 0) => {
       const el = one(selector, index);

@@ -253,9 +253,10 @@ test('strategy menu: choosing role in the panel menu and submitting sends role=l
   await r.clickPanel(ws('pick-cta-manual'));
   await r.until((s) => s.host?.proposal?.origin === 'manual');
   expect((await r.query(ws('list-input-item-strategy')))!.value).toBe('css');
-  await r.clickPanel(ws('list-input-item-strategy'));
+  // Real mouse clicks: a synthetic click skips the pointer events that close the menu.
+  await r.mousePanel(ws('list-input-item-strategy'));
   expect(await r.count(ws('list-input-item-strategy-option'))).toBe(7);
-  await r.clickPanel(`${ws('list-input-item-strategy-option')}[data-value="role"]`);
+  await r.mousePanel(`${ws('list-input-item-strategy-option')}[data-value="role"]`);
   expect(await r.count(ws('list-input-item-strategy-option'))).toBe(0);
   expect((await r.query(ws('list-input-item-strategy')))!.value).toBe('role');
   await r.submit(ws('list-input-item'), 'listitem');

@@ -43,6 +43,8 @@ export interface Recording {
   count(selector: string): Promise<number>;
   /** Click a panel element (inside the closed shadow root). */
   clickPanel(selector: string, index?: number): Promise<void>;
+  /** Click a panel element with the real mouse, so pointer events reach every listener. */
+  mousePanel(selector: string, index?: number): Promise<void>;
   /** Replace a panel input's value and commit it. */
   fill(selector: string, value: string, index?: number): Promise<void>;
   /** Replace an input's value and submit its form. */
@@ -138,6 +140,10 @@ export async function startRecording(
     query: (selector, index = 0) => call('query', selector, index),
     count: (selector) => call('count', selector),
     clickPanel: (selector, index = 0) => call('click', selector, index),
+    async mousePanel(selector, index = 0) {
+      const r = await call<{ x: number; y: number; w: number; h: number }>('rect', selector, index);
+      await page.mouse.click(r.x + r.w / 2, r.y + r.h / 2);
+    },
     fill: (selector, value, index = 0) => call('fill', selector, value, index),
     submit: (selector, value, index = 0) => call('submit', selector, value, index),
     async hover(selector, index = 0) {

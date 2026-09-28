@@ -85,41 +85,50 @@ export function Dropdown<T extends string>({
     const below = t.bottom + MARGIN;
     const flip = below + height > bottom && t.top - MARGIN - height >= top;
     const left = Math.max(panel && panel.width > 0 ? panel.left + MARGIN : 0, Math.min(t.left, right - width - MARGIN));
-    setPos({ left, top: flip ? t.top - MARGIN - height : below });
+    // `#ws-root` has `contain: layout`, so it, not the viewport, is the containing block of the fixed menu.
+    // The unplaced menu sits at left 0, top 0 of that block: its rect gives the block's origin.
+    const origin = menu.current.getBoundingClientRect();
+    setPos({ left: left - origin.left, top: (flip ? t.top - MARGIN - height : below) - origin.top });
   }, [open, width]);
 
   useEffect(() => {
-    if (open) menu.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.focus();
+    if (open) menu.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.focus({ preventScroll: true });
   }, [open, active, pos]);
 
   // Outside clicks and scrolling close the menu.
   useEffect(() => {
     if (!open || !trigger.current) return;
+    const root = trigger.current.getRootNode() as Document | ShadowRoot;
+    const host = root instanceof ShadowRoot ? root.host : null;
     const inside = (e: Event) => {
       const path = e.composedPath();
       return path.includes(menu.current!) || path.includes(trigger.current!);
     };
     const onDown = (e: Event) => {
+      // A closed shadow root hides its nodes from the path seen by window listeners;
+      // events from inside the panel are judged by the shadow root listener instead.
+      if (e.currentTarget !== root && host && e.composedPath().includes(host)) return;
       if (!inside(e)) close(false);
     };
     const onScroll = (e: Event) => {
       if (!menu.current || !(e.target instanceof Node) || !menu.current.contains(e.target)) close(false);
     };
-    const root = trigger.current.getRootNode() as Document | ShadowRoot;
     const win = trigger.current.ownerDocument.defaultView ?? window;
     const targets: EventTarget[] = root === trigger.current.ownerDocument ? [win] : [root, win];
+    // Inside a shadow root, only scrolls of the panel move the trigger; the page scrolling under a fixed panel does not.
+    const scrollTarget: EventTarget = host ? root : win;
     for (const t of targets) {
       t.addEventListener('pointerdown', onDown, true);
       t.addEventListener('mousedown', onDown, true);
-      t.addEventListener('scroll', onScroll, true);
     }
+    scrollTarget.addEventListener('scroll', onScroll, true);
     win.addEventListener('resize', onScroll);
     return () => {
       for (const t of targets) {
         t.removeEventListener('pointerdown', onDown, true);
         t.removeEventListener('mousedown', onDown, true);
-        t.removeEventListener('scroll', onScroll, true);
       }
+      scrollTarget.removeEventListener('scroll', onScroll, true);
       win.removeEventListener('resize', onScroll);
     };
   }, [open]);
