@@ -113,8 +113,9 @@ dependencies, update the `npmDeps` hash in `flake.nix`: set `hash` to
 ```sh
 webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms]
 webscoop record --edit <recipe> [--repick field]
+webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--timeout ms]
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
-                      [--profile name] [--timeout ms] [--lock-timeout ms] [--report]
+                      [--profile name] [--timeout ms] [--lock-timeout ms] [--report] [-q|--quiet]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
                       [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
@@ -141,6 +142,12 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--timeout` bounds navigation and network settling (default 30000 ms).
 - `--report` prints the full run report (candidate used, healing outcome, and
   status per field, and where the recipe was written back) to stderr.
+- `-q`/`--quiet` on `run` mutes the informational stderr lines (run start, page
+  loads, steps, healed fields, pagination progress, recipe write-back, model
+  messages, the closing summary). It still prints errors, warnings (encoded
+  `--var` values, dropped rows), guard lines, the notification text when
+  `notify-send` is missing, and re-pick prompts, so a paused run never looks
+  hung. A clean quiet run leaves stderr empty; `--report` still prints.
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
@@ -450,6 +457,21 @@ target with the rung that resolved it (`candidate`, `fuzzy`, `model`, `user`,
 `unresolved`), its status, and the tier's elapsed time. It exits 0 whatever
 healed and 1 when a run broke. The playground is only in a development
 checkout, so `bench` fails with a message elsewhere.
+
+### Editing a recipe
+
+```sh
+webscoop edit shop                  # reopen the recipe with its fields loaded
+webscoop edit shop --repick price   # pick one field again, save, and exit
+```
+
+`edit` opens the recipe, by name or path, in a recording session on its URL
+with every table, field, and step loaded. Change what you need and press
+**Ctrl+S** to save; close the window or press Ctrl+C to end. `--repick <field>`
+skips the full session and re-picks one field (see below). `edit` takes the
+same `--var`, `--profile`, `--timeout`, and `--lock-timeout` options as
+`record` and behaves exactly like `webscoop record --edit <recipe>`, which
+keeps working.
 
 ### Re-picking a field
 

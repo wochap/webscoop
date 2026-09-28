@@ -182,6 +182,68 @@ describe('webscoop run', () => {
     expect(io.err()).toContain('"candidateIndex": 0');
   });
 
+  it('prints only the rows with --quiet on a clean run', async () => {
+    const dir = await home();
+    const normal = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(3) }) });
+    expect(await main(['run', 'shop'], normal)).toBe(ExitCode.Ok);
+    const quiet = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(3) }) });
+    expect(await main(['run', 'shop', '--quiet'], quiet)).toBe(ExitCode.Ok);
+    expect(quiet.err()).toBe('');
+    expect(quiet.out()).toBe(normal.out());
+  });
+
+  it('treats -q like --quiet', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(2) }) });
+    expect(await main(['run', 'shop', '-q'], io)).toBe(ExitCode.Ok);
+    expect(io.err()).toBe('');
+    expect(JSON.parse(io.out())).toHaveLength(2);
+  });
+
+  it('still logs a failure with --quiet and exits 3', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(3, () => false) }) });
+    expect(await main(['run', 'shop', '--quiet'], io)).toBe(ExitCode.Unresolved);
+    expect(io.err()).toMatch(/run failed \(.*\).*price/s);
+    expect(io.err()).not.toContain('running shop');
+  });
+
+  it('still logs dropped-row warnings with --quiet', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(3, (i) => i !== 1) }) });
+    expect(await main(['run', 'shop', '--quiet'], io)).toBe(ExitCode.Ok);
+    expect(io.err()).toMatch(/warning: dropped 1 row on page 1: .*price.*row 1/);
+    expect(io.err()).not.toContain('rows dropped for missing fields in');
+  });
+
+  it('still logs guard lines with --quiet', async () => {
+    const dir = await home();
+    const login = 'https://shop.test/login?next=%2Fc%2Fshoes';
+    const form = () => h('html', {}, h('body', {}, h('form', {}, h('input', { name: 'username' }), h('input', { type: 'password', name: 'password' }), h('button', {}, 'Sign in'))));
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: { dom: form(), redirect: login }, [login]: form() }) });
+    expect(await main(['run', 'shop', '--quiet', '--guard-timeout', '0'], io)).toBe(ExitCode.Paused);
+    expect(io.err()).toContain('guard login on page 1');
+    expect(io.err()).toContain('waiting for you in the browser window');
+    expect(io.err()).toContain('run paused and gave up waiting');
+    expect(io.err()).not.toContain('page 1 loaded');
+  });
+
+  it('prints the report with --quiet --report and no informational lines', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(2) }) });
+    expect(await main(['run', 'shop', '--quiet', '--report'], io)).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('"rowCount": 2');
+    expect(io.err()).not.toContain('webscoop:');
+  });
+
+  it('rejects --quiet on test', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(1) }) });
+    expect(await main(['test', 'shop', '--quiet'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain("unknown option '--quiet'");
+    expect(io.browserCreated()).toBe(0);
+  });
+
   it('exits 1 when the profile is locked by another process', async () => {
     const dir = await home();
     await mkdir(join(dir, 'profiles', 'shop'), { recursive: true });

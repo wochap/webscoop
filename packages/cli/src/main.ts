@@ -65,6 +65,13 @@ Exit codes:
   3  a required field could not be resolved (alert a human)
 `;
 
+/** In-browser keys, shared by `record` and `edit`. */
+const RECORD_KEYS_HELP = `
+In the browser: p picks an element, Esc cancels, Enter confirms the found items,
+Left and Right walk the element's ancestors, Alt+Up and Alt+Down reorder fields,
+Ctrl+S saves. Close the window or press Ctrl+C here to end the session.
+With --repick: click the field's new location, then "Use and save"; S skips, Esc aborts.`;
+
 function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
   const program = new Command('webscoop')
     .description('Record scrapers by clicking, run them unattended from the command line.')
@@ -89,6 +96,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--report', 'print the full run report to stderr')
+    .option('-q, --quiet', 'print only errors, warnings, guard lines, and prompts on stderr')
     .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
     .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
     .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')
@@ -176,13 +184,21 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .addHelpText(
       'after',
-      `
-In the browser: p picks an element, Esc cancels, Enter confirms the found items,
-Left and Right walk the element's ancestors, Alt+Up and Alt+Down reorder fields,
-Ctrl+S saves. Close the window or press Ctrl+C here to end the session.
-With --repick: click the field's new location, then "Use and save"; S skips, Esc aborts.`,
+      RECORD_KEYS_HELP,
     )
     .action(async (template: string | undefined, opts: RecordCommandOptions) => setCode(await recordCommand(io, template, opts)));
+
+  program
+    .command('edit')
+    .description('edit an existing recipe in a browser window (same as record --edit)')
+    .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
+    .option('--repick <field>', 'pick a new location for one field (table.field, or a name one table has), save, and exit')
+    .option('--var <name=value>', 'set a URL template variable (repeatable); missing ones are asked for', collect, [])
+    .option('--profile <name>', 'browser profile name (default: the recipe name)')
+    .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .addHelpText('after', RECORD_KEYS_HELP)
+    .action(async (recipe: string, opts: Omit<RecordCommandOptions, 'edit'>) => setCode(await recordCommand(io, undefined, { ...opts, edit: recipe })));
 
   program
     .command('recipes')

@@ -181,6 +181,48 @@ describe('webscoop record', () => {
     expect(bad.err()).toContain('invalid recipe');
   });
 
+  it('opens an existing recipe with edit like record --edit', async () => {
+    const dir = await tempDir();
+    const reference = loadRecipe(await readFile(new URL('../fixtures/playground-catalog.json', import.meta.url), 'utf8'));
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'recipes'), { recursive: true });
+    await writeFile(join(dir, 'recipes', 'playground-catalog.json'), saveRecipe(reference));
+    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":1,"name":"broken"}');
+    const browser = new FakeBrowser({ [PAGE]: tier0() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['edit', 'playground-catalog'], io);
+    const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
+    expect(browser.visited).toEqual([PAGE]);
+    const reply = (await session.callHost({ kind: 'session.ready', url: PAGE })) as { state: { draft: { tables: { fields: unknown[] }[] } } };
+    expect(reply.state.draft.tables[0]!.fields).toHaveLength(6);
+    await session.userClose();
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('recording playground-catalog (edit)');
+
+    const bad = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['edit', 'broken'], bad)).toBe(ExitCode.Error);
+    expect(bad.err()).toContain('invalid recipe');
+
+    const unknown = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['edit', 'playground-catalog', '--repick', 'nope'], unknown)).toBe(ExitCode.Error);
+    expect(unknown.err()).toContain('no field named "nope"');
+
+    const missing = testIo({});
+    expect(await main(['edit'], missing)).toBe(ExitCode.Error);
+  });
+
+  it('lists edit in help and documents its options and keys', async () => {
+    const top = testIo({});
+    expect(await main(['--help'], top)).toBe(ExitCode.Ok);
+    expect(top.out()).toMatch(/edit \[options\] <recipe>\s+edit an existing recipe/);
+    const io = testIo({});
+    expect(await main(['edit', '--help'], io)).toBe(ExitCode.Ok);
+    for (const text of ['--repick <field>', '--var <name=value>', '--profile <name>', '--timeout <ms>', '--lock-timeout <ms>', 'Ctrl+S saves']) {
+      expect(io.out()).toContain(text);
+    }
+    expect(io.out()).not.toContain('--name');
+  });
+
   it('passes the CDP port and uses the e2e bundle under WEBSCOOP_E2E_CDP_PORT', async () => {
     const dir = await tempDir();
     const browser = new FakeBrowser({ [PAGE]: tier0() });

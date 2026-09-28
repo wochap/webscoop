@@ -74,6 +74,8 @@ export interface RunCommandOptions {
   show?: boolean;
   /** `--hide`: hide the window even when config selects no provider. */
   hide?: boolean;
+  /** `--quiet`: mute informational stderr lines. */
+  quiet?: boolean;
 }
 
 /** Step options for the runner from `--skip-steps`. */
@@ -337,36 +339,42 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
-function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string, multi = false): void {
+function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string, multi = false, quiet = false): void {
+  const info = infoLog(io, quiet);
   /** Field names carry their table when the recipe has several. */
   const named = (table: string | undefined, name: string) => (multi && table !== undefined ? `${table}.${name}` : name);
-  emitter.on('run.start', (e) => log(io, `running ${e.recipe} on profile "${profile}": ${e.url}`));
-  emitter.on('page.loaded', (e) => log(io, `page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
+  emitter.on('run.start', (e) => info(`running ${e.recipe} on profile "${profile}": ${e.url}`));
+  emitter.on('page.loaded', (e) => info(`page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
   emitter.on('guard.cleared', (e) => log(io, `guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
   emitter.on('guard.timeout', (e) => log(io, `guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
-  emitter.on('step.replayed', (e) => log(io, formatStep(e.step)));
-  emitter.on('step.skipped', (e) => log(io, formatStep(e.step)));
+  emitter.on('step.replayed', (e) => info(formatStep(e.step)));
+  emitter.on('step.skipped', (e) => info(formatStep(e.step)));
   emitter.on('field.healed', (e) =>
-    log(io, `healed ${named(e.table, e.target)}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
+    info(`healed ${named(e.table, e.target)}: ${describeOutcome(e.outcome, e.newPrimary)} (was ${selectorText(e.oldPrimary)})`),
   );
   emitter.on('field.resolved', ({ table, field }) => {
     if ((field.status === 'ok' || field.status === 'healed') && field.missingRows.length === 0) return;
     const notes = field.notes && field.notes.length > 0 ? ` (${field.notes.join('; ')})` : '';
     log(io, `field ${named(table, field.name)}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
   });
-  emitter.on('page.advanced', (e) => log(io, `page ${e.page}: ${e.kind}`));
+  emitter.on('page.advanced', (e) => info(`page ${e.page}: ${e.kind}`));
   emitter.on('pagination.stopped', (e) => {
-    if (e.reason !== 'limit' && e.reason !== 'none') log(io, `pagination stopped after page ${e.page}: ${e.reason}`);
+    if (e.reason !== 'limit' && e.reason !== 'none') info(`pagination stopped after page ${e.page}: ${e.reason}`);
   });
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
-  emitter.on('recipe.saved', (e) => log(io, `recipe written to ${e.path}`));
+  emitter.on('recipe.saved', (e) => info(`recipe written to ${e.path}`));
+}
+
+/** Logger for informational lines: a no-op under `--quiet`. Errors, warnings, guards, and prompts use `log`. */
+export function infoLog(io: CliIo, quiet: boolean | undefined): (message: string) => void {
+  return quiet ? () => {} : (message) => log(io, message);
 }
 
 /** The model rung for `run`, `test`, and `bench`: unavailable without an endpoint, off with `--no-llm`. */
-export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean }): Resolver {
-  return modelResolver(createLlm(config, io.env, io.cwd), { enabled: opts.llm !== false, log: (message) => log(io, message) });
+export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean; quiet?: boolean }): Resolver {
+  return modelResolver(createLlm(config, io.env, io.cwd), { enabled: opts.llm !== false, log: infoLog(io, opts.quiet) });
 }
 
 /** `WEBSCOOP_E2E_CDP_PORT`: a DevTools port so end-to-end tests can drive the run's own browser. */
@@ -397,7 +405,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
 
   try {
     const emitter = new RunEmitter();
-    logRunEvents(io, emitter, profile, tables.length > 1);
+    logRunEvents(io, emitter, profile, tables.length > 1, opts.quiet);
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
@@ -444,7 +452,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       log(io, `run failed (${result.reason}): ${result.message}`);
       return result.reason === 'aborted' ? ExitCode.Error : exitCodeFor(result.reason);
     }
-    log(io, summary(result.report));
+    infoLog(io, opts.quiet)(summary(result.report));
     return ExitCode.Ok;
   } finally {
     offInterrupt();
