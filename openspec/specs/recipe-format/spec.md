@@ -163,11 +163,12 @@ A recipe MAY contain a `browser` block with these optional keys:
 - `timezone`: an IANA timezone identifier
 - `locale`: a BCP 47 language tag
 - `humanize`: a boolean that turns humanized input on or off for runs of this recipe
+- `profile`: a profile name that the recipe's browser commands use, unless `--profile` is given. A valid profile name starts with a letter or digit, followed by letters, digits, `.`, `_`, or `-`
 
-A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. A non-boolean `humanize` SHALL fail validation naming `browser.humanize`. An absent block or key SHALL mean no recipe-level setting for it. The block SHALL NOT change the schema version.
+A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. A non-boolean `humanize` SHALL fail validation naming `browser.humanize`. A `profile` that is not a valid profile name SHALL fail validation naming `browser.profile`. An absent block or key SHALL mean no recipe-level setting for it. The block SHALL NOT change the schema version.
 
 #### Scenario: Browser block validates
-- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, `locale` `es-ES`, and `humanize` `true`
+- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, `locale` `es-ES`, `humanize` `true`, and `profile` `acme`
 - **THEN** validation succeeds
 
 #### Scenario: Credentials rejected
@@ -181,3 +182,7 @@ A proxy URL with user info SHALL fail validation with a message saying that cred
 #### Scenario: Invalid humanize value
 - **WHEN** a recipe declares `browser.humanize` as `"yes"`
 - **THEN** validation fails naming `browser.humanize`
+
+#### Scenario: Invalid profile name
+- **WHEN** a recipe declares `browser.profile` as `../other`
+- **THEN** validation fails naming `browser.profile`

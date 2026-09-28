@@ -385,6 +385,10 @@ Variable values are URL-encoded when they are substituted into the URL template.
 - the configured proxy with credentials masked
 - the configured timezone and locale
 - each profile directory with the driver, channel, and version from its marker, or "unknown" when there is no marker
+- `profiles.default` when set, and each rule in `profiles.rules` with its number, its patterns, and its profile
+- for each valid recipe in the recipes directory, the profile it resolves to without `--profile` and the source, as named in "Profile resolution"
+
+To resolve a recipe's host, doctor SHALL fill the URL with the declared variable defaults. When a variable in the host has no default, doctor SHALL treat `host` rules as not matching for that recipe and SHALL say that the host needs variables. A recipe that fails to load SHALL be reported as invalid and SHALL NOT change the exit code.
 
 A missing browser binary or a missing `patchright` package for the configured driver SHALL make doctor exit 1, like a missing Chromium does today.
 
@@ -396,6 +400,14 @@ A missing browser binary or a missing `patchright` package for the configured dr
 - **WHEN** profiles `shop` (Chromium) and `shop@chrome` (Chrome) exist with markers
 - **THEN** doctor lists both with their driver, channel, and version
 
+#### Scenario: Recipe resolution listed
+- **WHEN** a rule maps host `acme\\.com$` to `acme` and recipes `acme-list` (URL on `acme.com`) and `other` (no match, no default) exist
+- **THEN** doctor lists `acme-list` with profile `acme` from `config rule 1`, and `other` with profile `other` from `recipe name`
+
+#### Scenario: Host needs variables
+- **WHEN** recipe `list` has URL `https://{site}/list` and `site` has no default
+- **THEN** doctor lists `list` with the profile resolved without host rules and says the host needs variables
+
 ### Requirement: Humanize flags
 `webscoop run`, `webscoop test`, and `webscoop bench` SHALL accept `--humanize` and `--no-humanize`, with the meaning defined in "Humanized input" of the `browser-launch` capability. Passing both SHALL exit 1. The config file MAY declare `browser.humanize` as a boolean. When humanized input is on, the start line of a run SHALL say so. `webscoop record` and `webscoop edit` SHALL NOT accept these flags.
 
@@ -406,3 +418,81 @@ A missing browser binary or a missing `patchright` package for the configured dr
 #### Scenario: Conflicting flags
 - **WHEN** `webscoop run shop --humanize --no-humanize` is executed
 - **THEN** stderr reports the conflict and the exit code is 1
+
+### Requirement: Profile rules in config
+The config file MAY declare a `profiles` block with these optional keys:
+- `default`: a profile name
+- `rules`: an ordered list of entries, each with an optional `host` regular expression, an optional `name` regular expression, and a required `profile` name
+
+Each rule SHALL have at least one of `host` and `name`. A rule matches when every key it declares matches. `host` SHALL be tested against the host name (without port) of the recipe's URL, filled with the command's variable values. `name` SHALL be tested against the recipe name. Patterns SHALL be unanchored; a pattern matches when it matches any part of the value.
+
+The config SHALL fail to load, with exit 1 and a message naming the JSON path, when a pattern is not a valid regular expression, when a rule has neither `host` nor `name`, or when `default` or a rule's `profile` is not a valid profile name. A valid profile name starts with a letter or digit, followed by letters, digits, `.`, `_`, or `-`.
+
+#### Scenario: Host rule matches
+- **WHEN** the config has the rule `{ "host": "(^|\\.)acme\\.com$", "profile": "acme" }` and `webscoop run shop` is executed for a recipe whose URL is `https://www.acme.com/catalog`
+- **THEN** the run uses profile `acme`
+
+#### Scenario: Both keys must match
+- **WHEN** a rule declares `host` `acme\\.com$` and `name` `^admin-`, and the recipe `shop` has URL `https://acme.com/`
+- **THEN** the rule does not match
+
+#### Scenario: Invalid pattern
+- **WHEN** the config has a rule with `host` `acme(`
+- **THEN** every command exits 1 and stderr names `$.profiles.rules.0.host`
+
+#### Scenario: Empty rule
+- **WHEN** the config has the rule `{ "profile": "acme" }`
+- **THEN** every command exits 1 and stderr names `$.profiles.rules.0`
+
+### Requirement: Profile resolution
+`webscoop run`, `webscoop test`, `webscoop record` (including `record --edit` and `edit`), and `webscoop bench` SHALL resolve the profile name in this order, taking the first that applies:
+1. `--profile <name>`
+2. the recipe's `browser.profile`
+3. the first rule in `profiles.rules`, in list order, that matches the recipe
+4. `profiles.default`
+5. the recipe name
+
+For a new recording, the recipe name SHALL be the `--name` value or the name proposed from the URL, and the host SHALL come from the URL filled with the session's variable values. The resolved name SHALL select the profile directory as defined in "Profile per browser" of the `browser-launch` capability. The start line of each of these commands SHALL name the profile and its source: `flag`, `recipe`, `config rule <n>` (1-based), `config default`, or `recipe name`.
+
+#### Scenario: No profile config keeps today's behavior
+- **WHEN** the config has no `profiles` block and the recipe `shop` has no `browser.profile`
+- **THEN** `webscoop run shop` uses profile `shop` and the start line says the source is `recipe name`
+
+#### Scenario: Config default
+- **WHEN** the config sets `profiles.default` to `main` and no rule matches recipe `shop`
+- **THEN** `webscoop run shop` uses profile `main`
+
+#### Scenario: First matching rule wins
+- **WHEN** the rules are `[{ "name": "^acme-admin-", "profile": "acme-admin" }, { "host": "acme\\.com$", "profile": "acme" }]` and recipe `acme-admin-orders` has a URL on `acme.com`
+- **THEN** the run uses profile `acme-admin` and the start line says `config rule 1`
+
+#### Scenario: Recipe pin outranks rules
+- **WHEN** recipe `shop` declares `browser.profile` `personal` and a config rule matches `shop` with profile `acme`
+- **THEN** `webscoop run shop` uses profile `personal`
+
+#### Scenario: Flag outranks everything
+- **WHEN** recipe `shop` declares `browser.profile` `personal` and `webscoop run shop --profile scratch` is executed
+- **THEN** the run uses profile `scratch` and the start line says the source is `flag`
+
+#### Scenario: Host from variables
+- **WHEN** a recipe URL is `https://{site}/list`, a rule matches host `acme\\.com$`, and `webscoop run list --var site=shop.acme.com` is executed
+- **THEN** the run uses the rule's profile
+
+### Requirement: Recording pins the profile it used
+When `webscoop record` or `webscoop edit` saves a recipe, the CLI SHALL resolve the profile that the saved recipe would get without a `browser.profile` pin and without `--profile`, using the saved name and URL. When that profile differs from the profile the session used, the saved recipe SHALL declare `browser.profile` as the profile the session used. When they are equal, the saved recipe SHALL NOT declare `browser.profile`, and an empty `browser` block SHALL be dropped. As a result, a later `webscoop run` without `--profile` uses the profile the session used.
+
+#### Scenario: Rename during recording keeps the login
+- **WHEN** `webscoop record https://example.com/catalog` starts on profile `example-com-catalog` with no profile config, and the user saves the recipe as `shop`
+- **THEN** the saved recipe declares `browser.profile` `example-com-catalog`, and `webscoop run shop` uses that profile
+
+#### Scenario: Recipe that follows the config stays unpinned
+- **WHEN** a rule maps host `acme\\.com$` to `acme`, `webscoop record https://acme.com/list` starts on profile `acme`, and the user saves the recipe as `acme-list`
+- **THEN** the saved recipe has no `browser.profile`
+
+#### Scenario: Recording with an explicit profile
+- **WHEN** `webscoop record https://acme.com/list --profile second-account` is executed, a rule maps `acme.com` to `acme`, and the user saves
+- **THEN** the saved recipe declares `browser.profile` `second-account`
+
+#### Scenario: Edit keeps an existing pin
+- **WHEN** recipe `shop` declares `browser.profile` `personal` and `webscoop edit shop` saves a change
+- **THEN** the saved recipe still declares `browser.profile` `personal`
