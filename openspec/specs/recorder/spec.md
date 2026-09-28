@@ -139,7 +139,15 @@ The panel SHALL offer a picking mode. While picking, hovering an element SHALL d
 - **THEN** the tag says "11 similar siblings"
 
 ### Requirement: Selected element inspector
-After selection the panel SHALL show: tag name, role and accessible name when present, a text excerpt, and the element's `id`, `data-testid`, `class`, and `aria-*` attributes, each attribute flagged stable or hashed. It SHALL show an ancestor breadcrumb from the document body to the element with role or tag labels. The breadcrumb SHALL show at most the last three crumbs up to the current selection, preceded by an expander that shows every crumb when clicked. The user SHALL be able to move the selection up or down the breadcrumb with Left and Right arrow keys or by clicking a crumb; the highlight and inspector follow, and the shown crumbs follow the selection.
+After selection the panel SHALL show: tag name, role and accessible name when present, a text excerpt, and the element's `id`, `data-testid`, `class`, and `aria-*` attributes, each attribute flagged stable or hashed. Attribute names SHALL take only the width of the longest name. Each attribute SHALL be copyable by clicking it:
+- The `class` name SHALL copy every class token as a compound class selector, such as `.first.second.css-1x2y`, hashed tokens included.
+- One class token SHALL copy `.token`.
+- `id` SHALL copy `#value`.
+- Any other attribute SHALL copy `[name="value"]`.
+
+Identifiers and values SHALL be escaped so that the copied text is a valid CSS selector. The panel SHALL confirm each copy with a short message showing the copied text, and SHALL report a failure when the clipboard is unavailable.
+
+It SHALL show an ancestor breadcrumb from the document body to the element with role or tag labels. The breadcrumb SHALL show at most the last three crumbs up to the current selection, preceded by an expander that shows every crumb when clicked. The user SHALL be able to move the selection up or down the breadcrumb with Left and Right arrow keys or by clicking a crumb; the highlight and inspector follow, and the shown crumbs follow the selection.
 
 #### Scenario: Walk up to the container
 - **WHEN** a product title is selected and the user presses Left twice
@@ -148,6 +156,22 @@ After selection the panel SHALL show: tag name, role and accessible name when pr
 #### Scenario: Short breadcrumb on a deep page
 - **WHEN** the selected `h3` has 22 ancestors
 - **THEN** the breadcrumb shows an expander and the last three crumbs ending in the `h3`, and clicking the expander shows all 22 ancestors
+
+#### Scenario: Copy all classes
+- **WHEN** the selected element has `class="card css-1x2y featured"` and the user clicks the `class` name
+- **THEN** the clipboard holds `.card.css-1x2y.featured` and the panel confirms the copy
+
+#### Scenario: Copy one class
+- **WHEN** the user clicks the `featured` token of that element
+- **THEN** the clipboard holds `.featured`
+
+#### Scenario: Copy the id
+- **WHEN** the selected element has `id="my-id"` and the user clicks it
+- **THEN** the clipboard holds `#my-id`
+
+#### Scenario: Copy another attribute
+- **WHEN** the selected element has `data-testid="buy button"` and the user clicks it
+- **THEN** the clipboard holds `[data-testid="buy button"]`
 
 ### Requirement: Selector candidates shown and chosen
 For the selected element the panel SHALL list every generated selector candidate with its strategy, value, stability badge, and the number of elements it matches on the current page, ranked as defined by the selector-generation capability. When the element was chosen by hand in this session, by a pick on the page or a click on a breadcrumb crumb, the candidates SHALL be verified against it as defined by the selector-generation capability, and a candidate verified as a miss SHALL carry a badge stating that it reads another element. Candidates shown for a typed selector or for a saved field opened for editing SHALL NOT be verified until the user picks or clicks a crumb. The top candidate SHALL be preselected. The user MAY change which candidate is primary; the saved field SHALL list the chosen candidate first and keep the others in ranked order, hits before misses.
@@ -212,11 +236,19 @@ When the active table is a list, no suggestion SHALL be shown for picks inside i
 - **THEN** the list setup proposes the questions blocks as containers of `questions`, and accepting leaves `products` unchanged
 
 ### Requirement: Exclusions
-While the item container is proposed or set, the user SHALL be able to add an exclusion selector. Containers matching it SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list.
+While the list setup is open, the user SHALL be able to add and remove exclusion selectors. Containers matching an exclusion SHALL be removed from the highlighted set and from the match count, and the exclusion SHALL be saved in the recipe's `item.exclude` list. After the list is set, the Rows section SHALL list the exclusions with their counts, read-only, only when there is at least one, and SHALL offer no exclusion input. Exclusions SHALL be changed through the Rows section's Edit.
 
 #### Scenario: Exclude sponsored cards
-- **WHEN** 24 cards match and the user adds the exclusion `.sponsored` matching 2 of them
+- **WHEN** 24 cards match in the list setup and the user adds the exclusion `.sponsored` matching 2 of them
 - **THEN** the count shows 22 and those 2 cards lose their highlight
+
+#### Scenario: Exclusions shown read-only
+- **WHEN** the list is set with the exclusion `.sponsored`
+- **THEN** the Rows section lists `.sponsored` with its count and offers neither a remove control nor an exclusion input
+
+#### Scenario: No exclusions
+- **WHEN** the list is set without exclusions
+- **THEN** the Rows section shows no exclusion area
 
 ### Requirement: Add as field
 The user SHALL be able to turn the selection into a field with a name (defaulting to a slug of the accessible name or text, unique within its table), a type among `text`, `number`, `url`, `image`, `date`, `html` (defaulting to `url` for links, `image` for images, `number` when the text is numeric, else `text`), an attribute to read (defaulting to `href` for links and `src` for images), optional flag, and dedup key flag. The field's scope SHALL follow the table's mode as defined in "One mode per table", and the form SHALL offer no scope choice. The field SHALL go to the active table: the Pick section lives inside the active table's tab and offers no other target table. When the active table is a list, "Add field" SHALL be available only for a selection inside one of its containers. Activating another tab while an element is selected SHALL recompute the selection for that table. Adding the `+` tab while an element is selected SHALL create the table, activate it, and recompute the selection for it. The selection panel SHALL show these options as a form prefilled with the defaults before the field is added, and adding SHALL use the form's values. After a field is added, the panel SHALL return to the empty state described in "Clear the selection". Fields SHALL be listed under their table with name, type, sample value, and match count, and SHALL be reorderable within their table by drag or Alt+Up and Alt+Down. The Pick section SHALL also offer to mark the selection as the pagination target and to record it as a step.
@@ -455,7 +487,7 @@ The proposal block SHALL offer an "include all siblings" toggle. When on, every 
 - **THEN** the proposal shows 9 matches and 0 skipped
 
 ### Requirement: Saved list parent
-Accepting the list setup SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. The Rows section SHALL show the list parent with its match count and allow re-picking or clearing it after the list is set; when the list parent is marked inferred, the re-pick control SHALL read "Change". Setting, re-picking, or typing a list parent for a set item container SHALL rewrite `item.selectors` relative to the new list parent, keeping the chosen primary candidate first when it has a relative form; clearing the list parent SHALL rewrite them document relative. The item count SHALL be recounted after each rewrite.
+Accepting the list setup SHALL save the list parent's ranked candidates as `item.within` when a list parent is set, and omit `within` when the user cleared the list parent. The saved `item.selectors` SHALL be relative to the list parent when `within` is saved, and document relative otherwise. The Rows section SHALL show the list parent with its match count, and with an "inferred" mark when the list parent was inferred, as part of its selector stack. It SHALL offer no re-pick, Change, or clear control for the list parent. The list parent SHALL be changed or cleared through the Rows section's Edit, in the list setup. Setting, re-picking, typing, or clearing a list parent there and choosing "Update list" SHALL rewrite `item.selectors`: relative to the new list parent, keeping the chosen primary candidate first when it has a relative form, or document relative when the list parent was cleared. The item count SHALL be recounted after each rewrite.
 
 #### Scenario: Within saved on confirm
 - **WHEN** the user accepts a list setup whose list parent is the product list
@@ -466,7 +498,7 @@ Accepting the list setup SHALL save the list parent's ranked candidates as `item
 - **THEN** the saved recipe's `item` has no `within`
 
 #### Scenario: List parent set after confirming
-- **WHEN** the user set up a list manually, cleared the inferred list parent so the item selector is document relative, accepted, and then picks the product list as list parent from the Rows section
+- **WHEN** the user set up a list manually, cleared the inferred list parent so the item selector is document relative, and accepted, then chooses Edit in the Rows section, picks the product list as list parent, and chooses "Update list"
 - **THEN** `item.selectors` are rewritten relative to the product list and the item count stays 24
 
 #### Scenario: Highlights follow the list parent
@@ -478,8 +510,12 @@ Accepting the list setup SHALL save the list parent's ranked candidates as `item
 - **THEN** the run resolves the list parent, finds every result inside it, and returns one row per result
 
 #### Scenario: Change an inferred list parent
-- **WHEN** the Rows section shows the list parent `#rso` marked inferred and the user chooses "Change" and picks `#search`
+- **WHEN** the Rows section shows the list parent `#rso` marked inferred, and the user chooses Edit, clicks the list parent row, picks `#search`, and chooses "Update list"
 - **THEN** the list parent becomes `#search`, the item selectors are rewritten relative to it, and the inferred mark is gone
+
+#### Scenario: Summary has no list parent controls
+- **WHEN** the list is set with a list parent
+- **THEN** the Rows section shows the list parent in its stack and offers no re-pick, Change, or clear control for it
 
 ### Requirement: Accessibility candidates for levels
 The list parent and item fields SHALL list their candidates like a field does, including role-only candidates, and the user MAY choose which is primary before confirming.
@@ -901,3 +937,44 @@ When a list setup opened from a pick proposes a list parent, and when a list set
 #### Scenario: Not saved
 - **WHEN** the recipe is saved and opened again in a new recording session
 - **THEN** the Rows section shows the list parent without the "inferred" badge and the saved recipe has no field for the mark
+
+### Requirement: Match highlight for a pick
+The page SHALL highlight in the match style every element that the selection's item-relative primary candidate resolves to, inside each item container, in these states:
+- The list setup is open from a pick. The containers are the proposed items, and the candidate is the pick's top relative candidate shown on the "your pick" row.
+- The active table has a set item container and the selection is inside one of its containers, with scope `item`. The containers are the table's non-excluded containers.
+
+No match highlight SHALL be shown in these states:
+- For a selection while the active table has no item container and no list setup is open, including while the list suggestion is shown and after a page-scoped field is added.
+- For a selection outside every container.
+- For a selection that is itself an item container.
+- Inside excluded containers.
+
+The highlight SHALL follow the selection: it SHALL update when the user walks the selection up or down or chooses another candidate, and it SHALL clear when the selection is cleared or a field is added. Editing a saved field SHALL keep highlighting every match of the edited field as defined in "Edit a saved field".
+
+#### Scenario: Suggestion without green
+- **WHEN** the user picks a result title in an empty table and the list suggestion appears
+- **THEN** only the picked title is highlighted and no other title shows the match highlight
+
+#### Scenario: Green during list setup
+- **WHEN** the user opens the list setup from that pick and the proposal has 11 items
+- **THEN** the title in each of the 11 items shows the match highlight
+
+#### Scenario: Green after accepting the list
+- **WHEN** the user accepts the setup and the panel returns to the title selected with scope `item`
+- **THEN** the title in each item container shows the match highlight without adding a field
+
+#### Scenario: Green on a later pick
+- **WHEN** the list is set, a field was added, and the user picks the price inside the third item
+- **THEN** the price in every item container that has one shows the match highlight
+
+#### Scenario: Page table without green
+- **WHEN** the active table has no item container and the user picks the page heading and adds it as a field
+- **THEN** no match highlight is shown before or after adding it
+
+#### Scenario: Walk out of the item
+- **WHEN** the list is set and the user walks the selection up with Left past the item container
+- **THEN** the match highlight clears
+
+#### Scenario: Excluded container
+- **WHEN** the list is set with the exclusion `.sponsored` and the user picks a title inside a normal item
+- **THEN** titles inside the sponsored containers show no match highlight
