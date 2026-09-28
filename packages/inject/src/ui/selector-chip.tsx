@@ -10,14 +10,14 @@ export type SelectorLevel = 'list' | 'item' | 'field' | 'page';
 export const STRATEGIES: readonly Strategy[] = ['role', 'testid', 'id', 'class', 'text', 'css', 'xpath'];
 
 /** The tag each strategy shows: an icon, or a short glyph. */
-export const STRATEGY_TAGS: Record<Strategy, { icon?: IconName; text?: string; name: string }> = {
-  role: { icon: 'person-simple', name: 'role' },
-  testid: { icon: 'flask', name: 'test id' },
-  id: { text: '#', name: 'id' },
-  class: { text: '.', name: 'class' },
-  text: { icon: 'text-t', name: 'text' },
-  css: { text: '{}', name: 'css' },
-  xpath: { text: '//', name: 'xpath' },
+export const STRATEGY_TAGS: Record<Strategy, { icon?: IconName; text?: string; name: string; example: string }> = {
+  role: { icon: 'person-simple', name: 'role', example: 'button "Buy"' },
+  testid: { icon: 'flask', name: 'test id', example: 'data-testid' },
+  id: { text: '#', name: 'id', example: 'main' },
+  class: { text: '.', name: 'class', example: 'card' },
+  text: { icon: 'text-t', name: 'text', example: '"Next"' },
+  css: { text: '{}', name: 'css', example: 'div > a' },
+  xpath: { text: '//', name: 'xpath', example: 'ul/li' },
 };
 
 const STABILITY_LABEL: Record<Stability, string> = { stable: 'stable', medium: 'medium stability', fragile: 'fragile' };

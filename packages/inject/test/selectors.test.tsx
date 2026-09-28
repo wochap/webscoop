@@ -7,7 +7,7 @@ import { RecorderProvider } from '../src/ui/context';
 import { Icon, ICON_NAMES } from '../src/ui/icons';
 import { SelectorChip, selectorDisplay, STRATEGIES } from '../src/ui/selector-chip';
 import { applyTyping, SelectorInput, splitSelector } from '../src/ui/selector-input';
-import { renderPanel } from './panel';
+import { chooseOption, renderPanel } from './panel';
 import { acceptList, byClass, harness, openList, RESULTS } from '../../core/test/recorder-helpers';
 import { resultsSnapshot } from '../../core/test/snapshot';
 import { selectorChain } from '../src/chain';
@@ -130,9 +130,11 @@ describe('selector input', () => {
     const submitted: string[] = [];
     const p = withActions(<SelectorInput label="Item selector" testId="pick-selector" onSubmit={(t) => submitted.push(t)} />);
     const box = p.container.querySelector('[data-ws="pick-selector"]') as HTMLInputElement;
-    const strategy = p.container.querySelector('[data-ws="pick-selector-strategy"]') as HTMLSelectElement;
+    const strategy = p.container.querySelector('[data-ws="pick-selector-strategy"]') as HTMLButtonElement;
     expect(strategy.value).toBe('css');
-    expect(Array.from(strategy.options).map((o) => o.value)).toEqual(['role', 'testid', 'id', 'class', 'text', 'css', 'xpath']);
+    fireEvent.click(strategy);
+    expect(Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).map((o) => o.dataset.value)).toEqual(['role', 'testid', 'id', 'class', 'text', 'css', 'xpath']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     fireEvent.change(box, { target: { value: 'xpath=//ol/li' } });
     expect(strategy.value).toBe('xpath');
     expect(box.value).toBe('//ol/li');
@@ -140,7 +142,7 @@ describe('selector input', () => {
     expect(submitted).toEqual(['xpath=//ol/li']);
 
     // Typed role selector: choose role, type the value, submit.
-    fireEvent.change(strategy, { target: { value: 'role' } });
+    chooseOption(strategy, 'role');
     fireEvent.change(box, { target: { value: 'listitem' } });
     fireEvent.submit(box.closest('form')!);
     expect(submitted.at(-1)).toBe('role=listitem');

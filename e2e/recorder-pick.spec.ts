@@ -246,3 +246,20 @@ test('pick helpers: a manual setup infers the product list as list parent, and c
   expect((await r.state()).host!.proposal!.proposed.count).toBe(24);
   expect((await r.closeWindow()).code).toBe(0);
 });
+
+test('strategy menu: choosing role in the panel menu and submitting sends role=listitem', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'role-menu']);
+  await r.pick('h1.category-heading');
+  await r.clickPanel(ws('pick-cta-manual'));
+  await r.until((s) => s.host?.proposal?.origin === 'manual');
+  expect((await r.query(ws('list-input-item-strategy')))!.value).toBe('css');
+  await r.clickPanel(ws('list-input-item-strategy'));
+  expect(await r.count(ws('list-input-item-strategy-option'))).toBe(7);
+  await r.clickPanel(`${ws('list-input-item-strategy-option')}[data-value="role"]`);
+  expect(await r.count(ws('list-input-item-strategy-option'))).toBe(0);
+  expect((await r.query(ws('list-input-item-strategy')))!.value).toBe('role');
+  await r.submit(ws('list-input-item'), 'listitem');
+  const proposal = await r.until((s) => (s.host?.proposal?.proposed.selectors[0]?.strategy === 'role' ? s.host.proposal : undefined));
+  expect(proposal.proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
+  expect((await r.closeWindow()).code).toBe(0);
+});

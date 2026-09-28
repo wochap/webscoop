@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useActions } from './context';
+import { Dropdown, type DropdownOption } from './dropdown';
 import { Icon } from './icons';
 import { STRATEGIES, STRATEGY_TAGS, StrategyTag, type Strategy } from './selector-chip';
+
+const STRATEGY_OPTIONS: DropdownOption<Strategy>[] = STRATEGIES.map((s) => ({
+  value: s,
+  glyph: <StrategyTag strategy={s} />,
+  name: s,
+  hint: STRATEGY_TAGS[s].example,
+}));
 
 const TYPED = /^(role|testid|id|text|css|class|xpath)=([\s\S]*)$/;
 
@@ -50,6 +58,7 @@ export function SelectorInput({
   errorTestId = `${testId}-error`,
   pickTestId = `${testId}-pick`,
   candidatesTestId = `${testId}-candidates`,
+  strategyTestId = `${testId}-strategy`,
   extra,
 }: {
   /** The current selector as `strategy=value`; the input follows it when it changes. */
@@ -76,6 +85,7 @@ export function SelectorInput({
   errorTestId?: string;
   pickTestId?: string;
   candidatesTestId?: string;
+  strategyTestId?: string;
   extra?: ReactNode;
 }) {
   const actions = useActions();
@@ -118,23 +128,27 @@ export function SelectorInput({
             submit();
           }}
         >
-          <span className="ws-selin-strategy" title={`Strategy: ${tag.name}`}>
-            <StrategyTag strategy={state.strategy} />
-            <span className="ws-selin-name">{state.strategy}</span>
-            <Icon name="caret-down" size={9} />
-            <select
-              value={state.strategy}
-              aria-label={`${label} strategy`}
-              data-ws={`${testId}-strategy`}
-              onChange={(e) => setState({ ...state, strategy: e.target.value as Strategy })}
-            >
-              {STRATEGIES.map((s) => (
-                <option key={s} value={s}>
-                  {STRATEGY_TAGS[s].text ?? ''} {s}
-                </option>
-              ))}
-            </select>
-          </span>
+          <Dropdown
+            value={state.strategy}
+            options={STRATEGY_OPTIONS}
+            onChange={(strategy) => setState({ ...state, strategy })}
+            label={`${label} strategy`}
+            testId={strategyTestId}
+            className="ws-selin-strategy"
+            title={`Strategy: ${tag.name}`}
+            renderTrigger={() => (
+              <>
+                <StrategyTag strategy={state.strategy} />
+                <span className="ws-selin-name">{state.strategy}</span>
+                <Icon name="caret-down" size={9} />
+              </>
+            )}
+            footer={
+              <>
+                Paste <code>{state.strategy}=…</code> to switch automatically
+              </>
+            }
+          />
           <input
             className="ws-selin-value"
             value={state.value}

@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { emptyDraft, type Draft, type DraftTable, type PageMessage, type Path, type RecorderState } from '@webscoop/core';
 import { byClass, harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
@@ -63,4 +63,13 @@ export function renderPanel(host: RecorderState | null, ui: Partial<UiState> = {
   const q = (ws: string) => view.container.querySelector(`[data-ws="${ws}"]`) as HTMLElement | null;
   const qa = (ws: string) => Array.from(view.container.querySelectorAll(`[data-ws="${ws}"]`)) as HTMLElement[];
   return { ...view, store, sent, selected, toasts, actions, q, qa };
+}
+
+/** Choose `value` in a panel dropdown: click its trigger, then the option in the open menu. */
+export function chooseOption(trigger: Element, value: string) {
+  fireEvent.click(trigger);
+  const root = trigger.getRootNode() as Document | ShadowRoot;
+  const option = root.querySelector(`[role="option"][data-value="${value}"]`);
+  if (!option) throw new Error(`no option ${value}`);
+  fireEvent.click(option);
 }

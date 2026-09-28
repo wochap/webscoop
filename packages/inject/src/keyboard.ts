@@ -73,6 +73,12 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable === true;
 }
 
+/** Whether the event target is inside an open panel menu (a dropdown listbox), which handles its own keys. */
+export function isMenuTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return Boolean(el && typeof el.closest === 'function' && el.closest('[role="listbox"]'));
+}
+
 /**
  * Map a key press to a panel shortcut: `p` picks, `b` toggles browse mode,
  * `L` opens the list setup from the list suggestion, Esc closes a menu,

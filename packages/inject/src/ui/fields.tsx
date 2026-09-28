@@ -1,23 +1,28 @@
-import { useEffect, useState, type HTMLAttributes } from 'react';
+import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { defaultAttr, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
+import { Dropdown, type DropdownOption } from './dropdown';
 import { Icon } from './icons';
 import { Toggle } from './items';
 import { SelectorChip } from './selector-chip';
 
 type FieldType = DraftField['type'];
 
+/** Each field type's glyph and a short example of what it reads. */
+export const FIELD_TYPE_TAGS: Record<FieldType, { glyph: ReactNode; example: string }> = {
+  text: { glyph: <Icon name="text-t" weight="bold" size={11} />, example: '"Blue shirt"' },
+  number: { glyph: '#', example: '12.99' },
+  url: { glyph: '↗', example: 'https://…' },
+  image: { glyph: '▣', example: 'img src' },
+  date: { glyph: '◷', example: '2026-09-28' },
+  html: { glyph: '<>', example: '<b>…</b>' },
+};
+
+const TYPE_OPTIONS: DropdownOption<FieldType>[] = FIELD_TYPES.map((t) => ({ value: t, glyph: FIELD_TYPE_TAGS[t].glyph, name: t, hint: FIELD_TYPE_TAGS[t].example }));
+
 export function TypeSelect({ value, onChange, testId = 'field-type' }: { value: FieldType; onChange: (type: FieldType) => void; testId?: string }) {
-  return (
-    <select className="ws-select" value={value} aria-label="Field type" onChange={(e) => onChange(e.target.value as FieldType)} data-ws={testId}>
-      {FIELD_TYPES.map((t) => (
-        <option key={t} value={t}>
-          {t}
-        </option>
-      ))}
-    </select>
-  );
+  return <Dropdown value={value} options={TYPE_OPTIONS} onChange={onChange} label="Field type" testId={testId} />;
 }
 
 export function DedupKeyToggle({ on, onChange, testId = 'field-key' }: { on: boolean; onChange: (on: boolean) => void; testId?: string }) {

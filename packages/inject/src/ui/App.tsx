@@ -1,6 +1,6 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { currentTable, tableMode } from '@webscoop/core/page';
-import { isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
+import { isMenuTarget, isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
 import { modeOf, type Actions, type Snapshot } from '../store';
 import { useActions, useSnapshot } from './context';
 import { FieldList } from './fields';
@@ -119,6 +119,8 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
 export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot, actions: Actions): boolean {
   // While a run waits on a guard, every key belongs to the page (the user is logging in).
   if (snap.host?.guardContext) return false;
+  // An open dropdown menu owns its keys (Esc closes only the menu).
+  if (isMenuTarget(target)) return false;
   const host = snap.host;
   const selected = host?.selected;
   const shortcut = shortcutFor(e, {

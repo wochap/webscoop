@@ -52,7 +52,9 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   // Cancel an edit: the title keeps its type.
   await r.clickPanel(ws('field-summary'), 0);
   await r.until((s) => s.host?.editing?.index === 0 && s.host.selected);
-  await r.fill(ws('pick-form-type'), 'html');
+  await r.clickPanel(ws('pick-form-type'));
+  await r.clickPanel(ws('pick-form-type-option', '[data-value="html"]'));
+  expect((await r.query(ws('pick-form-type')))!.value).toBe('html');
   await r.clickPanel(ws('pick-cancel-edit'));
   const cancelled = await r.until((s) => (s.host?.editing === null ? s.host : undefined));
   expect(cancelled.draft.tables[0]!.fields[0]).toMatchObject({ name: 'title', type: 'text' });

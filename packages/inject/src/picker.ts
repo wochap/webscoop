@@ -1,5 +1,5 @@
 import { isOwn, OWN_TAGS, pickable } from './dom';
-import { isTypingTarget } from './keyboard';
+import { isMenuTarget, isTypingTarget } from './keyboard';
 
 /** The hover walk: the element under the pointer and how many steps the target is raised above it. */
 export interface HoverWalk {
@@ -174,7 +174,7 @@ export class Picker {
   private readonly onKey = (e: KeyboardEvent) => {
     if (!this.hooks.isActive()) return;
     const origin = e.composedPath?.()[0] ?? e.target;
-    if ((isTypingTarget(origin) && isOwn(origin as Node)) || (isOwn(e.target as Node) && this.hooks.isPanelTyping?.())) return;
+    if (((isTypingTarget(origin) || isMenuTarget(origin)) && isOwn(origin as Node)) || (isOwn(e.target as Node) && this.hooks.isPanelTyping?.())) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopImmediatePropagation();

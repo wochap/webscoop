@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { loadFonts } from './fonts';
 import { mount } from './mount';
 import { Overlay } from './overlay';
-import { isTypingTarget } from './keyboard';
+import { isMenuTarget, isTypingTarget } from './keyboard';
 import { BrowseObserver, Picker } from './picker';
 import { Runtime } from './runtime';
 import { installTestHook } from './testhook';
@@ -28,7 +28,7 @@ function boot(win: Window & typeof globalThis): void {
     onPick: (el) => runtime?.pick(el),
     onCancel: () => runtime?.cancelPicking(),
     onKey: (e) => runtime?.pageKey(e),
-    isPanelTyping: () => shadows.some((s) => isTypingTarget(s.activeElement)),
+    isPanelTyping: () => shadows.some((s) => isTypingTarget(s.activeElement) || isMenuTarget(s.activeElement)),
   });
   let shadows: ShadowRoot[] = [];
   const observer = new BrowseObserver(win, {

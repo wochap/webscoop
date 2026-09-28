@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent } from '@testing-library/react';
 import { dataset, render } from '@webscoop/playground';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baseState, newDraft, renderPanel, withTable } from './panel';
+import { baseState, chooseOption, newDraft, renderPanel, withTable } from './panel';
 import { emptyDraft, type RecorderState, detach, HOST_BINDING, nodeAt, type PageMessage } from '@webscoop/core';
 import { acceptList, byClass, cardPath, harness, openList, type Harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
@@ -145,11 +145,11 @@ describe('field options form', () => {
     const p = renderPanel(state);
     const name = p.q('pick-form-name') as HTMLInputElement;
     expect(name.value).toBe(state.selected!.defaults.name);
-    expect((p.q('pick-form-type') as HTMLSelectElement).value).toBe('number');
+    expect((p.q('pick-form-type') as HTMLButtonElement).value).toBe('number');
     expect(p.q('pick-add-hint')!.textContent).toBe('Reads inside each of 24 items.');
     expect(toggle(p.q('pick-form-optional'))).toBe('false');
     fireEvent.change(name, { target: { value: 'amount' } });
-    fireEvent.change(p.q('pick-form-type')!, { target: { value: 'text' } });
+    chooseOption(p.q('pick-form-type')!, 'text');
     fireEvent.click(p.q('pick-form-optional')!);
     fireEvent.click(p.q('pick-form-key')!);
     fireEvent.click(p.q('pick-add-field')!);
@@ -159,7 +159,7 @@ describe('field options form', () => {
   it('follows the type with the attribute and refuses a duplicate name', async () => {
     const { state } = await pickedPrice();
     const p = renderPanel(state);
-    fireEvent.change(p.q('pick-form-type')!, { target: { value: 'url' } });
+    chooseOption(p.q('pick-form-type')!, 'url');
     expect((p.q('pick-form-attr') as HTMLInputElement).value).toBe('href');
     fireEvent.change(p.q('pick-form-name')!, { target: { value: state.draft.tables[0]!.fields[0]!.name } });
     expect(p.q('pick-form-name-error')!.textContent).toMatch(/already named/);
@@ -240,7 +240,7 @@ describe('editing a saved field', () => {
     expect(toggle(p.q('pick-form-optional'))).toBe('true');
     expect(p.q('pick-actions')).toBeNull();
     expect(p.q('pick-update')).not.toBeNull();
-    fireEvent.change(p.q('pick-form-type')!, { target: { value: 'text' } });
+    chooseOption(p.q('pick-form-type')!, 'text');
     fireEvent.click(p.q('pick-update')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', attr: null, optional: true, key: false } });
     fireEvent.click(p.q('pick-cancel-edit')!);
