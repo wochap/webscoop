@@ -145,3 +145,31 @@ Timeouts SHALL apply to the underlying element waits only, not to the added huma
 #### Scenario: Page dwell
 - **WHEN** humanized input is on and a page finishes loading
 - **THEN** at least one pointer move or scroll event reaches the page before fields are extracted
+
+### Requirement: Element queries behave the same under both drivers
+Resolving a selector candidate and reading from a matched element SHALL give the same results under `playwright` and `patchright`. Element queries SHALL NOT match elements inside closed shadow roots, including the recorder panel, under either driver.
+
+Each read SHALL cost one evaluation in the page, whatever the driver. Reads are:
+- counting a candidate's matches
+- reading text, html, or an attribute
+- comparing two elements
+- snapshotting inside an element
+- measuring an element's box
+
+A read SHALL NOT serialize the whole document. A read of an element that no longer matches SHALL fail at once with an error that names the element, without waiting for the action timeout. Clicking, filling, pressing, selecting, and scrolling SHALL keep waiting for the element to be actionable, as they do today.
+
+#### Scenario: Closed shadow root ignored
+- **WHEN** a page has 200 elements matching `.price` and one more `.price` inside a closed shadow root, and a session resolves the css candidate `.price` under either driver
+- **THEN** it returns 200 elements
+
+#### Scenario: Patchright reads stay fast on a large list
+- **WHEN** a Patchright session on a page with a 200-item list resolves the items and reads two fields in each of the first 10 items
+- **THEN** it finishes in under 500 ms on a machine where the same work under Playwright takes under 100 ms
+
+#### Scenario: Chained scopes under Patchright
+- **WHEN** a Patchright session resolves item containers and then resolves a role, a text, and a css candidate inside the fifth container
+- **THEN** each result matches the Playwright session's result for the same page
+
+#### Scenario: Stale element read fails fast
+- **WHEN** an element is removed from the page after it was resolved and the session reads its text
+- **THEN** the read fails well before the action timeout, with an error naming the element
