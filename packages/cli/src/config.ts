@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { LocaleSchema, parseProxyUrl, PROXY_SCHEMES, TimezoneSchema } from '@webscoop/core';
+import { LocaleSchema, parseProxyUrl, PROFILE_NAME, PROXY_SCHEMES, TimezoneSchema } from '@webscoop/core';
 import { z } from 'zod';
 import { CliError } from './exit';
 import type { Paths } from './paths';
@@ -20,6 +20,21 @@ export const ProviderDefSchema = z.object({
 });
 
 const ProxyUrlSchema = z.string().refine((v) => parseProxyUrl(v) !== null, { error: (issue) => `invalid proxy URL, expected ${PROXY_SCHEMES.join(', ')}://host:port (got a value of ${String(issue.input).length} characters)` });
+
+const ProfileNameSchema = z.string().regex(PROFILE_NAME, 'invalid profile name: start with a letter or digit, then letters, digits, ., _, or -');
+
+const PatternSchema = z.string().superRefine((value, ctx) => {
+  try {
+    new RegExp(value);
+  } catch (error) {
+    ctx.addIssue({ code: 'custom', message: `invalid regular expression: ${(error as Error).message}` });
+  }
+});
+
+/** A profile rule: `host` and `name` are unanchored regular expressions; every key present must match. */
+export const ProfileRuleSchema = z
+  .object({ host: PatternSchema.optional(), name: PatternSchema.optional(), profile: ProfileNameSchema })
+  .refine((r) => r.host !== undefined || r.name !== undefined, { message: 'a profile rule needs host, name, or both' });
 
 export const ConfigSchema = z.object({
   llm: z
@@ -64,9 +79,39 @@ export const ConfigSchema = z.object({
         .default({}),
     })
     .default({ provider: 'auto', providers: {} }),
+  profiles: z
+    .object({
+      /** Profile used when no rule matches; without it, the recipe name. */
+      default: ProfileNameSchema.optional(),
+      /** Ordered rules; the first that matches the recipe wins. */
+      rules: z.array(ProfileRuleSchema).default([]),
+    })
+    .default({ rules: [] }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+export interface CompiledProfileRule {
+  host?: RegExp;
+  name?: RegExp;
+  profile: string;
+}
+
+const compiledRules = new WeakMap<Config, CompiledProfileRule[]>();
+
+/** The profile rules of a config as `RegExp` values, compiled once per config object. */
+export function profileRules(config: Config): CompiledProfileRule[] {
+  let rules = compiledRules.get(config);
+  if (!rules) {
+    rules = (config.profiles?.rules ?? []).map((r) => ({
+      ...(r.host !== undefined ? { host: new RegExp(r.host) } : {}),
+      ...(r.name !== undefined ? { name: new RegExp(r.name) } : {}),
+      profile: r.profile,
+    }));
+    compiledRules.set(config, rules);
+  }
+  return rules;
+}
 
 /** Load the config file; a missing file yields defaults, an invalid one is an error. */
 export async function loadConfig(paths: Paths): Promise<Config> {
@@ -88,5 +133,6 @@ export async function loadConfig(paths: Paths): Promise<Config> {
     const lines = parsed.error.issues.map((i) => `  ${['$', ...i.path].join('.')}: ${i.message}`);
     throw new CliError(`${paths.configFile}: invalid config\n${lines.join('\n')}`);
   }
+  profileRules(parsed.data);
   return parsed.data;
 }

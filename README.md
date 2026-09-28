@@ -140,9 +140,10 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   line as rows become available. `--out` writes the same content to a file.
 - Every row has one key per recipe field plus `_page` (1-based) and `_index`
   (0-based within the page).
-- `--profile` picks the browser profile (default: the recipe name). Two runs
-  cannot share a profile at once; the second waits `--lock-timeout` (default
-  30000 ms), then exits 1.
+- `--profile` picks the browser profile. Without it, the profile is resolved
+  (see [Profiles](#profiles)); with no profile config it is the recipe name.
+  Two runs cannot share a profile at once; the second waits `--lock-timeout`
+  (default 30000 ms), then exits 1.
 - `--timeout` bounds navigation and network settling (default 30000 ms).
 - `--report` prints the full run report (candidate used, healing outcome, and
   status per field, and where the recipe was written back) to stderr.
@@ -651,8 +652,11 @@ location, or the mismatch gives the proxy away:
 A recipe carries its own settings in an optional block:
 
 ```json
-"browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US" }
+"browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US", "profile": "personal" }
 ```
+
+`browser.profile` pins the recipe to a profile, above the config rules; see
+[Profiles](#profiles).
 
 #### Humanized input
 
@@ -733,6 +737,13 @@ Config file, all keys optional:
     "locale": "es-ES"
   },
   "window": { "provider": "auto", "providers": {} },
+  "profiles": {
+    "default": "main",
+    "rules": [
+      { "name": "^acme-admin-", "profile": "acme-admin" },
+      { "host": "(^|\\.)acme\\.com$", "profile": "acme" }
+    ]
+  },
   "llm": {
     "endpoint": "http://127.0.0.1:11434/v1",
     "model": "qwen3.5:9b",
@@ -743,6 +754,41 @@ Config file, all keys optional:
   }
 }
 ```
+
+### Profiles
+
+A profile holds the browser's cookies and logins. `run`, `test`, `record`,
+`edit`, and `bench` pick it in this order, first match wins:
+
+1. `--profile <name>`
+2. the recipe's `browser.profile`
+3. the first rule in the config's `profiles.rules` that matches the recipe
+4. `profiles.default`
+5. the recipe name
+
+A rule has a `profile` and at least one of `host` and `name`, both JavaScript
+regular expressions, unanchored (use `^` and `$` to anchor). `host` is tested
+against the host name of the recipe URL filled with the command's variables;
+`name` against the recipe name. When a rule has both, both must match. Put a
+`name` rule above a `host` rule to give some recipes on a host their own
+profile. An invalid pattern, a rule with neither key, or an invalid profile name
+is a config error naming its JSON path. Profile names are names, never paths:
+letters, digits, `.`, `_`, and `-`, starting with a letter or digit.
+
+The start line of each command names the profile and where it came from, e.g.
+`on profile "acme" (config rule 2)`. `webscoop doctor` lists the default, the
+rules, and the profile each saved recipe resolves to.
+
+When `record` or `edit` saves, it compares the profile the session used with the
+profile the saved recipe would resolve to without a pin. When they differ (the
+recipe was renamed during recording, or `--profile` was given), it writes the
+used profile to `browser.profile`, so the next `run` opens the profile you
+logged in with. When they are equal, it removes any pin, and the recipe keeps
+following the config.
+
+One shared profile (for example `profiles.default`) means runs of different
+recipes wait on the same profile lock, so they cannot run in parallel. Per-host
+rules avoid that.
 
 ### Language model
 

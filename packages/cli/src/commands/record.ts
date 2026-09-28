@@ -14,13 +14,13 @@ import {
   type StoragePort,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, settingsOptions } from '../browser';
-import { loadConfig } from '../config';
+import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
-import { prepareProfile } from '../profiles';
+import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { encodedValueWarnings, parseVars } from './run';
 
@@ -37,7 +37,6 @@ export interface RecordCommandOptions {
   repick?: string;
 }
 
-const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Reject templates with stray braces or that do not produce an http(s) URL. */
@@ -116,6 +115,19 @@ async function resolveValues(io: CliIo, template: string, given: Record<string, 
   return values;
 }
 
+/**
+ * The recipe as saved by `record` and `edit`: pinned to the profile the session
+ * used when the saved name and URL would resolve to another one without a pin,
+ * unpinned otherwise, so a later run opens the same profile.
+ */
+export function pinProfile(recipe: Recipe, used: string, values: Readonly<Record<string, string>>, config: Config): Recipe {
+  const unpinned = resolveProfile({ name: recipe.name, host: hostOf(recipe.url, values, recipe.vars), config });
+  const { profile: _, ...rest } = recipe.browser ?? {};
+  const browser = used === unpinned.profile ? rest : { ...rest, profile: used };
+  const { browser: __, ...others } = recipe;
+  return Object.keys(browser).length > 0 ? { ...others, browser } : (others as Recipe);
+}
+
 function logEvents(io: CliIo, emitter: RecorderEmitter): void {
   emitter.on('recorder.ready', (e) => log(io, `recorder ready on ${e.url}`));
   emitter.on('recorder.navigated', (e) => log(io, `navigated to ${e.url}`));
@@ -163,8 +175,9 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
 
   requireDisplay(io.env);
 
-  const profile = opts.profile ?? name;
-  if (!PROFILE_NAME.test(profile)) throw new CliError(`invalid profile name "${profile}"`);
+  const resolved = resolveProfile({ flag: opts.profile, recipePin: recipe?.browser?.profile, name, host: hostOf(url), config });
+  const profile = resolved.profile;
+  checkProfileName(profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
 
@@ -194,7 +207,12 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     logEvents(io, emitter);
     // A re-pick writes the recipe back where it was loaded from, even when that is a path.
     const target = mode.kind === 'repick' ? storage.pathFor(opts.edit!) : null;
-    const saveTo: StoragePort = target ? { list: () => storage.list(), load: (ref) => storage.load(ref), save: async (r) => void (await storage.saveTo(target, r)) } : storage;
+    const write = (r: Recipe) => (target ? storage.saveTo(target, r).then(() => {}) : storage.save(r));
+    const saveTo: StoragePort = {
+      list: () => storage.list(),
+      load: (ref) => storage.load(ref),
+      save: (r) => write(pinProfile(r, profile, values, config)),
+    };
     const controller = new RecorderController({
       session,
       storage: saveTo,
@@ -206,8 +224,8 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
       mode,
     });
 
-    if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} on profile "${profile}": ${url}`);
-    else log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} on profile "${profile}" (${proxyNote(settings)}): ${url}`);
+    if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} ${profileNote(resolved)}: ${url}`);
+    else log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} ${profileNote(resolved)} (${proxyNote(settings)}): ${url}`);
     const closed = controller.closed().then(() => 'closed' as const);
     // The user may close the window while the first page is still settling; that ends the session, it is not an error.
     const started = controller.start().then(

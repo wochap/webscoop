@@ -6,7 +6,8 @@ import { dataset, render } from '@webscoop/playground';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
-import { checkTemplate, proposeName } from '../src/commands/record';
+import { checkTemplate, pinProfile, proposeName } from '../src/commands/record';
+import { ConfigSchema } from '../src/config';
 import { encodedValueWarnings } from '../src/commands/run';
 import { tempDir, testIo } from './helpers';
 
@@ -51,7 +52,7 @@ describe('webscoop record', () => {
   it('documents its options and keys', async () => {
     const io = testIo({});
     expect(await main(['record', '--help'], io)).toBe(ExitCode.Ok);
-    for (const text of ['--name <recipe>', '--var <name=value>', '--profile <name>', '--timeout <ms>', '--edit <recipe>', 'Ctrl+S saves']) {
+    for (const text of ['--name <recipe>', '--var <name=value>', '--profile <name>', '(default: resolved from recipe and', '--timeout <ms>', '--edit <recipe>', 'Ctrl+S saves']) {
       expect(io.out()).toContain(text);
     }
   });
@@ -233,5 +234,109 @@ describe('webscoop record', () => {
     expect(session.injected).toEqual(['/* recorder e2e */']);
     await session.userClose();
     expect(await run).toBe(ExitCode.Ok);
+  });
+});
+
+describe('profile pin on save', () => {
+  async function pickAndSave(session: FakeInteractiveSession, name?: string) {
+    const page = annotate(tier0());
+    const title = descendantsOf(page).find((n: AnnotatedNode) => n.attrs.class === 'product-title')!;
+    await session.callHost({ kind: 'session.ready', url: PAGE });
+    await session.callHost({ kind: 'picker.select', url: PAGE, selection: selectionOf(title), snapshot: detach(page) });
+    await session.callHost({ kind: 'list.open', from: 'suggestion' });
+    await session.callHost({ kind: 'draft.confirmItems' });
+    await session.callHost({ kind: 'draft.addField', patch: { name: 'title' } });
+    if (name) await session.callHost({ kind: 'draft.setName', name });
+    const saved = (await session.callHost({ kind: 'save.request' })) as { ok: boolean };
+    expect(saved.ok).toBe(true);
+    await session.userClose();
+  }
+
+  async function record(args: string[], profiles?: unknown, name?: string) {
+    const dir = await tempDir();
+    if (profiles) {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(join(dir, 'config.json'), JSON.stringify({ profiles }));
+    }
+    const browser = new FakeBrowser({ [PAGE]: tier0() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['record', ...args], io);
+    await pickAndSave(await sessionOf(browser), name);
+    expect(await run).toBe(ExitCode.Ok);
+    return { dir, io, browser };
+  }
+
+  const saved = async (dir: string, name: string) => loadRecipe(await readFile(join(dir, 'recipes', `${name}.json`), 'utf8'));
+
+  it('pins the session profile when the recipe is renamed during recording', async () => {
+    const { dir, io, browser } = await record([PAGE]);
+    expect(browser.openedProfiles).toEqual([join(dir, 'profiles', '127-0-0-1-catalog')]);
+    expect(io.err()).toContain('on profile "127-0-0-1-catalog" (recipe name)');
+    expect((await saved(dir, '127-0-0-1-catalog')).browser).toBeUndefined();
+    const renamed = await record([PAGE], undefined, 'shop');
+    expect((await saved(renamed.dir, 'shop')).browser).toEqual({ profile: '127-0-0-1-catalog' });
+  });
+
+  it('leaves a recipe that follows a config rule unpinned', async () => {
+    const { dir, io, browser } = await record([PAGE], { rules: [{ host: '^127\\.0\\.0\\.1$', profile: 'local' }] }, 'acme-list');
+    expect(browser.openedProfiles).toEqual([join(dir, 'profiles', 'local')]);
+    expect(io.err()).toContain('on profile "local" (config rule 1)');
+    expect((await saved(dir, 'acme-list')).browser).toBeUndefined();
+  });
+
+  it('pins an explicit --profile', async () => {
+    const { dir, browser } = await record([PAGE, '--name', 'acme-list', '--profile', 'second-account'], { rules: [{ host: '^127\\.0\\.0\\.1$', profile: 'local' }] });
+    expect(browser.openedProfiles).toEqual([join(dir, 'profiles', 'second-account')]);
+    expect((await saved(dir, 'acme-list')).browser).toEqual({ profile: 'second-account' });
+  });
+
+  async function pinnedHome() {
+    const dir = await tempDir();
+    const reference = loadRecipe(await readFile(new URL('../fixtures/playground-catalog.json', import.meta.url), 'utf8'));
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'recipes'), { recursive: true });
+    await writeFile(join(dir, 'recipes', 'playground-catalog.json'), saveRecipe({ ...reference, browser: { profile: 'personal' } }));
+    return dir;
+  }
+
+  it('keeps an existing pin on edit', async () => {
+    const dir = await pinnedHome();
+    const browser = new FakeBrowser({ [PAGE]: tier0() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['edit', 'playground-catalog'], io);
+    const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
+    expect(browser.openedProfiles).toEqual([join(dir, 'profiles', 'personal')]);
+    await session.callHost({ kind: 'session.ready', url: PAGE });
+    await session.callHost({ kind: 'draft.setName', name: 'playground-catalog' });
+    expect(((await session.callHost({ kind: 'save.request' })) as { ok: boolean }).ok).toBe(true);
+    await session.userClose();
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('on profile "personal" (recipe)');
+    expect((await saved(dir, 'playground-catalog')).browser).toEqual({ profile: 'personal' });
+  });
+
+  it('keeps an existing pin on a re-pick save', async () => {
+    const dir = await pinnedHome();
+    const browser = new FakeBrowser({ [PAGE]: tier0() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    const run = main(['edit', 'playground-catalog', '--repick', 'title'], io);
+    const session = await Promise.race([sessionOf(browser), run.then((code) => Promise.reject(new Error(`exited ${code}: ${io.err()}`)))]);
+    const page = annotate(tier0());
+    const title = descendantsOf(page).filter((n: AnnotatedNode) => n.attrs.class === 'product-title')[2]!;
+    await session.callHost({ kind: 'session.ready', url: PAGE });
+    await session.callHost({ kind: 'picker.select', url: PAGE, selection: selectionOf(title), snapshot: detach(page) });
+    await session.callHost({ kind: 'repick.confirm' });
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('saved the new location of title');
+    expect((await saved(dir, 'playground-catalog')).browser).toEqual({ profile: 'personal' });
+  });
+
+  it('pins only when the used profile differs from the unpinned resolution', () => {
+    const base = loadRecipe(JSON.stringify({ schemaVersion: 1, name: 'shop', url: 'https://{site}/x', vars: [{ name: 'site', type: 'string' }], fields: [{ name: 'a', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }));
+    const config = ConfigSchema.parse({ profiles: { rules: [{ host: 'acme\\.com$', profile: 'acme' }] } });
+    expect(pinProfile(base, 'acme', { site: 'acme.com' }, config).browser).toBeUndefined();
+    expect(pinProfile(base, 'acme', {}, config).browser).toEqual({ profile: 'acme' });
+    expect(pinProfile({ ...base, browser: { profile: 'shop', timezone: 'UTC' } }, 'shop', {}, config).browser).toEqual({ timezone: 'UTC' });
+    expect(pinProfile({ ...base, browser: { profile: 'shop' } }, 'shop', {}, config).browser).toBeUndefined();
   });
 });

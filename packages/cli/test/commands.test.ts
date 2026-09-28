@@ -272,6 +272,40 @@ describe('webscoop run', () => {
   });
 });
 
+describe('profile resolution in run', () => {
+  async function runWith(profiles: unknown, recipes: RecipeInput[], args: string[] = [], page = PAGE) {
+    const dir = await home(recipes);
+    if (profiles) await writeFile(join(dir, 'config.json'), JSON.stringify({ profiles }));
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [page]: shopPage(1) }) });
+    expect(await main(['run', recipes[0]!.name, ...args], io)).toBe(ExitCode.Ok);
+    return io.err();
+  }
+
+  it('keeps the recipe name without profile config', async () => {
+    expect(await runWith(undefined, [recipe()])).toContain('on profile "shop" (recipe name)');
+  });
+
+  it('uses the config default when no rule matches', async () => {
+    expect(await runWith({ default: 'main', rules: [{ host: 'acme\\.com$', profile: 'acme' }] }, [recipe()])).toContain('on profile "main" (config default)');
+  });
+
+  it('uses a matching host rule', async () => {
+    expect(await runWith({ rules: [{ name: '^nope$', profile: 'x' }, { host: '(^|\\.)shop\\.test$', profile: 'shops' }] }, [recipe()])).toContain('on profile "shops" (config rule 2)');
+  });
+
+  it('prefers the recipe pin over a rule, and the flag over the pin', async () => {
+    const rules = { rules: [{ host: 'shop\\.test$', profile: 'shops' }] };
+    expect(await runWith(rules, [recipe({ browser: { profile: 'personal' } })])).toContain('on profile "personal" (recipe)');
+    expect(await runWith(rules, [recipe({ browser: { profile: 'personal' } })], ['--profile', 'scratch'])).toContain('on profile "scratch" (flag)');
+  });
+
+  it('matches the host filled from --var', async () => {
+    const r = recipe({ url: 'https://{site}/c/shoes', vars: [{ name: 'site', type: 'string' }] });
+    const err = await runWith({ rules: [{ host: 'acme\\.com$', profile: 'acme' }] }, [r], ['--var', 'site=shop.acme.com'], 'https://shop.acme.com/c/shoes');
+    expect(err).toContain('on profile "acme" (config rule 1)');
+  });
+});
+
 describe('webscoop recipes', () => {
   it('prints nothing for an empty directory', async () => {
     const dir = await tempDir();

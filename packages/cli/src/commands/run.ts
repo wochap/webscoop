@@ -38,7 +38,7 @@ import { resolvePaths } from '../paths';
 import { interactiveGuardBanner } from '../guard';
 import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
-import { prepareProfile } from '../profiles';
+import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile, type ResolvedProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { windowMode } from '../window';
 
@@ -120,7 +120,6 @@ export function healingFromFlags(opts: Pick<RunCommandOptions, 'heal' | 'save'>)
   return { enabled, writeBack: enabled && opts.save !== false };
 }
 
-const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export function parseVars(pairs: readonly string[]): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -310,7 +309,7 @@ interface Prepared {
   storage: FsStorage;
   recipe: Recipe;
   vars: Record<string, string>;
-  profile: string;
+  profile: ResolvedProfile;
   profileDir: string;
   lock: ProfileLock;
   settings: BrowserSettings;
@@ -340,19 +339,19 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
 
   requireDisplay(io.env);
 
-  const profile = opts.profile ?? recipe.name;
-  if (!PROFILE_NAME.test(profile)) throw new CliError(`invalid profile name "${profile}"`);
-  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
-  const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
+  const profile = resolveProfile({ flag: opts.profile, recipePin: recipe.browser?.profile, name: recipe.name, host: hostOf(recipe.url, vars, recipe.vars), config });
+  checkProfileName(profile.profile);
+  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile.profile);
+  const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile.profile });
   return { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser };
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
-function logRunEvents(io: CliIo, emitter: RunEmitter, profile: string, settings: BrowserSettings, multi = false, quiet = false): void {
+function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, settings: BrowserSettings, multi = false, quiet = false): void {
   const info = infoLog(io, quiet);
   /** Field names carry their table when the recipe has several. */
   const named = (table: string | undefined, name: string) => (multi && table !== undefined ? `${table}.${name}` : name);
-  emitter.on('run.start', (e) => info(`running ${e.recipe} on profile "${profile}" (${proxyNote(settings)}): ${e.url}`));
+  emitter.on('run.start', (e) => info(`running ${e.recipe} ${profileNote(profile)} (${proxyNote(settings)}): ${e.url}`));
   emitter.on('page.loaded', (e) => info(`page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));

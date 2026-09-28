@@ -75,3 +75,38 @@ describe('doctor LLM probe', () => {
     expect(line(io.out(), 'llm')).toContain('no model configured');
   });
 });
+
+describe('doctor profile resolution', () => {
+  const recipe = (name: string, url: string, vars: unknown[] = []) =>
+    JSON.stringify({ schemaVersion: 1, name, url, vars, fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] });
+
+  it('lists the default, the rules, and each recipe with its profile and source', async () => {
+    const dir = await tempDir();
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(join(dir, 'recipes'), { recursive: true });
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ profiles: { default: 'main', rules: [{ host: 'acme\\.com$', profile: 'acme' }, { host: 'x', name: '^list$', profile: 'lists' }] } }));
+    await writeFile(join(dir, 'recipes', 'acme-list.json'), recipe('acme-list', 'https://www.acme.com/list'));
+    await writeFile(join(dir, 'recipes', 'list.json'), recipe('list', 'https://{site}/list', [{ name: 'site', type: 'string' }]));
+    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":1}');
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await doctorCommand(io, { probe: fixed({ reachable: true, modelFound: true, models: [], latencyMs: 1 }) })).toBe(ExitCode.Ok);
+    const out = io.out();
+    expect(line(out, 'profiles.default')).toMatch(/ main$/);
+    expect(line(out, 'profile rule 1')).toMatch(/host \/acme\\.com\$\/ -> acme$/);
+    expect(line(out, 'profile rule 2')).toMatch(/host \/x\/ and name \/\^list\$\/ -> lists$/);
+    expect(line(out, 'recipe acme-list')).toMatch(/profile acme \(config rule 1\)$/);
+    expect(line(out, 'recipe list')).toMatch(/profile main \(config default; host needs variables\)$/);
+    expect(line(out, 'recipe broken')).toMatch(/ invalid$/);
+  });
+
+  it('falls back to the recipe name without profile config', async () => {
+    const dir = await tempDir();
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(join(dir, 'recipes'), { recursive: true });
+    await writeFile(join(dir, 'recipes', 'other.json'), recipe('other', 'https://other.org/'));
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    await doctorCommand(io);
+    expect(line(io.out(), 'recipe other')).toMatch(/profile other \(recipe name\)$/);
+  });
+});
+

@@ -491,6 +491,12 @@ describe('recipe browser block', () => {
     expect(result.ok && result.recipe.schemaVersion).toBe(1);
   });
 
+  it('accepts a valid profile pin and rejects a path, naming browser.profile', () => {
+    const ok = validateRecipe(base({ browser: { profile: 'acme.main_2' } }));
+    expect(ok.ok && ok.recipe.browser).toEqual({ profile: 'acme.main_2' });
+    expect(errorsOf(base({ browser: { profile: '../other' } })).map((e) => e.path)).toEqual(['$.browser.profile']);
+  });
+
   it('rejects a non-boolean humanize, naming the path', () => {
     const errors = errorsOf(base({ browser: { humanize: 'yes' as unknown as boolean } }));
     expect(errors.map((e) => e.path)).toEqual(['$.browser.humanize']);

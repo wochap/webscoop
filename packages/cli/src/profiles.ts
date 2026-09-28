@@ -1,12 +1,66 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { BrowserPort, OpenOptions, Session } from '@webscoop/core';
+import { fillTemplate, PROFILE_NAME, type BrowserPort, type OpenOptions, type Session } from '@webscoop/core';
 import { launchProblem, type BrowserChoice, type BrowserId } from './browser';
-import type { Config } from './config';
+import { profileRules, type Config } from './config';
 import { log, type BrowserInfo, type CliIo } from './context';
 import { CliError } from './exit';
 import type { Paths } from './paths';
+
+export { PROFILE_NAME };
+
+/** Where a resolved profile name came from; `rule` is 1-based. */
+export type ProfileSource = 'flag' | 'recipe' | { rule: number } | 'default' | 'name';
+
+export interface ResolvedProfile {
+  profile: string;
+  source: ProfileSource;
+}
+
+/**
+ * The profile a browser command uses: `--profile`, the recipe's
+ * `browser.profile`, the first matching config rule, `profiles.default`, then
+ * the recipe name. An undefined host makes `host` rules not match.
+ */
+export function resolveProfile(input: { flag?: string; recipePin?: string; name: string; host?: string; config: Config }): ResolvedProfile {
+  if (input.flag !== undefined) return { profile: input.flag, source: 'flag' };
+  if (input.recipePin !== undefined) return { profile: input.recipePin, source: 'recipe' };
+  const rules = profileRules(input.config);
+  for (const [i, rule] of rules.entries()) {
+    if (rule.host && (input.host === undefined || !rule.host.test(input.host))) continue;
+    if (rule.name && !rule.name.test(input.name)) continue;
+    return { profile: rule.profile, source: { rule: i + 1 } };
+  }
+  const fallback = input.config.profiles?.default;
+  if (fallback !== undefined) return { profile: fallback, source: 'default' };
+  return { profile: input.name, source: 'name' };
+}
+
+/** The source as the start lines and doctor print it. */
+export function profileSourceLabel(source: ProfileSource): string {
+  if (typeof source === 'object') return `config rule ${source.rule}`;
+  return { flag: 'flag', recipe: 'recipe', default: 'config default', name: 'recipe name' }[source];
+}
+
+/** `on profile "x" (source)`, for start lines. */
+export function profileNote(resolved: ResolvedProfile): string {
+  return `on profile "${resolved.profile}" (${profileSourceLabel(resolved.source)})`;
+}
+
+/** Host name of a URL template filled with `values` and the defaults of `vars`; undefined when a variable is missing or the URL is invalid. */
+export function hostOf(urlTemplate: string, values: Readonly<Record<string, string>> = {}, vars: Parameters<typeof fillTemplate>[1] = []): string | undefined {
+  try {
+    return new URL(fillTemplate(urlTemplate, vars, values)).hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reject a profile name that is not a plain directory name. */
+export function checkProfileName(profile: string): void {
+  if (!PROFILE_NAME.test(profile)) throw new CliError(`invalid profile name "${profile}"`);
+}
 
 /** Marker file naming the browser that last opened a profile. */
 export const MARKER_FILE = '.webscoop-browser.json';

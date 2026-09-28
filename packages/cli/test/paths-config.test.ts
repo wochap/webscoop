@@ -50,7 +50,7 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, window: { provider: 'auto', providers: {} } });
+    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, window: { provider: 'auto', providers: {} }, profiles: { rules: [] } });
   });
 
   it('accepts the LLM fields', async () => {
@@ -71,5 +71,35 @@ describe('loadConfig', () => {
     expect(error).toBeInstanceOf(CliError);
     expect((error as Error).message).toContain('config.json');
     expect((error as Error).message).toContain('llm.endpoint');
+  });
+
+  async function configError(json: unknown): Promise<string> {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify(json));
+    const error = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h')).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    return (error as Error).message;
+  }
+
+  it('accepts a profiles block', async () => {
+    const home = await tempDir();
+    const profiles = { default: 'main', rules: [{ name: '^acme-admin-', profile: 'acme-admin' }, { host: '(^|\\.)acme\\.com$', profile: 'acme' }] };
+    await writeFile(join(home, 'config.json'), JSON.stringify({ profiles }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(config.profiles).toEqual(profiles);
+  });
+
+  it('rejects an invalid profile rule pattern, naming its path', async () => {
+    expect(await configError({ profiles: { rules: [{ host: 'acme(', profile: 'acme' }] } })).toContain('$.profiles.rules.0.host');
+    expect(await configError({ profiles: { rules: [{ host: 'a', profile: 'a' }, { name: '[', profile: 'b' }] } })).toContain('$.profiles.rules.1.name');
+  });
+
+  it('rejects a profile rule with neither host nor name, naming the rule', async () => {
+    expect(await configError({ profiles: { rules: [{ profile: 'acme' }] } })).toMatch(/\$\.profiles\.rules\.0: /);
+  });
+
+  it('rejects invalid profile names, naming their paths', async () => {
+    expect(await configError({ profiles: { default: '../x' } })).toContain('$.profiles.default');
+    expect(await configError({ profiles: { rules: [{ host: 'a', profile: 'a/b' }] } })).toContain('$.profiles.rules.0.profile');
   });
 });

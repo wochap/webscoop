@@ -6,7 +6,7 @@ import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
-import { prepareProfile } from '../profiles';
+import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { modelRung, testRows } from './run';
 
@@ -108,9 +108,13 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   requireDisplay(io.env);
   const { startPlayground } = await loadPlayground();
 
-  const profile = opts.profile ?? recipe.name;
+  // The playground port is not known yet; it does not change the host name.
+  const resolved = resolveProfile({ flag: opts.profile, recipePin: recipe.browser?.profile, name: recipe.name, host: hostOf(recipe.url, { port: '0' }, recipe.vars), config });
+  const profile = resolved.profile;
+  checkProfileName(profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
+  log(io, `benchmarking ${recipe.name} ${profileNote(resolved)}`);
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
     log(io, 'interrupted, closing the browser');

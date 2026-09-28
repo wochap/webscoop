@@ -258,13 +258,14 @@ export const DraftSchema = z.object({
   pagination: z.nullable(DraftPaginationSchema),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
-  /** The recipe's browser block, kept as loaded; the panel edits only `humanize`. */
+  /** The recipe's browser block, kept as loaded; the panel edits only `humanize`, and `profile` round-trips untouched. */
   browser: z.optional(
     z.object({
       proxy: z.optional(z.object({ server: z.string(), bypass: z.optional(z.array(z.string())) })),
       timezone: z.optional(z.string()),
       locale: z.optional(z.string()),
       humanize: z.optional(z.boolean()),
+      profile: z.optional(z.string()),
     }),
   ),
   dirty: z.boolean(),

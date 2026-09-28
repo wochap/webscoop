@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPagination, draftToRecipe, emptyDraft, fieldDefaults, isNumericText, reduceDraft, slugName, type Draft } from '../src';
+import { detectPagination, draftFromRecipe, draftToRecipe, DraftSchema, validateRecipe, emptyDraft, fieldDefaults, isNumericText, reduceDraft, slugName, type Draft } from '../src';
 
 const candidate = { strategy: 'testid', value: 'price', stability: 'stable' } as const;
 
@@ -20,6 +20,16 @@ describe('draft reducer', () => {
     expect(reduceDraft(kept, { type: 'setHumanize', on: false }).browser).toEqual({ proxy: { server: 'http://proxy-b:8080' }, timezone: 'Europe/Madrid' });
   });
 
+  it('keeps browser.profile through load, the protocol schema, save, and the humanize toggle', () => {
+    const loaded = validateRecipe({ schemaVersion: 1, name: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }], browser: { profile: 'personal' } });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const draft = DraftSchema.parse(draftFromRecipe(loaded.recipe));
+    expect(draftToRecipe(draft).browser).toEqual({ profile: 'personal' });
+    const on = reduceDraft(draft, { type: 'setHumanize', on: true });
+    expect(draftToRecipe(on).browser).toEqual({ profile: 'personal', humanize: true });
+    expect(draftToRecipe(reduceDraft(on, { type: 'setHumanize', on: false })).browser).toEqual({ profile: 'personal' });
+  });
 
   it('defaults links to url/href, images to image/src, numeric text to number', () => {
     expect(fieldDefaults({ tag: 'a', attrs: { href: '/p/1' }, role: 'link', name: 'View details', text: 'View details' }, [])).toEqual({

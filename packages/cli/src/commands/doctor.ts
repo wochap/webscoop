@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { ProbeResult } from '@webscoop/llm';
 import { loadConfig, type Config } from '../config';
 import { browserSettings } from '../browser';
@@ -6,8 +8,9 @@ import type { BrowserInfo, CliIo } from '../context';
 import { detectDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { canProbe, createLlm, llmSettings, type Probeable } from '../llm';
-import { resolvePaths, type Env } from '../paths';
-import { listProfiles } from '../profiles';
+import { resolvePaths, type Env, type Paths } from '../paths';
+import { hostOf, listProfiles, profileSourceLabel, resolveProfile } from '../profiles';
+import { FsStorage } from '../storage';
 import { findOnPath, HYPRLAND_RULE, HYPRLAND_RULE_LUA, PRESETS, selectProvider, WINDOW_CLASS, type FindBinary } from '../window';
 
 /** Below this context window the model prompt budget gets too small to be useful. */
@@ -78,6 +81,40 @@ export function browserLines(config: Config, env: Env, browser: BrowserInfo): { 
   return { ok, lines };
 }
 
+/**
+ * Doctor lines for profile resolution: the default, each rule, and the profile
+ * each recipe in the recipes directory resolves to without `--profile`. An
+ * invalid recipe is reported and does not change the exit code.
+ */
+export async function profileLines(config: Config, paths: Pick<Paths, 'recipesDir'>, cwd: string): Promise<[string, string][]> {
+  const lines: [string, string][] = [];
+  if (config.profiles.default !== undefined) lines.push(['profiles.default', config.profiles.default]);
+  config.profiles.rules.forEach((rule, i) => {
+    const patterns = [rule.host !== undefined ? `host /${rule.host}/` : '', rule.name !== undefined ? `name /${rule.name}/` : ''].filter(Boolean).join(' and ');
+    lines.push([`profile rule ${i + 1}`, `${patterns} -> ${rule.profile}`]);
+  });
+  let files: string[];
+  try {
+    files = (await readdir(paths.recipesDir)).filter((f) => f.endsWith('.json')).sort();
+  } catch {
+    return lines;
+  }
+  const storage = new FsStorage(paths.recipesDir, cwd);
+  for (const file of files) {
+    const path = join(paths.recipesDir, file);
+    try {
+      const recipe = await storage.load(path);
+      const host = hostOf(recipe.url, {}, recipe.vars);
+      const resolved = resolveProfile({ recipePin: recipe.browser?.profile, name: recipe.name, host, config });
+      const note = host === undefined && resolved.source !== 'recipe' ? '; host needs variables' : '';
+      lines.push([`recipe ${recipe.name}`, `profile ${resolved.profile} (${profileSourceLabel(resolved.source)}${note})`]);
+    } catch {
+      lines.push([`recipe ${file.replace(/\.json$/, '')}`, 'invalid']);
+    }
+  }
+  return lines;
+}
+
 /** Doctor lines for a probe result. Every problem is a warning; none changes the exit code. */
 export function probeLines(endpoint: string, model: string, probe: ProbeResult): [string, string][] {
   if (!probe.reachable) return [['llm probe', `warning: ${endpoint} is unreachable${probe.error ? ` (${probe.error})` : ''}`]];
@@ -118,6 +155,7 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
     for (const { name, marker } of await listProfiles(paths)) {
       lines.push([`profile ${name}`, marker ? `${marker.driver}, ${marker.channel}, ${marker.version ?? 'version unknown'} (${marker.executablePath})` : 'unknown (no marker)']);
     }
+    lines.push(...(await profileLines(config, paths, io.cwd)));
     lines.push(
       ...windowLines(config, io.env, {
         ...(opts.findBinary ? { findBinary: opts.findBinary } : {}),

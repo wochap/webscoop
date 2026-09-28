@@ -43,6 +43,26 @@ describe('bench', () => {
     expect(io.err()).toContain('tiers go from 0 to 4');
   });
 
+  it('resolves the profile from config, names its source, and rejects an invalid name', async () => {
+    const dir = await tempDir();
+    await mkdir(join(dir, 'recipes'), { recursive: true });
+    await writeFile(
+      join(dir, 'recipes', 'shop.json'),
+      JSON.stringify({ schemaVersion: 1, name: 'shop', url: 'http://127.0.0.1:{port}/catalog', vars: [{ name: 'port', type: 'string' }], fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }),
+    );
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ profiles: { rules: [{ host: '^127\\.0\\.0\\.1$', profile: 'local' }] } }));
+    const { FakeBrowser } = await import('@webscoop/core/testing');
+    const browser = new FakeBrowser({});
+    const io = testIo({ env: { WAYLAND_DISPLAY: 'wayland-1', WEBSCOOP_HOME: dir }, browser });
+    await main(['bench', 'shop', '--tiers', '0', '--no-llm'], io);
+    expect(io.err()).toContain('benchmarking shop on profile "local" (config rule 1)');
+    expect(browser.openedProfiles).toEqual([join(dir, 'profiles', 'local')]);
+    const bad = testIo({ env: { WAYLAND_DISPLAY: 'wayland-1', WEBSCOOP_HOME: dir } });
+    expect(await main(['bench', 'shop', '--profile', '../x'], bad)).toBe(ExitCode.Error);
+    expect(bad.err()).toContain('invalid profile name "../x"');
+    expect(bad.browserCreated()).toBe(0);
+  });
+
   it('is listed in the help with --no-llm on run and test', async () => {
     const io = testIo({});
     expect(await main(['--help'], io)).toBe(ExitCode.Ok);

@@ -161,6 +161,9 @@ export const TimezoneSchema = z.string().refine(isTimezone, { error: (issue) => 
 export const LocaleSchema = z.string().refine(isLocale, { error: (issue) => `invalid locale ${JSON.stringify(issue.input)}, expected a BCP 47 tag such as es-ES` });
 
 /** Network identity for a recipe's browser. Credentials never live in a recipe. */
+/** A profile name: a directory name under the profiles directory, never a path. */
+export const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export const RecipeBrowserSchema = z.object({
   proxy: z
     .object({
@@ -176,6 +179,8 @@ export const RecipeBrowserSchema = z.object({
   locale: LocaleSchema.optional(),
   /** Humanized input for runs of this recipe. */
   humanize: z.boolean().optional(),
+  /** Profile name the recipe's browser commands use unless `--profile` is given. */
+  profile: z.string().regex(PROFILE_NAME, 'invalid profile name: start with a letter or digit, then letters, digits, ., _, or -').optional(),
 });
 
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
