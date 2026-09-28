@@ -208,12 +208,17 @@ describe('webscoop run', () => {
     expect(io.err()).not.toContain('running shop');
   });
 
-  it('still logs dropped-row warnings with --quiet', async () => {
+  it('mutes dropped-row warnings and partial fields with --quiet', async () => {
     const dir = await home();
-    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(3, (i) => i !== 1) }) });
+    const browser = () => new FakeBrowser({ [PAGE]: shopPage(3, (i) => i !== 1) });
+    const normal = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: browser() });
+    expect(await main(['run', 'shop', '--no-save'], normal)).toBe(ExitCode.Ok);
+    expect(normal.err()).toMatch(/warning: dropped 1 row on page 1: .*price.*row 1/);
+    expect(normal.err()).toMatch(/field price: partial/);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: browser() });
     expect(await main(['run', 'shop', '--quiet'], io)).toBe(ExitCode.Ok);
-    expect(io.err()).toMatch(/warning: dropped 1 row on page 1: .*price.*row 1/);
-    expect(io.err()).not.toContain('rows dropped for missing fields in');
+    expect(io.err()).toBe('');
+    expect(JSON.parse(io.out())).toHaveLength(2);
   });
 
   it('still logs guard lines with --quiet', async () => {

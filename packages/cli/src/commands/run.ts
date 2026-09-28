@@ -81,7 +81,7 @@ export interface RunCommandOptions {
   show?: boolean;
   /** `--hide`: hide the window even when config selects no provider. */
   hide?: boolean;
-  /** `--quiet`: mute informational stderr lines. */
+  /** `--quiet`: print only errors and prompts to act on stderr. */
   quiet?: boolean;
 }
 
@@ -316,7 +316,7 @@ interface Prepared {
   createBrowser(): Promise<BrowserPort>;
 }
 
-async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean }): Promise<Prepared> {
+async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean }): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths);
   const storage = new FsStorage(paths.recipesDir, io.cwd);
@@ -334,14 +334,14 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
     throw error;
   }
   const defaults = Object.fromEntries(recipe.vars.flatMap((v) => (v.default !== undefined ? [[v.name, v.default]] : [])));
-  for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars })) log(io, warning);
+  for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars })) infoLog(io, opts.quiet)(warning);
   const settings: BrowserSettings = { ...browserSettings(config, recipe, opts, io.env), humanize: resolveHumanize(opts, recipe, config) };
 
   requireDisplay(io.env);
 
   const profile = resolveProfile({ flag: opts.profile, recipePin: recipe.browser?.profile, name: recipe.name, host: hostOf(recipe.url, vars, recipe.vars), config });
   checkProfileName(profile.profile);
-  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile.profile);
+  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile.profile });
   return { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser };
 }
@@ -355,8 +355,8 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('page.loaded', (e) => info(`page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
-  emitter.on('guard.cleared', (e) => log(io, `guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
-  emitter.on('guard.timeout', (e) => log(io, `guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
+  emitter.on('guard.cleared', (e) => info(`guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
+  emitter.on('guard.timeout', (e) => info(`guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
   emitter.on('step.replayed', (e) => info(formatStep(e.step)));
   emitter.on('step.skipped', (e) => info(formatStep(e.step)));
   emitter.on('field.healed', (e) =>
@@ -365,7 +365,7 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('field.resolved', ({ table, field }) => {
     if ((field.status === 'ok' || field.status === 'healed') && field.missingRows.length === 0) return;
     const notes = field.notes && field.notes.length > 0 ? ` (${field.notes.join('; ')})` : '';
-    log(io, `field ${named(table, field.name)}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
+    info(`field ${named(table, field.name)}: ${field.status}, ${describeOutcome(field.outcome, field.candidate)}${notes}`);
   });
   emitter.on('page.advanced', (e) => info(`page ${e.page}: ${e.kind}`));
   emitter.on('pagination.stopped', (e) => {
@@ -375,7 +375,7 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('recipe.saved', (e) => info(`recipe written to ${e.path}`));
 }
 
-/** Logger for informational lines: a no-op under `--quiet`. Errors, warnings, guards, and prompts use `log`. */
+/** Logger for informational and warning lines: a no-op under `--quiet`. Errors and prompts to act use `log`. */
 export function infoLog(io: CliIo, quiet: boolean | undefined): (message: string) => void {
   return quiet ? () => {} : (message) => log(io, message);
 }
@@ -425,7 +425,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       // Re-pick and the guard banner inject the recorder, which needs the page's CSP out of the way.
       const bundle = await io.recorderBundle(port !== undefined ? 'e2e' : 'default');
       openOptions = { bypassCSP: true, ...openOptions };
-      repick = interactiveRepick(io, { storage, bundle, vars, timeoutMs: opts.timeout });
+      repick = interactiveRepick(io, { storage, bundle, vars, timeoutMs: opts.timeout, quiet: opts.quiet });
       banner = interactiveGuardBanner(io, { storage, bundle, recipe, vars, timeoutMs: opts.timeout });
     }
 
@@ -450,7 +450,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
     const result = await runner.run();
     await sink.finish(result.ok || result.reason === 'paused');
 
-    for (const warning of result.report.warnings) log(io, `warning: ${warning}`);
+    for (const warning of result.report.warnings) infoLog(io, opts.quiet)(`warning: ${warning}`);
     if (opts.report) io.stderr.write(`${JSON.stringify(result.report, null, 2)}\n`);
     if (!result.ok) {
       if (result.reason === 'paused') {

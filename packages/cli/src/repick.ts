@@ -15,7 +15,7 @@ import { CliError } from './exit';
  */
 export function interactiveRepick(
   io: CliIo,
-  opts: { storage: StoragePort; bundle: string; vars: Readonly<Record<string, string>>; timeoutMs: number },
+  opts: { storage: StoragePort; bundle: string; vars: Readonly<Record<string, string>>; timeoutMs: number; quiet?: boolean },
 ): RepickHandler {
   return async (request) => {
     const { session, target } = request;
@@ -35,9 +35,9 @@ export function interactiveRepick(
       const outcome = await controller.awaitRepick();
       if (outcome.kind === 'picked') {
         const primary = outcome.selectors[0];
-        log(io, `re-picked ${request.name}: ${primary ? `${primary.strategy}=${primary.value}` : 'no selector'}`);
+        if (!opts.quiet) log(io, `re-picked ${request.name}: ${primary ? `${primary.strategy}=${primary.value}` : 'no selector'}`);
       } else {
-        log(io, `re-pick of ${request.name}: ${outcome.kind}`);
+        if (!opts.quiet) log(io, `re-pick of ${request.name}: ${outcome.kind}`);
       }
       return outcome;
     } finally {

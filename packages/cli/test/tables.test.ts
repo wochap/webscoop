@@ -316,13 +316,13 @@ describe('record with tables', () => {
     expect(io.err()).toContain('the recipe is unchanged');
   });
 
-  it("passes the event's table in a run's interactive re-pick", async () => {
+  it("passes the event's table in a run's interactive re-pick and mutes the outcome under --quiet", async () => {
     const recipe = loadRecipe(shared());
     const browser = new FakeBrowser({ [PAGE]: shopPage(3) });
     const session = await browser.open('/profile');
     await session.goto(PAGE, { timeoutMs: 1000 });
     const io = testIo({});
-    const handler = interactiveRepick(io, { storage: { list: async () => [], load: async () => recipe, save: async () => {} }, bundle: '', vars: {}, timeoutMs: 1000 });
+    const handler = interactiveRepick(io, { storage: { list: async () => [], load: async () => recipe, save: async () => {} }, bundle: '', vars: {}, timeoutMs: 1000, quiet: true });
     const title = tablesOf(recipe)[1]!.fields[0]!;
     const outcome = handler({
       page: 1,
@@ -342,5 +342,7 @@ describe('record with tables', () => {
     expect(reply.state.repickContext).toMatchObject({ table: 'products', field: 'title' });
     await fake.callHost({ kind: 'repick.skip' });
     expect(await outcome).toEqual({ kind: 'skip' });
+    expect(io.err()).toContain('pick its new location in the browser window');
+    expect(io.err()).not.toContain('re-pick of title');
   });
 });

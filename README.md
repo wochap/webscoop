@@ -147,12 +147,14 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--timeout` bounds navigation and network settling (default 30000 ms).
 - `--report` prints the full run report (candidate used, healing outcome, and
   status per field, and where the recipe was written back) to stderr.
-- `-q`/`--quiet` on `run` mutes the informational stderr lines (run start, page
-  loads, steps, healed fields, pagination progress, recipe write-back, model
-  messages, the closing summary). It still prints errors, warnings (encoded
-  `--var` values, dropped rows), guard lines, the notification text when
-  `notify-send` is missing, and re-pick prompts, so a paused run never looks
-  hung. A clean quiet run leaves stderr empty; `--report` still prints.
+- `-q`/`--quiet` on `run` prints only errors and prompts to act on stderr.
+  Errors are a failed or given-up run, CLI and config errors, and an
+  interrupted run. Prompts are the guard waiting line, the guard banner hint,
+  re-pick requests, and the notification text when `notify-send` is missing,
+  so a paused run never looks hung. Informational lines and every warning
+  (dropped rows, partial or fallback fields, encoded `--var` values, profile
+  warnings, guard cleared or timed out, re-pick outcomes) are muted. A clean
+  quiet run leaves stderr empty; `--report` still prints.
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { h, FakeBrowser } from '@webscoop/core/testing';
 import { loadRecipe, saveRecipe, type RecipeInput } from '@webscoop/core';
@@ -279,6 +279,18 @@ describe('profiles per browser', () => {
     const again = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page(), chromium: CHROME });
     expect(await main(['run', 'shop'], again)).toBe(ExitCode.Ok);
     expect(again.err()).not.toContain('no cookies');
+  });
+
+  it('mutes profile warnings on run --quiet but not on test', async () => {
+    const dir = await home();
+    await mkdir(join(dir, 'profiles', 'shop'), { recursive: true });
+    const quiet = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page(), chromium: CHROME });
+    expect(await main(['run', 'shop', '--quiet'], quiet)).toBe(ExitCode.Ok);
+    expect(quiet.err()).toBe('');
+    await rm(join(dir, 'profiles', 'shop@chrome'), { recursive: true, force: true });
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page(), chromium: CHROME });
+    await main(['test', 'shop'], t);
+    expect(t.err()).toContain('no cookies');
   });
 
   it('warns when the marker names another binary or a newer version', async () => {

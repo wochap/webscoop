@@ -121,7 +121,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--report', 'print the full run report to stderr')
-    .option('-q, --quiet', 'print only errors, warnings, guard lines, and prompts on stderr')
+    .option('-q, --quiet', 'print only errors and prompts to act on stderr')
     .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
     .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
     .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')

@@ -171,11 +171,11 @@ export interface PreparedProfile {
  * warnings, and create the profile directory. Exit 1 happens here, before any
  * browser starts.
  */
-export async function prepareProfile(io: CliIo, config: Config, paths: Pick<Paths, 'profilesDir'>, name: string): Promise<PreparedProfile> {
+export async function prepareProfile(io: CliIo, config: Config, paths: Pick<Paths, 'profilesDir'>, name: string, warn: (message: string) => void = (message) => log(io, message)): Promise<PreparedProfile> {
   const browser = await io.chromium(config, io.env);
   const problem = launchProblem(browser);
   if (problem) throw new CliError(problem);
-  for (const warning of await profileWarnings(paths, name, browser, browser.version)) log(io, warning);
+  for (const warning of await profileWarnings(paths, name, browser, browser.version)) warn(warning);
   const profileDir = profileDirFor(paths, name, browser);
   await mkdir(profileDir, { recursive: true });
   return {
