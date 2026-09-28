@@ -156,3 +156,23 @@ A recipe MAY declare `steps`, an ordered list. Each step SHALL have `kind` among
 #### Scenario: Undeclared variable in a step value
 - **WHEN** a `type` step value is `{query}` and `vars` does not declare `query`
 - **THEN** validation fails and the error names `query`
+
+### Requirement: Browser block
+A recipe MAY contain a `browser` block with these optional keys:
+- `proxy`: an object with `server`, a proxy URL with scheme `http`, `https`, or `socks5` and no user info, and optionally `bypass`, a list of host patterns
+- `timezone`: an IANA timezone identifier
+- `locale`: a BCP 47 language tag
+
+A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. An absent block SHALL mean no recipe-level browser settings. The block SHALL NOT change the schema version.
+
+#### Scenario: Browser block validates
+- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, and `locale` `es-ES`
+- **THEN** validation succeeds
+
+#### Scenario: Credentials rejected
+- **WHEN** a recipe declares `browser.proxy.server` as `http://user:pass@proxy-b:8080`
+- **THEN** validation fails naming `browser.proxy.server` and saying credentials are not allowed in recipes
+
+#### Scenario: Recipe without the block
+- **WHEN** a recipe has no `browser` block
+- **THEN** validation succeeds and the run uses the config and flag settings

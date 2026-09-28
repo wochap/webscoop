@@ -364,3 +364,34 @@ Variable values are URL-encoded when they are substituted into the URL template.
 #### Scenario: Help lists the command
 - **WHEN** `webscoop --help` is executed
 - **THEN** the command list includes `edit` with a description that says it edits an existing recipe
+
+### Requirement: Proxy flags
+`webscoop run`, `webscoop test`, `webscoop record` (including `record --edit` and `edit`), and `webscoop bench` SHALL accept `--proxy <url>` and `--no-proxy`, with the meaning defined in the `browser-launch` capability. Passing both SHALL exit 1. The start line of a run SHALL name the proxy in use with its credentials masked, or say that none is used.
+
+#### Scenario: Proxy on the command line
+- **WHEN** `webscoop run shop --proxy http://u:p@127.0.0.1:3128` is executed
+- **THEN** the browser uses that proxy and stderr names `http://***@127.0.0.1:3128`
+
+#### Scenario: Conflicting flags
+- **WHEN** `webscoop run shop --proxy http://127.0.0.1:3128 --no-proxy` is executed
+- **THEN** stderr reports the conflict and the exit code is 1
+
+### Requirement: Doctor reports the browser setup
+`webscoop doctor` SHALL report:
+- the configured driver
+- the channel
+- the resolved browser binary with its version, or that it is missing
+- whether the `patchright` package is installed when the driver is `patchright`
+- the configured proxy with credentials masked
+- the configured timezone and locale
+- each profile directory with the driver, channel, and version from its marker, or "unknown" when there is no marker
+
+A missing browser binary or a missing `patchright` package for the configured driver SHALL make doctor exit 1, like a missing Chromium does today.
+
+#### Scenario: Patchright configured and missing
+- **WHEN** `browser.driver` is `patchright` and the `patchright` package cannot be loaded
+- **THEN** doctor reports it missing and exits 1
+
+#### Scenario: Profiles listed with their browser
+- **WHEN** profiles `shop` (Chromium) and `shop@chrome` (Chrome) exist with markers
+- **THEN** doctor lists both with their driver, channel, and version
