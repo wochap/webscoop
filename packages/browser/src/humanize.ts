@@ -9,12 +9,9 @@ export interface Point {
   y: number;
 }
 
-export interface Box {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+import { boxOf, type Box, type Measurable } from './box';
+
+export type { Box };
 
 /** The page surface the humanizer drives; a Playwright `Page` satisfies it. */
 export interface HumanPage {
@@ -32,9 +29,8 @@ export interface HumanPage {
 }
 
 /** The element surface the humanizer drives; a Playwright `Locator` satisfies it. */
-export interface HumanTarget {
+export interface HumanTarget extends Measurable {
   scrollIntoViewIfNeeded(): Promise<void>;
-  boundingBox(): Promise<Box | null>;
   click(options?: { trial?: boolean }): Promise<void>;
   fill(value: string): Promise<void>;
   inputValue(): Promise<string>;
@@ -200,7 +196,7 @@ export class Humanizer {
     await target.scrollIntoViewIfNeeded();
     // Playwright's own actionability checks and timeouts: visible, enabled, stable, receives events.
     await target.click({ trial: true });
-    let box = await target.boundingBox();
+    let box = await boxOf(target);
     if (!box) {
       await target.click();
       return;
@@ -208,7 +204,7 @@ export class Humanizer {
     await this.moveTo(this.targetPoint(box));
     await this.sleep(this.uniform(60, 250));
     // The target may have moved during the path; correct with a short final move.
-    box = await target.boundingBox();
+    box = await boxOf(target);
     if (box && !inside(this.pointer!, box)) await this.moveTo(this.targetPoint(box));
     await this.page.mouse.down();
     await this.sleep(this.hold());

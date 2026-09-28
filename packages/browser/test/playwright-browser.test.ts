@@ -8,9 +8,14 @@ import { FakeBrowser } from '@webscoop/core/testing';
 import { dataset, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PlaywrightBrowser } from '../src';
-import { PlaywrightSession } from '../src/playwright-browser';
+import { loadDriver, PlaywrightSession, type Driver } from '../src/playwright-browser';
 
 const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
+const hasPatchright = await loadDriver('patchright').then(
+  () => true,
+  () => false,
+);
+const drivers: Driver[] = hasPatchright ? ['playwright', 'patchright'] : ['playwright'];
 
 const c = (strategy: SelectorCandidate['strategy'], value: string): SelectorCandidate => ({
   strategy,
@@ -50,7 +55,7 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser title (integration)', () => {
   });
 });
 
-describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
+describe.skipIf(!hasDisplay).each(drivers)('PlaywrightBrowser (integration, %s)', (driver) => {
   let playground: Playground;
   let profileDir: string;
   let session: Session;
@@ -58,7 +63,7 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
   beforeAll(async () => {
     playground = await startPlayground({ port: 0 });
     profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
-    const browser = new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined });
+    const browser = new PlaywrightBrowser({ driver, executablePath: process.env.WEBSCOOP_CHROMIUM || undefined });
     session = await browser.open(profileDir);
   });
 
@@ -340,5 +345,70 @@ describe.skipIf(!hasDisplay)('PlaywrightBrowser (integration)', () => {
     await session.selectOption(select!, 'a');
     expect(await page.locator('#sort').inputValue()).toBe('a');
     await expect(session.selectOption(select!, 'Rating')).rejects.toThrow(/no option/);
+  });
+
+  const html = (body: string) => `data:text/html,${encodeURIComponent(`<!doctype html><body>${body}</body>`)}`;
+
+  it('fails a stale read at once, naming the element', async () => {
+    await session.goto(html('<p id="gone">bye</p><p id="stays">hi</p>'), { timeoutMs: 10_000 });
+    const [ref] = await session.resolve(c('id', 'gone'));
+    const page = (session as unknown as { page: import('playwright').Page }).page;
+    await page.evaluate(() => document.getElementById('gone')!.remove());
+    const started = Date.now();
+    await expect(session.read(ref!, { mode: 'text' })).rejects.toThrow(`element gone: ${ref!.description}`);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(await session.read(ref!, { attr: 'id', mode: 'text' }).catch(() => 'missed')).toBe('missed');
+  });
+
+  it('compares the same element, different elements, and a missing element', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const cards = await session.resolve(c('testid', 'product-card'));
+    const [byId] = await session.resolve(c('id', 'product-p02'));
+    expect(await session.same(cards[1]!, cards[1]!)).toBe(true);
+    expect(await session.same(cards[0]!, cards[1]!)).toBe(false);
+    const page = (session as unknown as { page: import('playwright').Page }).page;
+    await page.evaluate(() => document.getElementById('product-p02')!.remove());
+    expect(await session.same(byId!, cards[0]!)).toBe(false);
+    expect(await session.same(cards[0]!, byId!)).toBe(false);
+  });
+
+  it('measures an element the same as boundingBox', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const [card] = await session.resolve(c('testid', 'product-card'));
+    const page = (session as unknown as { page: import('playwright').Page }).page;
+    const box = (await page.locator('[data-testid="product-card"]').first().boundingBox())!;
+    expect(await (session as PlaywrightSession).geometry(card!)).toEqual({ x: box.x, y: box.y, w: box.width, h: box.height });
+  });
+
+  const bigList = (extra = '') =>
+    html(`<ul>${Array.from({ length: 200 }, (_, i) => `<li class="item"><span class="name">Item ${i}</span> <span class="price">$${i}</span></li>`).join('')}</ul>${extra}`);
+
+  it('ignores matches inside a closed shadow root', async () => {
+    await session.goto(bigList('<div id="host"></div><script>document.getElementById("host").attachShadow({ mode: "closed" }).innerHTML = \'<span class="price">$999</span>\';</script>'), {
+      timeoutMs: 10_000,
+    });
+    expect(await session.resolve(c('css', '.price'))).toHaveLength(200);
+  });
+
+  it('resolves a 200-item list and reads two fields in 10 items quickly', async () => {
+    await session.goto(bigList(), { timeoutMs: 10_000 });
+    const started = Date.now();
+    const items = await session.resolve(c('css', 'li.item'));
+    expect(items).toHaveLength(200);
+    for (const item of items.slice(0, 10)) {
+      for (const field of ['.name', '.price']) {
+        const [ref] = await session.resolve(c('css', field), item);
+        await session.read(ref!, { mode: 'text' });
+      }
+    }
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('resolves role, text, and css candidates inside the fifth container', async () => {
+    await session.goto(catalog(), { timeoutMs: 10_000 });
+    const fifth = (await session.resolve(c('role', 'listitem')))[4]!;
+    expect(await texts(c('role', 'heading'), fifth)).toEqual([dataset[4]!.title]);
+    expect(await texts(c('text', dataset[4]!.title), fifth)).toEqual([dataset[4]!.title]);
+    expect(await texts(c('css', 'h2.product-title'), fifth)).toEqual([dataset[4]!.title]);
   });
 });

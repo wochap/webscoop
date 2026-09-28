@@ -72,7 +72,7 @@ const BOX: Box = { x: 400, y: 300, width: 120, height: 40 };
 function target(scene: Scene, box: Box | null = BOX): HumanTarget {
   return {
     scrollIntoViewIfNeeded: async () => void scene.calls.push('scrollIntoView'),
-    boundingBox: async () => box,
+    evaluateAll: async () => box as never,
     click: async (o) => void scene.calls.push(o?.trial ? 'trial' : 'click'),
     fill: async (v) => void scene.calls.push(`fill:${v}`),
     inputValue: async () => 'old',

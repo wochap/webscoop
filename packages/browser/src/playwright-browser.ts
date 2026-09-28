@@ -14,6 +14,7 @@ import {
   type SettleOptions,
   type SerializedNode,
 } from '@webscoop/core';
+import { boxOf } from './box';
 import { Humanizer } from './humanize';
 import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
@@ -132,7 +133,10 @@ function locate(root: Root, candidate: SelectorCandidate): Locator {
  * a JSON string. A string crosses DevTools at any document depth; a nested
  * object hits Chromium's CBOR-to-JSON nesting limit on deep pages.
  */
-function serializeInPage(element: Element | null): string {
+function serializeInPage(target: Element[] | null): string {
+  // `evaluateAll` passes the scope's matches; `page.evaluate` passes null for the whole document.
+  if (target && !target[0]) throw new Error('element gone');
+  const element = target ? target[0]! : null;
   const walk = (node: Node): SerializedNode | null => {
     if (node.nodeType === Node.TEXT_NODE) return { type: 'text', text: node.textContent ?? '' };
     if (node.nodeType !== Node.ELEMENT_NODE) return null;
@@ -198,31 +202,51 @@ export class PlaywrightSession implements InteractiveSession {
   async resolve(candidate: SelectorCandidate, within?: ElementRef): Promise<ElementRef[]> {
     const scope = within ? (within as PwRef) : undefined;
     const locator = locate(scope?.locator ?? this.page, candidate);
-    const count = await locator.count();
+    const count = await locator.evaluateAll((els) => els.length);
     const prefix = `${scope ? `${scope.description} >> ` : ''}${candidate.strategy}=${candidate.value}`;
     return Array.from({ length: count }, (_, i) => new PwRef(locator.nth(i), `${prefix} >> nth=${i}`));
   }
 
   async read(ref: ElementRef, opts: ReadOptions): Promise<string> {
-    const { locator } = ref as PwRef;
-    if (opts.attr) return (await locator.getAttribute(opts.attr)) ?? '';
-    if (opts.mode === 'html') return locator.innerHTML();
-    return (await locator.textContent()) ?? '';
+    const { locator, description } = ref as PwRef;
+    // One page call; a ref that no longer matches fails at once instead of waiting the action timeout.
+    const value = await locator.evaluateAll(
+      (els, o) => {
+        const el = els[0];
+        if (!el) return null;
+        if (o.attr) return el.getAttribute(o.attr) ?? '';
+        if (o.mode === 'html') return el.innerHTML;
+        return el.textContent ?? '';
+      },
+      { attr: opts.attr ?? null, mode: opts.mode },
+    );
+    if (value === null) throw new Error(`element gone: ${description}`);
+    return value;
   }
 
   async same(a: ElementRef, b: ElementRef): Promise<boolean> {
-    const [ha, hb] = await Promise.all([(a as PwRef).locator.elementHandle(), (b as PwRef).locator.elementHandle()]);
-    try {
-      if (!ha || !hb) return false;
-      return await ha.evaluate((x, y) => x === y, hb);
-    } finally {
-      await Promise.all([ha?.dispose(), hb?.dispose()]);
-    }
+    // Mark a's element under a one-off key, then check b's element against it; both calls run in the same world.
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    type Marks = Map<string, WeakRef<Element>>;
+    const marked = await (a as PwRef).locator.evaluateAll((els, k) => {
+      const el = els[0];
+      if (!el) return false;
+      const w = window as unknown as { __webscoopSame?: Marks };
+      (w.__webscoopSame ??= new Map()).set(k, new WeakRef(el));
+      return true;
+    }, key);
+    if (!marked) return false;
+    return (b as PwRef).locator.evaluateAll((els, k) => {
+      const marks = (window as unknown as { __webscoopSame?: Marks }).__webscoopSame;
+      const mark = marks?.get(k)?.deref();
+      marks?.delete(k);
+      return els[0] !== undefined && els[0] === mark;
+    }, key);
   }
 
   async snapshot(within?: ElementRef): Promise<SerializedNode> {
     try {
-      const json = within ? await (within as PwRef).locator.evaluate(serializeInPage) : await this.page.evaluate(serializeInPage, null);
+      const json = within ? await (within as PwRef).locator.evaluateAll(serializeInPage) : await this.page.evaluate(serializeInPage, null);
       return JSON.parse(json) as SerializedNode;
     } catch (error) {
       throw new Error(`snapshot: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -255,7 +279,9 @@ export class PlaywrightSession implements InteractiveSession {
     const { locator } = ref as PwRef;
     this.navigationsBefore = this.navigations;
     // An option matches by value first, then by visible label; looked up in the page so a miss fails at once instead of waiting.
-    const option = await locator.evaluate((el, wanted) => {
+    const option = await locator.evaluateAll((els, wanted) => {
+      const el = els[0];
+      if (!el) return null;
       const options = Array.from((el as HTMLSelectElement).options ?? []);
       const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
       return hit ? hit.value : null;
@@ -387,7 +413,7 @@ export class PlaywrightSession implements InteractiveSession {
   }
 
   async geometry(ref: ElementRef): Promise<Geometry> {
-    const box = await (ref as PwRef).locator.boundingBox();
+    const box = await boxOf((ref as PwRef).locator);
     return box ? { x: box.x, y: box.y, w: box.width, h: box.height } : { x: 0, y: 0, w: 0, h: 0 };
   }
 }
