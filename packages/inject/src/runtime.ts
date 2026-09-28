@@ -52,6 +52,9 @@ export interface RuntimeOptions {
 const TOAST_MS = { ok: 4000, neutral: 4000, danger: 9000 } as const;
 
 /** The page side of the session: bridges to the host, drives the overlay, and implements the view's actions. */
+/** Longest wait for the host binding before the page reports that it is not connected. */
+const BINDING_WAIT_MS = 5000;
+
 export class Runtime implements Actions {
   readonly store: Store;
   private toastId = 0;
@@ -81,6 +84,8 @@ export class Runtime implements Actions {
 
   /** Tell the host the page is ready and take the state it replies with. */
   async start(): Promise<void> {
+    // Some drivers install the binding a moment after the document loads.
+    for (let waited = 0; !this.hostFn() && waited < BINDING_WAIT_MS; waited += 50) await new Promise((r) => setTimeout(r, 50));
     await this.send({ kind: 'session.ready', url: this.win.location.href });
   }
 

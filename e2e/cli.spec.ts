@@ -4,7 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, REFERENCE_RECIPE, referenceRecipe, TABLES_RECIPE, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, REFERENCE_RECIPE, referenceRecipe, TABLES_RECIPE, profileDir, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -41,7 +41,7 @@ test('rows equal the dataset on every recipe field', async ({ scoop }) => {
   expect(result.code, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual(expectedRows(scoop.playground.url));
   expect(result.stderr).toMatch(/24 rows from 1 page in \d+\.\d+s/);
-  expect(processesUsing(join(scoop.home, 'profiles', RECIPE))).toEqual([]);
+  expect(processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
 });
 
 test('--jsonl streams one row per line', async ({ scoop }) => {
@@ -151,7 +151,7 @@ async function waitFor(check: () => boolean, timeoutMs = 20_000): Promise<void> 
 
 test('a second concurrent run on one profile exits 1', async ({ scoop }) => {
   scoop.playground.control.delayMs = 4000;
-  const lockFile = join(scoop.home, 'profiles', RECIPE, '.webscoop.lock');
+  const lockFile = join(profileDir(scoop.home, RECIPE), '.webscoop.lock');
   const first = scoop.spawn(['run', RECIPE]);
   await waitFor(() => existsSync(lockFile));
   const second = await scoop.run(['run', RECIPE, '--lock-timeout', '500']);
@@ -165,7 +165,7 @@ test('a second concurrent run on one profile exits 1', async ({ scoop }) => {
 
 test('SIGINT closes the browser, releases the lock, and exits 1', async ({ scoop }) => {
   scoop.playground.control.delayMs = 10_000;
-  const lockFile = join(scoop.home, 'profiles', RECIPE, '.webscoop.lock');
+  const lockFile = join(profileDir(scoop.home, RECIPE), '.webscoop.lock');
   const run = scoop.spawn(['run', RECIPE]);
   await waitFor(() => scoop.playground.requests.some((r) => r.path === '/catalog'));
   run.child.kill('SIGINT');
@@ -174,7 +174,7 @@ test('SIGINT closes the browser, releases the lock, and exits 1', async ({ scoop
   expect(result.stderr).toContain('interrupted');
   expect(result.stdout).toBe('');
   expect(existsSync(lockFile)).toBe(false);
-  expect(processesUsing(join(scoop.home, 'profiles', RECIPE))).toEqual([]);
+  expect(processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
 });
 
 test.describe('a recipe with tables', () => {

@@ -1,6 +1,5 @@
-import { join } from 'node:path';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, test } from './fixtures';
+import { expect, hasDisplay, profileDir, test } from './fixtures';
 import { chromiumUsing, template, ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the recorder needs WAYLAND_DISPLAY or DISPLAY');
@@ -8,7 +7,7 @@ test.skip(!hasDisplay, 'the recorder needs WAYLAND_DISPLAY or DISPLAY');
 test('the fixture tears down the recorder process and its browser', async ({ scoop }) => {
   const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'teardown']);
   expect(r.run.child.exitCode).toBeNull();
-  const profile = join(scoop.home, 'profiles', 'teardown');
+  const profile = profileDir(scoop.home, 'teardown');
   expect(chromiumUsing(profile).length).toBeGreaterThan(0);
   const result = await r.closeWindow();
   expect(result.code, result.stderr).toBe(0);

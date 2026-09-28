@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, profileDir, test, type Scoop } from './fixtures';
 import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
@@ -54,7 +54,7 @@ test('guardedRun attaches to the runner and tears down cleanly', async ({ scoop 
   g.run.child.kill('SIGINT');
   const result = await g.run.done;
   expect(result.code).toBe(1);
-  await expect.poll(() => chromiumUsing(join(scoop.home, 'profiles', name)).length).toBe(0);
+  await expect.poll(() => chromiumUsing(profileDir(scoop.home, name)).length).toBe(0);
 });
 
 test('wall=login: the run pauses, the user logs in, and the run finishes with 24 rows', async ({ scoop }) => {

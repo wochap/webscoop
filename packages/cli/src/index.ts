@@ -5,7 +5,7 @@ export { loadConfig, ConfigSchema, type Config } from './config';
 export { detectDisplay, requireDisplay } from './display';
 export { acquireProfileLock, LOCK_FILE, type ProfileLock } from './lock';
 export { FsStorage, isRecipePath } from './storage';
-export type { CliIo, ChromiumInfo, Output } from './context';
+export type { CliIo, BrowserInfo, Output } from './context';
 export { createLlm, llmSettings, canProbe, type Probeable } from './llm';
 export { NotifySend, spawnProcess, NOTIFY_TIMEOUT_MS, type Spawn } from './notify';
 export * from './window';

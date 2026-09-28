@@ -121,6 +121,61 @@ export const TableSchema = z.object({
   fields: z.array(FieldSchema).min(1, 'a table needs at least one field'),
 });
 
+/** Proxy URL schemes a browser accepts. */
+export const PROXY_SCHEMES = ['http', 'https', 'socks5'] as const;
+
+/** Parse a proxy URL; null when it is not one of the accepted schemes with a host. */
+export function parseProxyUrl(value: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const scheme = url.protocol.replace(/:$/, '');
+  if (!(PROXY_SCHEMES as readonly string[]).includes(scheme) || !url.hostname) return null;
+  return url;
+}
+
+/** Whether a value is an IANA timezone the runtime knows, canonical or alias. */
+export function isTimezone(value: string): boolean {
+  if (!value.includes('/') && value !== 'UTC') return false;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a value is a well-formed BCP 47 language tag. */
+export function isLocale(value: string): boolean {
+  try {
+    return Intl.getCanonicalLocales(value).length === 1;
+  } catch {
+    return false;
+  }
+}
+
+export const TimezoneSchema = z.string().refine(isTimezone, { error: (issue) => `unknown timezone ${JSON.stringify(issue.input)}, expected an IANA identifier such as Europe/Madrid` });
+export const LocaleSchema = z.string().refine(isLocale, { error: (issue) => `invalid locale ${JSON.stringify(issue.input)}, expected a BCP 47 tag such as es-ES` });
+
+/** Network identity for a recipe's browser. Credentials never live in a recipe. */
+export const RecipeBrowserSchema = z.object({
+  proxy: z
+    .object({
+      server: z.string().superRefine((value, ctx) => {
+        const url = parseProxyUrl(value);
+        if (!url) ctx.addIssue({ code: 'custom', message: `invalid proxy URL ${JSON.stringify(value)}, expected ${PROXY_SCHEMES.join(', ')}://host:port` });
+        else if (url.username || url.password) ctx.addIssue({ code: 'custom', message: 'credentials are not allowed in recipes; put them in the config or WEBSCOOP_PROXY_USERNAME and WEBSCOOP_PROXY_PASSWORD' });
+      }),
+      bypass: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
+  timezone: TimezoneSchema.optional(),
+  locale: LocaleSchema.optional(),
+});
+
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
 
 const RecipeObjectSchema = z.object({
@@ -136,6 +191,7 @@ const RecipeObjectSchema = z.object({
   pagination: PaginationSchema.default(() => PaginationSchema.parse({})),
   guards: z.array(GuardSchema).default(defaultGuards),
   healing: HealingSchema.default(() => HealingSchema.parse({})),
+  browser: RecipeBrowserSchema.optional(),
 });
 
 type ParsedField = z.output<typeof FieldSchema>;
@@ -176,6 +232,7 @@ export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;
 export type GuardKind = Guard['kind'];
 export type Healing = z.infer<typeof HealingSchema>;
+export type RecipeBrowser = z.infer<typeof RecipeBrowserSchema>;
 export type Recipe = Omit<ParsedRecipe, 'fields' | 'tables'> & { fields?: RecipeField[]; tables?: RecipeTable[] };
 /** Recipe as written on disk, before defaults are filled in. */
 export type RecipeInput = z.input<typeof RecipeSchema>;

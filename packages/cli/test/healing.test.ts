@@ -115,7 +115,7 @@ describe('run healing flags', () => {
     expect(browser.openOptions[1]).toEqual({ remoteDebuggingPort: 9333 });
     const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[2]).toBeUndefined();
+    expect(browser.openOptions[2]).toEqual({});
   });
 });
 

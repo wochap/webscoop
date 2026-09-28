@@ -1,16 +1,18 @@
-import { join } from 'node:path';
-import { mkdir } from 'node:fs/promises';
 import { RunEmitter, Runner, templateVariables, type HealOutcome, type Recipe } from '@webscoop/core';
+import { browserSettings, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
+import { prepareProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { modelRung, testRows } from './run';
 
 export interface BenchCommandOptions {
+  /** `--proxy <url>`, or false for `--no-proxy`. */
+  proxy?: string | false;
   tiers: string;
   seed: number;
   json?: boolean;
@@ -100,12 +102,12 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   const recipe = await storage.load(recipeRef);
   const variables = templateVariables(recipe.url);
   if (!variables.includes('port')) throw new CliError(`recipe ${recipe.name} has no {port} variable in its URL, so bench cannot point it at the playground`);
+  const openOptions = settingsOptions(browserSettings(config, recipe, opts, io.env));
   requireDisplay(io.env);
   const { startPlayground } = await loadPlayground();
 
   const profile = opts.profile ?? recipe.name;
-  const profileDir = join(paths.profilesDir, profile);
-  await mkdir(profileDir, { recursive: true });
+  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
@@ -116,7 +118,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   const results: BenchTier[] = [];
   let broken = false;
   try {
-    const browser = await io.createBrowser(config, io.env);
+    const browser = await createBrowser();
     for (const tier of tiers) {
       if (controller.signal.aborted) break;
       playground.control.tier = tier;
@@ -136,6 +138,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
         emitter: new RunEmitter(),
         signal: controller.signal,
         healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
+        openOptions,
       }).run();
       const elapsedMs = Math.round(performance.now() - started);
       const fields: BenchField[] = testRows(result.report).map((row) => ({

@@ -37,6 +37,21 @@ export interface OpenOptions {
   bypassCSP?: boolean;
   /** Open a DevTools protocol port, so tests can attach with `connectOverCDP`. */
   remoteDebuggingPort?: number;
+  /** Route the browser's traffic through this proxy. */
+  proxy?: ProxySettings;
+  /** IANA timezone the page sees, e.g. `Europe/Madrid`. */
+  timezone?: string;
+  /** BCP 47 locale for `navigator.language` and `Accept-Language`, e.g. `es-ES`. */
+  locale?: string;
+}
+
+export interface ProxySettings {
+  /** Proxy URL without credentials, e.g. `http://127.0.0.1:3128`. */
+  server: string;
+  username?: string;
+  password?: string;
+  /** Comma-separated hosts that bypass the proxy. */
+  bypass?: string;
 }
 
 export interface GotoOptions {

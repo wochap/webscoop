@@ -1,8 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { findBrowserPid } from '@webscoop/cli';
-import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, test } from './fixtures';
+import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, profileDir, test } from './fixtures';
 
 // Moves real windows on the desktop; opt in on a Hyprland session.
 test.skip(!hasDisplay || process.env.WEBSCOOP_E2E_HYPRLAND !== '1' || !process.env.HYPRLAND_INSTANCE_SIGNATURE, 'set WEBSCOOP_E2E_HYPRLAND=1 in a Hyprland session');
@@ -31,7 +30,7 @@ test('the window hides after opening, comes back on a guard, and hides again aft
 
   // The delay keeps page 1 on screen long enough to look at the window.
   const g = await scoop.guardedRun([name, '--jsonl', '--delay', '1500']);
-  const pid = await findBrowserPid(join(scoop.home, 'profiles', name));
+  const pid = await findBrowserPid(profileDir(scoop.home, name));
   expect(pid).not.toBeNull();
 
   // The class rule places the window as it maps: the first time it is seen, it is already away.

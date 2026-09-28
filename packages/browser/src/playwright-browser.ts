@@ -16,15 +16,68 @@ import {
 } from '@webscoop/core';
 import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
-/** Launch flags that keep Chromium from advertising automation. */
+/** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
 export const IGNORED_DEFAULT_ARGS = ['--enable-automation'];
 
+export type Driver = 'playwright' | 'patchright';
+type DriverModule = typeof import('playwright');
+type LaunchOptions = NonNullable<Parameters<DriverModule['chromium']['launchPersistentContext']>[1]>;
+
+/** The configured driver's package cannot be loaded. */
+export class DriverMissingError extends Error {
+  constructor(readonly driver: Driver, options?: ErrorOptions) {
+    super(`the ${driver} package is not installed`, options);
+    this.name = 'DriverMissingError';
+  }
+}
+
+/** Load a driver's module. Patchright has Playwright's API, so it is typed as Playwright. */
+export async function loadDriver(driver: Driver): Promise<DriverModule> {
+  if (driver === 'playwright') return { chromium, errors } as DriverModule;
+  try {
+    return (await import('patchright')) as unknown as DriverModule;
+  } catch (error) {
+    throw new DriverMissingError(driver, { cause: error });
+  }
+}
+
 export interface PlaywrightBrowserOptions {
-  /** Chromium binary to use instead of the build Playwright downloaded. */
+  /** Automation driver. Default `playwright`. */
+  driver?: Driver;
+  /** Browser binary to use instead of the build the driver downloaded. */
   executablePath?: string;
   /** Timeout for element operations after navigation, in ms. Default 5000. */
   actionTimeoutMs?: number;
+  /** Driver module loader, injectable for tests. */
+  load?: (driver: Driver) => Promise<DriverModule>;
+}
+
+/** `launchPersistentContext` options for a driver and the open options. */
+export function launchOptions(options: PlaywrightBrowserOptions, opts: OpenOptions): LaunchOptions {
+  const playwright = (options.driver ?? 'playwright') === 'playwright';
+  const extra = [
+    ...(opts.remoteDebuggingPort !== undefined ? [`--remote-debugging-port=${opts.remoteDebuggingPort}`] : []),
+    ...(opts.args ?? []),
+  ];
+  return {
+    headless: false,
+    viewport: null,
+    // The CLI owns SIGINT: it aborts the run, closes the context, and releases the profile lock.
+    handleSIGINT: false,
+    ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+    ...(playwright ? { ignoreDefaultArgs: IGNORED_DEFAULT_ARGS } : {}),
+    ...(opts.bypassCSP ? { bypassCSP: true } : {}),
+    ...(opts.proxy ? { proxy: opts.proxy } : {}),
+    ...(opts.timezone ? { timezoneId: opts.timezone } : {}),
+    ...(opts.locale ? { locale: opts.locale } : {}),
+    args: playwright ? [...STEALTH_ARGS, ...extra] : extra,
+  };
+}
+
+/** A driver timeout; matched by name, since each driver has its own error classes. */
+function isDriverTimeout(error: unknown): boolean {
+  return error instanceof errors.TimeoutError || (error instanceof Error && error.name === 'TimeoutError');
 }
 
 /** How long `settle` waits for a navigation to start after an action. */
@@ -111,6 +164,7 @@ export class PlaywrightSession implements InteractiveSession {
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
+    private readonly driver: Driver = 'playwright',
   ) {
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) this.navigations++;
@@ -130,7 +184,7 @@ export class PlaywrightSession implements InteractiveSession {
         .catch(() => {});
       return { url: this.page.url(), title: await this.page.title(), status: response?.status() ?? null };
     } catch (error) {
-      if (error instanceof errors.TimeoutError) {
+      if (isDriverTimeout(error)) {
         throw new TimeoutError(`navigation to ${url} timed out after ${opts.timeoutMs} ms`);
       }
       throw error;
@@ -228,7 +282,7 @@ export class PlaywrightSession implements InteractiveSession {
       }
       return { url: this.page.url(), title: await this.page.title(), status: this.lastStatus };
     } catch (error) {
-      if (error instanceof errors.TimeoutError) {
+      if (isDriverTimeout(error)) {
         throw new TimeoutError(`waiting for ${this.page.url()} to load timed out after ${opts.timeoutMs} ms`);
       }
       throw error;
@@ -258,10 +312,19 @@ export class PlaywrightSession implements InteractiveSession {
     await this.context.close();
   }
 
+  /**
+   * Evaluate in the page's main world, where the recorder bundle lives.
+   * Patchright evaluates in an isolated world unless told otherwise.
+   */
+  private mainWorldEvaluate<R, A>(fn: string | ((arg: A) => R), arg?: A): Promise<R> {
+    const evaluate = this.page.evaluate.bind(this.page) as (f: unknown, a: unknown, isolated?: boolean) => Promise<R>;
+    return this.driver === 'patchright' ? evaluate(fn, arg, false) : evaluate(fn, arg);
+  }
+
   async inject(source: string): Promise<void> {
     await this.context.addInitScript({ content: source });
     try {
-      await this.page.evaluate(source);
+      await this.mainWorldEvaluate(source);
     } catch {
       // The current document may be mid-navigation; the init script covers the next one.
     }
@@ -270,11 +333,17 @@ export class PlaywrightSession implements InteractiveSession {
   async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
     const known = this.bindings.has(name);
     this.bindings.set(name, fn);
-    if (!known) await this.context.exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
+    if (known) return;
+    await this.context.exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
+    if (this.driver === 'patchright' && this.bindings.size === 1) {
+      // Patchright adds bindings to a document's main world only once the host evaluates there.
+      this.page.on('domcontentloaded', () => void this.mainWorldEvaluate('0').catch(() => {}));
+      await this.mainWorldEvaluate('0').catch(() => {});
+    }
   }
 
   async dispatch(msg: unknown): Promise<void> {
-    await this.page.evaluate(
+    await this.mainWorldEvaluate(
       ([global, message]) => {
         const target = (window as unknown as Record<string, { dispatch(m: unknown): void } | undefined>)[global];
         if (!target) throw new Error('the recorder is not loaded in this page');
@@ -313,29 +382,18 @@ export class PlaywrightSession implements InteractiveSession {
   }
 }
 
-/** `BrowserPort` over a headed, persistent Playwright Chromium context. */
+/** `BrowserPort` over a headed, persistent Chromium context, driven by Playwright or Patchright. */
 export class PlaywrightBrowser implements BrowserPort {
   constructor(private readonly options: PlaywrightBrowserOptions = {}) {}
 
   async open(profileDir: string, opts: OpenOptions = {}): Promise<InteractiveSession> {
-    const context = await chromium.launchPersistentContext(profileDir, {
-      headless: false,
-      viewport: null,
-      // The CLI owns SIGINT: it aborts the run, closes the context, and releases the profile lock.
-      handleSIGINT: false,
-      ...(this.options.executablePath ? { executablePath: this.options.executablePath } : {}),
-      ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
-      ...(opts.bypassCSP ? { bypassCSP: true } : {}),
-      args: [
-        ...STEALTH_ARGS,
-        ...(opts.remoteDebuggingPort !== undefined ? [`--remote-debugging-port=${opts.remoteDebuggingPort}`] : []),
-        ...(opts.args ?? []),
-      ],
-    });
+    const driver = this.options.driver ?? 'playwright';
+    const module = await (this.options.load ?? loadDriver)(driver);
+    const context = await module.chromium.launchPersistentContext(profileDir, launchOptions(this.options, opts));
     try {
       context.setDefaultTimeout(this.options.actionTimeoutMs ?? 5000);
       const page = context.pages()[0] ?? (await context.newPage());
-      return new PlaywrightSession(context, page);
+      return new PlaywrightSession(context, page, driver);
     } catch (error) {
       await context.close().catch(() => {});
       throw error;
@@ -343,7 +401,7 @@ export class PlaywrightBrowser implements BrowserPort {
   }
 }
 
-/** Path of the Chromium build this Playwright version expects. */
-export function expectedChromiumPath(): string {
-  return chromium.executablePath();
+/** Path of the Chromium build this driver version expects. */
+export async function expectedChromiumPath(driver: Driver = 'playwright'): Promise<string> {
+  return (await loadDriver(driver)).chromium.executablePath();
 }

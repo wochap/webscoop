@@ -192,6 +192,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   };
   if (draft.guards) recipe.guards = draft.guards;
   if (draft.healing) recipe.healing = draft.healing;
+  if (draft.browser) recipe.browser = draft.browser;
   return recipe;
 }
 
@@ -317,6 +318,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     pagination,
     guards: recipe.guards,
     healing: recipe.healing,
+    ...(recipe.browser ? { browser: recipe.browser } : {}),
     dirty: false,
     errors: [],
   });

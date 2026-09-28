@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadRecipe, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
+import { draftFromRecipe, draftToRecipe, loadRecipe, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
 import { tablesRecipe } from './helpers';
 
 const referencePath = fileURLToPath(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url));
@@ -479,5 +479,48 @@ describe('error collection', () => {
       expect(recipeError.errors).toHaveLength(2);
       expect(recipeError.format()).toContain('$.fields[0].type');
     }
+  });
+});
+
+describe('recipe browser block', () => {
+  it('validates a proxy, timezone, and locale', () => {
+    const browser = { proxy: { server: 'http://proxy-b:8080', bypass: ['localhost', '*.lan'] }, timezone: 'Europe/Madrid', locale: 'es-ES' };
+    const result = validateRecipe(base({ browser }));
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.recipe.browser).toEqual(browser);
+    expect(result.ok && result.recipe.schemaVersion).toBe(1);
+  });
+
+  it('rejects credentials in the proxy server, naming the path', () => {
+    const errors = errorsOf(base({ browser: { proxy: { server: 'http://user:pass@proxy-b:8080' } } }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.browser.proxy.server');
+    expect(errors[0]!.message).toContain('credentials are not allowed in recipes');
+  });
+
+  it('rejects an unknown scheme, timezone, and locale', () => {
+    const errors = errorsOf(base({ browser: { proxy: { server: 'ftp://proxy:21' }, timezone: 'Mars/Base', locale: 'not a locale' } }));
+    expect(errors.map((e) => e.path)).toEqual(['$.browser.proxy.server', '$.browser.timezone', '$.browser.locale']);
+    expect(errors[1]!.message).toContain('Mars/Base');
+  });
+
+  it('accepts a recipe without the block', () => {
+    const result = validateRecipe(base());
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.recipe.browser).toBeUndefined();
+  });
+
+  it('keeps the block through a save', () => {
+    const browser = { timezone: 'America/New_York', locale: 'en-US' };
+    const saved = JSON.parse(saveRecipe(loadRecipe(JSON.stringify(base({ browser })), '/r/shop.json')));
+    expect(saved.browser).toEqual(browser);
+  });
+});
+
+describe('recipe browser block in the recorder', () => {
+  it('survives an edit session', () => {
+    const browser = { proxy: { server: 'socks5://127.0.0.1:1080' }, locale: 'en-US' };
+    const recipe = loadRecipe(JSON.stringify(base({ browser })), '/r/shop.json');
+    expect(draftToRecipe(draftFromRecipe(recipe, { category: 'books' })).browser).toEqual(browser);
   });
 });

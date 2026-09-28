@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NoopWindow, type BrowserPort, type Notification, type WindowPort } from '@webscoop/core';
 import { afterEach } from 'vitest';
-import type { ChromiumInfo, CliIo, WindowMode } from '../src';
+import type { BrowserInfo, CliIo, WindowMode } from '../src';
 
 const temps: string[] = [];
 afterEach(async () => {
@@ -33,7 +33,7 @@ export function testIo(opts: {
   cwd?: string;
   homedir?: string;
   browser?: BrowserPort;
-  chromium?: Partial<ChromiumInfo>;
+  chromium?: Partial<BrowserInfo>;
   /** Answers for terminal prompts, in order; null plays closed input. */
   answers?: (string | null)[];
   /** Port `createWindow` returns. Default: a `NoopWindow`. */
@@ -59,7 +59,7 @@ export function testIo(opts: {
       return opts.browser;
     },
     async chromium() {
-      return { path: '/opt/chromium/chrome', source: 'playwright', installed: true, version: 'Chromium 1', ...opts.chromium };
+      return { driver: 'playwright', channel: 'chromium', id: '', path: '/opt/chromium/chrome', source: 'playwright', installed: true, version: 'Chromium 1', ...opts.chromium };
     },
     onInterrupt(handler) {
       handlers.add(handler);

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as base } from '@playwright/test';
 import type { RecipeInput } from '@webscoop/core';
@@ -19,6 +19,19 @@ export const STEPS_RECIPE = join(root, 'packages/cli/fixtures/playground-steps.j
 export const TABLES_RECIPE = join(root, 'packages/cli/fixtures/playground-tables.json');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
+
+/** Driver the CLI runs under: `WEBSCOOP_E2E_DRIVER`, default `playwright`. Patchright uses Chrome. */
+export const E2E_DRIVER = process.env.WEBSCOOP_E2E_DRIVER === 'patchright' ? 'patchright' : 'playwright';
+
+/** System Chrome as the CLI finds it, or null. Pinned in the config so tests that trim the PATH still find it. */
+export const CHROME =
+  ['google-chrome-stable', 'google-chrome'].flatMap((name) => (process.env.PATH ?? '').split(delimiter).filter(Boolean).map((dir) => join(dir, name))).find((p) => existsSync(p)) ??
+  (existsSync('/opt/google/chrome/chrome') ? '/opt/google/chrome/chrome' : null);
+
+/** Profile directory of a profile name under the e2e driver. */
+export function profileDir(home: string, name: string, driver: string = E2E_DRIVER): string {
+  return join(home, 'profiles', driver === 'patchright' ? `${name}@chrome` : name);
+}
 
 export interface CliResult {
   code: number | null;
@@ -78,6 +91,7 @@ export const test = base.extend<{ scoop: Scoop }>({
     };
     const recipe = referenceRecipe(playground.port);
     await writeRecipe(recipe);
+    if (E2E_DRIVER === 'patchright') await writeFile(join(home, 'config.json'), `${JSON.stringify({ browser: { driver: 'patchright', ...(CHROME ? { executablePath: CHROME } : {}) } })}\n`);
 
     const children = new Set<ChildProcess>();
     const spawnCli = (args: string[], env: Record<string, string | undefined> = {}): CliRun => {

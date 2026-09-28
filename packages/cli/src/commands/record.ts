@@ -1,5 +1,3 @@
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   draftFromRecipe,
   emptyDraft,
@@ -15,16 +13,20 @@ import {
   type Session,
   type StoragePort,
 } from '@webscoop/core';
+import { browserSettings, proxyNote, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
+import { prepareProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { encodedValueWarnings, parseVars } from './run';
 
 export interface RecordCommandOptions {
+  /** `--proxy <url>`, or false for `--no-proxy`. */
+  proxy?: string | false;
   name?: string;
   var: string[];
   profile?: string;
@@ -156,13 +158,14 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   for (const warning of encodedValueWarnings(template, values)) log(io, warning);
   const url = fillTemplate(template, [], values);
   const name = opts.name ?? recipe?.name ?? proposeName(url);
+  // A fresh recording has no recipe yet: only the flag and the config apply.
+  const settings = browserSettings(config, recipe, opts, io.env);
 
   requireDisplay(io.env);
 
   const profile = opts.profile ?? name;
   if (!PROFILE_NAME.test(profile)) throw new CliError(`invalid profile name "${profile}"`);
-  const profileDir = join(paths.profilesDir, profile);
-  await mkdir(profileDir, { recursive: true });
+  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
 
   const cdpPort = io.env.WEBSCOOP_E2E_CDP_PORT?.trim();
@@ -180,8 +183,8 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   let session: Session | undefined;
   try {
     const bundle = await io.recorderBundle(e2e ? 'e2e' : 'default');
-    const browser = await io.createBrowser(config, io.env);
-    session = await browser.open(profileDir, { bypassCSP: true, ...(e2e ? { remoteDebuggingPort: Number(cdpPort) } : {}) });
+    const browser = await createBrowser();
+    session = await browser.open(profileDir, { ...settingsOptions(settings), bypassCSP: true, ...(e2e ? { remoteDebuggingPort: Number(cdpPort) } : {}) });
     if (!isInteractiveSession(session)) throw new CliError('this browser adapter cannot run a recording session');
 
     const draft = recipe
@@ -204,7 +207,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     });
 
     if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} on profile "${profile}": ${url}`);
-    else log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} on profile "${profile}": ${url}`);
+    else log(io, `recording ${recipe ? `${recipe.name} (edit)` : name} on profile "${profile}" (${proxyNote(settings)}): ${url}`);
     const closed = controller.closed().then(() => 'closed' as const);
     // The user may close the window while the first page is still settling; that ends the session, it is not an error.
     const started = controller.start().then(

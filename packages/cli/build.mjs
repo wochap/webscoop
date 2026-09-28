@@ -12,8 +12,8 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  // Playwright ships its own driver and browsers registry; load it from node_modules.
-  external: ['playwright', 'playwright-core'],
+  // Playwright and Patchright ship their own driver and browsers registry; load them from node_modules.
+  external: ['playwright', 'playwright-core', 'patchright', 'patchright-core'],
   define: { __WEBSCOOP_RECORDER__: JSON.stringify(recorder) },
   banner: {
     js: [

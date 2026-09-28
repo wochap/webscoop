@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { LocaleSchema, parseProxyUrl, PROXY_SCHEMES, TimezoneSchema } from '@webscoop/core';
 import { z } from 'zod';
 import { CliError } from './exit';
 import type { Paths } from './paths';
@@ -17,6 +18,8 @@ export const ProviderDefSchema = z.object({
   /** Prints the active workspace, run right before `show`; fills `{workspace}`. */
   workspace: z.string().min(1).optional(),
 });
+
+const ProxyUrlSchema = z.string().refine((v) => parseProxyUrl(v) !== null, { error: (issue) => `invalid proxy URL, expected ${PROXY_SCHEMES.join(', ')}://host:port (got a value of ${String(issue.input).length} characters)` });
 
 export const ConfigSchema = z.object({
   llm: z
@@ -38,8 +41,16 @@ export const ConfigSchema = z.object({
     .object({
       /** Chromium binary to use instead of the build Playwright downloaded. */
       executablePath: z.string().min(1).optional(),
+      /** Automation driver: `playwright` (default) or `patchright`. */
+      driver: z.enum(['playwright', 'patchright']).default('playwright'),
+      /** `chromium` or `chrome`; defaults to `chromium` with Playwright and `chrome` with Patchright. */
+      channel: z.enum(['chromium', 'chrome']).optional(),
+      /** Default proxy: a URL, or an object with the URL and a bypass list. Credentials may sit in the URL. */
+      proxy: z.union([ProxyUrlSchema, z.object({ server: ProxyUrlSchema, bypass: z.union([z.string().min(1), z.array(z.string().min(1))]).optional() })]).optional(),
+      timezone: TimezoneSchema.optional(),
+      locale: LocaleSchema.optional(),
     })
-    .default({}),
+    .default({ driver: 'playwright' }),
   window: z
     .object({
       /** `auto` (default), `hyprland`, `none`, or a name from `providers`. */

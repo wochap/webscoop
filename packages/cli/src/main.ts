@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { promisify } from 'node:util';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { doctorCommand } from './commands/doctor';
@@ -10,7 +7,8 @@ import { recipesCommand } from './commands/recipes';
 import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
 import { loadRecorderBundle } from './bundle';
-import { chromiumOverride, type ChromiumInfo, type CliIo } from './context';
+import { probeVersion, resolveBrowser } from './browser';
+import type { CliIo } from './context';
 import { NotifySend } from './notify';
 import { createWindowPort } from './window';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
@@ -46,6 +44,20 @@ function seedInt(value: string): number {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+/** `--proxy <url>` and `--no-proxy`, which share the `proxy` value and may not be passed together. */
+function proxyOptions(command: Command): Command {
+  const seen = new Set<string>();
+  const note = (flag: string) => () => {
+    seen.add(flag);
+    if (seen.size === 2) command.error('error: option --proxy <url> cannot be used with option --no-proxy');
+  };
+  return command
+    .option('--proxy <url>', 'route the browser through this proxy (http, https, or socks5 URL), replacing the recipe and config proxy')
+    .option('--no-proxy', 'connect directly, whatever the recipe and config say')
+    .on('option:proxy', note('proxy'))
+    .on('option:no-proxy', note('no-proxy'));
 }
 
 const EXIT_HELP = `
@@ -84,8 +96,7 @@ function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
     })
     .showHelpAfterError('(run webscoop --help for usage)');
 
-  program
-    .command('run')
+  proxyOptions(program.command('run'))
     .description('run a recipe and print the extracted rows')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -149,8 +160,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
-  program
-    .command('test')
+  proxyOptions(program.command('test'))
     .description('check a recipe on its first page: heal without saving and print each field\'s status')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -171,8 +181,7 @@ working selector first (unless --no-save).`,
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
-  program
-    .command('record')
+  proxyOptions(program.command('record'))
     .description('record a recipe by clicking in a browser window')
     .argument('[url-template]', 'page to record; {name} marks a variable, e.g. "https://shop.test/c/{category}"')
     .option('--name <recipe>', 'recipe name (default: proposed from the URL host and path)')
@@ -188,8 +197,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (template: string | undefined, opts: RecordCommandOptions) => setCode(await recordCommand(io, template, opts)));
 
-  program
-    .command('edit')
+  proxyOptions(program.command('edit'))
     .description('edit an existing recipe in a browser window (same as record --edit)')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--repick <field>', 'pick a new location for one field (table.field, or a name one table has), save, and exit')
@@ -227,8 +235,7 @@ and export again when the site changes. Needs no display.`,
     )
     .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
 
-  program
-    .command('bench')
+  proxyOptions(program.command('bench'))
     .description('run a playground recipe on every playground tier and report which rung resolved each field')
     .argument('<recipe>', 'recipe with a {port} variable, e.g. the playground-catalog fixture')
     .option('--tiers <range>', 'tiers to run, e.g. 0-4, 3, or 0,3-4', '0-4')
@@ -250,7 +257,7 @@ Exits 0 whatever healed, 1 when a run broke. Needs a development checkout.`,
 
   program
     .command('doctor')
-    .description('check paths, display, Chromium, window provider, and LLM configuration')
+    .description('check paths, display, browser, proxy, profiles, window provider, and LLM configuration')
     .action(async () => setCode(await doctorCommand(io)));
 
   return program;
@@ -276,19 +283,6 @@ export async function main(args: readonly string[], io: CliIo): Promise<Code> {
   }
 }
 
-const execFileAsync = promisify(execFile);
-
-async function probeChromium(path: string, source: ChromiumInfo['source']): Promise<ChromiumInfo> {
-  if (!existsSync(path)) return { path, source, installed: false, error: 'not found' };
-  try {
-    const { stdout } = await execFileAsync(path, ['--version'], { timeout: 15_000 });
-    return { path, source, installed: true, version: stdout.trim() };
-  } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr?.trim().split('\n').pop();
-    return { path, source, installed: false, error: stderr || (error as Error).message };
-  }
-}
-
 /** The real world: process streams, environment, Playwright. */
 export function defaultIo(): CliIo {
   return {
@@ -297,16 +291,16 @@ export function defaultIo(): CliIo {
     env: process.env,
     cwd: process.cwd(),
     homedir: homedir(),
-    async createBrowser(config, env) {
+    async createBrowser(_config, _env, browser) {
       const { PlaywrightBrowser } = await import('@webscoop/browser');
-      const executablePath = chromiumOverride(config, env);
-      return new PlaywrightBrowser(executablePath ? { executablePath } : {});
+      return new PlaywrightBrowser({ driver: browser.driver, ...(browser.executablePath ? { executablePath: browser.executablePath } : {}) });
     },
     async chromium(config, env) {
-      const override = chromiumOverride(config, env);
-      if (override) return probeChromium(override, 'override');
       const { expectedChromiumPath } = await import('@webscoop/browser');
-      return probeChromium(expectedChromiumPath(), 'playwright');
+      const choice = await resolveBrowser(config, env, { expectedPath: expectedChromiumPath });
+      if (!choice.path) return { ...choice, installed: false, error: 'not found' };
+      const probe = await probeVersion(choice.path);
+      return { ...choice, installed: probe.version !== undefined, ...probe };
     },
     onInterrupt(handler) {
       process.on('SIGINT', handler);

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRecipe, type RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, test, type Scoop } from './fixtures';
+import { expect, hasDisplay, profileDir, test, type Scoop } from './fixtures';
 import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
@@ -188,7 +188,7 @@ test.describe('interactive run fixture', () => {
     const name = await scoop.writeRecipe(variant(scoop, 'repick-teardown', deadPrice));
     const r = await scoop.interactiveRun([name]);
     await r.until((s) => s.host?.repickContext);
-    const profile = join(scoop.home, 'profiles', name);
+    const profile = profileDir(scoop.home, name);
     expect(chromiumUsing(profile).length).toBeGreaterThan(0);
     seen = { pid: r.run.child.pid!, profile };
     // Left running on purpose: the fixture must tear it down.

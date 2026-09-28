@@ -85,6 +85,10 @@ runs only when asked, from a Hyprland session:
 WEBSCOOP_E2E_HYPRLAND=1 npm run test:e2e -- window
 ```
 
+`WEBSCOOP_E2E_DRIVER=patchright` runs the end-to-end suite through Patchright
+and the system Chrome. `e2e/stealth.spec.ts` runs the catalog recipe under
+Patchright whatever the variable says, and skips when Chrome is not installed.
+
 ### Chromium override
 
 To use a different Chromium binary, set `WEBSCOOP_CHROMIUM=/path/to/chrome`,
@@ -600,6 +604,73 @@ site changes, re-record (or `webscoop run` to heal) the recipe and export it
 again rather than editing selectors in the script: the recipe stays the source
 of truth.
 
+### Stealth and network identity
+
+webscoop always runs headed with a real, persistent profile, and hides the
+usual automation flags. Sites with strong bot management can still spot stock
+Playwright, so two opt-in settings go further:
+
+- `browser.driver`: `playwright` (default) or `patchright`. Patchright is a
+  build of the Playwright driver patched against the usual detection signals
+  (the `Runtime.enable` side effects, the binding globals, the automation
+  flags). It is installed with webscoop.
+- `browser.channel`: `chromium` or `chrome`. The default is `chromium` with
+  Playwright and `chrome` with Patchright. `chrome` launches the system Google
+  Chrome: the first of `google-chrome-stable` and `google-chrome` on the
+  `PATH`, else `/opt/google/chrome/chrome`. `browser.executablePath` and
+  `WEBSCOOP_CHROMIUM` still override the binary.
+
+The network identity matters as much as the driver. A proxy routes the
+browser's traffic, and the timezone and locale should match the proxy's
+location, or the mismatch gives the proxy away:
+
+```json
+{
+  "browser": {
+    "driver": "patchright",
+    "proxy": { "server": "http://user:pass@proxy.example:8080", "bypass": "localhost,*.lan" },
+    "timezone": "Europe/Madrid",
+    "locale": "es-ES"
+  }
+}
+```
+
+- The proxy is taken from `--proxy <url>`, else the recipe's `browser.proxy`,
+  else the config's `browser.proxy` (a URL string or an object with `server`
+  and `bypass`). `--no-proxy` connects directly. Schemes: `http`, `https`,
+  `socks5`. `run`, `test`, `record`, `edit`, and `bench` take both flags.
+- Credentials go in the URL of the config or `--proxy`, or in
+  `WEBSCOOP_PROXY_USERNAME` and `WEBSCOOP_PROXY_PASSWORD`. A recipe may name a
+  proxy server but never credentials: recipes are meant to be shared. Every log
+  and doctor line masks them (`http://***@proxy.example:8080`).
+- `browser.timezone` (IANA, e.g. `America/New_York`) and `browser.locale`
+  (BCP 47, e.g. `en-US`) set what the page sees in `Intl` and
+  `navigator.language`, and the `Accept-Language` header. A recipe's values
+  win over the config's. An invalid value exits 1 before a browser starts.
+
+A recipe carries its own settings in an optional block:
+
+```json
+"browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US" }
+```
+
+Browsers never share a profile, because Chrome and Chromium of different
+versions damage each other's profiles. Playwright's Chromium keeps
+`profiles/<name>`, as before; Chrome uses `profiles/<name>@chrome`, and
+Patchright's Chromium `profiles/<name>@patchright`. The first time a command
+opens a suffixed profile beside an existing unsuffixed one, it warns that the
+new profile has none of the old cookies or logins, so a login wall may pause
+the run once. Each profile keeps a `.webscoop-browser.json` marker naming the
+driver, channel, binary, and version that last opened it; a different binary
+or a newer version in the marker than the one launching gets a warning. The
+command carries on in both cases. `webscoop doctor` lists the driver, channel,
+binary and version, the masked proxy, timezone and locale, and every profile
+with the browser that last used it.
+
+What this does not do: no fingerprint spoofing (canvas, WebGL, user agent),
+which the headed real browser does not need and which tends to be detected
+itself, and no humanized input timing, which is a separate option.
+
 ### Exit codes
 
 | Code | Meaning | Cron should |
@@ -614,7 +685,7 @@ of truth.
 | What | Location |
 | ---- | -------- |
 | Recipes | `$XDG_DATA_HOME/webscoop/recipes/<name>.json` (default `~/.local/share/webscoop/recipes/`) |
-| Browser profiles | `$XDG_DATA_HOME/webscoop/profiles/<name>/` |
+| Browser profiles | `$XDG_DATA_HOME/webscoop/profiles/<name>/` (`<name>@chrome/` and `<name>@patchright/` for other browsers) |
 | Config | `$XDG_CONFIG_HOME/webscoop/config.json` (default `~/.config/webscoop/config.json`) |
 
 `WEBSCOOP_HOME=/some/dir` replaces both roots: recipes in `/some/dir/recipes/`,
@@ -624,7 +695,14 @@ Config file, all keys optional:
 
 ```json
 {
-  "browser": { "executablePath": "/path/to/chrome" },
+  "browser": {
+    "executablePath": "/path/to/chrome",
+    "driver": "playwright",
+    "channel": "chromium",
+    "proxy": "http://user:pass@proxy.example:8080",
+    "timezone": "Europe/Madrid",
+    "locale": "es-ES"
+  },
   "window": { "provider": "auto", "providers": {} },
   "llm": {
     "endpoint": "http://127.0.0.1:11434/v1",

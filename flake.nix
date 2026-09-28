@@ -44,7 +44,7 @@
         npmDeps = pkgs.fetchNpmDeps {
           inherit src;
           fetcherVersion = 2;
-          hash = "sha256-o6KttkOnQjyHg7A6aQ6UDMgmTLbmutgWwoPoemDevPs=";
+          hash = "sha256-7YS+SB1PRHWpuaNM5obfCVjI8Faky0jWOWSwUPI2Wwc=";
         };
 
         nativeBuildInputs = [
@@ -79,9 +79,12 @@
           mkdir -p $lib/node_modules $out/bin
           cp -r packages/cli/dist $lib/dist
 
-          # The bundle keeps Playwright external; ship it next to the bundle.
+          # The bundle keeps Playwright and Patchright external; ship them next to the bundle.
+          # Patchright's `chrome` channel uses the system Chrome, so no browser is downloaded.
           cp -rL node_modules/playwright $lib/node_modules/playwright
           cp -rL node_modules/playwright-core $lib/node_modules/playwright-core
+          cp -rL node_modules/patchright $lib/node_modules/patchright
+          cp -rL node_modules/patchright-core $lib/node_modules/patchright-core
 
           makeWrapper ${lib.getExe nodejs} $out/bin/webscoop \
             --add-flags $lib/dist/webscoop.js \

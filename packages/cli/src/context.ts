@@ -1,4 +1,5 @@
 import type { BrowserPort, NotifyPort, WindowPort } from '@webscoop/core';
+import type { BrowserChoice } from './browser';
 import type { Config } from './config';
 import type { Env } from './paths';
 import type { WindowMode } from './window';
@@ -14,10 +15,10 @@ export interface CliIo {
   env: Env;
   cwd: string;
   homedir: string;
-  /** Build the browser adapter. Called only after the display check passed. */
-  createBrowser(config: Config, env: Env): BrowserPort | Promise<BrowserPort>;
-  /** Report the Chromium binary that would be launched, for `doctor`. */
-  chromium(config: Config, env: Env): Promise<ChromiumInfo>;
+  /** Build the browser adapter for a resolved browser. Called only after the display check passed. */
+  createBrowser(config: Config, env: Env, browser: BrowserInfo): BrowserPort | Promise<BrowserPort>;
+  /** Resolve the browser that would be launched and probe its version. */
+  chromium(config: Config, env: Env): Promise<BrowserInfo>;
   /** Register a SIGINT handler; returns an unsubscribe function. */
   onInterrupt(handler: () => void): () => void;
   /** Ask a question on the terminal; resolves null when input is closed. */
@@ -30,10 +31,8 @@ export interface CliIo {
   createWindow(config: Config, env: Env, opts: { profileDir: string; mode: WindowMode }): WindowPort;
 }
 
-export interface ChromiumInfo {
-  path: string;
-  /** `override` when set by config or `WEBSCOOP_CHROMIUM`, else the build Playwright expects. */
-  source: 'playwright' | 'override';
+/** A resolved browser with the result of its version probe. */
+export interface BrowserInfo extends BrowserChoice {
   installed: boolean;
   version?: string;
   error?: string;

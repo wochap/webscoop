@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
 import type { ProbeResult } from '@webscoop/llm';
 import { loadConfig, type Config } from '../config';
-import type { CliIo } from '../context';
+import { browserSettings } from '../browser';
+import type { BrowserInfo, CliIo } from '../context';
 import { detectDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { canProbe, createLlm, llmSettings, type Probeable } from '../llm';
 import { resolvePaths, type Env } from '../paths';
+import { listProfiles } from '../profiles';
 import { findOnPath, HYPRLAND_RULE, HYPRLAND_RULE_LUA, PRESETS, selectProvider, WINDOW_CLASS, type FindBinary } from '../window';
 
 /** Below this context window the model prompt budget gets too small to be useful. */
@@ -41,6 +43,41 @@ export function windowLines(config: Config, env: Env, opts: { findBinary?: FindB
   return lines;
 }
 
+/** Doctor lines for the browser setup; `ok` is false when the configured driver or binary is missing. */
+export function browserLines(config: Config, env: Env, browser: BrowserInfo): { ok: boolean; lines: [string, string][] } {
+  const lines: [string, string][] = [];
+  let ok = true;
+  if (browser.driver === 'patchright') {
+    if (browser.driverMissing) ok = false;
+    lines.push(['driver', browser.driverMissing ? 'patchright (missing: the patchright package is not installed; run: npm install patchright)' : 'patchright (installed)']);
+  } else {
+    lines.push(['driver', 'playwright']);
+  }
+  lines.push(['channel', browser.channel]);
+  const where = { playwright: 'playwright build', patchright: 'patchright build', override: 'override', chrome: 'system chrome' }[browser.source];
+  const hint = browser.source === 'playwright' ? '; run: npx playwright install chromium' : browser.source === 'patchright' ? '; run: npx patchright install chromium' : '';
+  if (!browser.path) {
+    ok = false;
+    lines.push(['chromium', `missing: no ${browser.channel} binary found; tried ${(browser.tried ?? []).join(', ')}`]);
+  } else if (!browser.installed) {
+    ok = false;
+    lines.push(['chromium', `missing: ${browser.path} (${where}${browser.error ? `: ${browser.error}` : ''})${hint}`]);
+  } else {
+    lines.push(['chromium', `${browser.path} (${where}${browser.version ? `, ${browser.version}` : ''})`]);
+  }
+  let proxy: string;
+  try {
+    proxy = browserSettings(config, undefined, {}, env).proxyShown ?? 'none';
+  } catch (error) {
+    ok = false;
+    proxy = `invalid: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  lines.push(['proxy', proxy]);
+  lines.push(['timezone', config.browser.timezone ?? 'system default']);
+  lines.push(['locale', config.browser.locale ?? 'system default']);
+  return { ok, lines };
+}
+
 /** Doctor lines for a probe result. Every problem is a warning; none changes the exit code. */
 export function probeLines(endpoint: string, model: string, probe: ProbeResult): [string, string][] {
   if (!probe.reachable) return [['llm probe', `warning: ${endpoint} is unreachable${probe.error ? ` (${probe.error})` : ''}`]];
@@ -74,15 +111,13 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
   lines.push(['display', display.available ? display.description : `missing: ${display.description}`]);
 
   if (config) {
-    const chromium = await io.chromium(config, io.env);
-    if (!chromium.installed) ok = false;
-    const where = chromium.source === 'override' ? 'override' : 'playwright build';
-    lines.push([
-      'chromium',
-      chromium.installed
-        ? `${chromium.path} (${where}${chromium.version ? `, ${chromium.version}` : ''})`
-        : `missing: ${chromium.path} (${where}${chromium.error ? `: ${chromium.error}` : ''}); run: npx playwright install chromium`,
-    ]);
+    const browser = await io.chromium(config, io.env);
+    const browserCheck = browserLines(config, io.env, browser);
+    if (!browserCheck.ok) ok = false;
+    lines.push(...browserCheck.lines);
+    for (const { name, marker } of await listProfiles(paths)) {
+      lines.push([`profile ${name}`, marker ? `${marker.driver}, ${marker.channel}, ${marker.version ?? 'version unknown'} (${marker.executablePath})` : 'unknown (no marker)']);
+    }
     lines.push(
       ...windowLines(config, io.env, {
         ...(opts.findBinary ? { findBinary: opts.findBinary } : {}),
