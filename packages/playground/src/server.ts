@@ -110,6 +110,34 @@ go.addEventListener('click', () => { document.getElementById('result').textConte
 </body></html>`;
 }
 
+/**
+ * A page that steals focus like Bing: any `keydown` on `document` (bubble
+ * phase) whose target is not an input moves focus to `#q`. Bubble `keydown`
+ * and `click` counts are kept on `window.__thief` and in `#counts`.
+ */
+function focusThiefPage(): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Focus thief</title>
+<style>body{font-family:sans-serif;margin:40px}</style></head>
+<body>
+<label>Search <input id="q" name="q" autocomplete="off"></label>
+<p id="intro">Typing anywhere on this page moves focus to the search box.</p>
+<pre id="counts">{"keydown":0,"click":0}</pre>
+<script>
+const thief = window.__thief = { keydown: 0, click: 0 };
+const q = document.getElementById('q');
+const show = () => { document.getElementById('counts').textContent = JSON.stringify(thief); };
+document.addEventListener('keydown', (e) => {
+  thief.keydown++;
+  show();
+  const tag = e.target && e.target.tagName;
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') q.focus();
+});
+document.addEventListener('click', () => { thief.click++; show(); });
+</script>
+</body></html>`;
+}
+
 function send(res: ServerResponse, status: number, body: string, type = 'text/plain; charset=utf-8'): void {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
@@ -322,6 +350,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     if (url.pathname === '/challenge/turnstile') return send(res, 200, turnstileFrame(), 'text/html; charset=utf-8');
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
+    if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/' ) {
       res.writeHead(302, { location: '/catalog' });

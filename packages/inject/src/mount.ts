@@ -20,6 +20,30 @@ export interface Mounted {
   unmount(): void;
 }
 
+/**
+ * User input events stopped at each recorder shadow root in the bubble phase,
+ * so page bubble listeners (focus-stealing search boxes, click trackers) never
+ * see panel input. Recorder handlers inside the tree and window capture
+ * listeners run first and are unaffected.
+ */
+export const ISOLATED_EVENTS = [
+  'keydown', 'keyup', 'keypress',
+  'beforeinput', 'input', 'change',
+  'compositionstart', 'compositionupdate', 'compositionend',
+  'copy', 'cut', 'paste',
+  'pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointercancel',
+  'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout',
+  'click', 'dblclick', 'auxclick', 'contextmenu',
+  'wheel',
+  'focusin', 'focusout',
+] as const;
+
+const stop = (e: Event) => e.stopPropagation();
+
+function isolate(shadow: ShadowRoot): void {
+  for (const type of ISOLATED_EVENTS) shadow.addEventListener(type, stop, type === 'wheel' ? { passive: true } : undefined);
+}
+
 function styleShadow(shadow: ShadowRoot, text: string): void {
   const doc = shadow.ownerDocument;
   const View = doc.defaultView as (Window & typeof globalThis) | null;
@@ -62,6 +86,7 @@ function host(doc: Document, tag: string, text: string, inner: string): { host: 
   const child = doc.createElement('div');
   if (inner) child.id = inner;
   shadow.appendChild(child);
+  isolate(shadow);
   return { host: el, shadow, el: child };
 }
 

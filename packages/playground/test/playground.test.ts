@@ -545,3 +545,19 @@ describe('hover', () => {
     expect(render(dataset, { tier: 0, seed: 5, hover: true })).not.toBe(render(dataset, { tier: 0, seed: 6, hover: true }));
   });
 });
+
+describe('focus thief', () => {
+  it('moves focus to the search box on a body keydown and counts it', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/focus-thief`)).text();
+    const { window } = new JSDOM(html, { runScripts: 'dangerously' });
+    const doc = window.document;
+    doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'h', bubbles: true }));
+    expect(doc.activeElement?.id).toBe('q');
+    const thief = (window as unknown as { __thief: { keydown: number; click: number } }).__thief;
+    expect(thief).toEqual({ keydown: 1, click: 0 });
+    doc.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(JSON.parse(doc.getElementById('counts')!.textContent!)).toEqual({ keydown: 1, click: 1 });
+    window.close();
+  });
+});
