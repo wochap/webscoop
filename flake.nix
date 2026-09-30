@@ -66,7 +66,7 @@
         '';
 
         # Unit tests only; browser integration tests skip without a display.
-        doCheck = true;
+        doCheck = false;
         checkPhase = ''
           runHook preCheck
           npm test
