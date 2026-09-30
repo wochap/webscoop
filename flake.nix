@@ -33,6 +33,7 @@
           ./tsconfig.base.json
           ./vitest.config.ts
           ./packages
+          ./skills
         ];
       };
     in
@@ -94,6 +95,9 @@
             )}
 
           installShellCompletion --zsh packages/cli/completions/_webscoop
+
+          mkdir -p $out/share/webscoop/skills
+          cp -r skills/webscoop-use-recipe $out/share/webscoop/skills/
 
           runHook postInstall
         '';

@@ -122,6 +122,21 @@ Recipe and profile names are read from the data directory (`WEBSCOOP_HOME`,
 else `$XDG_DATA_HOME/webscoop`, else `~/.local/share/webscoop`) without
 starting Node.
 
+### Agent skill
+
+`skills/webscoop-use-recipe/SKILL.md` teaches AI harnesses (Claude Code,
+Codex, and similar) to list your recipes with `webscoop recipes --json`, pick
+the one that fits a request, run it, and explain its exit code. The Nix
+package installs it at `share/webscoop/skills/webscoop-use-recipe/`. With
+home-manager, where `pkg` is the webscoop package:
+
+```nix
+home.file.".claude/skills/webscoop-use-recipe".source = "${pkg}/share/webscoop/skills/webscoop-use-recipe";
+```
+
+Without Nix, copy or symlink the directory into your harness's skills
+directory.
+
 ## Usage
 
 ```sh
