@@ -14,11 +14,15 @@ The runner SHALL open Chromium in headed mode using a persistent profile directo
 - **THEN** the second run's first request carries that cookie
 
 ### Requirement: Profile lock
-Two runs SHALL NOT open the same profile concurrently. The runner SHALL take a lock per profile; a second run SHALL wait up to `--lock-timeout` (default 30 seconds) and then exit 1 with a message naming the profile and the holding process id.
+Two browsers SHALL NOT open the same profile concurrently. A per-profile lock SHALL be held by whichever opens the profile's browser: the daemon for as long as the profile's browser is open, or an exclusive command (`record`, `edit`, `bench`) for its whole session. Runs sharing the daemon's browser for a profile SHALL NOT take the lock themselves. An exclusive command that finds the lock held by another process that is not the daemon SHALL wait up to `--lock-timeout` (default 30 seconds) and then exit 1 with a message naming the profile and the holding process id.
 
 #### Scenario: Concurrent runs on one profile
-- **WHEN** a second run starts while the first holds the profile lock and does not release it within the timeout
-- **THEN** the second run exits 1 and names the profile
+- **WHEN** a second run on a profile starts while a first run on it is running
+- **THEN** both run in the daemon's browser for that profile and neither fails on the lock
+
+#### Scenario: Two recordings on one profile
+- **WHEN** `webscoop record` holds profile `default` and a second `webscoop record` on `default` starts and the first does not end within the lock timeout
+- **THEN** the second exits 1 and names the profile
 
 ### Requirement: URL substitution
 The runner SHALL replace every `{name}` in the URL template with the URL-encoded variable value before navigation.
@@ -185,15 +189,15 @@ The runner SHALL emit typed events during a run: `browser.started`, `run.start`,
 - **THEN** `attention.resolved` is observed before `run.failed`
 
 ### Requirement: Clean shutdown
-On success, failure, guard timeout, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits. A run that ends while paused on a guard SHALL close the browser like any other run.
+On success, failure, guard timeout, or SIGINT a run SHALL close its own tab and any popup opened from it, and release attention if it holds it. It SHALL NOT close a browser that the daemon keeps for other jobs. The daemon SHALL close a browser and release its profile lock when the browser's idle time elapses, on `daemon stop`, or for an exclusive command. A run that ends while paused on a guard SHALL close its tab like any other run.
 
 #### Scenario: Interrupted run
 - **WHEN** SIGINT is received mid-run
-- **THEN** the browser closes, the lock is released, and the exit code is 1
+- **THEN** the run's tab closes and the exit code is 1
 
 #### Scenario: Interrupted while paused
-- **WHEN** SIGINT is received while the run is paused on a guard
-- **THEN** the browser closes, the lock is released, and the exit code is 1
+- **WHEN** SIGINT is received while the run is paused on a guard and holds attention
+- **THEN** the run's tab closes, attention passes to the next waiting run, and the exit code is 1
 
 ### Requirement: Per-row candidate fallback
 After the runner settles an item scoped field on a page (candidate order and healing, as in candidate resolution order), it SHALL resolve that field in each container with the settled primary candidate only, unless the field sets `fallback: true`. A container where the settled primary candidate matches nothing SHALL yield no value for that field, and the missing fields rules SHALL apply. With `fallback: true`, the runner SHALL try the settled candidates in listed order in each container and use the first that matches inside it. Healing SHALL behave the same in both modes.

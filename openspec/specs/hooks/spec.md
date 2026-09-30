@@ -19,6 +19,7 @@ The config file MAY declare `hooks`, a map from an event name to a command line 
 
 ### Requirement: Lifecycle events
 The CLI SHALL fire these events:
+- `run.queued`: when a `run` or `test` job has to wait for a free slot in the daemon, with the number of jobs ahead.
 - `browser.starting`: before a browser is launched for a command.
 - `browser.started`: after the browser has opened, once its main process id is known or 5 seconds have passed.
 - `browser.closed`: after the browser has closed.
@@ -29,7 +30,7 @@ The CLI SHALL fire these events:
 - `attention.resolved`: when that need ends: the guard cleared, the re-pick was answered, or the run ended while it was open. Every `attention.needed` SHALL be followed by exactly one `attention.resolved`.
 - `browser.show` and `browser.hide`: fired only by the `webscoop browser` command.
 
-`record`, `edit`, `run`, `test`, and `bench` SHALL fire the browser events.
+`record`, `edit`, and `bench` SHALL fire the browser events for the browser they launch. For `run` and `test`, the daemon SHALL fire `browser.starting` and `browser.started` when it launches a profile's browser and `browser.closed` when it closes it, once per browser lifetime, not once per job; a job served by an already open browser fires no browser events.
 
 #### Scenario: Unattended run with a guard
 - **WHEN** `webscoop run shop` hits a login guard on page 2, the user logs in, and the run finishes
@@ -38,6 +39,21 @@ The CLI SHALL fire these events:
 #### Scenario: Guard timeout closes the attention
 - **WHEN** a guard is raised and its timeout elapses
 - **THEN** `attention.resolved` fires before `run.failed`
+
+#### Scenario: Warm browser fires no browser events
+- **WHEN** a daemon browser for profile `default` is open and idle and `webscoop run shop` runs on it
+- **THEN** the hooks see `run.start` and `run.done` and no `browser.*` event
+
+#### Scenario: Queued job
+- **WHEN** `daemon.concurrency` is 1, a job runs on profile `default`, and a second job on `default` is submitted
+- **THEN** `run.queued` fires for the second job with 1 job ahead
+
+### Requirement: Hooks in the daemon
+Hooks for events of `run` and `test` SHALL be run by the daemon, one at a time per daemon, with the same contract as other hooks. Hooks of `run.*` and `attention.*` events SHALL receive the environment of the command that submitted the job. Hooks of browser events SHALL receive the environment of the job that caused the launch, or of the last job served by that browser for `browser.closed`. A hook's standard output and error SHALL go to the daemon log.
+
+#### Scenario: Job environment reaches the hook
+- **WHEN** `FOO=1 webscoop run shop` runs through a daemon started from a shell without `FOO`, and an `attention.needed` hook runs `test "$FOO" = 1`
+- **THEN** the hook exits 0
 
 ### Requirement: Hook command contract
 Each command SHALL be run with `/bin/sh -c`, with the environment of the webscoop process plus:

@@ -33,11 +33,15 @@ Guards SHALL be evaluated only when enabled in the recipe's `guards` list (all e
 - **THEN** no guard is raised and the page is extracted as is
 
 ### Requirement: Pause, notify, and focus
-When a guard is raised, the runner SHALL enter a paused state, bring the browser window to the front, and send one desktop notification with the recipe name, the guard kind, and the page number. It SHALL NOT send more than one notification per guard occurrence. While paused, no rows SHALL be emitted and no navigation SHALL be initiated by the runner.
+When a guard is raised, the runner SHALL enter a paused state. Once the run holds attention for its browser, as defined by the browser-daemon capability, and the guard is still present, the runner SHALL bring its tab to the front and send one desktop notification with the recipe name, the guard kind, and the page number. It SHALL NOT send more than one notification per guard occurrence, and SHALL send none when the guard cleared while the run waited for attention. While paused, no rows SHALL be emitted and no navigation SHALL be initiated by the runner, except the reload that re-checks the guard after waiting for attention.
 
 #### Scenario: Notification sent once
 - **WHEN** a `login` guard is raised on page 2 of recipe `shop`
 - **THEN** exactly one notification naming `shop`, `login`, and page 2 is sent
+
+#### Scenario: No notification after another run's solve
+- **WHEN** a run waits for attention on a captcha and the captcha is gone when it reloads
+- **THEN** no notification is sent for it
 
 ### Requirement: Clearing and resuming
 While paused, the runner SHALL re-evaluate the guard at least every second. The guard clears when the detection rule no longer matches and the page has settled. After clearing, if the current URL differs from the intended URL for that page, the runner SHALL navigate to the intended URL, wait for it to settle, and re-check guards once before extracting. Resuming SHALL continue the run at the same page number and preserve rows already emitted.
@@ -55,7 +59,7 @@ While paused, the runner SHALL re-evaluate the guard at least every second. The 
 - **THEN** page 3 is extracted and the run continues with page 4
 
 ### Requirement: Guard timeout
-A run SHALL wait at most the guard timeout (default 600000 milliseconds, configurable per run) across all guards in that run. When the timeout elapses while paused, the runner SHALL stop with failure reason `paused`, rows already emitted SHALL remain emitted, no recipe write-back SHALL occur, and the process SHALL exit 2. A timeout of 0 SHALL fail immediately on the first guard.
+A run SHALL wait at most the guard timeout (default 600000 milliseconds, configurable per run) across all guards in that run, counting only time while the run holds attention; time spent waiting for attention SHALL NOT count. When the timeout elapses while paused, the runner SHALL stop with failure reason `paused`, rows already emitted SHALL remain emitted, no recipe write-back SHALL occur, and the process SHALL exit 2. A timeout of 0 SHALL fail immediately once the run holds attention and the guard is still present.
 
 #### Scenario: Timeout in cron
 - **WHEN** a guard is raised and nobody clears it within the timeout
@@ -65,15 +69,23 @@ A run SHALL wait at most the guard timeout (default 600000 milliseconds, configu
 - **WHEN** the guard timeout is 0 and a `login` guard is raised
 - **THEN** the run exits 2 immediately after the notification
 
+#### Scenario: Waiting for attention does not count
+- **WHEN** the guard timeout is 60000, a run waits 90 seconds for attention held by another run, then gets attention with its guard still present
+- **THEN** it still has 60 seconds to be cleared
+
 ### Requirement: Interactive banner
-When the run is interactive, the runner SHALL show a banner over the page while paused with the guard kind, a short reason, a countdown to the timeout, and Continue and Abort actions. Continue SHALL trigger an immediate re-check; Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when the guard clears. Unattended runs SHALL NOT inject anything into the page.
+While a run holds attention for a guard, the runner SHALL show a banner over its page with the guard kind, a short reason, a countdown to the timeout, and Continue and Abort actions, in every run, interactive or not. Continue SHALL trigger an immediate re-check; Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when attention resolves. When the config sets `guards.banner` to false, no banner SHALL be shown and nothing SHALL be injected into the page of an unattended run. Outside attention, unattended runs SHALL NOT inject anything into the page.
 
 #### Scenario: Continue re-checks
 - **WHEN** the user logs in on another tab and clicks Continue
 - **THEN** the guard is re-evaluated at once and, if cleared, the run resumes
 
+#### Scenario: Banner in an unattended run
+- **WHEN** a non-interactive run holds attention for a captcha and `guards.banner` is not set
+- **THEN** the page shows the banner with Continue and Abort, and the banner is gone after the captcha clears
+
 #### Scenario: Unattended run injects nothing
-- **WHEN** a guard is raised in a non-interactive run
+- **WHEN** `guards.banner` is false and a guard is raised in a non-interactive run
 - **THEN** the page contains no recorder elements
 
 ### Requirement: Guard reporting

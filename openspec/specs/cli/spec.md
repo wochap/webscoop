@@ -7,11 +7,15 @@ Defines the `webscoop` command line interface: the commands users and cron jobs 
 ## Requirements
 
 ### Requirement: One process per invocation
-The CLI SHALL perform one command per invocation and exit when it completes. It SHALL NOT leave a daemon, server, or browser process running after exit.
+The CLI SHALL perform one command per invocation and exit when it completes. `run` and `test` SHALL execute in the browser daemon, which MAY keep running, with its browsers, after the command exits, as defined by the browser-daemon capability. Every other command SHALL NOT leave a daemon, server, or browser process running after exit.
 
 #### Scenario: Process exits after run
 - **WHEN** `webscoop run <recipe>` completes
-- **THEN** the process exits and no Chromium process started by it remains
+- **THEN** the command's process exits, and any Chromium process left running belongs to the daemon
+
+#### Scenario: Export leaves nothing behind
+- **WHEN** `webscoop export shop` completes
+- **THEN** no process started by it remains
 
 ### Requirement: Exit codes
 The CLI SHALL exit with:
