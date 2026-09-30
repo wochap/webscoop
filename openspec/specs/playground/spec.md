@@ -247,3 +247,10 @@ The catalog page SHALL accept a `hover` flag. With it, every product link SHALL 
 #### Scenario: Synthetic event does not reveal
 - **WHEN** a script dispatches a `mouseover` event on a product link
 - **THEN** its `href` still starts with `/r/`
+
+### Requirement: Focus-thief page
+The playground SHALL serve `/focus-thief`, a page with a search box and bubble-phase listeners on `document` that move focus to the search box on any `keydown` whose target is not an input, and that count `keydown` and `click` events they receive. The counts SHALL be readable from the page (for example, on `window` and in the DOM) so tests can assert them.
+
+#### Scenario: Thief steals focus from the page
+- **WHEN** the page body has focus and the user presses `h`
+- **THEN** the search box gains focus and the `keydown` count increases

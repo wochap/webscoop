@@ -1086,3 +1086,18 @@ The recorder's preview SHALL NOT move the mouse pointer for hover fields; it SHA
 #### Scenario: Badge
 - **WHEN** a field has `hover` on
 - **THEN** its preview value shows the hover badge and the pointer is not moved by the preview
+
+### Requirement: Panel input events stay out of the page
+User input events that start inside the recorder UI (the panel, the overlay, and the results drawer) SHALL NOT reach event listeners the page registered in the bubble phase on its own elements, `document`, or `window`. This covers keyboard (`keydown`, `keyup`, `keypress`), text input (`beforeinput`, `input`, `change`, composition events), clipboard (`copy`, `cut`, `paste`), pointer, mouse (including `click`, `dblclick`, `auxclick`, `contextmenu`), `wheel`, and focus-change (`focusin`, `focusout`) events. Characters typed into panel inputs SHALL still appear there, and every panel control SHALL keep working, including its keyboard shortcuts, menus, and outside-click closing. Listeners the page registered in the capture phase are not covered by this requirement.
+
+#### Scenario: Page does not steal focus while typing
+- **WHEN** the page moves focus to its search box on any `keydown` it receives on `document`, and the user types `hello` into a panel text input
+- **THEN** the panel input holds `hello` and the page's search box never gains focus
+
+#### Scenario: Page click handler
+- **WHEN** the page counts clicks with a bubble-phase listener on `document`, and the user clicks buttons in the panel
+- **THEN** the page's count does not change and the panel buttons act
+
+#### Scenario: Panel shortcuts still work
+- **WHEN** focus is in the panel (not in an input) and the user presses a panel shortcut such as `p`
+- **THEN** the shortcut acts as before
