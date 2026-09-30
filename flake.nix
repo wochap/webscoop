@@ -51,6 +51,7 @@
           nodejs
           pkgs.npmHooks.npmConfigHook
           pkgs.makeWrapper
+          pkgs.installShellFiles
         ];
 
         env = playwrightEnv // {
@@ -91,6 +92,8 @@
             ${lib.concatStringsSep " " (
               lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") playwrightEnv
             )}
+
+          installShellCompletion --zsh packages/cli/completions/_webscoop
 
           runHook postInstall
         '';

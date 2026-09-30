@@ -1,0 +1,196 @@
+#compdef webscoop
+# zsh completion for webscoop. Reads recipe and profile names straight from the
+# data directory, so a TAB press never starts Node. Each subcommand block is
+# marked with "# command: <name>"; test/completion.test.ts checks those blocks
+# against the real command tree.
+
+# Data root, resolved like resolvePaths: WEBSCOOP_HOME, then XDG_DATA_HOME, then ~/.local/share.
+_webscoop_data_dir() {
+  local home=${WEBSCOOP_HOME//[[:space:]]/}
+  local xdg=${XDG_DATA_HOME//[[:space:]]/}
+  if [[ -n $home ]]; then
+    REPLY=$WEBSCOOP_HOME
+  elif [[ -n $xdg ]]; then
+    REPLY=$XDG_DATA_HOME/webscoop
+  else
+    REPLY=$HOME/.local/share/webscoop
+  fi
+}
+
+# Recipe names (recipes/*.json without the extension), plus ordinary .json paths.
+_webscoop_recipes() {
+  local REPLY
+  _webscoop_data_dir
+  local -a recipes
+  recipes=( $REPLY/recipes/*.json(N:t:r) )
+  local ret=1
+  (( $#recipes )) && _describe -t recipes 'recipe' recipes && ret=0
+  _files -g '*.json' && ret=0
+  return ret
+}
+
+# Profile names (directories in profiles/ with any @<browser> suffix removed), each once.
+_webscoop_profiles() {
+  local REPLY name
+  _webscoop_data_dir
+  local -a dirs profiles
+  dirs=( $REPLY/profiles/*(N/:t) )
+  for name in $dirs; do
+    profiles+=( ${name%%@*} )
+  done
+  profiles=( ${(u)profiles} )
+  (( $#profiles )) || return 1
+  _describe -t profiles 'profile' profiles
+}
+
+_webscoop() {
+  local curcontext=$curcontext state line ret=1
+  typeset -A opt_args
+
+  local -a proxy_opts humanize_opts timeout_opts window_opts
+  proxy_opts=(
+    '(--no-proxy)--proxy[route the browser through this proxy]:url:_urls'
+    '(--proxy)--no-proxy[connect directly, whatever the recipe and config say]'
+  )
+  humanize_opts=(
+    '(--no-humanize)--humanize[move, type, and scroll like a person (slower)]'
+    '(--humanize)--no-humanize[act at full speed]'
+  )
+  timeout_opts=(
+    '--timeout[navigation timeout]:ms:'
+    '--lock-timeout[how long to wait for a busy profile]:ms:'
+  )
+  window_opts=(
+    '(--hide)--show[keep the browser window visible for the whole run]'
+    '(--show)--hide[hide the browser window even when window.provider is none]'
+  )
+
+  _arguments -C \
+    '(- *)'{-V,--version}'[print the version]' \
+    '(- *)'{-h,--help}'[show help]' \
+    '1: :->command' \
+    '*:: :->args' && ret=0
+
+  case $state in
+    command)
+      local -a commands
+      commands=(
+        'run:run a recipe and print the extracted rows'
+        'test:check a recipe on its first page without saving'
+        'record:record a recipe by clicking in a browser window'
+        'edit:edit an existing recipe in a browser window'
+        'recipes:list saved recipes'
+        'export:write a standalone Playwright script for a recipe'
+        'bench:run a playground recipe on every playground tier'
+        'doctor:check paths, display, browser, proxy, profiles, and LLM'
+      )
+      _describe -t commands 'webscoop command' commands && ret=0
+      ;;
+    args)
+      curcontext=${curcontext%:*:*}:webscoop-$words[1]:
+      case $words[1] in
+        # command: run
+        run)
+          _arguments \
+            $proxy_opts $humanize_opts $timeout_opts $window_opts \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '*--var[set a URL template variable]:name=value:' \
+            '--jsonl[print one JSON object per line]' \
+            '--out[write the output to a file or directory]:path:_files' \
+            '--table[print only this table]:table:' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '--report[print the full run report to stderr]' \
+            '(-q --quiet)'{-q,--quiet}'[print only errors and prompts to act on stderr]' \
+            '--no-heal[try only the first stored selector per target]' \
+            '--no-save[heal, but do not write the recipe back]' \
+            '--interactive[show the re-pick panel when a required field cannot be healed]' \
+            '--no-llm[never ask the language model to locate a field]' \
+            '--pages[pages to walk]:pages:(1 all)' \
+            '--max-pages[most pages "all" walks]:n:' \
+            '--delay[wait between pages]:ms:' \
+            '--guard-timeout[longest total wait to clear guards]:ms:' \
+            '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--no-notify[do not send a desktop notification on a guard]' \
+            "--skip-steps[replay none of the recipe's steps]" \
+            '1:recipe:_webscoop_recipes' && ret=0
+          ;;
+        # command: test
+        test)
+          _arguments \
+            $proxy_opts $humanize_opts $timeout_opts $window_opts \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '*--var[set a URL template variable]:name=value:' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '--json[print the field table as a JSON array]' \
+            '--no-llm[never ask the language model to locate a field]' \
+            '--pages[pages to walk]:pages:(1 all)' \
+            '--max-pages[most pages "all" walks]:n:' \
+            '--delay[wait between pages]:ms:' \
+            '--guard-timeout[how long to wait to clear a guard]:ms:' \
+            '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--no-notify[do not send a desktop notification on a guard]' \
+            "--skip-steps[replay none of the recipe's steps]" \
+            '1:recipe:_webscoop_recipes' && ret=0
+          ;;
+        # command: record
+        record)
+          _arguments \
+            $proxy_opts $timeout_opts \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--name[recipe name]:recipe:' \
+            '*--var[set a URL template variable]:name=value:' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '--edit[edit an existing recipe]:recipe:_webscoop_recipes' \
+            '--repick[with --edit: pick a new location for one field]:field:' \
+            '1::url template:_urls' && ret=0
+          ;;
+        # command: edit
+        edit)
+          _arguments \
+            $proxy_opts $timeout_opts \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--repick[pick a new location for one field]:field:' \
+            '*--var[set a URL template variable]:name=value:' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '1:recipe:_webscoop_recipes' && ret=0
+          ;;
+        # command: recipes
+        recipes)
+          _arguments \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--json[print a JSON array]' && ret=0
+          ;;
+        # command: export
+        export)
+          _arguments \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--format[script language]:format:((ts\:"TypeScript (Node)" py\:"Python sync API"))' \
+            '--out[write the script to a file]:path:_files' \
+            '--headless[make the script run without a browser window]' \
+            '1:recipe:_webscoop_recipes' && ret=0
+          ;;
+        # command: bench
+        bench)
+          _arguments \
+            $proxy_opts $humanize_opts $timeout_opts \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--tiers[tiers to run]:range:(0-4 0 1 2 3 4 0,3-4)' \
+            '--seed[playground seed]:n:' \
+            '--json[print the results as JSON]' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '--no-llm[never ask the language model to locate a field]' \
+            '1:recipe:_webscoop_recipes' && ret=0
+          ;;
+        # command: doctor
+        doctor)
+          _arguments \
+            '(-h --help)'{-h,--help}'[show help]' && ret=0
+          ;;
+      esac
+      ;;
+  esac
+
+  return ret
+}
+
+_webscoop "$@"

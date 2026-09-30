@@ -28,6 +28,7 @@
     "webscoop": "./dist/webscoop.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "completions"
   ]
 }

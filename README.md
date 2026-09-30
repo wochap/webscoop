@@ -112,6 +112,23 @@ dependencies, update the `npmDeps` hash in `flake.nix`: set `hash` to
 `lib.fakeHash`, run `nix build .#default`, then copy the `got:` hash from the
 `hash mismatch` error into `flake.nix`.
 
+### Shell completion
+
+The Nix package installs a zsh completion function into
+`share/zsh/site-functions`, so commands, flags, recipe names, and profile names
+complete once the package is on your profile. Without Nix, add the
+`completions` directory (`packages/cli/completions` in a checkout, or the one
+in the installed npm package) to `fpath` before `compinit` in `~/.zshrc`:
+
+```zsh
+fpath=(/path/to/webscoop/packages/cli/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+Recipe and profile names are read from the data directory (`WEBSCOOP_HOME`,
+else `$XDG_DATA_HOME/webscoop`, else `~/.local/share/webscoop`) without
+starting Node.
+
 ## Usage
 
 ```sh

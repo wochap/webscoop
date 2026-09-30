@@ -98,7 +98,7 @@ Left and Right walk the element's ancestors, Alt+Up and Alt+Down reorder fields,
 Ctrl+S saves. Close the window or press Ctrl+C here to end the session.
 With --repick: click the field's new location, then "Use and save"; S skips, Esc aborts.`;
 
-function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
+export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command {
   const program = new Command('webscoop')
     .description('Record scrapers by clicking, run them unattended from the command line.')
     .version(VERSION)
