@@ -122,7 +122,7 @@ Before asking the model, the rung SHALL build a candidate list from the target's
 - **THEN** only anchor elements appear in the candidate list
 
 ### Requirement: Model prompt and answer contract
-The prompt SHALL contain the field's name and type, the stored fingerprint (tag, role, name, text sample, stable attributes, ancestors), the last known sample value when present, and the candidate list. The model SHALL answer with a JSON object `{ "index": <integer or null>, "confidence": <0 to 1>, "reason": <string> }`. Answers with an index outside the list, a missing field, or confidence below 0.5 SHALL count as no pick.
+The prompt SHALL contain the field's name and type, the stored fingerprint (tag, role, name, text sample, stable attributes, ancestors), the last known sample value when present, and the candidate list. When the recipe has a `description`, the prompt SHALL contain it. When the target belongs to a table that has a `description`, the prompt SHALL contain the table's name and description. Each description SHALL be included with its whitespace runs collapsed to single spaces, wrapped into at most 4 lines, each shorter than the prompt's line limit, and cut beyond that. The model SHALL answer with a JSON object `{ "index": <integer or null>, "confidence": <0 to 1>, "reason": <string> }`. Answers with an index outside the list, a missing field, or confidence below 0.5 SHALL count as no pick.
 
 #### Scenario: Low confidence ignored
 - **WHEN** the model answers index 4 with confidence 0.3
@@ -131,6 +131,18 @@ The prompt SHALL contain the field's name and type, the stored fingerprint (tag,
 #### Scenario: Null pick
 - **WHEN** the model answers index null
 - **THEN** the rung fails for that target and the report records the model's reason
+
+#### Scenario: Table description in the prompt
+- **WHEN** the field `title` of table `results` with description "table of google search results" goes to the model rung
+- **THEN** the prompt contains the table name `results` and the text "table of google search results"
+
+#### Scenario: No description, no line
+- **WHEN** neither the recipe nor the target's table has a description
+- **THEN** the prompt has no recipe or table description lines
+
+#### Scenario: Long description is bounded
+- **WHEN** a table description is 2000 characters long
+- **THEN** the prompt contains at most 4 lines of it, each shorter than the line limit
 
 ### Requirement: Model pick verification
 A model pick SHALL be verified before acceptance: the picked element SHALL resolve through its positional selector; for item scoped fields the promoted relative selector SHALL resolve in at least half of the containers; the picked element's fingerprint score SHALL be at least 0.4; and for `number` and `date` fields the picked element's text SHALL convert to a non-null value. A pick that fails verification SHALL count as no pick.

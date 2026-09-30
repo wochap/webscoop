@@ -96,11 +96,24 @@ Each emitted row SHALL contain one key per field of its table, plus `_page` (1-b
 - **THEN** stderr names `ads` and the declared table names, and the exit code is 1
 
 ### Requirement: `recipes` command
-`webscoop recipes` SHALL list the recipes in the recipes directory with name, URL template, field count, and last modified time. With `--json` it SHALL print the same as a JSON array.
+`webscoop recipes` SHALL list the recipes in the recipes directory with name, field count, last modified time, URL template, and description. The DESCRIPTION column SHALL show the first line of the recipe description cut to 60 characters with an ellipsis when cut, and SHALL be empty for a recipe without one.
+
+With `--json` it SHALL print a JSON array with one object per recipe holding `name`, `url`, `fields` (the field count), `modified`, `path`, and:
+- `description`: the full recipe description, or absent;
+- `vars`: one object per declared variable with `name`, and `default` and `description` when declared;
+- `tables`: one object per table in recipe order with `name`, `description` when declared, and `fields`, a list of objects with each field's `name` and `type`. A recipe in the shorthand form SHALL list one table named `items`.
 
 #### Scenario: Empty recipes directory
 - **WHEN** no recipes exist
 - **THEN** the command prints nothing to stdout and exits 0
+
+#### Scenario: Catalog for an AI harness
+- **WHEN** the recipe `bing-search` has description "Bing web search results for a query", a variable `query` described "search terms", and a table `results` with fields `title` (text) and `link` (url), and `webscoop recipes --json` is run
+- **THEN** the entry for `bing-search` holds that description, `vars` `[{ "name": "query", "description": "search terms" }]`, and `tables` `[{ "name": "results", "fields": [{ "name": "title", "type": "text" }, { "name": "link", "type": "url" }] }]`
+
+#### Scenario: Text listing shows the first line
+- **WHEN** a recipe description is "Google results\nOne row per organic result" and `webscoop recipes` is run
+- **THEN** the recipe's DESCRIPTION column reads `Google results`
 
 ### Requirement: `doctor` command
 `webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, and the configured LLM endpoint if any. When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.

@@ -331,7 +331,7 @@ The panel SHALL offer a test run that executes the draft recipe on the current p
 - **THEN** the drawer shows a `page` tab with 1 row and a `products` tab with 24 rows
 
 ### Requirement: Save
-Saving SHALL validate the draft with the recipe schema, write it to the recipes directory under the chosen name, and confirm in the panel. A draft with one table named `items` that was not loaded from the `tables` form SHALL be written in the shorthand form; any other draft SHALL be written with `tables`. Validation errors SHALL be shown in the panel next to the offending field or table. Saving SHALL NOT close the session; the user MAY keep editing and save again.
+Saving SHALL validate the draft with the recipe schema, write it to the recipes directory under the chosen name, and confirm in the panel. A draft with one table named `items` that has no description and was not loaded from the `tables` form SHALL be written in the shorthand form; any other draft SHALL be written with `tables`. Validation errors SHALL be shown in the panel next to the offending field or table. Saving SHALL NOT close the session; the user MAY keep editing and save again.
 
 #### Scenario: Save writes the file
 - **WHEN** the user saves a draft named `shop-catalog`
@@ -340,6 +340,10 @@ Saving SHALL validate the draft with the recipe schema, write it to the recipes 
 #### Scenario: Save two tables
 - **WHEN** the user saves a draft with tables `page` and `products`
 - **THEN** the file declares `tables` with both entries in strip order and no top level `fields`
+
+#### Scenario: Described items table uses the tables form
+- **WHEN** a new draft has only the table `items` with the description "product cards" and the user saves
+- **THEN** the file declares `tables` with one table `items` holding that description, and no top level `item` or `fields`
 
 ### Requirement: Edit an existing recipe
 Starting a session with an existing recipe SHALL open its URL (prompting for variables), load its tables with their fields and item containers, and its pagination into the panel, activate the first table, and show each field's match count on the current page. A recipe with one table in the `tables` form SHALL load like the shorthand form, and saving SHALL keep the form it was loaded in.
@@ -1105,3 +1109,27 @@ User input events that start inside the recorder UI (the panel, the overlay, and
 #### Scenario: Panel shortcuts still work
 - **WHEN** focus is in the panel (not in an input) and the user presses a panel shortcut such as `p`
 - **THEN** the shortcut acts as before
+
+### Requirement: Description inputs
+The panel SHALL let the user edit every description of the draft:
+- The expanded Recipe section SHALL show a multiline Description input below the Name input, holding the recipe description.
+- The active table SHALL have a multiline description input directly below the table tab bar, holding that table's description. Switching tabs SHALL show the newly active table's description.
+- Each row of the variables table SHALL have a single-line description input for that variable.
+
+An edit SHALL be committed when the input loses focus. Leading and trailing whitespace SHALL be trimmed on commit, and an input left empty SHALL remove the description. A variable description SHALL NOT accept a line break. A description longer than 2000 characters SHALL be refused with an inline error, and the previous value SHALL stay in effect. Editing a recipe that has descriptions SHALL load them into these inputs, and saving SHALL write them back unchanged when not edited. Renaming a variable SHALL keep its description.
+
+#### Scenario: Describe a table
+- **WHEN** the user types "table of google search results" in the description input under the tab bar for table `results`, leaves the input, and saves
+- **THEN** the saved recipe's table `results` has that description
+
+#### Scenario: Descriptions survive edit
+- **WHEN** a recipe with a recipe description, a table description, and a variable description is opened with `webscoop edit` and saved without changes to them
+- **THEN** the saved file holds the same three descriptions
+
+#### Scenario: Clearing removes the key
+- **WHEN** the user empties the recipe Description input and saves
+- **THEN** the saved recipe has no `description` key
+
+#### Scenario: Line break refused for a variable
+- **WHEN** the user presses Enter in a variable's description input
+- **THEN** no line break is inserted

@@ -201,3 +201,22 @@ A field MAY set `hover: true`. It SHALL default to false and SHALL be left out w
 #### Scenario: Wrong type
 - **WHEN** a field has `"hover": "yes"`
 - **THEN** validation fails naming the field's `hover`
+
+### Requirement: Descriptions
+A recipe MAY declare a `description`, each table MAY declare a `description`, and each variable under `vars` MAY declare a `description`. Each SHALL be a string of 1 to 2000 characters. Recipe and table descriptions MAY contain line breaks; a variable description SHALL NOT contain a line break. A description SHALL be plain text meant for people and for AI models: what the recipe returns, what a table holds, what a variable means. A description SHALL NOT change how a recipe runs. The top level shorthand form (`item` and `fields`) SHALL have no table description; the recipe `description` still applies to it.
+
+#### Scenario: Described recipe validates
+- **WHEN** a recipe declares `description: "Bing web search results for a query"`, a table `results` with `description: "table of search results\none row per organic result"`, and a variable `query` with `description: "search terms"`
+- **THEN** validation succeeds and the run output is the same as without the descriptions
+
+#### Scenario: Multiline variable description rejected
+- **WHEN** a variable declares a `description` containing a line break
+- **THEN** validation fails and the error names the variable
+
+#### Scenario: Empty description rejected
+- **WHEN** a table declares `description: ""`
+- **THEN** validation fails and the error names the table
+
+#### Scenario: Recipes without descriptions stay valid
+- **WHEN** a recipe written before this change is loaded
+- **THEN** validation succeeds unchanged
