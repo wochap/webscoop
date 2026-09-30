@@ -47,6 +47,13 @@ describe('zsh completion', () => {
     expect(missing, `missing from ${FILE}:\n${missing.join('\n')}`).toEqual([]);
   });
 
+  it('offers show and hide for browser, and no window flags', () => {
+    const block = sections(text).get('browser') ?? '';
+    expect(block).toMatch(/show\\:/);
+    expect(block).toMatch(/hide\\:/);
+    expect(text).not.toMatch(/--(show|hide)\[/);
+  });
+
   it.skipIf(!hasZsh())('parses with zsh -n', () => {
     execFileSync('zsh', ['-n', FILE]);
   });

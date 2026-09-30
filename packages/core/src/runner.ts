@@ -1,4 +1,4 @@
-import { RunEmitter, type FailureReason, type Row, type RunReport } from './events';
+import { RunEmitter, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
 import { RunFailure } from './failure';
 import { countItems, extractPage, resolveFirst, resolvePaginationTarget, type PageExtraction, type ResolvedSelectors } from './extract';
 import type { GuardBannerHandler, GuardBannerHooks } from './guards/banner';
@@ -14,11 +14,11 @@ import {
   TimeoutError,
   type BrowserPort,
   type ElementRef,
+  type LifecyclePort,
   type NotifyPort,
   type OpenOptions,
   type PageInfo,
   type Session,
-  type WindowPort,
 } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { primaryTableIndex, tablesOf } from './recipe/tables';
@@ -98,8 +98,8 @@ export interface RunOptions {
   pagination?: PaginationOverrides;
   /** Guard detection and the pause while a human clears a wall. Default: no guards. */
   guards?: GuardOptions;
-  /** Hidden after the browser opens and while no guard needs a human, shown when one does. Default: never touched. */
-  window?: WindowPort;
+  /** Hooks around the browser launch, and the browser's process id for `browser.started`. */
+  lifecycle?: LifecyclePort;
   /** Replay of the recipe's steps. Default: enabled. */
   steps?: StepOptions;
 }
@@ -141,6 +141,8 @@ export class Runner {
   readonly emitter: RunEmitter;
   private currentState: RunState = 'idle';
   private readonly history: RunState[] = ['idle'];
+  /** The open `attention.needed`, closed by exactly one `attention.resolved`. */
+  private attention: AttentionReason | null = null;
 
   constructor(private readonly opts: RunOptions) {
     this.emitter = opts.emitter ?? new RunEmitter();
@@ -153,6 +155,18 @@ export class Runner {
   /** Every state the run has been in, in order. */
   get states(): readonly RunState[] {
     return this.history;
+  }
+
+  private needAttention(payload: RunEvents['attention.needed']): void {
+    this.attention = payload.reason;
+    this.emitter.emit('attention.needed', payload);
+  }
+
+  private resolveAttention(outcome: AttentionOutcome): void {
+    const reason = this.attention;
+    if (reason === null) return;
+    this.attention = null;
+    this.emitter.emit('attention.resolved', { reason, outcome });
   }
 
   private transition(to: RunState): void {
@@ -174,6 +188,8 @@ export class Runner {
         const table = target.table ?? tablesOf(this.opts.recipe)[0]!.name;
         this.transition('repicking');
         this.emitter.emit('repick.requested', { page, table, target: target.name, oldSelector, fingerprint });
+        const url = await ctx.session.url().catch(() => '');
+        this.needAttention({ reason: 'repick', page, url, table, target: target.name });
         const result = await handler({
           page,
           target,
@@ -185,6 +201,7 @@ export class Runner {
           recipe: current(),
         });
         this.emitter.emit('repick.resolved', { page, table, target: target.name, result: result.kind });
+        this.resolveAttention(result.kind);
         if (result.kind === 'abort') throw new RunFailure('aborted', `the re-pick of ${target.name} was aborted`);
         this.transition('extracting');
         if (result.kind === 'skip') return null;
@@ -248,6 +265,7 @@ export class Runner {
     };
 
     const rows: Row[] = [];
+    let opened = false;
     let session: Session | undefined;
     let closing: Promise<void> | undefined;
     const closeSession = (): Promise<void> => {
@@ -270,20 +288,22 @@ export class Runner {
         }
         throw error;
       }
-      this.emitter.emit('run.start', { recipe: recipe.name, url: strategy.url, profileDir, at: report.startedAt });
 
       this.transition('opening');
-      const windowPort = this.opts.window;
-      if (windowPort?.prepare) await quietly(() => windowPort.prepare!());
-      const launchArgs = windowPort?.launchArgs ?? [];
+      const lifecycle = this.opts.lifecycle;
+      if (lifecycle?.beforeLaunch) await quietly(() => lifecycle.beforeLaunch!());
+      const launchArgs = lifecycle?.extraArgs ?? [];
       const openOptions =
         launchArgs.length > 0 ? { ...this.opts.openOptions, args: [...(this.opts.openOptions?.args ?? []), ...launchArgs] } : this.opts.openOptions;
       session = await browser.open(profileDir, openOptions);
+      opened = true;
       const live = session;
+      const pid = lifecycle?.browserPid ? await lifecycle.browserPid().catch(() => undefined) : undefined;
+      this.emitter.emit('browser.started', pid !== undefined ? { pid } : {});
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
-      // Compositor rules match the initial title; the first navigation replaces it.
+      // Window manager rules can match the initial title; the first navigation replaces it.
       await quietly(() => live.setTitle(WINDOW_TITLE));
-      if (windowPort) await quietly(() => windowPort.hide());
+      this.emitter.emit('run.start', { recipe: recipe.name, url: strategy.url, profileDir, at: report.startedAt });
 
       const timeoutMs = this.opts.timeoutMs ?? 30_000;
       const limit = this.opts.pagination?.limit ?? recipe.pagination.limit;
@@ -354,8 +374,7 @@ export class Runner {
         const { kind, reason } = match;
         const url = at.url;
         this.emitter.emit('guard.raised', { kind, page, url, reason });
-        await quietly(() => windowPort?.show());
-        await quietly(() => windowPort?.focus?.());
+        this.needAttention({ reason: 'guard', page, url, kind });
         await quietly(() => live.focus());
         await quietly(() =>
           (guardOpts?.notify ?? new NoopNotify()).notify({
@@ -401,10 +420,11 @@ export class Runner {
         report.guards.push({ kind, page, url, waitedMs: result.waitedMs, cleared: result.cleared });
         if (!result.cleared) {
           this.emitter.emit('guard.timeout', { kind, page, url, waitedMs: result.waitedMs });
+          this.resolveAttention('timeout');
           throw new RunFailure('paused', `${kind} guard on page ${page} was not cleared within the guard timeout (${reason}): ${url}`);
         }
         this.emitter.emit('guard.cleared', { kind, page, url, waitedMs: result.waitedMs });
-        await quietly(() => windowPort?.hide());
+        this.resolveAttention('cleared');
         let next = result.info;
         // The user may end up elsewhere, such as the home page after logging in; a login URL is never a page to go back to.
         if (!sameUrl(next.url, intended) && !LOGIN_URL_PATTERN.test(pathOf(intended))) {
@@ -643,10 +663,12 @@ export class Runner {
       finish();
       this.transition('done');
       this.emitter.emit('run.done', { report });
+      this.emitter.emit('browser.closed', {});
       return { ok: true, rows, report };
     } catch (error) {
       await closeSession();
       finish();
+      this.resolveAttention('ended');
       const failure = toFailure(error, signal);
       if (this.currentState !== 'failed') this.transition('failed');
       this.emitter.emit('run.failed', {
@@ -655,6 +677,7 @@ export class Runner {
         ...(failure.fields ? { fields: failure.fields } : {}),
         report,
       });
+      if (opened) this.emitter.emit('browser.closed', {});
       return {
         ok: false,
         reason: failure.reason,
@@ -670,7 +693,7 @@ export class Runner {
   }
 }
 
-/** Title of the blank page the browser opens on, for compositor window rules. */
+/** Title of the blank page the browser opens on, for window manager rules. */
 export const WINDOW_TITLE = 'webscoop';
 
 /** Side effects such as notifications must never fail the run. */

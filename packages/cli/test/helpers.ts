@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NoopWindow, type BrowserPort, type Notification, type WindowPort } from '@webscoop/core';
+import type { BrowserPort, Notification } from '@webscoop/core';
 import { afterEach } from 'vitest';
-import type { BrowserInfo, CliIo, WindowMode } from '../src';
+import type { BrowserInfo, CliIo } from '../src';
 
 const temps: string[] = [];
 afterEach(async () => {
@@ -24,8 +24,8 @@ export interface TestIo extends CliIo {
   prompts: () => string[];
   /** Notifications sent through `createNotify`. */
   notifications: Notification[];
-  /** Calls to `createWindow`, in order. */
-  windows: { profileDir: string; mode: WindowMode }[];
+  /** Profile directories `findBrowserPid` was asked about, in order. */
+  pidLookups: string[];
 }
 
 export function testIo(opts: {
@@ -36,8 +36,8 @@ export function testIo(opts: {
   chromium?: Partial<BrowserInfo>;
   /** Answers for terminal prompts, in order; null plays closed input. */
   answers?: (string | null)[];
-  /** Port `createWindow` returns. Default: a `NoopWindow`. */
-  window?: WindowPort;
+  /** Process id `findBrowserPid` returns. Default: null, at once. */
+  pid?: number | null;
 }): TestIo {
   const answers = [...(opts.answers ?? [])];
   const prompts: string[] = [];
@@ -46,7 +46,7 @@ export function testIo(opts: {
   let created = 0;
   const handlers = new Set<() => void>();
   const notifications: Notification[] = [];
-  const windows: TestIo['windows'] = [];
+  const pidLookups: string[] = [];
   return {
     stdout: { write: (s: string) => (out += s) },
     stderr: { write: (s: string) => (err += s) },
@@ -73,12 +73,12 @@ export function testIo(opts: {
       return `/* recorder ${variant} */`;
     },
     createNotify: () => ({ notify: async (n) => void notifications.push(n) }),
-    createWindow(_config, _env, window) {
-      windows.push(window);
-      return opts.window ?? new NoopWindow();
+    async findBrowserPid(profileDir) {
+      pidLookups.push(profileDir);
+      return opts.pid ?? null;
     },
     notifications,
-    windows,
+    pidLookups,
     prompts: () => prompts,
     out: () => out,
     err: () => err,

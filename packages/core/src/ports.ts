@@ -234,22 +234,14 @@ export interface StoragePort {
   save(recipe: Recipe): Promise<void>;
 }
 
-/** Moves the run's browser window out of the way and back, through the desktop's compositor. */
-export interface WindowPort {
-  show(): Promise<void>;
-  hide(): Promise<void>;
-  /** Give the shown window input focus, where the compositor allows it. */
-  focus?(): Promise<void>;
-  /** Run before the browser launches, such as installing a compositor rule that hides the window as it maps. */
-  prepare?(): Promise<void>;
-  /** Extra Chromium arguments the compositor rule matches on, such as `--class`. */
-  readonly launchArgs?: readonly string[];
-}
-
-export class NoopWindow implements WindowPort {
-  async show(): Promise<void> {}
-  async hide(): Promise<void> {}
-  async focus(): Promise<void> {}
+/** The browser's lifecycle around a run, for the CLI's hooks. */
+export interface LifecyclePort {
+  /** Awaited before the browser launches, such as hooks that install a window manager rule. */
+  beforeLaunch?(): Promise<void>;
+  /** Main process id of the launched browser, or undefined when it is not found in time. */
+  browserPid?(): Promise<number | undefined>;
+  /** Extra Chromium arguments for the launch. */
+  readonly extraArgs?: readonly string[];
 }
 
 export class NoopNotify implements NotifyPort {

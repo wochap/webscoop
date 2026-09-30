@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
-import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
+import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
+import { browserCommand, type BrowserCommandOptions } from './commands/browser';
 import { doctorCommand } from './commands/doctor';
 import { exportCommand, type ExportCommandOptions } from './commands/export';
 import { recipesCommand } from './commands/recipes';
@@ -10,7 +11,7 @@ import { loadRecorderBundle } from './bundle';
 import { probeVersion, resolveBrowser } from './browser';
 import type { CliIo } from './context';
 import { NotifySend } from './notify';
-import { createWindowPort } from './window';
+import { findBrowserPid } from './browser-pid';
 import { CliError, ExitCode, type ExitCode as Code } from './exit';
 
 export const VERSION = '0.1.0';
@@ -133,15 +134,12 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
     .option('--skip-steps', "replay none of the recipe's steps (clicks, typing) before extracting, for debugging")
-    .addOption(new Option('--show', 'keep the browser window visible for the whole run').conflicts('hide'))
-    .addOption(new Option('--hide', 'hide the browser window even when the config sets window.provider to none'))
     .addHelpText(
       'after',
       `
-Window: on a desktop with a window provider (Hyprland is detected, others can
-be configured), the browser window is moved out of sight while the run works
-and brought back when a guard needs you. --interactive and --show keep it
-visible; see webscoop doctor for the provider in use.
+Hooks: commands in the config "hooks" block run on lifecycle events, such as
+attention.needed when a guard or a re-pick needs you in the browser; use them
+to hide and show the window with your window manager.
 
 Guards: when a page asks for a human (a login redirect, a bot check, or a
 short or errored page where nothing resolves), the run brings the browser
@@ -190,8 +188,6 @@ working selector first (unless --no-save).`,
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
     .option('--skip-steps', "replay none of the recipe's steps, which test replays like a run by default")
-    .addOption(new Option('--show', 'keep the browser window visible for the whole run').conflicts('hide'))
-    .addOption(new Option('--hide', 'hide the browser window even when the config sets window.provider to none'))
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
@@ -244,7 +240,7 @@ prints rows like webscoop run (a recipe with several tables prints one JSON
 object keyed by table name, JSONL rows carry _table, and --out ./dir/ writes
 one file per table), and exits 0, 1, or 3 like it. It tries the stored selector
 candidates in order and nothing more: no fingerprint or model healing, no
-guards, no notifications, no window hiding, no recipe write-back. Re-record
+guards, no notifications, no hooks, no recipe write-back. Re-record
 and export again when the site changes. Needs no display.`,
     )
     .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
@@ -270,8 +266,23 @@ Exits 0 whatever healed, 1 when a run broke. Needs a development checkout.`,
     .action(async (recipe: string, opts: BenchCommandOptions) => setCode(await benchCommand(io, recipe, opts)));
 
   program
+    .command('browser')
+    .description('fire the browser.show or browser.hide hooks for the browser running on a profile')
+    .addArgument(new Argument('<action>', 'show or hide').choices(['show', 'hide']))
+    .option('--profile <name>', 'browser profile name (default: profiles.default from the config, else default)')
+    .addHelpText(
+      'after',
+      `
+Finds the running browser of the profile and runs the configured hooks for
+browser.show or browser.hide with WEBSCOOP_BROWSER_PID set, for example to
+bring a hidden browser back from a key binding. Exits 1 when no browser runs
+on the profile.`,
+    )
+    .action(async (action: 'show' | 'hide', opts: BrowserCommandOptions) => setCode(await browserCommand(io, action, opts)));
+
+  program
     .command('doctor')
-    .description('check paths, display, browser, proxy, profiles, window provider, and LLM configuration')
+    .description('check paths, display, browser, proxy, profiles, hooks, and LLM configuration')
     .action(async () => setCode(await doctorCommand(io)));
 
   return program;
@@ -333,6 +344,6 @@ export function defaultIo(): CliIo {
     },
     recorderBundle: loadRecorderBundle,
     createNotify: (env) => new NotifySend({ stderr: process.stderr, env }),
-    createWindow: (config, env, opts) => createWindowPort(config, env, { ...opts, stderr: process.stderr }),
+    findBrowserPid: (profileDir, deadlineMs) => findBrowserPid(profileDir, { deadlineMs }),
   };
 }

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CliError, loadConfig, resolvePaths } from '../src';
+import { CliError, hookCommands, loadConfig, resolvePaths, WINDOW_CONFIG_WARNING } from '../src';
 import { tempDir } from './helpers';
 
 describe('resolvePaths', () => {
@@ -50,7 +50,7 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, window: { provider: 'auto', providers: {} }, profiles: { rules: [] } });
+    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, profiles: { rules: [] } });
   });
 
   it('accepts the LLM fields', async () => {
@@ -80,6 +80,33 @@ describe('loadConfig', () => {
     expect(error).toBeInstanceOf(CliError);
     return (error as Error).message;
   }
+
+  it('accepts hooks as a command line or a list, and hookTimeoutMs', async () => {
+    const home = await tempDir();
+    const hooks = { 'attention.needed': 'notify-send hi', 'browser.started': ['a', 'b'] };
+    await writeFile(join(home, 'config.json'), JSON.stringify({ hooks, hookTimeoutMs: 2000, browser: { args: ['--class=webscoop'] } }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(config.hooks).toEqual(hooks);
+    expect(config.hookTimeoutMs).toBe(2000);
+    expect(config.browser.args).toEqual(['--class=webscoop']);
+    expect(hookCommands(config, 'attention.needed')).toEqual(['notify-send hi']);
+    expect(hookCommands(config, 'browser.started')).toEqual(['a', 'b']);
+    expect(hookCommands(config, 'run.done')).toEqual([]);
+  });
+
+  it('rejects an unknown hook event, naming it', async () => {
+    expect(await configError({ hooks: { 'attention.maybe': 'true' } })).toContain('attention.maybe');
+    expect(await configError({ hooks: { 'run.done': [] } })).toContain('$.hooks.run.done');
+  });
+
+  it('loads a leftover window block with one warning and ignores it', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ window: { provider: 'hyprland' } }));
+    const warnings: string[] = [];
+    await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'), (m) => warnings.push(m));
+    expect(warnings).toEqual([WINDOW_CONFIG_WARNING]);
+    expect(WINDOW_CONFIG_WARNING).toContain('hooks');
+  });
 
   it('accepts a profiles block', async () => {
     const home = await tempDir();

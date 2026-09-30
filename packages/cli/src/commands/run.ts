@@ -40,7 +40,7 @@ import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile, type ResolvedProfile } from '../profiles';
 import { FsStorage } from '../storage';
-import { windowMode } from '../window';
+import { HookRunner } from '../hooks';
 
 export interface RunCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -77,13 +77,12 @@ export interface RunCommandOptions {
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
-  /** `--show`: never hide the browser window. */
-  show?: boolean;
-  /** `--hide`: hide the window even when config selects no provider. */
-  hide?: boolean;
   /** `--quiet`: print only errors and prompts to act on stderr. */
   quiet?: boolean;
 }
+
+/** How long `browser.started` waits for the browser's process id. */
+export const BROWSER_PID_DEADLINE_MS = 5000;
 
 /** Step options for the runner from `--skip-steps`. */
 export function stepsFromFlags(opts: { skipSteps?: boolean }): StepOptions {
@@ -313,12 +312,13 @@ interface Prepared {
   profileDir: string;
   lock: ProfileLock;
   settings: BrowserSettings;
+  hooks: HookRunner;
   createBrowser(): Promise<BrowserPort>;
 }
 
-async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean }): Promise<Prepared> {
+async function prepare(io: CliIo, command: 'run' | 'test', recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean }): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
-  const config = await loadConfig(paths);
+  const config = await loadConfig(paths, (message) => log(io, message));
   const storage = new FsStorage(paths.recipesDir, io.cwd);
   const recipe = await storage.load(recipeRef);
   checkTable(recipe, opts.table);
@@ -343,7 +343,8 @@ async function prepare(io: CliIo, recipeRef: string, opts: { var: string[]; prof
   checkProfileName(profile.profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile.profile });
-  return { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser };
+  const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars } }, io);
+  return { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks };
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
@@ -394,7 +395,7 @@ export async function e2ePort(io: CliIo): Promise<number | undefined> {
 }
 
 export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandOptions): Promise<Code> {
-  const { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser } = await prepare(io, recipeRef, opts);
+  const { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks } = await prepare(io, 'run', recipeRef, opts);
 
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
@@ -414,6 +415,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
   try {
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile, settings, tables.length > 1, opts.quiet);
+    hooks.attach(emitter, { run: true });
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
@@ -442,7 +444,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
       steps: stepsFromFlags(opts),
-      window: io.createWindow(config, io.env, { profileDir, mode: windowMode(opts) }),
+      lifecycle: hooks.lifecycle((dir) => io.findBrowserPid(dir, BROWSER_PID_DEADLINE_MS)),
       saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
       openOptions,
       ...(repick ? { repick } : {}),
@@ -465,6 +467,7 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
   } finally {
     offInterrupt();
     lock.release();
+    await hooks.drain();
   }
 }
 
@@ -492,10 +495,6 @@ export interface TestCommandOptions {
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
-  /** `--show`: never hide the browser window. */
-  show?: boolean;
-  /** `--hide`: hide the window even when config selects no provider. */
-  hide?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -565,7 +564,7 @@ export function formatTable(rows: readonly TestRow[]): string {
  * resolved on at least one row, 3 when one did not.
  */
 export async function testCommand(io: CliIo, recipeRef: string, opts: TestCommandOptions): Promise<Code> {
-  const { config, recipe, vars, profile, profileDir, lock, settings, createBrowser } = await prepare(io, recipeRef, opts);
+  const { config, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks } = await prepare(io, 'test', recipeRef, opts);
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
     log(io, 'interrupted, closing the browser');
@@ -574,6 +573,7 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
   try {
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile, settings);
+    hooks.attach(emitter, { run: true });
     const port = await e2ePort(io);
     const browser = await createBrowser();
     const runner = new Runner({
@@ -588,7 +588,7 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       guards: guardsFromFlags(io, opts, 0),
       steps: stepsFromFlags(opts),
-      window: io.createWindow(config, io.env, { profileDir, mode: windowMode(opts) }),
+      lifecycle: hooks.lifecycle((dir) => io.findBrowserPid(dir, BROWSER_PID_DEADLINE_MS)),
       openOptions: { ...settingsOptions(settings), ...(port !== undefined ? { remoteDebuggingPort: port } : {}) },
     });
     const result = await runner.run();
@@ -605,5 +605,6 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
   } finally {
     offInterrupt();
     lock.release();
+    await hooks.drain();
   }
 }

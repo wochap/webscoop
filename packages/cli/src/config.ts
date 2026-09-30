@@ -4,22 +4,28 @@ import { z } from 'zod';
 import { CliError } from './exit';
 import type { Paths } from './paths';
 
-/** A window provider: shell command templates, `{pid}` and `{workspace}` filled at run time. */
-export const ProviderDefSchema = z.object({
-  /** The provider applies when this variable is set and this binary is on the PATH. */
-  detect: z.object({ env: z.string().min(1), binary: z.string().min(1) }),
-  hide: z.string().min(1),
-  show: z.string().min(1),
-  focus: z.string().min(1).optional(),
-  /** Run once before the browser launches, e.g. to install a compositor rule. */
-  prepare: z.string().min(1).optional(),
-  /** Chromium arguments for hiding runs, e.g. `--class=webscoop` for that rule to match. */
-  args: z.array(z.string().min(1)).optional(),
-  /** Prints the active workspace, run right before `show`; fills `{workspace}`. */
-  workspace: z.string().min(1).optional(),
-});
-
 const ProxyUrlSchema = z.string().refine((v) => parseProxyUrl(v) !== null, { error: (issue) => `invalid proxy URL, expected ${PROXY_SCHEMES.join(', ')}://host:port (got a value of ${String(issue.input).length} characters)` });
+
+/** Lifecycle events a hook can run on. */
+export const HOOK_EVENTS = [
+  'browser.starting',
+  'browser.started',
+  'browser.closed',
+  'run.start',
+  'run.done',
+  'run.failed',
+  'attention.needed',
+  'attention.resolved',
+  'browser.show',
+  'browser.hide',
+] as const;
+
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+/** Default `hookTimeoutMs`. */
+export const DEFAULT_HOOK_TIMEOUT_MS = 5000;
+
+const HookCommandsSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
 const ProfileNameSchema = z.string().regex(PROFILE_NAME, 'invalid profile name: start with a letter or digit, then letters, digits, ., _, or -');
 
@@ -66,19 +72,16 @@ export const ConfigSchema = z.object({
       locale: LocaleSchema.optional(),
       /** Humanized input by default for `run`, `test`, and `bench`. */
       humanize: z.boolean().optional(),
+      /** Extra Chromium arguments for every launch, e.g. `--class=webscoop` for a window manager rule. */
+      args: z.array(z.string().min(1)).optional(),
     })
     .default({ driver: 'playwright' }),
-  window: z
-    .object({
-      /** `auto` (default), `hyprland`, `none`, or a name from `providers`. */
-      provider: z.string().min(1).default('auto'),
-      /** User providers by name, tried by `auto` after the built-in ones in declaration order. */
-      providers: z
-        .record(z.string(), ProviderDefSchema)
-        .refine((p) => !('auto' in p) && !('none' in p), { message: 'provider names auto and none are reserved' })
-        .default({}),
-    })
-    .default({ provider: 'auto', providers: {} }),
+  /** Shell commands per lifecycle event: one command line or a list, run in order. */
+  hooks: z.partialRecord(z.enum(HOOK_EVENTS), HookCommandsSchema).optional(),
+  /** Longest a hook command may run before it is killed. Default 5000. */
+  hookTimeoutMs: z.number().int().positive().optional(),
+  /** No longer supported; loaded with a warning and ignored. */
+  window: z.unknown().optional(),
   profiles: z
     .object({
       /** Profile used when no rule matches; without it, the recipe name. */
@@ -113,8 +116,21 @@ export function profileRules(config: Config): CompiledProfileRule[] {
   return rules;
 }
 
-/** Load the config file; a missing file yields defaults, an invalid one is an error. */
-export async function loadConfig(paths: Paths): Promise<Config> {
+/** The commands configured for an event, in order. */
+export function hookCommands(config: Config, event: HookEvent): string[] {
+  const commands = config.hooks?.[event];
+  if (commands === undefined) return [];
+  return typeof commands === 'string' ? [commands] : commands;
+}
+
+/** Warning for a config that still has a `window` block. */
+export const WINDOW_CONFIG_WARNING = 'warning: the config "window" block is no longer supported and is ignored; use "hooks" (for example attention.needed and attention.resolved) instead';
+
+/**
+ * Load the config file; a missing file yields defaults, an invalid one is an
+ * error. `warn` receives the warning for a leftover `window` block.
+ */
+export async function loadConfig(paths: Paths, warn?: (message: string) => void): Promise<Config> {
   let text: string;
   try {
     text = await readFile(paths.configFile, 'utf8');
@@ -134,5 +150,6 @@ export async function loadConfig(paths: Paths): Promise<Config> {
     throw new CliError(`${paths.configFile}: invalid config\n${lines.join('\n')}`);
   }
   profileRules(parsed.data);
+  if (parsed.data.window !== undefined) warn?.(WINDOW_CONFIG_WARNING);
   return parsed.data;
 }

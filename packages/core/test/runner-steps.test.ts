@@ -47,6 +47,7 @@ describe('runner steps', () => {
     expect(result.rows).toHaveLength(3);
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'stepping', 'extracting', 'done']);
     expect(t.log.sequence()).toEqual([
+      'browser.started',
       'run.start',
       'page.loaded',
       'step.replayed',
@@ -55,6 +56,7 @@ describe('runner steps', () => {
       'page.done',
       'pagination.stopped',
       'run.done',
+      'browser.closed',
     ]);
     expect(t.log.of('step.replayed')[0]).toMatchObject({ page: 1, step: { index: 0, kind: 'click', outcome: 'ok' } });
     expect(result.report.steps).toEqual([expect.objectContaining({ index: 0, page: 1, outcome: 'ok' })]);

@@ -544,7 +544,7 @@ describe('runner page loop', () => {
     expect(at('page.done', 1)).toBeLessThan(at('page.advanced', 2));
     expect(at('page.advanced', 2)).toBeLessThan(at('page.loaded', 2));
     expect(at('page.loaded', 2)).toBeLessThan(at('page.done', 2));
-    expect(log.sequence().slice(-3)).toEqual(['page.done', 'pagination.stopped', 'run.done']);
+    expect(log.sequence().slice(-4)).toEqual(['page.done', 'pagination.stopped', 'run.done', 'browser.closed']);
     expect(log.of('field.resolved')).toHaveLength(4);
     expect(RUN_EVENT_NAMES).toContain('page.advanced');
     expect(RUN_EVENT_NAMES).toContain('pagination.stopped');

@@ -44,7 +44,7 @@ describe('runner healing', () => {
     const result = await t.runner.run();
     expect(result.ok).toBe(true);
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'done']);
-    expect(t.log.sequence()).toEqual(['run.start', 'page.loaded', 'field.healed', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'recipe.saved', 'run.done']);
+    expect(t.log.sequence()).toEqual(['browser.started', 'run.start', 'page.loaded', 'field.healed', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'recipe.saved', 'run.done', 'browser.closed']);
     const names = t.log.names();
     for (const healed of t.log.of('field.healed')) {
       if (healed.target === 'item') continue;
@@ -125,7 +125,7 @@ describe('runner healing', () => {
   });
 
   it('lists the new events in RUN_EVENT_NAMES', () => {
-    expect(RUN_EVENT_NAMES).toEqual(['run.start', 'page.loaded', 'guard.raised', 'guard.cleared', 'guard.timeout', 'step.replayed', 'step.skipped', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'run.done', 'run.failed']);
+    expect(RUN_EVENT_NAMES).toEqual(['browser.started', 'run.start', 'page.loaded', 'guard.raised', 'guard.cleared', 'guard.timeout', 'step.replayed', 'step.skipped', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'attention.needed', 'attention.resolved', 'run.done', 'run.failed', 'browser.closed']);
   });
 });
 
@@ -144,6 +144,11 @@ describe('runner re-pick', () => {
     expect(result.ok && result.rows.every((r) => typeof r.price === 'number')).toBe(true);
     expect(t.log.of('repick.requested')).toEqual([{ page: 1, table: 'items', target: 'price', oldSelector: css('.gone'), fingerprint: null }]);
     expect(t.log.of('repick.resolved')).toEqual([{ page: 1, table: 'items', target: 'price', result: 'picked' }]);
+    expect(t.log.of('attention.needed')).toEqual([{ reason: 'repick', page: 1, url: expect.any(String), table: 'items', target: 'price' }]);
+    expect(t.log.of('attention.resolved')).toEqual([{ reason: 'repick', outcome: 'picked' }]);
+    const names = t.log.names();
+    expect(names.indexOf('attention.needed')).toBe(names.indexOf('repick.requested') + 1);
+    expect(names.indexOf('attention.resolved')).toBe(names.indexOf('repick.resolved') + 1);
     expect(t.log.of('field.healed').find((e) => e.target === 'price')?.outcome).toEqual({ kind: 'user' });
     expect(result.report.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'healed', outcome: { kind: 'user' } });
     expect(t.saved[0]!.fields!.find((f) => f.name === 'price')!.selectors).toEqual([testid('price'), css('.product-price')]);
@@ -163,6 +168,7 @@ describe('runner re-pick', () => {
     const result = await t.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'aborted' });
     expect(t.runner.states).toEqual(['idle', 'opening', 'navigating', 'extracting', 'repicking', 'failed']);
+    expect(t.log.of('attention.resolved')).toEqual([{ reason: 'repick', outcome: 'abort' }]);
     expect(t.browser.openSessions).toBe(0);
   });
 

@@ -131,7 +131,15 @@ export interface RepickInfo {
   fingerprint: Fingerprint | null;
 }
 
+/** Why a run needs the user in the browser. */
+export type AttentionReason = 'guard' | 'repick';
+
+/** How an attention need ended: the guard cleared or timed out, the re-pick was answered, or the run ended first. */
+export type AttentionOutcome = 'cleared' | 'timeout' | 'picked' | 'skip' | 'abort' | 'ended';
+
 export interface RunEvents {
+  /** The browser opened; `pid` is its main process id when known. */
+  'browser.started': { pid?: number };
   'run.start': { recipe: string; url: string; profileDir: string; at: string };
   'page.loaded': { page: number; url: string; title: string; status: number | null };
   'guard.raised': { kind: GuardKind; page: number; url: string; reason: string };
@@ -162,13 +170,20 @@ export interface RunEvents {
   /** Emitted once, when the page loop ends; `page` is the last page extracted. */
   'pagination.stopped': { page: number; reason: StopReason };
   'recipe.saved': { path: string };
+  /** Right after `guard.raised` or `repick.requested`. */
+  'attention.needed': { reason: AttentionReason; page: number; url: string; kind?: GuardKind; table?: string; target?: string };
+  /** Exactly once for every `attention.needed`, before `run.done` or `run.failed`. */
+  'attention.resolved': { reason: AttentionReason; outcome: AttentionOutcome };
   'run.done': { report: RunReport };
   'run.failed': { reason: FailureReason; message: string; fields?: string[]; report: RunReport };
+  /** After `run.done` or `run.failed`, when the browser had opened. */
+  'browser.closed': Record<string, never>;
 }
 
 export type RunEventName = keyof RunEvents;
 
 export const RUN_EVENT_NAMES: readonly RunEventName[] = [
+  'browser.started',
   'run.start',
   'page.loaded',
   'guard.raised',
@@ -185,8 +200,11 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'page.advanced',
   'pagination.stopped',
   'recipe.saved',
+  'attention.needed',
+  'attention.resolved',
   'run.done',
   'run.failed',
+  'browser.closed',
 ];
 
 type Listener<P> = (payload: P) => void;

@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import {
   draftFromRecipe,
   emptyDraft,
@@ -18,11 +19,12 @@ import { loadConfig, type Config } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
+import { HookRunner } from '../hooks';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
-import { encodedValueWarnings, parseVars } from './run';
+import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings, parseVars } from './run';
 
 export interface RecordCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -147,7 +149,7 @@ function logEvents(io: CliIo, emitter: RecorderEmitter): void {
 
 export async function recordCommand(io: CliIo, template: string | undefined, opts: RecordCommandOptions): Promise<Code> {
   const paths = resolvePaths(io.env, io.homedir);
-  const config = await loadConfig(paths);
+  const config = await loadConfig(paths, (message) => log(io, message));
   const storage = new FsStorage(paths.recipesDir, io.cwd);
 
   let recipe: Recipe | undefined;
@@ -193,11 +195,15 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     });
   });
 
+  const hooks = new HookRunner(config, { command: opts.edit ? 'edit' : 'record', profile, profileDir, recipe: name, vars: values }, io);
   let session: Session | undefined;
   try {
     const bundle = await io.recorderBundle(e2e ? 'e2e' : 'default');
     const browser = await createBrowser();
+    await hooks.fire('browser.starting');
     session = await browser.open(profileDir, { ...settingsOptions(settings), bypassCSP: true, ...(e2e ? { remoteDebuggingPort: Number(cdpPort) } : {}) });
+    hooks.setPid((await io.findBrowserPid(resolve(profileDir), BROWSER_PID_DEADLINE_MS)) ?? undefined);
+    void hooks.fire('browser.started');
     if (!isInteractiveSession(session)) throw new CliError('this browser adapter cannot run a recording session');
 
     const draft = recipe
@@ -274,5 +280,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     stopInterrupt();
     await session?.close().catch(() => {});
     lock.release();
+    if (session) void hooks.fire('browser.closed');
+    await hooks.drain();
   }
 }

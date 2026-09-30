@@ -6,7 +6,7 @@ export const EXCLUDED_BEHAVIORS = [
   'model healing',
   'guards',
   'notifications',
-  'window hiding',
+  'hooks',
   'recipe write-back',
 ] as const;
 

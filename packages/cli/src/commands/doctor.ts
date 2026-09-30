@@ -2,16 +2,15 @@ import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ProbeResult } from '@webscoop/llm';
-import { loadConfig, type Config } from '../config';
+import { HOOK_EVENTS, hookCommands, loadConfig, type Config } from '../config';
 import { browserSettings } from '../browser';
-import type { BrowserInfo, CliIo } from '../context';
+import { log, type BrowserInfo, type CliIo } from '../context';
 import { detectDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { canProbe, createLlm, llmSettings, type Probeable } from '../llm';
 import { resolvePaths, type Env, type Paths } from '../paths';
 import { hostOf, listProfiles, profileSourceLabel, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
-import { findOnPath, HYPRLAND_RULE, HYPRLAND_RULE_LUA, PRESETS, selectProvider, WINDOW_CLASS, type FindBinary } from '../window';
 
 /** Below this context window the model prompt budget gets too small to be useful. */
 export const MIN_CONTEXT_TOKENS = 8192;
@@ -19,31 +18,16 @@ export const MIN_CONTEXT_TOKENS = 8192;
 export interface DoctorOptions {
   /** Check the endpoint; the adapter's own probe by default. Injectable for tests. */
   probe?: (llm: Probeable) => Promise<ProbeResult>;
-  /** Binary lookup for window providers; `PATH` by default. */
-  findBinary?: FindBinary;
-  platform?: NodeJS.Platform;
 }
 
-/** Doctor lines for the window provider. Every problem is a warning. */
-export function windowLines(config: Config, env: Env, opts: { findBinary?: FindBinary; platform?: NodeJS.Platform } = {}): [string, string][] {
-  const findBinary = opts.findBinary ?? findOnPath;
-  const selection = selectProvider(config.window, env, { findBinary, ...(opts.platform ? { platform: opts.platform } : {}) });
-  if (!selection.def) {
-    if (selection.warning) return [['window', `none (warning: ${selection.warning})`]];
-    if (config.window.provider === 'none') return [['window', 'none (window.provider is none; the window stays visible)']];
-    // A desktop that was recognised but lacks its tool deserves a hint.
-    const defs = { ...PRESETS, ...config.window.providers };
-    const partial = Object.entries(defs).find(([, def]) => env[def.detect.env]?.trim() && !findBinary(def.detect.binary, env));
-    if (partial) return [['window', `none (warning: ${partial[1].detect.env} is set but ${partial[1].detect.binary} is not on the PATH; the window stays visible)`]];
-    return [['window', 'none (no provider detected; the window stays visible)']];
+/** Doctor lines for the hooks: one per configured event with its number of commands. */
+export function hookLines(config: Config): [string, string][] {
+  const lines: [string, string][] = [];
+  for (const event of HOOK_EVENTS) {
+    const count = hookCommands(config, event).length;
+    if (count > 0) lines.push([`hook ${event}`, `${count} command${count === 1 ? '' : 's'}`]);
   }
-  const lines: [string, string][] = [['window', `${selection.name} (${selection.def.detect.binary} at ${selection.binaryPath})`]];
-  if (selection.name === 'hyprland') {
-    lines.push(['window rule', HYPRLAND_RULE]);
-    lines.push(['window rule (lua)', `${HYPRLAND_RULE_LUA} (added at run time on a Lua config)`]);
-    lines.push(['window note', `hiding runs launch Chromium with --class=${WINDOW_CLASS}, so the rule sends the window away as it maps`]);
-  }
-  return lines;
+  return lines.length > 0 ? lines : [['hooks', 'none configured']];
 }
 
 /** Doctor lines for the browser setup; `ok` is false when the configured driver or binary is missing. */
@@ -133,7 +117,7 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
 
   let config: Config | undefined;
   try {
-    config = await loadConfig(paths);
+    config = await loadConfig(paths, (message) => log(io, message));
     lines.push(['config', `${paths.configFile} (${existsSync(paths.configFile) ? 'found' : 'not found, using defaults'})`]);
   } catch (error) {
     ok = false;
@@ -156,12 +140,7 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
       lines.push([`profile ${name}`, marker ? `${marker.driver}, ${marker.channel}, ${marker.version ?? 'version unknown'} (${marker.executablePath})` : 'unknown (no marker)']);
     }
     lines.push(...(await profileLines(config, paths, io.cwd)));
-    lines.push(
-      ...windowLines(config, io.env, {
-        ...(opts.findBinary ? { findBinary: opts.findBinary } : {}),
-        ...(opts.platform ? { platform: opts.platform } : {}),
-      }),
-    );
+    lines.push(...hookLines(config));
     const llm = llmSettings(config, io.env);
     lines.push(['llm', llm.endpoint ? `${llm.endpoint}${llm.model ? ` (model ${llm.model})` : ' (warning: no model configured, the model rung is off)'}` : 'not configured']);
     if (llm.endpoint && llm.model) {

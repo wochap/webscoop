@@ -277,7 +277,7 @@ describe('header', () => {
       '  - model healing',
       '  - guards',
       '  - notifications',
-      '  - window hiding',
+      '  - hooks',
       '  - recipe write-back',
       '',
       'When the site changes, re-record the recipe with webscoop and export it',

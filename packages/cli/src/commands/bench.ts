@@ -4,11 +4,12 @@ import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
+import { HookRunner } from '../hooks';
 import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
-import { modelRung, testRows } from './run';
+import { BROWSER_PID_DEADLINE_MS, modelRung, testRows } from './run';
 
 export interface BenchCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -99,7 +100,7 @@ const HEAL_OUTCOMES = new Set(['missing-required']);
 export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchCommandOptions): Promise<Code> {
   const tiers = parseTiers(opts.tiers);
   const paths = resolvePaths(io.env, io.homedir);
-  const config = await loadConfig(paths);
+  const config = await loadConfig(paths, (message) => log(io, message));
   const storage = new FsStorage(paths.recipesDir, io.cwd);
   const recipe = await storage.load(recipeRef);
   const variables = templateVariables(recipe.url);
@@ -120,6 +121,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
     log(io, 'interrupted, closing the browser');
     controller.abort();
   });
+  const hooks = new HookRunner(config, { command: 'bench', profile, profileDir, recipe: recipe.name }, io);
   const playground = await startPlayground({ port: 0 });
   const results: BenchTier[] = [];
   let broken = false;
@@ -135,13 +137,16 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
       const firstPage: Recipe = { ...recipe, pagination: { ...recipe.pagination, limit: 1 } };
       log(io, `tier ${tier}: running ${recipe.name}`);
       const started = performance.now();
+      const emitter = new RunEmitter();
+      hooks.attach(emitter, { run: false });
       const result = await new Runner({
         recipe: firstPage,
         browser,
         profileDir,
         vars,
         timeoutMs: opts.timeout,
-        emitter: new RunEmitter(),
+        emitter,
+        lifecycle: hooks.lifecycle((dir) => io.findBrowserPid(dir, BROWSER_PID_DEADLINE_MS)),
         signal: controller.signal,
         healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
         openOptions,
@@ -169,6 +174,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
     offInterrupt();
     await playground.stop();
     lock.release();
+    await hooks.drain();
   }
   io.stdout.write(opts.json ? `${JSON.stringify(results, null, 2)}\n` : formatBench(results));
   return broken || controller.signal.aborted ? ExitCode.Error : ExitCode.Ok;

@@ -1,8 +1,7 @@
-import type { BrowserPort, NotifyPort, WindowPort } from '@webscoop/core';
+import type { BrowserPort, NotifyPort } from '@webscoop/core';
 import type { BrowserChoice } from './browser';
 import type { Config } from './config';
 import type { Env } from './paths';
-import type { WindowMode } from './window';
 
 export interface Output {
   write(chunk: string): unknown;
@@ -27,8 +26,8 @@ export interface CliIo {
   recorderBundle(variant: 'default' | 'e2e'): Promise<string>;
   /** Desktop notifications, for guards. */
   createNotify(env: Env): NotifyPort;
-  /** Hides and shows the run's browser window; `show` yields a port that does nothing. */
-  createWindow(config: Config, env: Env, opts: { profileDir: string; mode: WindowMode }): WindowPort;
+  /** Main process id of the browser running on an absolute profile directory, or null when none shows up within the deadline. */
+  findBrowserPid(profileDir: string, deadlineMs: number): Promise<number | null>;
 }
 
 /** A resolved browser with the result of its version probe. */

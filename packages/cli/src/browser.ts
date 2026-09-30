@@ -1,12 +1,29 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 import { isLocale, isTimezone, parseProxyUrl, PROXY_SCHEMES, type OpenOptions, type ProxySettings, type Recipe } from '@webscoop/core';
 import type { Config } from './config';
 import { chromiumOverride } from './context';
 import { CliError } from './exit';
 import type { Env } from './paths';
-import { findOnPath, type FindBinary } from './window';
+
+/** Path of an executable on `PATH`, or null. */
+export type FindBinary = (name: string, env: Env) => string | null;
+
+export const findOnPath: FindBinary = (name, env) => {
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const path = join(dir, name);
+    try {
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch {
+      // Not here.
+    }
+  }
+  return null;
+};
 
 export type Driver = Config['browser']['driver'];
 export type Channel = 'chromium' | 'chrome';
@@ -127,6 +144,8 @@ export interface BrowserSettings {
   locale?: string;
   /** Humanized input; set only by `run`, `test`, and `bench`. */
   humanize?: boolean;
+  /** Extra Chromium arguments from `browser.args`. */
+  args?: string[];
 }
 
 export interface ProxyFlags {
@@ -160,6 +179,7 @@ function proxyFrom(value: string, bypass: string | undefined, credentialsFromUrl
  */
 export function browserSettings(config: Config, recipe: Pick<Recipe, 'browser'> | undefined, flags: ProxyFlags, env: Env): BrowserSettings {
   const settings: BrowserSettings = {};
+  if (config.browser.args && config.browser.args.length > 0) settings.args = [...config.browser.args];
   let resolved: { proxy: ProxySettings; shown: string } | undefined;
   if (typeof flags.proxy === 'string') resolved = proxyFrom(flags.proxy, undefined, true, env, '--proxy');
   else if (flags.proxy === false) resolved = undefined;
@@ -194,6 +214,7 @@ export function settingsOptions(settings: BrowserSettings): OpenOptions {
     ...(settings.timezone ? { timezone: settings.timezone } : {}),
     ...(settings.locale ? { locale: settings.locale } : {}),
     ...(settings.humanize ? { humanize: true } : {}),
+    ...(settings.args ? { args: settings.args } : {}),
   };
 }
 

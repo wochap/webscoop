@@ -78,13 +78,6 @@ WEBSCOOP_LLM_ENDPOINT=http://127.0.0.1:11434/v1 WEBSCOOP_LLM_MODEL=qwen3.5:9b \
   npm run test:e2e -- llm.real
 ```
 
-`e2e/window.spec.ts` moves a real browser window around a Hyprland desktop and
-runs only when asked, from a Hyprland session:
-
-```sh
-WEBSCOOP_E2E_HYPRLAND=1 npm run test:e2e -- window
-```
-
 `WEBSCOOP_E2E_DRIVER=patchright` runs the end-to-end suite through Patchright
 and the system Chrome. `e2e/stealth.spec.ts` runs the catalog recipe under
 Patchright whatever the variable says, and skips when Chrome is not installed.
@@ -146,6 +139,7 @@ webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
+webscoop browser show|hide [--profile name]
 webscoop doctor
 ```
 
@@ -326,87 +320,136 @@ kind, page, URL, wait, cleared), and counted in the summary line.
 webscoop run shop --guard-timeout 300000 >> rows.json   # cron: give up after five minutes, exit 2
 ```
 
-### Window
+### Hooks
 
-Unattended runs keep the browser window out of your way: right after the
-browser opens it is moved off screen, when a guard needs you it is brought to
-the workspace you are on and focused, and once the guard clears it is moved
-away again. `record`, `run --interactive`, and `--show` never hide the window.
-`--hide` hides it even when the config sets `window.provider` to `none`, as
-long as a provider is detected. Hiding is best effort: a provider command that
-fails or takes over 2 seconds is reported once on stderr and the run carries
-on with the window visible.
+webscoop does not move the browser window itself. It fires lifecycle events,
+and the config maps each event to shell commands, so your own scripts decide
+what the window manager does (hide the browser, bring it back when a guard
+needs you, send a notification).
 
-The window is found by process id: the Chromium main process whose command
-line carries `--user-data-dir=<profile directory>`. Linux only; elsewhere the
-provider is always `none`.
+| Event | When |
+| --- | --- |
+| `browser.starting` | before a browser launches; the launch waits for these hooks |
+| `browser.started` | the browser opened and its main process id is known (or 5 seconds passed) |
+| `browser.closed` | the browser closed |
+| `run.start` | `run` or `test` starts navigating |
+| `run.done` | a run or test ended successfully |
+| `run.failed` | a run or test ended unsuccessfully, including a guard timeout and an abort |
+| `attention.needed` | the run needs you in the browser: reason `guard` or `repick` |
+| `attention.resolved` | that need ended; exactly one follows every `attention.needed` |
+| `browser.show`, `browser.hide` | fired only by `webscoop browser show|hide` |
 
-Providers:
+`run`, `test`, `record`, `edit`, and `bench` fire the browser events; `run`
+and `test` also fire the run and attention events.
 
-- `hyprland` (built in): detected when `HYPRLAND_INSTANCE_SIGNATURE` is set
-  and `hyprctl` is on the `PATH`. Hides on the `special:webscoop` workspace
-  silently, shows on the active workspace (read from
-  `hyprctl activeworkspace -j`) and focuses the window. Works with Lua and
-  classic Hyprland configs.
-- `none`: does nothing.
-- Your own, in the config file (below).
+```json
+{
+  "hooks": {
+    "attention.needed": "notify-send webscoop \"$WEBSCOOP_RECIPE needs you\"",
+    "run.done": ["~/bin/log-run.sh", "~/bin/sync-rows.sh"]
+  },
+  "hookTimeoutMs": 5000
+}
+```
 
-`window.provider` picks one: `auto` (default) tries `hyprland`, then your
-providers in the order they are declared, else `none`. A named provider that
-is not detected is reported and the window stays visible. `webscoop doctor`
-prints the provider in use.
+A value is one command line or a list run in order. An unknown event name is
+a config error. Each command runs with `/bin/sh -c` and the environment of
+webscoop plus:
 
-The first frame: moving a window by pid can only happen once it has mapped,
-so it would flash on your workspace for a moment. Hiding runs therefore
-launch Chromium with `--class=webscoop` (its Wayland app id), and a window
-rule on that class sends it to `special:webscoop` as it maps. On a Lua
-Hyprland config webscoop adds the rule itself before the first launch, once
-per Hyprland session (a config reload drops it and the next run adds it
-again). On a classic config, paste the rule `doctor` prints:
+- `WEBSCOOP_EVENT`: the event name
+- `WEBSCOOP_COMMAND`: `run`, `test`, `record`, `edit`, `bench`, or `browser`
+- `WEBSCOOP_PROFILE`, `WEBSCOOP_PROFILE_DIR`: the profile name and directory
+- `WEBSCOOP_BROWSER_PID`: the browser main process id, when known
+- `WEBSCOOP_RECIPE`: the recipe name, when there is one
+- `WEBSCOOP_RUN_ID`: unique to the webscoop invocation
+- `WEBSCOOP_URL`: the page URL, when there is one
+- `WEBSCOOP_REASON`: the attention reason, or the failure reason for `run.failed`
+
+Stdin gets one JSON object with `event`, `at` (ISO timestamp), the same values
+(`command`, `profile`, `profileDir`, `browserPid`, `recipe`, `runId`, `url`,
+`reason`), the recipe's variable values as `vars` (only here, never in the
+environment), and the event's details: `kind` (guard kind), `table` and
+`target` (re-pick target), and `page` for `attention.needed`; `outcome` for
+`attention.resolved`; `rows`, `pages`, and `message` for `run.done` and
+`run.failed`. Values are never substituted into the command line.
+
+```sh
+webscoop run bing --var query=cat   # a run.start hook running `jq -r .vars.query` prints cat
+```
+
+Hooks of one webscoop process run one at a time, in the order their events
+fired. Only `browser.starting` holds up the command (the browser launches once
+its hooks exit); webscoop waits for pending hooks before it exits. A command
+that runs longer than `hookTimeoutMs` (default 5000) is killed. A command that
+fails to start, exits non-zero, or times out is reported once on stderr and
+never changes the exit code. Hook output goes to stderr, never to stdout.
+
+`webscoop browser show [--profile name]` and `webscoop browser hide` find the
+browser running on the profile (`--profile`, else `profiles.default`, else
+`default`) and fire `browser.show` or `browser.hide` with its pid, for example
+from a key binding to bring back a hidden browser. They exit 1 when no browser
+runs on the profile, and warn when no hook is configured for the event.
+
+`browser.args` adds Chromium arguments to every launch. `--class=webscoop`
+sets the Wayland app id, so a window manager rule can place the window before
+it ever shows.
+
+#### Hyprland example
+
+Hide the browser on a special workspace as it maps, bring it to your
+workspace when a run needs you, and send it back once the need ends. Record
+and edit sessions are shown right away.
+
+`~/bin/webscoop-window` (Hyprland 0.56 with a Lua config; the classic
+dispatchers are in the comments):
+
+```sh
+#!/bin/sh
+pid=$WEBSCOOP_BROWSER_PID
+[ -n "$pid" ] || exit 0
+case "$1" in
+  show)
+    ws=$(hyprctl activeworkspace -j | jq -r .id)
+    # classic: hyprctl dispatch movetoworkspace "$ws,pid:$pid"; hyprctl dispatch focuswindow "pid:$pid"
+    hyprctl dispatch "hl.dsp.window.move({ workspace = \"$ws\", follow = false, window = \"pid:$pid\" })"
+    hyprctl dispatch "hl.dsp.focus({ window = \"pid:$pid\" })"
+    ;;
+  hide)
+    # classic: hyprctl dispatch movetoworkspacesilent "special:webscoop,pid:$pid"
+    hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:webscoop\", follow = false, window = \"pid:$pid\" })"
+    ;;
+esac
+```
+
+The window rule, in `hyprland.lua`:
+
+```lua
+hl.window_rule({ match = { class = "^(webscoop)$" }, workspace = "special:webscoop silent" })
+```
+
+or in a classic `hyprland.conf`:
 
 ```
 windowrulev2 = workspace special:webscoop silent, class:^(webscoop)$
 ```
 
-Visible runs (`record`, `--interactive`, `--show`) keep Chromium's usual
-class, so your own rules for it still apply.
-
-A provider is a set of shell command templates: `{pid}` is the browser's
-process id, `{workspace}` the output of the optional `workspace` command (a
-JSON object's `id`, else the trimmed text). Optional `prepare` runs once
-before the browser launches, and `args` are extra Chromium arguments for
-hiding runs; together they cover the first frame. For sway:
+The config:
 
 ```json
 {
-  "window": {
-    "provider": "auto",
-    "providers": {
-      "sway": {
-        "detect": { "env": "SWAYSOCK", "binary": "swaymsg" },
-        "hide": "swaymsg '[pid={pid}] move scratchpad'",
-        "show": "swaymsg '[pid={pid}] scratchpad show'",
-        "focus": "swaymsg '[pid={pid}] focus'",
-        "args": ["--class=webscoop"]
-      }
-    }
+  "browser": { "args": ["--class=webscoop"] },
+  "hooks": {
+    "browser.started": "case $WEBSCOOP_COMMAND in record|edit) ~/bin/webscoop-window show ;; esac",
+    "attention.needed": "~/bin/webscoop-window show",
+    "attention.resolved": "~/bin/webscoop-window hide",
+    "browser.show": "~/bin/webscoop-window show",
+    "browser.hide": "~/bin/webscoop-window hide"
   }
 }
 ```
 
-With `args` set, `for_window [app_id="webscoop"] move scratchpad` in the sway
-config hides the window as it maps. A provider named `hyprland` in
-`providers` replaces the built-in one.
-
-Manual check on Hyprland: start the playground (`npm run playground`), write
-the paged fixture with `wall=login&wallAfterPage=2` added to its URL, and run
-it with `--delay 1500`. The window should never appear on your workspace while
-pages 1 and 2 load, come to your workspace with focus when the login wall
-shows on page 3, and leave again once you log in (any username and password work).
-
-```sh
-webscoop run shop --show        # watch the run
-```
+A Hyprland key binding for `webscoop browser show` brings a hidden run's
+browser back at any time. `webscoop doctor` lists the configured hooks.
 
 ### Steps
 
@@ -619,7 +662,7 @@ with the meanings below; logs go to stderr.
 
 The script tries each target's stored selector candidates in order and nothing
 more. It does not include fingerprint healing, model healing, guards,
-notifications, window hiding, or recipe write-back; its header says so. When a
+notifications, hooks, or recipe write-back; its header says so. When a
 site changes, re-record (or `webscoop run` to heal) the recipe and export it
 again rather than editing selectors in the script: the recipe stays the source
 of truth.
@@ -753,9 +796,11 @@ Config file, all keys optional:
     "channel": "chromium",
     "proxy": "http://user:pass@proxy.example:8080",
     "timezone": "Europe/Madrid",
-    "locale": "es-ES"
+    "locale": "es-ES",
+    "args": ["--class=webscoop"]
   },
-  "window": { "provider": "auto", "providers": {} },
+  "hooks": { "attention.needed": "~/bin/webscoop-window show" },
+  "hookTimeoutMs": 5000,
   "profiles": {
     "default": "main",
     "rules": [
