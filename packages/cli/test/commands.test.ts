@@ -330,7 +330,7 @@ describe('webscoop recipes', () => {
     expect(await main(['recipes'], io)).toBe(ExitCode.Ok);
     const lines = io.out().trimEnd().split('\n');
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatch(/^NAME\s+FIELDS\s+MODIFIED\s+URL$/);
+    expect(lines[0]).toMatch(/^NAME\s+FIELDS\s+MODIFIED\s+DESCRIPTION\s+URL$/);
     expect(lines[1]).toMatch(/^books\s+1\s+2026-01-02T03:04:05Z\s+https:\/\/books\.test\/$/);
     expect(lines[2]).toMatch(/^shop\s+3\s+/);
 
@@ -339,6 +339,44 @@ describe('webscoop recipes', () => {
     const list = JSON.parse(json.out());
     expect(list.map((r: { name: string }) => r.name)).toEqual(['books', 'shop']);
     expect(list[0]).toMatchObject({ url: 'https://books.test/', fields: 1, modified: '2026-01-02T03:04:05.000Z' });
+    expect(list[1].tables).toEqual([{ name: 'items', fields: [{ name: 'title', type: 'text' }, { name: 'price', type: 'number' }, { name: 'link', type: 'url' }] }]);
+    expect(list[1].vars).toEqual([{ name: 'category', default: 'shoes' }]);
+    expect('description' in list[1]).toBe(false);
+  });
+
+  it('shows the description: first line in the listing, full catalog in JSON', async () => {
+    const { item: _item, fields: _fields, ...rest } = recipe();
+    const bing: RecipeInput = {
+      ...rest,
+      name: 'bing-search',
+      description: 'Bing web search results for a query\nOne row per organic result',
+      url: 'https://bing.com/search?q={query}',
+      vars: [{ name: 'query', type: 'string', description: 'search terms' }],
+      tables: [
+        {
+          name: 'results',
+          fields: [
+            { name: 'title', type: 'text', selectors: [{ strategy: 'css', value: 'h2', stability: 'medium' }] },
+            { name: 'link', type: 'url', selectors: [{ strategy: 'css', value: 'a', stability: 'medium' }] },
+          ],
+        },
+      ],
+    };
+    const long = recipe({ name: 'long', description: 'x'.repeat(80) });
+    const dir = await home([bing, long]);
+    const io = testIo({ env: { WEBSCOOP_HOME: dir } });
+    expect(await main(['recipes'], io)).toBe(ExitCode.Ok);
+    const lines = io.out().trimEnd().split('\n');
+    expect(lines[1]).toMatch(/\sBing web search results for a query\s+https:\/\/bing\.com/);
+    expect(lines[2]).toContain(`${'x'.repeat(59)}…`);
+    expect(lines[2]).not.toContain('x'.repeat(60));
+
+    const json = testIo({ env: { WEBSCOOP_HOME: dir } });
+    expect(await main(['recipes', '--json'], json)).toBe(ExitCode.Ok);
+    const entry = JSON.parse(json.out())[0];
+    expect(entry).toMatchObject({ name: 'bing-search', description: 'Bing web search results for a query\nOne row per organic result' });
+    expect(entry.vars).toEqual([{ name: 'query', description: 'search terms' }]);
+    expect(entry.tables).toEqual([{ name: 'results', fields: [{ name: 'title', type: 'text' }, { name: 'link', type: 'url' }] }]);
   });
 });
 

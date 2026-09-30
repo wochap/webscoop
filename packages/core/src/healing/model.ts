@@ -208,6 +208,44 @@ function describeFingerprint(fp: Fingerprint | undefined): string[] {
   ];
 }
 
+/** Descriptions the prompt shows next to the target. */
+export interface PromptDescriptions {
+  recipe?: string;
+  table?: { name: string; text: string };
+}
+
+/** Most lines one description takes in the prompt. */
+const DESCRIPTION_LINES = 4;
+
+/** A description as prompt lines: whitespace collapsed, wrapped at word boundaries under `MAX_LINE`, cut after `DESCRIPTION_LINES`. */
+export function wrapDescription(label: string, text: string): string[] {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const lines: string[] = [];
+  let line = `${label}:`;
+  for (const word of words) {
+    const next = `${line} ${word}`;
+    if (next.length < MAX_LINE) {
+      line = next;
+      continue;
+    }
+    lines.push(line);
+    if (lines.length === DESCRIPTION_LINES) return lines;
+    line = clip(`  ${word}`, MAX_LINE - 1);
+  }
+  lines.push(line);
+  return lines.slice(0, DESCRIPTION_LINES);
+}
+
+/** The descriptions a context holds for a target: the recipe's and the target's table's. */
+export function descriptionsFor(target: HealTarget, ctx: Pick<HealContext, 'recipeDescription' | 'tableDescriptions'>): PromptDescriptions {
+  const table = 'table' in target && target.table ? target.table : undefined;
+  const text = table ? ctx.tableDescriptions?.[table] : undefined;
+  return {
+    ...(ctx.recipeDescription ? { recipe: ctx.recipeDescription } : {}),
+    ...(table && text ? { table: { name: table, text } } : {}),
+  };
+}
+
 /**
  * The chat messages asking for a pick: the task and answer contract, then the
  * field, its recorded fingerprint, the last known value, and the numbered
@@ -219,9 +257,12 @@ export function buildPrompt(
   fingerprint: Fingerprint | undefined,
   sample: string | null,
   candidates: readonly AnnotatedNode[],
+  descriptions: PromptDescriptions = {},
 ): ChatMessage[] {
   const user = [
     ...describeTarget(target),
+    ...(descriptions.recipe ? wrapDescription('Recipe', descriptions.recipe) : []),
+    ...(descriptions.table ? wrapDescription(`Table ${descriptions.table.name}`, descriptions.table.text) : []),
     ...describeFingerprint(fingerprint),
     ...(sample ? [clip(`Last value: ${sample.replace(/\s+/g, ' ')}`, MAX_LINE - 1)] : []),
     'Candidates (#index <tag attributes> "own text" @ ancestors):',
@@ -250,7 +291,7 @@ export function promptTokens(llm: Pick<LlmPort, 'estimateTokens'>, messages: rea
 export function pruneCandidates(
   root: AnnotatedNode,
   target: HealTarget,
-  ctx: Pick<HealContext, 'outerAncestors' | 'viewport'>,
+  ctx: Pick<HealContext, 'outerAncestors' | 'viewport' | 'recipeDescription' | 'tableDescriptions'>,
   llm: Pick<LlmPort, 'estimateTokens' | 'contextTokens'>,
 ): ModelCandidate[] {
   const fp = target.fingerprint;
@@ -261,7 +302,7 @@ export function pruneCandidates(
   if (fp) pool.sort((a, b) => b.score! - a.score! || a.order - b.order);
 
   const budget = Math.floor(PROMPT_BUDGET * llm.contextTokens);
-  let used = promptTokens(llm, buildPrompt(target, fp, sampleOf(target), []));
+  let used = promptTokens(llm, buildPrompt(target, fp, sampleOf(target), [], descriptionsFor(target, ctx)));
   const out: ModelCandidate[] = [];
   for (const { node, score } of pool) {
     if (out.length >= MAX_CANDIDATES) break;
@@ -322,7 +363,7 @@ export function modelResolver(llm: LlmPort, opts: ModelResolverOptions): Resolve
         note('no candidate elements in scope');
         return null;
       }
-      const messages = buildPrompt(target, target.fingerprint, sampleOf(target), candidates.map((c) => c.node));
+      const messages = buildPrompt(target, target.fingerprint, sampleOf(target), candidates.map((c) => c.node), descriptionsFor(target, ctx));
       const answer = await completeJson(llm, messages, PickSchema, { maxTokens: opts.maxTokens ?? 200, noThinking: true });
       if (!answer.ok) {
         if (TRANSPORT_FAILURES.has(answer.error.kind)) {

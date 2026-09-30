@@ -103,6 +103,10 @@ export interface HealContext {
   viewport?: Viewport;
   /** Record why a rung declined the target, for the field's report. */
   note?(target: HealTarget, text: string): void;
+  /** The recipe's `description`, for the model prompt. */
+  recipeDescription?: string;
+  /** Descriptions of the recipe's described tables, by table name. */
+  tableDescriptions?: Readonly<Record<string, string>>;
 }
 
 /** One rung of the healing ladder. */

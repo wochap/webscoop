@@ -3,6 +3,7 @@ import { containersFor, excludeContainers, extractPage, listParent, resolveFirst
 import type { ElementRef, InteractiveSession, PageInfo, SerializedElement, StoragePort } from '../ports';
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
+import { DESCRIPTION_MAX } from '../recipe/constants';
 import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import { replaySteps } from '../steps/replay';
@@ -46,6 +47,7 @@ import {
 import { RecorderEmitter } from './events';
 import {
   currentTable,
+  descriptionKey,
   HOST_BINDING,
   parsePageMessage,
   scopeForTable,
@@ -279,6 +281,7 @@ export class RecorderController {
       selectorError: null,
       urlError: null,
       varError: null,
+      descriptionError: null,
       openedUrl: '',
       repick: repickContext ? repickContext.index : null,
       repickStep: null,
@@ -698,6 +701,16 @@ export class RecorderController {
       case 'draft.setName':
         this.apply({ type: 'setName', name: msg.name });
         return;
+      case 'draft.setDescription': {
+        const key = descriptionKey(msg.target);
+        if (msg.text.trim().length > DESCRIPTION_MAX) {
+          this.current = { ...this.current, descriptionError: { key, message: `a description is at most ${DESCRIPTION_MAX} characters` } };
+          return;
+        }
+        this.apply({ type: 'setDescription', target: msg.target, text: msg.text });
+        if (this.current.descriptionError?.key === key) this.current = { ...this.current, descriptionError: null };
+        return;
+      }
       case 'draft.setHumanize':
         this.apply({ type: 'setHumanize', on: msg.on });
         return;

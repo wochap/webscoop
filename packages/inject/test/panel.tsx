@@ -18,7 +18,7 @@ export function withTable(draft: Draft, patch: Partial<DraftTable>): Draft {
 }
 
 export function baseState(draft: Draft = newDraft(), openedUrl = 'http://127.0.0.1:4777/catalog?cat=shoes&tier=0'): RecorderState {
-  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, urlError: null, varError: null, openedUrl, repick: null, repickStep: null, repickContext: null, guardContext: null, notice: null, otherLists: [], test: null, saved: null, busy: null, error: null, panel: { collapsed: { recipe: false, steps: false, pagination: true } } };
+  return { url: 'http://127.0.0.1:4777/catalog?tier=0', draft, selected: null, proposal: null, levelPick: null, editing: null, pendingSelect: null, selectorError: null, urlError: null, varError: null, descriptionError: null, openedUrl, repick: null, repickStep: null, repickContext: null, guardContext: null, notice: null, otherLists: [], test: null, saved: null, busy: null, error: null, panel: { collapsed: { recipe: false, steps: false, pagination: true } } };
 }
 
 /** Real host states from the controller on the tier 0 fake page. */

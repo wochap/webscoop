@@ -16,7 +16,7 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
     return el;
   };
   const setValue = (el: HTMLElement, value: string) => {
-    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
     el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
   };

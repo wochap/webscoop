@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
-import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type Draft, type VarValue } from '@webscoop/core/page';
+import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Icon } from './icons';
 import { Toggle } from './items';
@@ -142,8 +142,46 @@ function CommitInput({ value, onCommit, ...rest }: { value: string; onCommit: (v
   );
 }
 
+/**
+ * A multiline description that keeps local text and commits on blur; Esc
+ * restores the value. Enter inserts a line break.
+ */
+export function DescriptionInput({ value, target, label, testId, error }: { value: string | undefined; target: DescriptionTarget; label: string; testId: string; error: string | null }) {
+  const actions = useActions();
+  const [text, setText] = useState(value ?? '');
+  useEffect(() => setText(value ?? ''), [value]);
+  const commit = () => {
+    if (text.trim() !== (value ?? '')) void actions.send({ kind: 'draft.setDescription', target, text });
+  };
+  return (
+    <div className="ws-col" style={{ gap: 4 }}>
+      <textarea
+        className={`ws-input ws-description${error ? ' ws-invalid' : ''}`}
+        rows={2}
+        value={text}
+        placeholder="What this holds, for people and AI models"
+        aria-label={label}
+        data-ws={testId}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            setText(value ?? '');
+          }
+        }}
+      />
+      {error && (
+        <span className="ws-error" data-ws={`${testId}-error`}>
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** One variable: name, value, remove, and where it is used. Removing a used variable asks first. */
-export function VarTableRow({ draft, variable, error }: { draft: Draft; variable: VarValue; error: string | null }) {
+export function VarTableRow({ draft, variable, error, descriptionError = null }: { draft: Draft; variable: VarValue; error: string | null; descriptionError?: string | null }) {
   const actions = useActions();
   const [confirming, setConfirming] = useState(false);
   const usage = varUsage(draft, variable.name);
@@ -167,6 +205,14 @@ export function VarTableRow({ draft, variable, error }: { draft: Draft; variable
           data-ws={`var-input-${name}`}
           onCommit={(value) => void actions.send({ kind: 'draft.setVar', name, value })}
         />
+        <CommitInput
+          className={`ws-var-cell ws-var-description${descriptionError ? ' ws-invalid' : ''}`}
+          value={variable.description ?? ''}
+          placeholder="description"
+          aria-label={`Description of ${name}`}
+          data-ws={`var-description-${name}`}
+          onCommit={(text) => void actions.send({ kind: 'draft.setDescription', target: { kind: 'var', name }, text })}
+        />
         <button
           type="button"
           className="ws-var-remove"
@@ -179,6 +225,11 @@ export function VarTableRow({ draft, variable, error }: { draft: Draft; variable
         </button>
       </div>
       {error && <span className="ws-error ws-var-note">{error}</span>}
+      {descriptionError && (
+        <span className="ws-error ws-var-note" data-ws={`var-description-error-${name}`}>
+          {descriptionError}
+        </span>
+      )}
       {confirming ? (
         <div className="ws-var-confirm" data-ws={`var-confirm-${name}`}>
           <span className="ws-spacer">{`Used in ${where} — replace with its value?`}</span>
@@ -301,6 +352,7 @@ export function RecipeBar({
   draft,
   urlError = null,
   varError = null,
+  descriptionError = null,
   openedUrl = '',
   collapsed = false,
   onCollapse,
@@ -308,6 +360,7 @@ export function RecipeBar({
   draft: Draft;
   urlError?: string | null;
   varError?: { name: string; message: string } | null;
+  descriptionError?: { key: string; message: string } | null;
   openedUrl?: string;
   collapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
@@ -325,6 +378,16 @@ export function RecipeBar({
           <NameInput name={draft.name} error={draft.nameError} />
         </label>
         <div className="ws-col ws-recipe-field">
+          <span className="ws-label">Description</span>
+          <DescriptionInput
+            value={draft.description}
+            target={{ kind: 'recipe' }}
+            label="Recipe description"
+            testId="recipe-description"
+            error={descriptionError?.key === 'recipe' ? descriptionError.message : null}
+          />
+        </div>
+        <div className="ws-col ws-recipe-field">
           <div className="ws-row">
             <span className="ws-label">URL template</span>
             {diff && (
@@ -341,11 +404,18 @@ export function RecipeBar({
             <div className="ws-var-row ws-var-head">
               <span>var</span>
               <span>value</span>
+              <span>description</span>
               <span />
             </div>
           )}
           {draft.vars.map((v) => (
-            <VarTableRow key={v.name} draft={draft} variable={v} error={rowError?.name === v.name ? rowError.message : null} />
+            <VarTableRow
+              key={v.name}
+              draft={draft}
+              variable={v}
+              error={rowError?.name === v.name ? rowError.message : null}
+              descriptionError={descriptionError?.key === `var:${v.name}` ? descriptionError.message : null}
+            />
           ))}
           {addError && (
             <span className="ws-error" data-ws="var-add-error">

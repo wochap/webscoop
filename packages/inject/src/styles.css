@@ -216,6 +216,8 @@
 .ws-input:focus { box-shadow: inset 0 0 0 1px var(--ws-accent); }
 .ws-input.ws-invalid { box-shadow: inset 0 0 0 1px var(--ws-danger); }
 .ws-input-sm { height: 22px; font-size: 11px; }
+.ws-description { height: auto; min-height: 44px; padding: 6px 8px; resize: vertical; font: inherit; line-height: 1.4; }
+.ws-table-description { padding: 0 var(--ws-s3); }
 .ws-error { color: var(--ws-danger); font-size: 11px; }
 
 .ws-card {
@@ -282,7 +284,7 @@
 .ws-rendered-arrow { flex: none; }
 .ws-rendered-value { color: var(--ws-neutral-200); }
 .ws-var-table { display: flex; flex-direction: column; gap: 2px; }
-.ws-var-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
+.ws-var-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
 .ws-var-head { padding: 0 2px 3px; font-size: 10.5px; color: var(--ws-neutral-600); }
 .ws-var-cell {
   height: 24px;

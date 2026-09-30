@@ -1,5 +1,7 @@
 /** Recipe enumerations, kept free of zod so the injected page can import them cheaply. */
 export const SCHEMA_VERSION = 1 as const;
+/** Longest recipe, table, or variable description. */
+export const DESCRIPTION_MAX = 2000;
 
 export const STRATEGIES = ['role', 'testid', 'id', 'text', 'css', 'class', 'xpath'] as const;
 export const STABILITIES = ['stable', 'medium', 'fragile'] as const;

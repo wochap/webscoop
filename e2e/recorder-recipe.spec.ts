@@ -30,3 +30,18 @@ test('turn on Humanize input and save: the recipe has browser.humanize true', as
   expect((await r.closeWindow()).code).toBe(0);
   expect(loadRecipe(await readFile(saved.path!, 'utf8')).browser).toEqual({ humanize: true });
 });
+
+test('describe the recipe and the active table, save, and read both from the file', async ({ scoop }) => {
+  const r = await scoop.record(['--edit', scoop.recipe.name]);
+  await r.fill(ws('recipe-description'), 'Playground catalog\none row per product');
+  await r.until((s) => s.host?.draft.description === 'Playground catalog\none row per product');
+  await r.fill(ws('table-description'), '  table of catalog products  ');
+  await r.until((s) => s.host?.draft.tables[0]?.description === 'table of catalog products');
+  await r.key('Control+s');
+  const saved = await r.until((s) => (s.host?.saved && !s.host.draft.dirty ? s.host.saved : undefined));
+  expect((await r.closeWindow()).code).toBe(0);
+  const recipe = loadRecipe(await readFile(saved.path!, 'utf8'));
+  expect(recipe.description).toBe('Playground catalog\none row per product');
+  expect(recipe.tables).toEqual([expect.objectContaining({ name: 'items', description: 'table of catalog products' })]);
+  expect(recipe.fields).toBeUndefined();
+});

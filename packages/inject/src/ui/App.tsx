@@ -15,7 +15,7 @@ import { Section } from './section';
 import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
-import { TabBar, TableHeader } from './tables';
+import { TabBar, TableDescription, TableHeader } from './tables';
 
 /** Carry out a shortcut against the current state. */
 export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions): void {
@@ -250,6 +250,7 @@ export function ScoopRoot() {
               draft={draft}
               urlError={host.urlError}
               varError={host.varError}
+              descriptionError={host.descriptionError}
               openedUrl={host.openedUrl}
               collapsed={collapsed.recipe}
               onCollapse={collapse('recipe')}
@@ -266,6 +267,7 @@ export function ScoopRoot() {
             />
             <PaginationSection pagination={draft.pagination} collapsed={collapsed.pagination} onCollapse={collapse('pagination')} />
             <TabBar draft={draft} locked={locked} />
+            <TableDescription draft={draft} error={host.descriptionError} />
             <div className="ws-col" style={{ gap: 'var(--ws-s3)' }} data-ws="table-content" data-table={table.name}>
               <TableHeader draft={draft} locked={locked} />
               {table.item && (

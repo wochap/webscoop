@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  DESCRIPTION_MAX,
   FIELD_SCOPES,
   FIELD_TYPES,
   GUARD_KINDS,
@@ -12,7 +13,7 @@ import {
   STRATEGIES,
 } from './constants';
 
-export { FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STEP_KINDS, STEP_WHENS, STOP_RULES, STRATEGIES };
+export { DESCRIPTION_MAX, FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STEP_KINDS, STEP_WHENS, STOP_RULES, STRATEGIES };
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -44,10 +45,14 @@ export const FingerprintSchema = z.object({
   }),
 });
 
+/** Plain text for people and AI models; never changes how a recipe runs. */
+export const DescriptionSchema = z.string().min(1, 'a description cannot be empty').max(DESCRIPTION_MAX, `a description is at most ${DESCRIPTION_MAX} characters`);
+
 export const VarSchema = z.object({
   name: z.string().regex(IDENTIFIER, 'variable names must be identifiers'),
   type: z.literal('string'),
   default: z.string().optional(),
+  description: DescriptionSchema.refine((value) => !/[\r\n]/.test(value), 'a variable description is one line').optional(),
 });
 
 export const ItemSchema = z.object({
@@ -119,6 +124,7 @@ export const StepSchema = z.object({
 /** One flat output: one row per item container, or one row per page without an item block. */
 export const TableSchema = z.object({
   name: z.string().regex(KEBAB, 'table names must be kebab-case'),
+  description: DescriptionSchema.optional(),
   item: ItemSchema.optional(),
   fields: z.array(FieldSchema).min(1, 'a table needs at least one field'),
 });
@@ -190,6 +196,7 @@ const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }))
 const RecipeObjectSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   name: z.string().regex(KEBAB, 'recipe names must be kebab-case'),
+  description: DescriptionSchema.optional(),
   url: z.string().min(1),
   vars: z.array(VarSchema).default([]),
   /** Shorthand for a single table named `items`; a recipe declares either this pair or `tables`. */

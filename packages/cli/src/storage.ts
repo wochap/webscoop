@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { loadRecipe, RecipeError, saveRecipe, tablesOf, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
+import { loadRecipe, RecipeError, saveRecipe, tablesOf, type FieldType, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
 import { CliError } from './exit';
 
 /** Whether a recipe reference is a path rather than a name in the recipes directory. */
@@ -10,6 +10,23 @@ export function isRecipePath(ref: string): boolean {
 
 export interface ListedRecipe extends RecipeSummary {
   path: string;
+  description?: string;
+  vars: { name: string; default?: string; description?: string }[];
+  /** Every table in recipe order; a shorthand recipe lists one table named `items`. */
+  tables: { name: string; description?: string; fields: { name: string; type: FieldType }[] }[];
+}
+
+/** What a listing shows of a recipe beyond its file: descriptions, variables, and tables. */
+function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 'tables'> {
+  return {
+    ...(recipe.description ? { description: recipe.description } : {}),
+    vars: recipe.vars.map((v) => ({ name: v.name, ...(v.default !== undefined ? { default: v.default } : {}), ...(v.description ? { description: v.description } : {}) })),
+    tables: tablesOf(recipe).map((t) => ({
+      name: t.name,
+      ...(t.description ? { description: t.description } : {}),
+      fields: t.fields.map((f) => ({ name: f.name, type: f.type })),
+    })),
+  };
 }
 
 /** Recipes stored as `<name>.json` files in the recipes directory. */
@@ -40,7 +57,7 @@ export class FsStorage implements StoragePort {
       const path = join(this.recipesDir, entry);
       try {
         const [recipe, info] = await Promise.all([this.load(path), stat(path)]);
-        out.push({ name: recipe.name, url: recipe.url, fieldCount: tablesOf(recipe).reduce((n, t) => n + t.fields.length, 0), modified: info.mtime, path });
+        out.push({ name: recipe.name, url: recipe.url, fieldCount: tablesOf(recipe).reduce((n, t) => n + t.fields.length, 0), modified: info.mtime, path, ...catalogOf(recipe) });
       } catch (error) {
         this.warnings.push(error instanceof CliError ? error.message : `${path}: ${(error as Error).message}`);
       }

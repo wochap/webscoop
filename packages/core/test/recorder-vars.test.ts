@@ -122,3 +122,41 @@ describe('recorder variable messages', () => {
     expect(t.controller.draft.vars).toEqual([]);
   });
 });
+
+describe('descriptions', () => {
+  const field = { name: 'title', type: 'text' as const, scope: 'page' as const, selectors: [{ strategy: 'css' as const, value: 'h1', stability: 'medium' as const }], optional: false, key: false, count: null, sample: null };
+  const withField = (draft: Draft): Draft => ({ ...draft, tables: draft.tables.map((t, i) => (i === 0 ? { ...t, fields: [field] } : t)) });
+
+  it('sets, trims, and removes recipe, table, and variable descriptions', () => {
+    let draft = withField(google());
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'recipe' }, text: '  Google results\n one row per result  ' });
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'table', index: 0 }, text: 'search results' });
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'var', name: 'query' }, text: ' search terms ' });
+    expect(draft.description).toBe('Google results\n one row per result');
+    expect(draft.tables[0]!.description).toBe('search results');
+    expect(draft.vars[0]!.description).toBe('search terms');
+    expect(draft.dirty).toBe(true);
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'recipe' }, text: '   ' });
+    expect('description' in draft).toBe(false);
+    expect(draftToRecipe(draft).description).toBeUndefined();
+  });
+
+  it('keeps a variable description through a rename and on save', () => {
+    let draft = withField(google());
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'var', name: 'query' }, text: 'search terms' });
+    draft = reduceDraft(draft, { type: 'renameVar', from: 'query', to: 'q' });
+    expect(draft.vars).toEqual([{ name: 'q', value: 'top llms', description: 'search terms' }]);
+    expect(draftToRecipe(draft).vars).toEqual([{ name: 'q', type: 'string', default: 'top llms', description: 'search terms' }]);
+  });
+
+  it('refuses a description over the limit into descriptionError and keeps the previous one', async () => {
+    const t = await harness(tier0Snapshot(), catalog());
+    await t.send({ kind: 'draft.setDescription', target: { kind: 'table', index: 0 }, text: 'products' });
+    await t.send({ kind: 'draft.setDescription', target: { kind: 'table', index: 0 }, text: 'x'.repeat(2001) });
+    expect(t.controller.state.descriptionError).toEqual({ key: 'table:0', message: 'a description is at most 2000 characters' });
+    expect(t.controller.state.draft.tables[0]!.description).toBe('products');
+    await t.send({ kind: 'draft.setDescription', target: { kind: 'table', index: 0 }, text: 'cards' });
+    expect(t.controller.state.descriptionError).toBeNull();
+    expect(t.controller.state.draft.tables[0]!.description).toBe('cards');
+  });
+});

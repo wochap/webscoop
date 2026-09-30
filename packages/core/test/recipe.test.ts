@@ -557,3 +557,52 @@ describe('recipe browser block in the recorder', () => {
     expect(draftToRecipe(draftFromRecipe(recipe, { category: 'books' })).browser).toEqual(browser);
   });
 });
+
+describe('descriptions', () => {
+  const described = (): RecipeInput => {
+    const { fields: _fields, ...rest } = base();
+    return {
+      ...rest,
+      description: 'Bing web search results for a query',
+      vars: [{ name: 'category', type: 'string', description: 'search terms' }],
+      tables: [
+        {
+          name: 'results',
+          description: 'table of search results\none row per organic result',
+          fields: [{ name: 'title', type: 'text', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }],
+        },
+      ],
+    } as RecipeInput;
+  };
+
+  it('accepts recipe, table, and variable descriptions and keeps them through a save', () => {
+    const result = validateRecipe(described());
+    expect(result.ok).toBe(true);
+    const saved = JSON.parse(saveRecipe(loadRecipe(JSON.stringify(described()), '/r/shop.json')));
+    expect(saved.description).toBe('Bing web search results for a query');
+    expect(saved.tables[0].description).toBe('table of search results\none row per organic result');
+    expect(saved.vars[0].description).toBe('search terms');
+  });
+
+  it('rejects an empty table description, naming the table', () => {
+    const input = described();
+    input.tables![0]!.description = '';
+    expect(errorsOf(input).map((e) => e.path)).toEqual(['$.tables[0].description']);
+  });
+
+  it('rejects a multiline variable description, naming the variable', () => {
+    const input = described();
+    input.vars![0]!.description = 'search\nterms';
+    expect(errorsOf(input).map((e) => e.path)).toEqual(['$.vars[0].description']);
+  });
+
+  it('rejects a description over the limit', () => {
+    expect(errorsOf({ ...described(), description: 'x'.repeat(2001) }).map((e) => e.path)).toEqual(['$.description']);
+  });
+
+  it('accepts a recipe without descriptions unchanged', () => {
+    const result = validateRecipe(base());
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.recipe.description).toBeUndefined();
+  });
+});

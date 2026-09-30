@@ -4,6 +4,7 @@ import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, Ste
 import { SHORTHAND_TABLE, tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import type {
+  DescriptionTarget,
   Draft,
   DraftField,
   DraftItem,
@@ -127,7 +128,7 @@ export const DEFAULT_PAGINATION: DraftPagination = {
  * written with `tables`.
  */
 export function isShorthand(draft: Pick<Draft, 'tables' | 'form'>): boolean {
-  return draft.form === 'shorthand' && draft.tables.length === 1 && draft.tables[0]!.name === SHORTHAND_TABLE;
+  return draft.form === 'shorthand' && draft.tables.length === 1 && draft.tables[0]!.name === SHORTHAND_TABLE && !draft.tables[0]!.description;
 }
 
 function recipeItem(item: DraftItem) {
@@ -163,13 +164,21 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   const recipe: RecipeInput = {
     schemaVersion: 1,
     name: draft.name,
+    ...(draft.description ? { description: draft.description } : {}),
     url: draft.url,
     vars: draft.vars
       .filter((v) => declared.includes(v.name))
-      .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}) })),
+      .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}), ...(v.description ? { description: v.description } : {}) })),
     ...(shorthand
       ? { fields: first.fields.map(recipeField) }
-      : { tables: draft.tables.map((t) => ({ name: t.name, ...(t.item ? { item: recipeItem(t.item) } : {}), fields: t.fields.map(recipeField) })) }),
+      : {
+          tables: draft.tables.map((t) => ({
+            name: t.name,
+            ...(t.description ? { description: t.description } : {}),
+            ...(t.item ? { item: recipeItem(t.item) } : {}),
+            fields: t.fields.map(recipeField),
+          })),
+        }),
   };
   if (draft.steps.length > 0) {
     recipe.steps = draft.steps.map((s) => ({
@@ -263,12 +272,17 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     ...(s.label ? { label: s.label } : {}),
     count: null,
   }));
-  const vars = draftVariables({ url: recipe.url, steps }).map((name) => ({
-    name,
-    value: values[name] ?? recipe.vars.find((v) => v.name === name)?.default ?? '',
-  }));
+  const vars = draftVariables({ url: recipe.url, steps }).map((name) => {
+    const declared = recipe.vars.find((v) => v.name === name);
+    return {
+      name,
+      value: values[name] ?? declared?.default ?? '',
+      ...(declared?.description ? { description: declared.description } : {}),
+    };
+  });
   const tables: DraftTable[] = tablesOf(recipe).map((table) => ({
     name: table.name,
+    ...(table.description ? { description: table.description } : {}),
     item: table.item
       ? {
           selectors: table.item.selectors.map(bare),
@@ -311,6 +325,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
         };
   return validateDraft({
     name: recipe.name,
+    ...(recipe.description ? { description: recipe.description } : {}),
     url: recipe.url,
     vars,
     tables,
@@ -429,6 +444,8 @@ export type DraftAction =
   | { type: 'moveStep'; from: number; to: number }
   | { type: 'setStepCounts'; counts: (number | null)[] }
   | { type: 'setName'; name: string }
+  /** Set a description, trimmed; empty removes it. Length is checked by the session. */
+  | { type: 'setDescription'; target: DescriptionTarget; text: string }
   /** Set `browser.humanize`, or remove it and drop an empty `browser` block. */
   | { type: 'setHumanize'; on: boolean }
   | { type: 'setVar'; name: string; value: string }
@@ -441,6 +458,12 @@ export type DraftAction =
   /** Remove a variable; each use becomes its value, encoded in the template and raw in steps. */
   | { type: 'removeVar'; name: string }
   | { type: 'markSaved' };
+
+/** The object with its `description` set to `text`, or removed when `text` is empty. */
+function withDescription<T extends { description?: string }>(value: T, text: string): T {
+  const { description: _, ...rest } = value;
+  return (text ? { ...rest, description: text } : rest) as T;
+}
 
 /** Actions that only refresh live data and do not make the draft dirty. */
 const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved', 'selectTable']);
@@ -726,6 +749,19 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'setName':
       next = { ...draft, name: action.name };
       break;
+    case 'setDescription': {
+      const text = action.text.trim();
+      const target = action.target;
+      if (target.kind === 'recipe') next = withDescription(draft, text);
+      else if (target.kind === 'table') {
+        if (!draft.tables[target.index]) return draft;
+        next = { ...draft, tables: draft.tables.map((t, i) => (i === target.index ? withDescription(t, text) : t)) };
+      } else {
+        if (!draft.vars.some((v) => v.name === target.name)) return draft;
+        next = { ...draft, vars: draft.vars.map((v) => (v.name === target.name ? withDescription(v, text.replace(/\s*[\r\n]+\s*/g, ' ')) : v)) };
+      }
+      break;
+    }
     case 'setHumanize': {
       const { humanize: _, ...rest } = draft.browser ?? {};
       const browser = action.on ? { ...rest, humanize: true } : rest;

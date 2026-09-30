@@ -14,6 +14,11 @@ import {
   STRATEGIES,
 } from '../recipe/constants';
 
+/** Key of a description edit target, as used in `descriptionError`. */
+export function descriptionKey(target: DescriptionTarget): string {
+  return target.kind === 'recipe' ? 'recipe' : target.kind === 'table' ? `table:${target.index}` : `var:${target.name}`;
+}
+
 /**
  * Messages between the injected recorder page and the host process.
  * Page to host goes through the `__webscoopHost` binding, which returns a
@@ -155,6 +160,7 @@ export const VarValueSchema = z.object({
   value: z.string(),
   /** Added with "+ var": kept in the draft while nothing uses it, never saved unused. */
   added: z.optional(z.literal(true)),
+  description: z.optional(z.string()),
 });
 
 export const DraftFieldSchema = z.object({
@@ -232,8 +238,16 @@ export const ErrorEntrySchema = z.object({
 });
 
 /** One table of the draft: its name, item container, and fields. */
+/** Which description an edit sets: the recipe's, a table's by index, or a variable's by name. */
+export const DescriptionTargetSchema = z.union([
+  z.object({ kind: z.literal('recipe') }),
+  z.object({ kind: z.literal('table'), index: index() }),
+  z.object({ kind: z.literal('var'), name: z.string() }),
+]);
+
 export const DraftTableSchema = z.object({
   name: z.string(),
+  description: z.optional(z.string()),
   item: z.nullable(DraftItemSchema),
   fields: z.array(DraftFieldSchema),
   /** Why the table does not validate as a whole, such as an invalid name or no fields. */
@@ -248,6 +262,7 @@ export const DRAFT_FORMS = ['shorthand', 'tables'] as const;
 export const DraftSchema = z.object({
   name: z.string(),
   nameError: z.optional(z.string()),
+  description: z.optional(z.string()),
   url: z.string(),
   vars: z.array(VarValueSchema),
   /** Every table, in strip order; there is always at least one. */
@@ -411,6 +426,8 @@ export const RecorderStateSchema = z.object({
   urlError: z._default(z.nullable(z.string()), null),
   /** Why the last variable add or rename was refused; `name` is the row (the new name for an add). */
   varError: z._default(z.nullable(z.object({ name: z.string(), message: z.string() })), null),
+  /** Why the last description edit was refused; `key` is `recipe`, `table:<index>`, or `var:<name>`. */
+  descriptionError: z._default(z.nullable(z.object({ key: z.string(), message: z.string() })), null),
   /** The URL the session itself last opened: at start, on Reopen, or the page it attached to. */
   openedUrl: z._default(z.string(), ''),
   /** Set while an interactive run is paused on a guard. */
@@ -551,6 +568,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   /** Collapse or expand a panel section; session state only. */
   msg('panel.setCollapsed', { section: z.enum(PANEL_SECTIONS), collapsed: z.boolean() }),
   msg('draft.setName', { name: z.string() }),
+  /** Set a description: trimmed, empty removes it, too long is refused into `descriptionError`. */
+  msg('draft.setDescription', { target: DescriptionTargetSchema, text: z.string() }),
   /** Turn humanized input on for runs of the recipe, or remove the setting. */
   msg('draft.setHumanize', { on: z.boolean() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
@@ -608,6 +627,7 @@ export type ItemLadderRow = z.infer<typeof ItemLadderRowSchema>;
 export type ParentLadderRow = z.infer<typeof ParentLadderRowSchema>;
 export type LevelPick = z.infer<typeof LevelPickSchema>;
 export type VarValue = z.infer<typeof VarValueSchema>;
+export type DescriptionTarget = z.infer<typeof DescriptionTargetSchema>;
 export type DraftField = z.infer<typeof DraftFieldSchema>;
 export type DraftItem = z.infer<typeof DraftItemSchema>;
 export type DraftTable = z.infer<typeof DraftTableSchema>;

@@ -239,6 +239,7 @@ export async function resolveDocumentTarget(session: Session, recipe: Recipe, ta
     session,
     cache: new SnapshotCache(session),
     threshold: recipe.healing.fuzzyThreshold,
+    recipe,
     note: (_, text) => notes.push(text),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
   });
@@ -347,7 +348,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   const context = (
     extra: { within?: ElementRef; containers?: readonly ElementRef[]; probe?: () => Promise<ElementRef | undefined>; outerAncestors?: readonly string[] } = {},
   ): HealContext =>
-    healContext({ session, cache, threshold, note, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
+    healContext({ session, cache, threshold, note, recipe, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
 
   const settle = (target: HealTarget, ctx: HealContext) => settleWith(target, ctx, opts.promote ?? false);
   const reused = opts.resolved;

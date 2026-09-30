@@ -1,3 +1,5 @@
+import type { Recipe } from '../recipe/schema';
+import { tablesOf } from '../recipe/tables';
 import type { ElementRef, SerializedElement, Session } from '../ports';
 import { annotate, type AnnotatedNode } from '../selectors/annotated';
 import type { Viewport } from './score';
@@ -33,7 +35,9 @@ export function healContext(opts: {
   outerAncestors?: readonly string[];
   viewport?: Viewport;
   note?: (target: HealTarget, text: string) => void;
+  recipe?: Pick<Recipe, 'description' | 'item' | 'fields' | 'tables'>;
 }): HealContext {
+  const described = opts.recipe ? tablesOf(opts.recipe).filter((t) => t.description) : [];
   return {
     session: opts.session,
     ...(opts.within ? { within: opts.within } : {}),
@@ -44,5 +48,7 @@ export function healContext(opts: {
     threshold: opts.threshold,
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
     ...(opts.note ? { note: opts.note } : {}),
+    ...(opts.recipe?.description ? { recipeDescription: opts.recipe.description } : {}),
+    ...(described.length > 0 ? { tableDescriptions: Object.fromEntries(described.map((t) => [t.name, t.description!])) } : {}),
   };
 }

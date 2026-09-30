@@ -179,3 +179,39 @@ describe('collapsed recipe', () => {
     expect(summary.querySelector('[data-ws="recipe-summary-var-email"]')).toBeNull();
   });
 });
+
+describe('descriptions', () => {
+  it('commits the recipe description on blur, trimmed by the host, and shows a refused one inline', () => {
+    const p = renderPanel(baseState({ ...newDraft(), description: 'Shoes' }));
+    const input = p.q('recipe-description') as HTMLTextAreaElement;
+    expect(input.tagName).toBe('TEXTAREA');
+    expect(input.value).toBe('Shoes');
+    fireEvent.change(input, { target: { value: 'Shoe catalog\none row per product' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(p.sent).toEqual([]);
+    fireEvent.blur(input);
+    expect(p.sent).toEqual([{ kind: 'draft.setDescription', target: { kind: 'recipe' }, text: 'Shoe catalog\none row per product' }]);
+    cleanup();
+    const refused = renderPanel({ ...baseState(), descriptionError: { key: 'recipe', message: 'a description is at most 2000 characters' } });
+    expect(refused.q('recipe-description-error')!.textContent).toContain('2000');
+  });
+
+  it('edits the active table description under the tab bar', () => {
+    const draft = newDraft();
+    const p = renderPanel(baseState({ ...draft, tables: [{ ...draft.tables[0]!, description: 'products' }] }));
+    const input = p.q('table-description') as HTMLTextAreaElement;
+    expect(input.value).toBe('products');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(p.sent).toEqual([{ kind: 'draft.setDescription', target: { kind: 'table', index: 0 }, text: '' }]);
+  });
+
+  it('edits a variable description in its row as a single line', () => {
+    const p = renderPanel(baseState());
+    const input = p.q('var-description-category') as HTMLInputElement;
+    expect(input.tagName).toBe('INPUT');
+    fireEvent.change(input, { target: { value: 'product category' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(p.sent).toEqual([{ kind: 'draft.setDescription', target: { kind: 'var', name: 'category' }, text: 'product category' }]);
+  });
+});

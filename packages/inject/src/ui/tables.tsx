@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { tableMode, type Draft, type DraftTable, type TableMode } from '@webscoop/core/page';
 import { useActions, useSnapshot } from './context';
 import { Icon, type IconName } from './icons';
+import { DescriptionInput } from './recipe';
 import { Kbd } from './shell';
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -426,6 +427,24 @@ export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }
           {table.error}
         </span>
       )}
+    </div>
+  );
+}
+
+/** The active table's description, directly under the tab bar. */
+export function TableDescription({ draft, error }: { draft: Draft; error: { key: string; message: string } | null }) {
+  const index = draft.activeTable;
+  const table = draft.tables[index]!;
+  return (
+    <div className="ws-table-description" data-ws="table-description-row">
+      <DescriptionInput
+        key={index}
+        value={table.description}
+        target={{ kind: 'table', index }}
+        label={`Description of table ${table.name}`}
+        testId="table-description"
+        error={error?.key === `table:${index}` ? error.message : null}
+      />
     </div>
   );
 }

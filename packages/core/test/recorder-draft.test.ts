@@ -124,3 +124,46 @@ describe('pagination detection', () => {
     expect(detectPagination({ tag: 'div', attrs: {}, role: 'button' }, 'http://h.test/catalog')).toEqual({ kind: 'more' });
   });
 });
+
+describe('draft descriptions', () => {
+  const selectors = [{ strategy: 'css', value: 'h1', stability: 'medium' }] as const;
+
+  it('round-trips recipe, table, and variable descriptions', () => {
+    const loaded = validateRecipe({
+      schemaVersion: 1,
+      name: 'bing-search',
+      description: 'Bing web search results\nfor a query',
+      url: 'https://bing.com/search?q={query}',
+      vars: [{ name: 'query', type: 'string', description: 'search terms' }],
+      tables: [{ name: 'results', description: 'one row per result', fields: [{ name: 'title', type: 'text', selectors }] }],
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const draft = DraftSchema.parse(draftFromRecipe(loaded.recipe));
+    const saved = draftToRecipe(draft);
+    expect(saved.description).toBe('Bing web search results\nfor a query');
+    expect(saved.vars).toEqual([{ name: 'query', type: 'string', description: 'search terms' }]);
+    expect(saved.tables![0]!.description).toBe('one row per result');
+  });
+
+  it('loads a shorthand recipe with no table description and saves it as shorthand', () => {
+    const loaded = validateRecipe({ schemaVersion: 1, name: 'shop', description: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors }] });
+    if (!loaded.ok) throw new Error('invalid');
+    const draft = draftFromRecipe(loaded.recipe);
+    expect(draft.tables[0]!.description).toBeUndefined();
+    const saved = draftToRecipe(draft);
+    expect(saved.fields).toHaveLength(1);
+    expect(saved.description).toBe('shop');
+  });
+
+  it('saves a described items table in the tables form', () => {
+    let draft = newDraft();
+    draft = { ...draft, tables: [{ ...draft.tables[0]!, name: 'items', fields: [{ name: 'title', type: 'text', scope: 'page', selectors: [...selectors], optional: false, key: false, count: null, sample: null }] }] };
+    expect(draftToRecipe(draft).fields).toHaveLength(1);
+    draft = reduceDraft(draft, { type: 'setDescription', target: { kind: 'table', index: 0 }, text: 'product cards' });
+    const saved = draftToRecipe(draft);
+    expect(saved.fields).toBeUndefined();
+    expect(saved.item).toBeUndefined();
+    expect(saved.tables).toEqual([expect.objectContaining({ name: 'items', description: 'product cards' })]);
+  });
+});

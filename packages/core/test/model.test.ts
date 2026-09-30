@@ -6,6 +6,8 @@ import {
   descendantsOf,
   estimateTokens,
   fingerprint,
+  healContext,
+  descriptionsFor,
   LlmError,
   MAX_CANDIDATES,
   modelResolver,
@@ -104,6 +106,46 @@ describe('pruneCandidates', () => {
 });
 
 describe('prompt', () => {
+  const described = field('title', 'text', { table: 'results' });
+  const userOf = (descriptions: Parameters<typeof buildPrompt>[4]) => buildPrompt(described, undefined, null, [], descriptions)[1]!.content;
+
+  it('shows the recipe and table descriptions after the target', () => {
+    const user = userOf({ recipe: 'Google  search\n results', table: { name: 'results', text: 'table of google search results' } });
+    expect(user).toContain('Field: title\nType: text\nRecipe: Google search results\nTable results: table of google search results\nRecorded element');
+  });
+
+  it('has no description lines without descriptions', () => {
+    const user = userOf({});
+    expect(user).not.toMatch(/^(Recipe|Table)/m);
+  });
+
+  it('bounds a 2000 character description to 4 lines under the limit', () => {
+    const text = Array.from({ length: 400 }, (_, i) => `w${i}`).join(' ').padEnd(2000, 'x').slice(0, 2000);
+    const lines = userOf({ table: { name: 'results', text } }).split('\n');
+    const start = lines.findIndex((l) => l.startsWith('Table results:'));
+    const end = lines.indexOf('Recorded element: unknown');
+    expect(end - start).toBe(4);
+    for (const line of lines) expect(line.length, line).toBeLessThan(160);
+  });
+
+  it('takes the descriptions from the recipe through the heal context', () => {
+    const recipe = fingerprintedRecipe();
+    const { item, fields, ...rest } = recipe;
+    const ctx = healContext({
+      session: {} as never,
+      cache: {} as never,
+      threshold: 0.7,
+      recipe: { ...rest, description: 'catalog', tables: [{ name: 'results', description: 'products', ...(item ? { item } : {}), fields: fields! }, { name: 'page', fields: fields! }] },
+    });
+    expect(ctx.recipeDescription).toBe('catalog');
+    expect(ctx.tableDescriptions).toEqual({ results: 'products' });
+    expect(descriptionsFor(described, ctx)).toEqual({ recipe: 'catalog', table: { name: 'results', text: 'products' } });
+    expect(descriptionsFor(field('title', 'text', { table: 'page' }), ctx)).toEqual({ recipe: 'catalog' });
+    const bare = healContext({ session: {} as never, cache: {} as never, threshold: 0.7, recipe: fingerprintedRecipe() });
+    expect(bare.recipeDescription).toBeUndefined();
+    expect(bare.tableDescriptions).toBeUndefined();
+  });
+
   it('is identical for two runs on the same snapshot, and every line is under 160 characters', () => {
     const long = 'A very long product description that goes on and on '.repeat(6);
     const html = () =>
@@ -203,6 +245,13 @@ describe('modelResolver on tier 3', () => {
     expect(new Set(asked).size).toBe(asked.length);
     expect(asked).toContain('price');
     expect(llm.requests[0]!.opts).toMatchObject({ json: true, noThinking: true, maxTokens: 200 });
+  });
+
+  it('sends the recipe description to the model', async () => {
+    const llm = mockFromScript(TIER3_SCRIPT);
+    await run({ ...fingerprintedRecipe(), description: 'Playground catalog products' }, llm).result;
+    expect(llm.requests.length).toBeGreaterThan(0);
+    for (const r of llm.requests) expect(r.prompt).toContain('Recipe: Playground catalog products');
   });
 
   it('ignores a pick below confidence 0.5', async () => {
