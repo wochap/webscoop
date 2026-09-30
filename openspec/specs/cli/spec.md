@@ -116,7 +116,7 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 - **THEN** the recipe's DESCRIPTION column reads `Google results`
 
 ### Requirement: `doctor` command
-`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, and the configured LLM endpoint if any. When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.
+`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, the configured LLM endpoint if any, and the configured hooks as one line per event with its number of commands (or a line saying no hooks are configured). When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.
 
 #### Scenario: No display
 - **WHEN** neither `WAYLAND_DISPLAY` nor `DISPLAY` is set
@@ -129,6 +129,10 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 #### Scenario: Endpoint down
 - **WHEN** an endpoint is configured but refuses connections
 - **THEN** doctor prints a warning naming the endpoint and still exits 0 when display and Chromium are fine
+
+#### Scenario: Hooks listed
+- **WHEN** the config has two commands for `attention.needed` and one for `browser.started`
+- **THEN** doctor prints a line for `attention.needed` with 2 commands and a line for `browser.started` with 1 command
 
 ### Requirement: File locations
 The CLI SHALL use XDG paths: recipes under `$XDG_DATA_HOME/webscoop/recipes/`, browser profiles under `$XDG_DATA_HOME/webscoop/profiles/`, config at `$XDG_CONFIG_HOME/webscoop/config.json`. When the XDG variables are unset, `~/.local/share` and `~/.config` SHALL be used. `WEBSCOOP_HOME` SHALL override both roots when set, so tests can isolate state.
@@ -286,17 +290,6 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 #### Scenario: Skip steps
 - **WHEN** `webscoop run shop --skip-steps` runs the same recipe
 - **THEN** no step is replayed and the run reports the fields as missing behind the gate
-
-### Requirement: Window flags and config
-`webscoop run` and `webscoop test` SHALL accept `--show` (never hide) and `--hide` (hide even when config disables it, if a provider detects). The config file MAY declare `window.provider` (`auto` default, `hyprland`, `none`, or a user provider name) and `window.providers`. `record` SHALL never hide.
-
-#### Scenario: Config disables hiding
-- **WHEN** `window.provider` is `none` and `webscoop run shop` starts on Hyprland
-- **THEN** the window stays visible
-
-#### Scenario: Force hide
-- **WHEN** `window.provider` is `none` and `--hide` is passed on Hyprland
-- **THEN** the window is hidden
 
 ### Requirement: `export` command
 `webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. Recipes with any number of tables SHALL be accepted. The command SHALL NOT open a browser and SHALL NOT require a display.
@@ -523,6 +516,7 @@ The CLI package SHALL ship a zsh completion function named `_webscoop`. It SHALL
 - the subcommands, each with a short description
 - every option of each subcommand, including negated forms such as `--no-heal`
 - fixed option values: `ts` and `py` for `--format`; `1` and `all` for `--pages`
+- `show` and `hide` for the `browser` subcommand
 - recipe names for the `<recipe>` argument of `run`, `test`, `edit`, `export`, and `bench`, and for `record --edit`, alongside ordinary file paths
 - profile names for `--profile`
 
@@ -530,11 +524,11 @@ Recipe names SHALL be the `.json` files in the recipes directory without the ext
 
 #### Scenario: Subcommands
 - **WHEN** the user types `webscoop ` and presses TAB
-- **THEN** `run`, `test`, `record`, `edit`, `recipes`, `export`, `bench`, and `doctor` are offered with descriptions
+- **THEN** `run`, `test`, `record`, `edit`, `recipes`, `export`, `bench`, `browser`, and `doctor` are offered with descriptions
 
 #### Scenario: Flags of a subcommand
 - **WHEN** the user types `webscoop run shop --` and presses TAB
-- **THEN** every option of `run` is offered, including `--no-heal`, `--humanize`, and `--show`
+- **THEN** every option of `run` is offered, including `--no-heal` and `--humanize`, and `--show` and `--hide` are not offered
 
 #### Scenario: Recipe names
 - **WHEN** the recipes directory holds `shop.json` and `news.json` and the user types `webscoop run ` and presses TAB
@@ -555,3 +549,17 @@ Recipe names SHALL be the `.json` files in the recipes directory without the ext
 #### Scenario: Installed with the Nix package
 - **WHEN** the Nix package is built
 - **THEN** `_webscoop` is installed under `share/zsh/site-functions`
+
+### Requirement: Extra browser arguments
+The config file MAY declare `browser.args`, a list of strings passed as extra Chromium command line arguments to every browser that `run`, `test`, `record`, `edit`, and `bench` launch. With no `browser.args`, no extra arguments SHALL be passed.
+
+#### Scenario: Window class for a window manager rule
+- **WHEN** the config has `"browser": { "args": ["--class=webscoop"] }` and `webscoop run shop` starts
+- **THEN** the Chromium main process command line contains `--class=webscoop`
+
+### Requirement: Leftover window config
+A config file that declares a `window` block SHALL load, with one stderr warning per command saying that `window` is no longer supported and pointing to `hooks`. The block SHALL be ignored.
+
+#### Scenario: Old config still loads
+- **WHEN** the config declares `"window": { "provider": "hyprland" }` and `webscoop run shop` starts
+- **THEN** stderr has the warning, no window is hidden, and the run proceeds

@@ -150,11 +150,11 @@ The runner SHALL produce a run report available to the CLI with: start and end t
 - **THEN** the summary line says 6 rows were dropped for missing fields, the report's dropped count is 6, and `url` has status `partial` with the 6 container indexes
 
 ### Requirement: Run events
-The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `step.replayed`, `step.skipped`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `run.done`, `run.failed`. `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, and `row.emitted` SHALL carry the table name. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`. Rows of a page SHALL be emitted table by table in recipe order.
+The runner SHALL emit typed events during a run: `browser.started`, `run.start`, `page.loaded`, `guard.raised`, `guard.cleared`, `guard.timeout`, `step.replayed`, `step.skipped`, `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, `row.emitted`, `page.done`, `page.advanced`, `pagination.stopped`, `recipe.saved`, `attention.needed`, `attention.resolved`, `run.done`, `run.failed`, `browser.closed`. `browser.started` SHALL carry the browser main process id when known. `attention.needed` SHALL be emitted right after `guard.raised` with reason `guard`, and right after `repick.requested` with reason `repick`; `attention.resolved` SHALL be emitted when that guard clears or times out, when that re-pick is answered, or when the run ends while attention is open, so every `attention.needed` is followed by exactly one `attention.resolved` before `run.done` or `run.failed`. `field.resolved`, `field.healed`, `repick.requested`, `repick.resolved`, and `row.emitted` SHALL carry the table name. Consumers SHALL be able to subscribe without changing runner behavior. JSONL output SHALL be driven by `row.emitted`. Rows of a page SHALL be emitted table by table in recipe order.
 
 #### Scenario: Event order
 - **WHEN** a run succeeds on one page
-- **THEN** events are observed in the order `run.start`, `page.loaded`, `field.resolved` (one or more), `row.emitted` (one or more), `page.done`, `pagination.stopped`, `run.done`
+- **THEN** events are observed in the order `browser.started`, `run.start`, `page.loaded`, `field.resolved` (one or more), `row.emitted` (one or more), `page.done`, `pagination.stopped`, `run.done`, `browser.closed`
 
 #### Scenario: Healing events
 - **WHEN** a field heals and the recipe is written back
@@ -176,6 +176,14 @@ The runner SHALL emit typed events during a run: `run.start`, `page.loaded`, `gu
 - **WHEN** a recipe has tables `page` and `products`
 - **THEN** every `row.emitted` on page 1 for `page` precedes those for `products` and each names its table
 
+#### Scenario: Attention pairs with the guard
+- **WHEN** a login guard is raised on page 1 and cleared
+- **THEN** `attention.needed` follows `guard.raised` and `attention.resolved` follows `guard.cleared`
+
+#### Scenario: Attention closed on abort
+- **WHEN** SIGINT is received while a guard is raised
+- **THEN** `attention.resolved` is observed before `run.failed`
+
 ### Requirement: Clean shutdown
 On success, failure, guard timeout, or SIGINT the runner SHALL close the browser context and release the profile lock before the process exits. A run that ends while paused on a guard SHALL close the browser like any other run.
 
@@ -186,21 +194,6 @@ On success, failure, guard timeout, or SIGINT the runner SHALL close the browser
 #### Scenario: Interrupted while paused
 - **WHEN** SIGINT is received while the run is paused on a guard
 - **THEN** the browser closes, the lock is released, and the exit code is 1
-
-### Requirement: Window hiding hooks
-When a window port is supplied, the runner SHALL call `hide` after the browser session opens and before the first navigation, `show` when a guard is raised, and `hide` again when a guard clears. Window port failures SHALL NOT fail the run. The runner SHALL set the initial page title to `webscoop` before the first navigation. Before opening the browser, the runner SHALL call the window port's optional `prepare` and append its optional `launchArgs` to the browser's launch arguments.
-
-#### Scenario: Hide after open
-- **WHEN** a run opens the browser with a window port
-- **THEN** `hide` is called before `page.loaded` is emitted for page 1
-
-#### Scenario: Prepare before launch
-- **WHEN** the window port declares `prepare` and `launchArgs`
-- **THEN** `prepare` is called before the browser opens and the browser is opened with the launch arguments appended
-
-#### Scenario: Show then hide around a guard
-- **WHEN** a guard is raised and later clears
-- **THEN** `show` is called on raise and `hide` on clear
 
 ### Requirement: Per-row candidate fallback
 After the runner settles an item scoped field on a page (candidate order and healing, as in candidate resolution order), it SHALL resolve that field in each container with the settled primary candidate only, unless the field sets `fallback: true`. A container where the settled primary candidate matches nothing SHALL yield no value for that field, and the missing fields rules SHALL apply. With `fallback: true`, the runner SHALL try the settled candidates in listed order in each container and use the first that matches inside it. Healing SHALL behave the same in both modes.
