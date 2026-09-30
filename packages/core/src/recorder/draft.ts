@@ -149,6 +149,7 @@ function recipeField(f: DraftField) {
     ...(f.attr ? { attr: f.attr } : {}),
     optional: f.optional,
     ...(f.fallback ? { fallback: true } : {}),
+    ...(f.hover ? { hover: true } : {}),
     ...(f.key ? { key: true } : {}),
     ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
   };
@@ -289,6 +290,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
         optional: f.optional,
         key: f.key ?? false,
         ...(f.fallback ? { fallback: true } : {}),
+    ...(f.hover ? { hover: true } : {}),
         ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
         count: null,
         sample: null,
@@ -361,6 +363,7 @@ export interface NewField {
   optional?: boolean;
   key?: boolean;
   fallback?: boolean;
+  hover?: boolean;
   fingerprint?: DraftField['fingerprint'];
   count?: number | null;
   coverage?: DraftField['coverage'];
@@ -476,6 +479,7 @@ function applyFieldPatch(field: DraftField, patch: FieldPatch): DraftField {
   if (patch.optional !== undefined) next.optional = patch.optional;
   if (patch.key !== undefined) next.key = patch.key;
   if (patch.fallback !== undefined) next.fallback = patch.fallback;
+  if (patch.hover !== undefined) next.hover = patch.hover;
   if (patch.attr === null || patch.attr === '') delete next.attr;
   else if (patch.attr !== undefined) next.attr = patch.attr;
   return next;
@@ -491,6 +495,7 @@ function toDraftField(f: NewField): DraftField {
     optional: f.optional ?? false,
     key: f.key ?? false,
     ...(f.fallback ? { fallback: true } : {}),
+    ...(f.hover ? { hover: true } : {}),
     ...(f.fingerprint ? { fingerprint: f.fingerprint } : {}),
     count: f.count ?? null,
     ...(f.coverage !== undefined ? { coverage: f.coverage } : {}),
@@ -589,8 +594,12 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'replaceField': {
       const prev = table.fields[action.index];
       if (!prev) return draft;
-      // The fallback flag is set on the field row, not in the selection form: keep it unless the field says otherwise.
-      const field = toDraftField({ ...action.field, fallback: action.field.fallback ?? prev.fallback ?? false });
+      // The fallback and hover flags are set on the field row, not in the selection form: keep them unless the field says otherwise.
+      const field = toDraftField({
+        ...action.field,
+        fallback: action.field.fallback ?? prev.fallback ?? false,
+        hover: action.field.hover ?? prev.hover ?? false,
+      });
       const fields = table.fields.map((f, i) => (i === action.index ? field : field.key ? { ...f, key: false } : f));
       next = setActive({ fields });
       break;

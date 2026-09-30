@@ -5,6 +5,7 @@ import { useActions, useSnapshot } from './context';
 import { Dropdown, type DropdownOption } from './dropdown';
 import { Icon } from './icons';
 import { Toggle } from './items';
+import { HoverBadge } from './results';
 import { SelectorChip } from './selector-chip';
 
 type FieldType = DraftField['type'];
@@ -266,6 +267,7 @@ export function FieldRow({
         <span className="ws-meta ws-ellipsis" style={{ maxWidth: 140 }} title={field.sample ?? ''} data-ws="field-sample">
           {field.sample ?? ''}
         </span>
+        {field.hover && <HoverBadge />}
       </div>
       <div className="ws-row">
         <span className="ws-spacer" />
@@ -276,6 +278,10 @@ export function FieldRow({
         <span className="ws-row" title="In rows where the primary selector matches nothing, try the other candidates in order">
           <span className="ws-meta">fallback</span>
           <Toggle on={field.fallback ?? false} onChange={(fallback) => update({ fallback })} label="Fallback" testId="field-fallback" />
+        </span>
+        <span className="ws-row" title="Move the mouse over the element before reading it">
+          <span className="ws-meta">hover</span>
+          <Toggle on={field.hover ?? false} onChange={(hover) => update({ hover })} label="Hover" testId="field-hover" />
         </span>
         <DedupKeyToggle on={field.key} onChange={(key) => update({ key })} />
       </div>

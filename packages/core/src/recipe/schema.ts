@@ -69,6 +69,8 @@ export const FieldSchema = z.object({
   optional: z.boolean().default(false),
   /** Walk the settled candidates per row instead of using only the settled primary; omitted on save when false. */
   fallback: z.boolean().default(false),
+  /** Move the real mouse over the element before reading it; omitted on save when false. */
+  hover: z.boolean().default(false),
   key: z.boolean().optional(),
   fingerprint: FingerprintSchema.optional(),
 });

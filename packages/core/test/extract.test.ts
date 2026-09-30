@@ -272,3 +272,73 @@ describe('tables', () => {
     expect(await countItems(s, pageOnly, [{ item: null, fields: [[testid('category')]] }])).toBe(1);
   });
 });
+
+describe('hover before read', () => {
+  const REAL = (href: string) => href.replace('/p/', '/real/');
+  /** Links read their real URL only after a hover, like a page's trusted `mouseover` handler. */
+  async function hoverSession(log: string[] = []) {
+    const browser = new FakeBrowser({
+      [PAGE]: {
+        dom: catalog(cards(3)),
+        hover: (el) => {
+          log.push(`hover:${el.attrs.href}`);
+          if (el.attrs.href) el.attrs.href = REAL(el.attrs.href);
+        },
+      },
+    });
+    const s = await browser.open('/profile');
+    await s.goto(PAGE, { timeoutMs: 1000 });
+    return { s, browser };
+  }
+  const withHover = (hover: boolean) =>
+    loadRecipe(
+      recipe({
+        fields: [
+          { name: 'title', type: 'text', scope: 'item', selectors: [css('h2')] },
+          { name: 'url', type: 'url', scope: 'item', selectors: [css('a.product-link')], hover },
+          { name: 'category', type: 'text', scope: 'page', selectors: [testid('category')], hover },
+        ],
+      }),
+    );
+
+  it('hovers only flagged fields, once per row, before reading them', async () => {
+    const { s, browser } = await hoverSession();
+    const out = (await extractPage(s, withHover(true), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows.map((row) => row.url)).toEqual(['https://shop.test/real/0', 'https://shop.test/real/1', 'https://shop.test/real/2']);
+    // The page field once, then the link on each row; titles are never hovered.
+    expect(browser.hovers).toHaveLength(4);
+    expect(browser.hovers.filter((d) => d.includes('h2'))).toEqual([]);
+  });
+
+  it('does not hover fields without the flag', async () => {
+    const { s, browser } = await hoverSession();
+    const out = (await extractPage(s, withHover(false), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows.map((row) => row.url)).toEqual(['https://shop.test/p/0', 'https://shop.test/p/1', 'https://shop.test/p/2']);
+    expect(browser.hovers).toEqual([]);
+  });
+
+  it('does not hover with the hover option off', async () => {
+    const { s, browser } = await hoverSession();
+    const out = (await extractPage(s, withHover(true), { pageUrl: PAGE, page: 1, hover: false })).tables[0]!;
+    expect(out.rows[0]!.url).toBe('https://shop.test/p/0');
+    expect(browser.hovers).toEqual([]);
+  });
+
+  it('hovers on later pages that reuse settled selectors', async () => {
+    const { s, browser } = await hoverSession();
+    const r = withHover(true);
+    const first = await extractPage(s, r, { pageUrl: PAGE, page: 1 });
+    browser.hovers.length = 0;
+    await extractPage(s, r, { pageUrl: PAGE, page: 2, resolved: first.resolved });
+    expect(browser.hovers).toHaveLength(4);
+  });
+
+  it('reads the value without hovering when the element is missing, under the usual rules', async () => {
+    const browser = new FakeBrowser({ [PAGE]: catalog(cards(3, (i) => (i === 1 ? { noLink: true } : {}))) });
+    const s = await browser.open('/profile');
+    await s.goto(PAGE, { timeoutMs: 1000 });
+    const out = (await extractPage(s, withHover(true), { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.dropped).toEqual([{ index: 1, fields: ['url'] }]);
+    expect(browser.hovers).toHaveLength(3);
+  });
+});

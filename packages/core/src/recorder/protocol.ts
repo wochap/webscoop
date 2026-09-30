@@ -167,6 +167,8 @@ export const DraftFieldSchema = z.object({
   key: z.boolean(),
   /** Walk the candidates per row instead of using only the settled primary; absent means false. */
   fallback: z.optional(z.boolean()),
+  /** Move the real mouse over the element before reading it at run time; absent means false. */
+  hover: z.optional(z.boolean()),
   fingerprint: z.optional(ProtocolFingerprintSchema),
   /** Matches of the primary selector on the current page, null until counted. */
   count: z.nullable(count()),
@@ -328,7 +330,8 @@ export const TestTableSchema = z.object({
   rowCount: count(),
   /** Rows left out because a required field resolved nothing, and the fields that caused it. */
   dropped: z.object({ count: count(), fields: z.array(z.string()) }),
-  fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'healed', 'partial', 'missing']) })),
+  /** `hover` marks fields the runner hovers before reading; the preview reads them as they are. */
+  fields: z.array(z.object({ name: z.string(), status: z.enum(['ok', 'healed', 'partial', 'missing']), hover: z.optional(z.boolean()) })),
   /** Why this table produced no rows, such as a required field that matched nothing. */
   error: z.optional(z.string()),
 });
@@ -431,6 +434,7 @@ const FieldPatchSchema = z.object({
   optional: z.optional(z.boolean()),
   key: z.optional(z.boolean()),
   fallback: z.optional(z.boolean()),
+  hover: z.optional(z.boolean()),
   /** Table for a new field: an index, or a new table by name. The table becomes active. */
   table: z.optional(z.union([index(), z.object({ new: z.string() })])),
 });

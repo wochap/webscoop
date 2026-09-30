@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "playground-hover",
+  "url": "http://127.0.0.1:{port}/catalog?hover=1",
+  "vars": [{ "name": "port", "type": "string", "default": "4777" }],
+  "item": {
+    "selectors": [{ "strategy": "testid", "value": "product-card", "stability": "stable" }],
+    "exclude": []
+  },
+  "fields": [
+    {
+      "name": "title",
+      "type": "text",
+      "scope": "item",
+      "selectors": [{ "strategy": "css", "value": "h2.product-title", "stability": "medium" }],
+      "optional": false
+    },
+    {
+      "name": "url",
+      "type": "url",
+      "scope": "item",
+      "selectors": [{ "strategy": "css", "value": "a.product-link", "stability": "medium" }],
+      "optional": false,
+      "hover": true,
+      "key": true
+    }
+  ]
+}

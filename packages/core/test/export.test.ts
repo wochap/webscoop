@@ -178,6 +178,19 @@ describe('buildPlan', () => {
     ]);
   });
 
+  it('carries each field hover flag, and both preludes hover flagged fields before reading', () => {
+    const recipe = fixture('playground-catalog');
+    const fields = recipe.fields!.map((f) => (f.name === 'url' ? { ...f, hover: true } : f));
+    const plan = buildPlan({ ...recipe, fields });
+    expect(plan.tables[0]!.fields.filter((f) => f.hover).map((f) => f.name)).toEqual(['url']);
+    const ts = renderTs(plan, OPTS);
+    expect(ts).toContain('if (element && field.hover) await hoverFirst(element);');
+    expect(ts).toContain('position: { x: 2, y: 2 }, timeout: 500');
+    const py = renderPy(plan, OPTS);
+    expect(py).toContain('if element is not None and field.get("hover"):');
+    expect(py).toContain('"position": {"x": 2, "y": 2}, "timeout": 500');
+  });
+
   it('resolves url pagination: the page variable is not required and sits in the template', () => {
     const plan = buildPlan(fixture('playground-paged'));
     expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false });
@@ -650,7 +663,7 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
         const recipe = fixture('playground-catalog');
         // The first card resolves its image, which holds no text; the other cards resolve their title.
         const xpath = ".//img[contains(@class, 'product-image')][not(ancestor::li[1]/preceding-sibling::li)] | .//h2";
-        const desc = { name: 'desc', type: 'text' as const, scope: 'item' as const, selectors: [{ strategy: 'xpath' as const, value: xpath, stability: 'fragile' as const }], optional: false, fallback: false };
+        const desc = { name: 'desc', type: 'text' as const, scope: 'item' as const, selectors: [{ strategy: 'xpath' as const, value: xpath, stability: 'fragile' as const }], optional: false, fallback: false, hover: false };
         const out = await runScript(format, { ...recipe, name: 'empty-desc', fields: [...recipe.fields!, desc] });
         expect(out.code, out.stderr).toBe(0);
         const rows = JSON.parse(out.stdout) as Rows;
@@ -666,7 +679,7 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
           { strategy: 'xpath' as const, value: './/h2[ancestor::li[1]/following-sibling::li]', stability: 'fragile' as const },
           { strategy: 'xpath' as const, value: './/h2', stability: 'fragile' as const },
         ];
-        const head = { name: 'head', type: 'text' as const, scope: 'item' as const, selectors, optional: false, fallback: false };
+        const head = { name: 'head', type: 'text' as const, scope: 'item' as const, selectors, optional: false, fallback: false, hover: false };
         const off = await runScript(format, { ...recipe, name: 'head-off', fields: [...recipe.fields!, head] });
         expect(off.code, off.stderr).toBe(0);
         expect(JSON.parse(off.stdout) as Rows).toHaveLength(23);

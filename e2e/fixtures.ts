@@ -17,6 +17,7 @@ export const PAGED_RECIPE = join(root, 'packages/cli/fixtures/playground-paged.j
 export const POSITIONAL_RECIPE = join(root, 'packages/cli/fixtures/playground-positional.json');
 export const STEPS_RECIPE = join(root, 'packages/cli/fixtures/playground-steps.json');
 export const TABLES_RECIPE = join(root, 'packages/cli/fixtures/playground-tables.json');
+export const HOVER_RECIPE = join(root, 'packages/cli/fixtures/playground-hover.json');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 

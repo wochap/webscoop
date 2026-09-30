@@ -56,6 +56,14 @@ describe('results drawer', () => {
     expect(p.qa('results-field-status-item').map((f) => f.dataset.field)).toEqual(['title']);
   });
 
+  it('badges the column of a hover field', () => {
+    const table = { ...results.tables[0]!, fields: [{ name: 'title', status: 'ok' as const, hover: true }] };
+    const p = renderPanel({ ...baseState(), test: { ...results, tables: [table] } }, { drawerOpen: true });
+    const badges = p.qa('field-hover-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.closest('th')!.textContent).toContain('title');
+  });
+
   it('shows no tabs for a single table', () => {
     const p = renderPanel({ ...baseState(), test: { ...results, tables: [results.tables[0]!] } }, { drawerOpen: true });
     expect(p.q('results-tabs')).toBeNull();

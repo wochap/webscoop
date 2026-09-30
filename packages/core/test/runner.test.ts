@@ -121,6 +121,7 @@ describe('Runner', () => {
           same: async () => false,
           snapshot: async () => ({ type: 'text', text: '' }),
           click: async () => {},
+          hover: async () => {},
           fill: async () => {},
           press: async () => {},
           selectOption: async () => {},

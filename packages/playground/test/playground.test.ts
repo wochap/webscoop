@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dataset, formatPrice, render, renderResults, startPlayground, type Playground } from '../src';
+import { dataset, formatPrice, MAX_TIER, render, renderResults, startPlayground, type Playground } from '../src';
 
 const running: Playground[] = [];
 async function start() {
@@ -505,5 +505,43 @@ describe('server', () => {
     expect(cookie).toMatch(/^ws_visitor=v1;.*Max-Age=/);
     await fetch(`${pg.url}/catalog`, { headers: { cookie: 'ws_visitor=v1' } });
     expect(pg.requests.map((r) => r.cookie)).toEqual([undefined, 'ws_visitor=v1']);
+  });
+});
+
+describe('hover', () => {
+  it('serves obfuscated product links with no real URL in the page', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/catalog?hover=1`)).text();
+    const links = [...html.matchAll(/class="product-link" href="([^"]+)"/g)].map((m) => m[1]!);
+    expect(links).toHaveLength(24);
+    expect(links.every((href) => /^\/r\/[0-9a-z]{12}$/.test(href))).toBe(true);
+    for (const p of dataset) expect(html).not.toContain(p.url);
+    const plain = await (await fetch(`${pg.url}/catalog`)).text();
+    expect(plain).not.toContain('/r/');
+  });
+
+  it('keeps links obfuscated on synthetic mouseover, and the script leaves the DOM', () => {
+    const dom = new JSDOM(render(dataset, { tier: 0, seed: 1, hover: true }), { runScripts: 'dangerously' });
+    const { document, MouseEvent } = dom.window;
+    const link = document.querySelector('a.product-link')!;
+    link.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expect(link.getAttribute('href')).toMatch(/^\/r\//);
+    expect(document.documentElement.outerHTML).not.toContain('/p/p01');
+    expect(document.querySelectorAll('script')).toHaveLength(0);
+  });
+
+  it('combines with every tier and seed, with seeded tokens', () => {
+    for (let tier = 0; tier <= MAX_TIER; tier++) {
+      let html: string;
+      try {
+        html = render(dataset, { tier, seed: 5, hover: true });
+      } catch {
+        continue;
+      }
+      expect(count(html, 'href="/r/'), `tier ${tier}`).toBe(24);
+      for (const p of dataset) expect(html, `tier ${tier}`).not.toContain(`href="${p.url}"`);
+    }
+    expect(render(dataset, { tier: 0, seed: 5, hover: true })).toBe(render(dataset, { tier: 0, seed: 5, hover: true }));
+    expect(render(dataset, { tier: 0, seed: 5, hover: true })).not.toBe(render(dataset, { tier: 0, seed: 6, hover: true }));
   });
 });

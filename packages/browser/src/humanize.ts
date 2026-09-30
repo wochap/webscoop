@@ -32,10 +32,38 @@ export interface HumanPage {
 export interface HumanTarget extends Measurable {
   scrollIntoViewIfNeeded(): Promise<void>;
   click(options?: { trial?: boolean }): Promise<void>;
+  hover(options?: HoverOptions): Promise<void>;
   fill(value: string): Promise<void>;
   inputValue(): Promise<string>;
   press(key: string): Promise<void>;
   selectOption(option: { value: string }): Promise<unknown>;
+}
+
+export interface HoverOptions {
+  trial?: boolean;
+  position?: Point;
+  timeout?: number;
+}
+
+/** A point just inside an element's top-left corner, relative to its box, for when its center is covered. */
+export const HOVER_INSET: Point = { x: 2, y: 2 };
+/** Actionability timeouts for a hover at the center, then at the inset, in ms. */
+export const HOVER_TIMEOUT_MS = { center: 1000, inset: 500 };
+
+/**
+ * Where a hover can land: `center` when the element's center receives
+ * events, `inset` when only the point near its top-left corner does, null
+ * when neither does within the timeouts. Trial hovers move nothing.
+ */
+export async function hoverSpot(target: Pick<HumanTarget, 'hover'>): Promise<'center' | 'inset' | null> {
+  const ok = (options: HoverOptions) =>
+    target.hover(options).then(
+      () => true,
+      () => false,
+    );
+  if (await ok({ trial: true, timeout: HOVER_TIMEOUT_MS.center })) return 'center';
+  if (await ok({ trial: true, position: HOVER_INSET, timeout: HOVER_TIMEOUT_MS.inset })) return 'inset';
+  return null;
 }
 
 export interface HumanizerOptions {
@@ -209,6 +237,25 @@ export class Humanizer {
     await this.page.mouse.down();
     await this.sleep(this.hold());
     await this.page.mouse.up();
+  }
+
+  /**
+   * Move the pointer over the element along a humanized path and dwell
+   * 80 to 250 ms. Aims into the box, or at the top-left inset when the center
+   * is covered; returns quietly when the element cannot be hovered.
+   */
+  async hover(target: HumanTarget): Promise<void> {
+    await target.scrollIntoViewIfNeeded().catch(() => {});
+    const spot = await hoverSpot(target);
+    if (!spot) return;
+    const box = await boxOf(target).catch(() => null);
+    if (!box) return;
+    const point =
+      spot === 'center'
+        ? this.targetPoint(box)
+        : { x: box.x + Math.min(HOVER_INSET.x, box.width / 2), y: box.y + Math.min(HOVER_INSET.y, box.height / 2) };
+    await this.moveTo(point);
+    await this.sleep(this.uniform(80, 250));
   }
 
   /** Per-character delays for a value, scaled so a long value takes at most `TYPING_CAP_MS`. */

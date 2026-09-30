@@ -15,7 +15,7 @@ import {
   type SerializedNode,
 } from '@webscoop/core';
 import { boxOf } from './box';
-import { Humanizer } from './humanize';
+import { HOVER_INSET, HOVER_TIMEOUT_MS, Humanizer, type HoverOptions } from './humanize';
 import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
@@ -75,6 +75,27 @@ export function launchOptions(options: PlaywrightBrowserOptions, opts: OpenOptio
     ...(opts.locale ? { locale: opts.locale } : {}),
     args: playwright ? [...STEALTH_ARGS, ...extra] : extra,
   };
+}
+
+/**
+ * Hover with Playwright's own mouse: at the center, then just inside the
+ * top-left corner, then give up quietly. Locator hover scrolls into view and
+ * checks that the point receives events. After a hover, wait one animation
+ * frame so synchronous handlers have run.
+ */
+export async function plainHover(
+  target: { hover(options?: HoverOptions): Promise<void> },
+  page: { evaluate<R>(fn: () => R): Promise<R> },
+): Promise<void> {
+  for (const options of [{ timeout: HOVER_TIMEOUT_MS.center }, { position: HOVER_INSET, timeout: HOVER_TIMEOUT_MS.inset }]) {
+    try {
+      await target.hover(options);
+    } catch {
+      continue;
+    }
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))).catch(() => {});
+    return;
+  }
 }
 
 /** A driver timeout; matched by name, since each driver has its own error classes. */
@@ -259,6 +280,12 @@ export class PlaywrightSession implements InteractiveSession {
     if (this.humanizer) return this.humanizer.click(locator);
     await locator.scrollIntoViewIfNeeded();
     await locator.click();
+  }
+
+  async hover(ref: ElementRef): Promise<void> {
+    const { locator } = ref as PwRef;
+    if (this.humanizer) return this.humanizer.hover(locator);
+    await plainHover(locator, this.page);
   }
 
   async fill(ref: ElementRef, value: string): Promise<void> {

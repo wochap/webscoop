@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DWELL, Humanizer, KEY, THINK, TYPING_CAP_MS, speedFromEnv, type Box, type HumanPage, type HumanTarget } from '../src/humanize';
-import { PlaywrightSession } from '../src/playwright-browser';
+import { PlaywrightSession, plainHover } from '../src/playwright-browser';
 
 /** Mulberry32: a small seeded uniform random source. */
 function seeded(seed: number): () => number {
@@ -69,8 +69,14 @@ function setup(seed = 1, scroll = { y: 0, view: 800, height: 4000 }) {
 
 const BOX: Box = { x: 400, y: 300, width: 120, height: 40 };
 
-function target(scene: Scene, box: Box | null = BOX): HumanTarget {
+/** Hover spots that receive events: a covered center rejects center hovers, no spot rejects every hover. */
+function target(scene: Scene, box: Box | null = BOX, spots: ('center' | 'inset')[] = ['center', 'inset']): HumanTarget {
   return {
+    hover: async (o) => {
+      const spot = o?.position ? 'inset' : 'center';
+      scene.calls.push(`${o?.trial ? 'trial-hover' : 'hover'}:${spot}`);
+      if (!spots.includes(spot)) throw new Error('element is covered');
+    },
     scrollIntoViewIfNeeded: async () => void scene.calls.push('scrollIntoView'),
     evaluateAll: async () => box as never,
     click: async (o) => void scene.calls.push(o?.trial ? 'trial' : 'click'),
@@ -242,5 +248,70 @@ describe('PlaywrightSession with humanized input', () => {
     await s.press('Enter', ref);
     await s.scrollToBottom();
     expect(calls).toEqual(['h.click', 'h.type:a', 'h.press:Enter', 'h.scroll']);
+  });
+});
+
+describe('hover', () => {
+  it('humanized: moves into the box and dwells 80 to 250 ms', async () => {
+    const { scene, humanizer } = setup(3);
+    await humanizer.hover(target(scene));
+    expect(scene.calls[0]).toBe('scrollIntoView');
+    expect(scene.calls[1]).toBe('trial-hover:center');
+    const last = scene.moves.at(-1)!;
+    expect(last.x).toBeGreaterThanOrEqual(BOX.x + BOX.width * 0.1);
+    expect(last.x).toBeLessThanOrEqual(BOX.x + BOX.width * 0.9);
+    expect(scene.moves.length).toBeGreaterThanOrEqual(12);
+    const dwell = scene.slept.at(-1)!;
+    expect(dwell).toBeGreaterThanOrEqual(80);
+    expect(dwell).toBeLessThanOrEqual(250);
+    expect(scene.calls).not.toContain('down');
+  });
+
+  it('humanized: a covered center falls back to the top-left inset', async () => {
+    const { scene, humanizer } = setup(4);
+    await humanizer.hover(target(scene, BOX, ['inset']));
+    expect(scene.calls.slice(1, 3)).toEqual(['trial-hover:center', 'trial-hover:inset']);
+    expect(scene.moves.at(-1)).toEqual({ x: BOX.x + 2, y: BOX.y + 2 });
+  });
+
+  it('humanized: returns quietly without a box or a hoverable spot', async () => {
+    const { scene, humanizer } = setup(5);
+    await humanizer.hover(target(scene, null));
+    await humanizer.hover(target(scene, BOX, []));
+    expect(scene.moves).toEqual([]);
+    expect(scene.slept).toEqual([]);
+  });
+
+  it('plain: hovers the center and waits one frame', async () => {
+    const { scene } = setup();
+    const frames: string[] = [];
+    await plainHover(target(scene), { evaluate: async () => void frames.push('frame') as never });
+    expect(scene.calls).toEqual(['hover:center']);
+    expect(frames).toEqual(['frame']);
+  });
+
+  it('plain: a covered center falls back to the inset', async () => {
+    const { scene } = setup();
+    await plainHover(target(scene, BOX, ['inset']), { evaluate: async () => undefined as never });
+    expect(scene.calls).toEqual(['hover:center', 'hover:inset']);
+  });
+
+  it('plain: gives up quietly when nothing receives events', async () => {
+    const { scene } = setup();
+    const frames: string[] = [];
+    await plainHover(target(scene, null, []), { evaluate: async () => void frames.push('frame') as never });
+    expect(scene.calls).toEqual(['hover:center', 'hover:inset']);
+    expect(frames).toEqual([]);
+  });
+
+  it('PlaywrightSession routes hover through the humanizer when on', async () => {
+    const calls: string[] = [];
+    const locator = { hover: async () => void calls.push('hover') };
+    const page = { on() {}, evaluate: async () => undefined };
+    const humanizer = { hover: async () => void calls.push('h.hover') };
+    const ref = { locator, description: 'x' } as never;
+    await new PlaywrightSession({} as never, page as never, 'playwright', humanizer as never).hover(ref);
+    await new PlaywrightSession({} as never, page as never, 'playwright').hover(ref);
+    expect(calls).toEqual(['h.hover', 'hover']);
   });
 });

@@ -175,6 +175,28 @@ describe('fields', () => {
     for (const table of saved.tables) for (const f of table.fields) expect(f).not.toHaveProperty('fallback');
   });
 
+  it('defaults hover to false and leaves it out on save', () => {
+    const recipe = loadRecipe(base());
+    expect(recipe.fields![0]!.hover).toBe(false);
+    const saved = JSON.parse(saveRecipe(recipe));
+    expect(saved.fields[0]).not.toHaveProperty('hover');
+    for (const table of JSON.parse(saveRecipe(loadRecipe(tablesRecipe()))).tables) for (const f of table.fields) expect(f).not.toHaveProperty('hover');
+  });
+
+  it('keeps hover true through a round-trip, with the other flags', () => {
+    const recipe = loadRecipe(base({ fields: [field('a', { hover: true, fallback: true, optional: true })] as RecipeInput['fields'] }));
+    expect(recipe.fields![0]!.hover).toBe(true);
+    const once = saveRecipe(recipe);
+    expect(JSON.parse(once).fields[0]).toMatchObject({ hover: true, fallback: true, optional: true });
+    expect(saveRecipe(loadRecipe(once))).toBe(once);
+  });
+
+  it('rejects a hover flag that is not a boolean, naming it', () => {
+    const errors = errorsOf(base({ fields: [field('a', { hover: 'yes' })] as unknown as RecipeInput['fields'] }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.fields[0].hover');
+  });
+
   it('rejects duplicate field names, naming the field', () => {
     const errors = errorsOf(base({ fields: [field('price'), field('price')] as RecipeInput['fields'] }));
     expect(errors).toHaveLength(1);

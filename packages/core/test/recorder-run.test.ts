@@ -55,6 +55,7 @@ describe('RecorderController', () => {
           ],
           optional: false,
           fallback: false,
+          hover: false,
         },
       ],
     };
@@ -70,6 +71,23 @@ describe('RecorderController', () => {
     const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
     expect(saved.ok).toBe(true);
     expect(JSON.parse(t.storage.files.get(r.name)!).fields[0].fallback).toBe(true);
+  });
+
+  it('saves the hover flag, keeps it for edit, and never hovers in test runs', async () => {
+    const r = referenceRecipe();
+    const t = await harness(tier0Snapshot(), draftFromRecipe(r));
+    await t.send({ kind: 'draft.updateField', index: 0, patch: { hover: true } });
+    expect(t.controller.draft.tables[0]!.fields[0]!.hover).toBe(true);
+    const results = await t.controller.testRun();
+    expect(t.browser.hovers).toEqual([]);
+    expect(results.tables[0]!.fields[0]).toMatchObject({ name: r.fields![0]!.name, hover: true });
+    expect(results.tables[0]!.fields[1]).not.toHaveProperty('hover');
+    const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(saved.ok).toBe(true);
+    const stored = JSON.parse(t.storage.files.get(r.name)!);
+    expect(stored.fields[0].hover).toBe(true);
+    expect(stored.fields[1]).not.toHaveProperty('hover');
+    expect(draftFromRecipe(loadRecipe(stored)).tables[0]!.fields[0]!.hover).toBe(true);
   });
 
   it('keeps the draft when the page announces itself again after a navigation', async () => {

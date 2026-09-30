@@ -126,6 +126,22 @@ describe('fields', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateField', index: 0, patch: { fallback: true } });
   });
 
+  it('shows a hover toggle with the stored value and a badge on hover fields', () => {
+    const draft = withTable(newDraft(), { fields: [field('title'), field('link', { hover: true })] });
+    const p = renderPanel(baseState(draft));
+    const [title, link] = p.qa('field');
+    const off = title!.querySelector('[data-ws="field-hover"]')!;
+    expect(off.getAttribute('aria-checked')).toBe('false');
+    expect(off.closest('[title]')!.getAttribute('title')).toBe('Move the mouse over the element before reading it');
+    expect(title!.querySelector('[data-ws="field-hover-badge"]')).toBeNull();
+    expect(link!.querySelector('[data-ws="field-hover"]')!.getAttribute('aria-checked')).toBe('true');
+    const badge = link!.querySelector('[data-ws="field-hover-badge"]') as HTMLElement;
+    expect(badge.textContent).toBe('on hover');
+    expect(badge.title).toBe('Resolved on hover at run time');
+    fireEvent.click(off);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateField', index: 0, patch: { hover: true } });
+  });
+
   it('does nothing on a chip click beyond what clicking the field row does', () => {
     const draft = withTable(newDraft(), { fields: [field('title')] });
     const p = renderPanel(baseState(draft));

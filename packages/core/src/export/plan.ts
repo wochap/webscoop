@@ -51,6 +51,8 @@ export interface PlanField {
   optional: boolean;
   /** Per row, walk the settled candidates instead of using only the settled primary. */
   fallback: boolean;
+  /** Move the mouse over the element before reading it. */
+  hover: boolean;
   selectors: PlanSelector[];
   read: ReadMode;
   /** Attribute read when `read` is `attr`, else null. */
@@ -182,6 +184,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
         scope: field.scope,
         optional: field.optional,
         fallback: field.fallback,
+        hover: field.hover,
         selectors: selectors(field.selectors),
         read: readMode(field.type, attr),
         attr: attr ?? null,

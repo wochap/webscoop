@@ -3,6 +3,7 @@ import { containersFor, excludeContainers, extractPage, listParent, resolveFirst
 import type { ElementRef, InteractiveSession, PageInfo, SerializedElement, StoragePort } from '../ports';
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
+import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import { replaySteps } from '../steps/replay';
 import {
@@ -1481,6 +1482,7 @@ export class RecorderController {
         optional: patch.optional ?? field.optional,
         key: patch.key ?? field.key,
         fallback: patch.fallback ?? field.fallback ?? false,
+        hover: patch.hover ?? field.hover ?? false,
         ...(fp ? { fingerprint: fp } : {}),
         count,
         coverage,
@@ -2170,6 +2172,7 @@ export class RecorderController {
         optional: patch.optional ?? false,
         key: patch.key ?? false,
         fallback: patch.fallback ?? false,
+        hover: patch.hover ?? false,
         fingerprint: selected.selection.fingerprint,
         count: selectors[0]!.count ?? null,
         coverage,
@@ -2280,9 +2283,10 @@ export class RecorderController {
         error: validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n'),
       };
     } else {
-      const extracted = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1 })).tables;
+      const extracted = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1, hover: false })).tables;
+      const recipeTables = tablesOf(validated.recipe);
       results = {
-        tables: extracted.map((extraction): TestTable => {
+        tables: extracted.map((extraction, t): TestTable => {
           const causes = new Set(extraction.dropped.flatMap((d) => d.fields));
           const droppedFields = extraction.fields.map((f) => f.name).filter((name) => causes.has(name));
           return {
@@ -2290,7 +2294,11 @@ export class RecorderController {
             rows: extraction.rows.slice(0, MAX_TEST_ROWS),
             rowCount: extraction.rows.length,
             dropped: { count: extraction.dropped.length, fields: droppedFields },
-            fields: extraction.fields.map((f) => ({ name: f.name, status: f.status })),
+            fields: extraction.fields.map((f) => ({
+              name: f.name,
+              status: f.status,
+              ...(recipeTables[t]?.fields.find((field) => field.name === f.name)?.hover ? { hover: true } : {}),
+            })),
             ...(extraction.missingRequired.length > 0
               ? {
                   error: `required ${

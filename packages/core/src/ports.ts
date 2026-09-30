@@ -87,6 +87,11 @@ export interface Session {
   snapshot(within?: ElementRef): Promise<SerializedNode>;
   /** Scroll the element into view and click it. */
   click(ref: ElementRef): Promise<void>;
+  /**
+   * Scroll the element into view and move the real mouse over it, so the page
+   * gets trusted pointer events. Resolves quietly when it cannot hover.
+   */
+  hover(ref: ElementRef): Promise<void>;
   /** Clear an input, textarea, or editable element and type the value into it. */
   fill(ref: ElementRef, value: string): Promise<void>;
   /** Press a key (`Enter`, `Escape`, `Tab`, or one character) on the element, or on the focused element without one. */

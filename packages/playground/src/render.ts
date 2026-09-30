@@ -23,6 +23,8 @@ export interface RenderOptions {
   rows?: number | null;
   /** Two identical `p.product-note` siblings per card after the rating. Default false. */
   twins?: boolean;
+  /** Product links carry an obfuscated `/r/<token>` href until a trusted mouseover reveals the real one. Default false. */
+  hover?: boolean;
 }
 
 export const GATE_KINDS = ['cookie', 'search', 'tabs'] as const;
@@ -556,6 +558,43 @@ function applyChrome(html: string, chrome: ChromeMode | null): string {
   return html.replace('</head>', `${HOSTILE_STYLE}\n</head>`).replace('<body>', `<body>\n${HOSTILE_BODY}`);
 }
 
+/** An opaque link token per product, drawn from the seed. */
+function hoverTokens(products: readonly Product[], seed: number): string[] {
+  const rng = createRng(seed ^ 0x5eed_4b0f);
+  return products.map(() => Array.from({ length: 12 }, () => Math.floor(rng() * 36).toString(36)).join(''));
+}
+
+/**
+ * Swap every product link's `href` for `/r/<token>` and add a script that
+ * restores the real URL on a trusted `mouseover`, like Bing's result links.
+ * The map lives in a closure, base64 encoded, and the script removes itself,
+ * so the real URL is nowhere in the DOM before a hover. Keyed on the `href`,
+ * so it works on every tier.
+ */
+function applyHover(html: string, products: readonly Product[], seed: number): string {
+  const tokens = hoverTokens(products, seed);
+  const map: Record<string, string> = {};
+  products.forEach((p, i) => {
+    const token = `/r/${tokens[i]}`;
+    map[token] = Buffer.from(p.url).toString('base64');
+    html = html.split(`href="${escapeHtml(p.url)}"`).join(`href="${token}"`);
+  });
+  const script = `<script>
+(function () {
+  var map = ${JSON.stringify(map)};
+  document.addEventListener('mouseover', function (event) {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    var link = event.target.closest('a[href^="/r/"]');
+    var real = link && map[link.getAttribute('href')];
+    if (real) link.setAttribute('href', atob(real));
+  }, true);
+  document.currentScript.remove();
+})();
+</script>`;
+  return html.replace('</body>', `${script}
+</body>`);
+}
+
 export function render(products: readonly Product[], opts: RenderOptions): string {
   const renderer = tiers[opts.tier];
   if (!renderer) throw new UnimplementedTierError(opts.tier);
@@ -572,7 +611,8 @@ export function render(products: readonly Product[], opts: RenderOptions): strin
     rows: opts.rows ?? null,
     twins: opts.twins ?? false,
   };
-  return applyChrome(renderer(ctx), ctx.chrome);
+  const html = applyChrome(renderer(ctx), ctx.chrome);
+  return opts.hover ? applyHover(html, products, opts.seed) : html;
 }
 
 /** Results per group wrapper on the results page. */

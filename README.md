@@ -863,7 +863,16 @@ used by the end-to-end tests, is
   Without it, every field has scope `page` and the recipe yields one row.
 - `fields`: `name`, `type` (`text`, `number`, `url`, `image`, `date`, `html`),
   `scope` (`item` or `page`), ranked `selectors`, optional `attr`, `optional`
-  (default false), `key` (at most one field), and `fingerprint`.
+  (default false), `fallback` (default false), `hover` (default false), `key`
+  (at most one field), and `fingerprint`. `hover: true` moves the real mouse
+  over the field's element before it is read, on every row (page fields once),
+  for sites that write the real value on mouseover, such as result links whose
+  `href` is swapped in by a `mouseover` handler. The pointer aims at the
+  element's center, then just inside its top-left corner when the center is
+  covered; a hover that fails reads the value as it is. With `--humanize` the
+  pointer travels a humanized path and dwells 80 to 250 ms. False flags are
+  left out when a recipe is saved. The recorder has a `hover` toggle on saved
+  fields; its preview does not hover and badges those values "on hover".
 - Selector candidates: `{ "strategy", "value", "stability" }` with strategy
   `role` (`"heading|Wireless Mouse"`: role, then optional exact accessible
   name), `testid`, `id`, `text` (exact), `css`, or `xpath`. The first candidate
@@ -964,6 +973,14 @@ filled. `gate=tabs` shows two `role="tab"` buttons, `About` (active) and
 `Products`; the list is inserted into the Products panel when that tab is
 clicked, and nothing persists, so every page load needs the click. Gates
 compose with tiers (their classes and ids churn too), `paginate`, and walls.
+
+`hover=1` renders every product link with an obfuscated `href="/r/<token>"`
+(tokens drawn from `seed`); the real `/p/<id>` URL is nowhere in the DOM. A
+trusted `mouseover` on the link or its descendants swaps in the real URL
+synchronously; script-dispatched events do not. It combines with every tier
+and seed.
+[`packages/cli/fixtures/playground-hover.json`](packages/cli/fixtures/playground-hover.json)
+reads the links with a `hover` field.
 
 ## Layout
 

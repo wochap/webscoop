@@ -52,14 +52,13 @@ export function loadRecipe(json: string | unknown, source = '<recipe>'): Recipe 
   return result.recipe;
 }
 
-/** A field as written: `fallback` is left out when false. */
-function savedField(field: RecipeField): RecipeField | Omit<RecipeField, 'fallback'> {
-  if (field.fallback) return field;
-  const { fallback: _, ...rest } = field;
-  return rest;
+/** A field as written: `fallback` and `hover` are left out when false. */
+function savedField(field: RecipeField): Partial<RecipeField> {
+  const { fallback, hover, ...rest } = field;
+  return { ...rest, ...(fallback ? { fallback } : {}), ...(hover ? { hover } : {}) };
 }
 
-/** Serialize a recipe as stable, human editable JSON. An empty `steps` list and false `fallback` flags are left out, so recipes keep their shape. */
+/** Serialize a recipe as stable, human editable JSON. An empty `steps` list and false `fallback` and `hover` flags are left out, so recipes keep their shape. */
 export function saveRecipe(recipe: Recipe): string {
   const { steps, ...rest } = recipe;
   const out = {

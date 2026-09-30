@@ -19,6 +19,15 @@ export function TestRunSummary({ results, durationMs }: { results: TestTable; du
   );
 }
 
+/** Marks a field whose preview value is read as it is, while runs hover its element first. */
+export function HoverBadge() {
+  return (
+    <span className="ws-badge" title="Resolved on hover at run time" data-ws="field-hover-badge">
+      on hover
+    </span>
+  );
+}
+
 const STATUS_TONE = { ok: 'ws-stable', healed: 'ws-stable', partial: 'ws-medium', missing: 'ws-fragile' } as const;
 
 export function FieldStatusList({ fields }: { fields: TestTable['fields'] }) {
@@ -55,14 +64,17 @@ function cell(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
-export function ResultsTable({ rows }: { rows: TestTable['rows'] }) {
+export function ResultsTable({ rows, hover = [] }: { rows: TestTable['rows']; hover?: readonly string[] }) {
   const columns = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((c) => c !== '_page');
   return (
     <table className="ws-table" data-ws="results-table">
       <thead>
         <tr>
           {columns.map((c) => (
-            <th key={c}>{c === '_index' ? '#' : c}</th>
+            <th key={c}>
+              {c === '_index' ? '#' : c}
+              {hover.includes(c) && <> <HoverBadge /></>}
+            </th>
           ))}
         </tr>
       </thead>
@@ -145,7 +157,7 @@ export function ResultsDrawer({
       </div>
       <RunLog results={results} table={table} />
       <div className="ws-drawer-body">
-        {view === 'table' ? <ResultsTable rows={rows} /> : <pre className="ws-json" data-ws="results-json">{JSON.stringify(rows, null, 2)}</pre>}
+        {view === 'table' ? <ResultsTable rows={rows} hover={table?.fields.filter((f) => f.hover).map((f) => f.name) ?? []} /> : <pre className="ws-json" data-ws="results-json">{JSON.stringify(rows, null, 2)}</pre>}
       </div>
     </div>
   );

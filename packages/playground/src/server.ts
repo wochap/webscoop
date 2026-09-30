@@ -336,6 +336,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       const sponsored = intParam(url.searchParams.get('sponsored'), 'sponsored', 0, products.length) ?? 0;
       const mixed = flag(url, 'mixed');
       const twins = flag(url, 'twins');
+      const hover = flag(url, 'hover');
       const rows = intParam(url.searchParams.get('rows'), 'rows', 1, 24) ?? null;
       const chromeParam = url.searchParams.get('chrome');
       if (chromeParam !== null && !(CHROME_MODES as readonly string[]).includes(chromeParam)) {
@@ -391,7 +392,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
 
       let html: string;
       try {
-        html = render(shown, { tier, seed, chrome, sponsored, pager, gate, category: products[0]?.category, mixed, rows, twins });
+        html = render(shown, { tier, seed, chrome, sponsored, pager, gate, category: products[0]?.category, mixed, rows, twins, hover });
       } catch (error) {
         if (error instanceof UnimplementedTierError) throw new HttpError(501, error.message);
         throw error;

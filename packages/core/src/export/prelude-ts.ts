@@ -55,6 +55,7 @@ interface Field {
   scope: 'item' | 'page';
   optional: boolean;
   fallback: boolean;
+  hover: boolean;
   selectors: Selector[];
   read: 'attr' | 'html' | 'text';
   attr: string | null;
@@ -658,8 +659,29 @@ async function readValue(field: Field, element: Locator, pageUrl: string): Promi
   return convertValue(field.type, raw, pageUrl);
 }
 
+/**
+ * Move the real mouse over the element: at its center, then just inside its
+ * top-left corner when the center is covered, then give up. After a hover,
+ * wait one animation frame so the page's handlers have run.
+ */
+async function hoverFirst(element: Locator): Promise<void> {
+  for (const options of [{ timeout: 1000 }, { position: { x: 2, y: 2 }, timeout: 500 }]) {
+    try {
+      await element.hover(options);
+    } catch {
+      continue;
+    }
+    await element
+      .page()
+      .evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+      .catch(() => {});
+    return;
+  }
+}
+
 /** A field's value on one row: found only when an element matched and its value is neither null nor empty. Empty values yield null. */
 async function fieldValue(field: Field, element: Locator | null, pageUrl: string): Promise<{ value: Value; found: boolean }> {
+  if (element && field.hover) await hoverFirst(element);
   const value = element ? await readValue(field, element, pageUrl) : null;
   return value === null || value === '' ? { value: null, found: false } : { value, found: true };
 }

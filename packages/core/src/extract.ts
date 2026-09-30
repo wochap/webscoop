@@ -96,6 +96,8 @@ export interface ExtractOptions {
   resolved?: readonly (ResolvedSelectors | null)[];
   /** Extract only primary table containers from this index on (a page that grew); `_index` restarts at 0. */
   fromIndex?: number;
+  /** Move the mouse over the elements of `hover` fields before reading them. Default true; the recorder preview turns it off. */
+  hover?: boolean;
 }
 
 export interface TableExtractOptions extends Omit<ExtractOptions, 'resolved'> {
@@ -467,6 +469,11 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
     itemAncestors = itemFingerprint?.ancestors ?? [];
   }
 
+  /** A `hover` field's element gets the real mouse over it right before it is read. */
+  const hoverFor = async (field: RecipeField, ref: ElementRef | undefined) => {
+    if (field.hover && ref && opts.hover !== false) await session.hover(ref);
+  };
+
   // Fields: resolve each once, then read every row.
   interface FieldState {
     field: RecipeField;
@@ -486,6 +493,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       if (field.scope === 'page') {
         const settled = await replay(selectors);
         const ref = settled?.resolution.refs[0];
+        await hoverFor(field, ref);
         const pageValue = await fieldValue(session, field, ref, opts.pageUrl);
         states.push({ field, settled, pageValue, missingRows: [] });
       } else {
@@ -503,6 +511,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       const settled = await resolveTarget(ladder, target, ctx, settle(target, ctx));
       record(settled);
       const ref = settled?.resolution.refs[0];
+      await hoverFor(field, ref);
       const pageValue = await fieldValue(session, field, ref, opts.pageUrl);
       states.push({ field, settled, pageValue, missingRows: [] });
       continue;
@@ -531,6 +540,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
       if (!result) {
         const selectors = rowSelectors[n];
         const resolved = selectors ? await resolveFirst(session, selectors, container) : null;
+        await hoverFor(state.field, resolved?.refs[0]);
         result = await fieldValue(session, state.field, resolved?.refs[0], opts.pageUrl);
       }
       if (!result.found) state.missingRows.push(index);

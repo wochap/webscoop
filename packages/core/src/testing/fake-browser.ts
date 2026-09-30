@@ -50,6 +50,8 @@ export interface FakePage {
     select?: FakeAction;
     press?: FakeAction;
   };
+  /** What a hover does to the hovered element: mutate it in place, as a page's `mouseover` handler would. */
+  hover?: (el: SerializedElement, url: string) => void;
   /** Replace the DOM this many milliseconds after the page loads, for content that shows up late. */
   later?: { afterMs: number; dom: SerializedElement };
 }
@@ -178,6 +180,14 @@ export class FakeSession implements Session {
       return;
     }
     this.grow('more');
+  }
+
+  /** Record the hover, then run the page's hover hook on the element. */
+  async hover(ref: ElementRef): Promise<void> {
+    this.assertOpen();
+    this.browser.hovers.push(ref.description);
+    const node = (ref as FakeRef).node;
+    this.browser.pages.get(this.currentUrl)?.hover?.(node.el, this.currentUrl);
   }
 
   /** Set the element's `value` attribute, then run the page's fill handler. */
@@ -420,6 +430,8 @@ export class FakeBrowser implements BrowserPort {
   readonly visited: string[] = [];
   /** Descriptions of every clicked element, in order. */
   readonly clicks: string[] = [];
+  /** Descriptions of every hovered element, in order. */
+  readonly hovers: string[] = [];
   /** Every fill, select, and key press, in order. */
   readonly actions: FakeActionRecord[] = [];
   readonly openedProfiles: string[] = [];

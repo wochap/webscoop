@@ -607,8 +607,24 @@ def read_value(page, field, element, page_url):
     return convert_value(page, field["type"], raw, page_url)
 
 
+def hover_first(page, element):
+    """Move the real mouse over the element: at its center, then just inside its top-left corner when the center is covered, then give up. After a hover, wait one animation frame so the page's handlers have run."""
+    for options in ({"timeout": 1000}, {"position": {"x": 2, "y": 2}, "timeout": 500}):
+        try:
+            element.hover(**options)
+        except Exception:
+            continue
+        try:
+            page.evaluate("() => new Promise((resolve) => requestAnimationFrame(() => resolve()))")
+        except Exception:
+            pass
+        return
+
+
 def field_value(page, field, element, page_url):
     """A field's value on one row and whether it was found: an element matched and its value is neither None nor empty. Empty values yield None."""
+    if element is not None and field.get("hover"):
+        hover_first(page, element)
     value = read_value(page, field, element, page_url) if element is not None else None
     return (None, False) if value is None or value == "" else (value, True)
 
@@ -1174,6 +1190,7 @@ TABLES = [
                 "scope": "page",
                 "optional": False,
                 "fallback": False,
+                "hover": False,
                 "selectors": [
                     {"strategy": "testid", "value": "category"},
                     {"strategy": "css", "value": "h1.category-heading"},
@@ -1200,6 +1217,7 @@ TABLES = [
                 "scope": "item",
                 "optional": False,
                 "fallback": False,
+                "hover": False,
                 "selectors": [{"strategy": "css", "value": "h2.product-title"}],
                 "read": "text",
                 "attr": None,
@@ -1210,6 +1228,7 @@ TABLES = [
                 "scope": "item",
                 "optional": False,
                 "fallback": False,
+                "hover": False,
                 "selectors": [{"strategy": "css", "value": "a.product-link"}],
                 "read": "attr",
                 "attr": "href",
@@ -1230,6 +1249,7 @@ TABLES = [
                 "scope": "item",
                 "optional": False,
                 "fallback": False,
+                "hover": False,
                 "selectors": [{"strategy": "css", "value": "h3.questions-title"}],
                 "read": "text",
                 "attr": None,
@@ -1240,6 +1260,7 @@ TABLES = [
                 "scope": "item",
                 "optional": False,
                 "fallback": False,
+                "hover": False,
                 "selectors": [{"strategy": "css", "value": "button.questions-option"}],
                 "read": "text",
                 "attr": None,
