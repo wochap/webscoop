@@ -504,3 +504,41 @@ When `webscoop record` or `webscoop edit` saves a recipe, the CLI SHALL resolve 
 #### Scenario: Edit keeps an existing pin
 - **WHEN** recipe `shop` declares `browser.profile` `personal` and `webscoop edit shop` saves a change
 - **THEN** the saved recipe still declares `browser.profile` `personal`
+
+### Requirement: Zsh completion
+The CLI package SHALL ship a zsh completion function named `_webscoop`. It SHALL complete:
+- the subcommands, each with a short description
+- every option of each subcommand, including negated forms such as `--no-heal`
+- fixed option values: `ts` and `py` for `--format`; `1` and `all` for `--pages`
+- recipe names for the `<recipe>` argument of `run`, `test`, `edit`, `export`, and `bench`, and for `record --edit`, alongside ordinary file paths
+- profile names for `--profile`
+
+Recipe names SHALL be the `.json` files in the recipes directory without the extension. Profile names SHALL be the directory names in the profiles directory with any `@<browser>` suffix removed, without duplicates. Both directories SHALL be resolved as the CLI resolves them: `$WEBSCOOP_HOME/{recipes,profiles}` when `WEBSCOOP_HOME` is set, otherwise `${XDG_DATA_HOME:-~/.local/share}/webscoop/{recipes,profiles}`. Completion SHALL NOT start the `webscoop` program or Node. A missing directory SHALL yield no candidates, not an error.
+
+#### Scenario: Subcommands
+- **WHEN** the user types `webscoop ` and presses TAB
+- **THEN** `run`, `test`, `record`, `edit`, `recipes`, `export`, `bench`, and `doctor` are offered with descriptions
+
+#### Scenario: Flags of a subcommand
+- **WHEN** the user types `webscoop run shop --` and presses TAB
+- **THEN** every option of `run` is offered, including `--no-heal`, `--humanize`, and `--show`
+
+#### Scenario: Recipe names
+- **WHEN** the recipes directory holds `shop.json` and `news.json` and the user types `webscoop run ` and presses TAB
+- **THEN** `shop` and `news` are offered
+
+#### Scenario: Profile names
+- **WHEN** the profiles directory holds `work@chromium`, `work@chrome`, and `default`, and the user types `webscoop run shop --profile ` and presses TAB
+- **THEN** `work` and `default` are offered, each once
+
+#### Scenario: WEBSCOOP_HOME
+- **WHEN** `WEBSCOOP_HOME` is set and the user completes a recipe name
+- **THEN** names come from `$WEBSCOOP_HOME/recipes`
+
+#### Scenario: Completion stays in sync with the CLI
+- **WHEN** a subcommand or option is added to the CLI but not to the completion function
+- **THEN** the test suite fails and names the missing command or option
+
+#### Scenario: Installed with the Nix package
+- **WHEN** the Nix package is built
+- **THEN** `_webscoop` is installed under `share/zsh/site-functions`
