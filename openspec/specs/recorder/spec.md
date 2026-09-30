@@ -1068,3 +1068,21 @@ The Recipe section SHALL offer a "Humanize input" toggle with a short hint that 
 #### Scenario: Turn off removes the key
 - **WHEN** a recipe whose `browser` block holds only `humanize: true` is edited, the toggle is turned off, and the recipe is saved
 - **THEN** the saved recipe has no `browser` block
+
+### Requirement: Field hover toggle
+A saved field row SHALL show a `hover` toggle next to `optional`, `fallback`, and `key`, with a tooltip saying the mouse is moved over the element before it is read. Toggling it SHALL update the draft field's `hover` flag, and saving SHALL write it to the recipe (left out when false). Editing a recipe SHALL show the stored value.
+
+#### Scenario: Turn on hover
+- **WHEN** the user turns on the `hover` toggle of a field and saves
+- **THEN** the saved recipe's field has `"hover": true`
+
+#### Scenario: Edit keeps hover
+- **WHEN** a recipe whose field has `"hover": true` is opened with `webscoop edit`
+- **THEN** that field's `hover` toggle is on
+
+### Requirement: Preview of hover fields
+The recorder's preview SHALL NOT move the mouse pointer for hover fields; it SHALL read their elements as they are. Preview values of a field with `hover` on SHALL carry a visible badge stating the value is resolved on hover at run time, in the field row and in the results preview.
+
+#### Scenario: Badge
+- **WHEN** a field has `hover` on
+- **THEN** its preview value shows the hover badge and the pointer is not moved by the preview

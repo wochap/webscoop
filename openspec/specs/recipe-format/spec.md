@@ -186,3 +186,18 @@ A proxy URL with user info SHALL fail validation with a message saying that cred
 #### Scenario: Invalid profile name
 - **WHEN** a recipe declares `browser.profile` as `../other`
 - **THEN** validation fails naming `browser.profile`
+
+### Requirement: Field hover flag
+A field MAY set `hover: true`. It SHALL default to false and SHALL be left out when a recipe is saved with it false, so recipes without it keep their shape. It SHALL be valid on item and page scoped fields of any type and SHALL combine with `optional`, `fallback`, and `key`.
+
+#### Scenario: Default
+- **WHEN** a field has no `hover` key
+- **THEN** it loads with `hover` false and saves without a `hover` key
+
+#### Scenario: Round trip
+- **WHEN** a recipe with a field `"hover": true` is loaded and saved
+- **THEN** the saved field still has `"hover": true`
+
+#### Scenario: Wrong type
+- **WHEN** a field has `"hover": "yes"`
+- **THEN** validation fails naming the field's `hover`

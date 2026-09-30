@@ -220,3 +220,30 @@ After the runner settles an item scoped field on a page (candidate order and hea
 #### Scenario: Healing still applies with fallback off
 - **WHEN** a field with `fallback` false has no candidate matching in the first container and a fuzzy heal holds in most containers
 - **THEN** the healed selector is used for every row as before
+
+### Requirement: Hover before read
+For a field with `hover: true`, the runner SHALL, before reading the field's element, scroll that element into view and move the real mouse pointer over it so the page receives trusted pointer and mouse events (`pointerover`, `mouseover`, `mouseenter`, `mousemove`). This SHALL happen on every row for item fields, once per page for page fields, after the element is resolved (including per-row candidate fallback) and immediately before its value is read. Fields without the flag SHALL NOT move the pointer.
+
+The pointer SHALL aim at the element's center; when the center does not hit the element or one of its descendants (for example, another element covers it), it SHALL aim at a point just inside the element's top-left corner. When neither receives the events, or the element has no box, the runner SHALL read the value without hovering and SHALL NOT drop the row for that reason.
+
+Without humanize, the read SHALL follow the hover within one animation frame and add no more than 50 ms per hover. With humanize, the pointer SHALL travel a humanized path to a point inside the element and dwell a random time between 80 and 250 ms before the read.
+
+#### Scenario: Hover reveals the value
+- **WHEN** a link's `href` is replaced with the real URL by a trusted `mouseover` handler, and its field has `hover: true`
+- **THEN** every row's value is the real URL
+
+#### Scenario: No flag, no hover
+- **WHEN** the same field has no `hover` flag
+- **THEN** rows carry the obfuscated `href` and the pointer does not move for that field
+
+#### Scenario: Covered center
+- **WHEN** the element's center is covered by another element but its top-left corner is not
+- **THEN** the pointer hovers the top-left corner and the revealed value is read
+
+#### Scenario: Hover impossible
+- **WHEN** a flagged field's element has no layout box
+- **THEN** its value is read without hovering and the row is kept or dropped by the usual missing-field rules
+
+#### Scenario: Humanized dwell
+- **WHEN** humanize is on and a flagged field is read
+- **THEN** the pointer moves along a humanized path and waits 80 to 250 ms before the read

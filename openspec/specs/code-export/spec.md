@@ -109,3 +109,10 @@ For a recipe with one table, rows SHALL go to stdout as a JSON array, or one JSO
 #### Scenario: Directory output
 - **WHEN** the same script runs with `--out ./data/`
 - **THEN** `./data/page.json` and `./data/products.json` exist and stdout is empty
+
+### Requirement: Hover parity in exported scripts
+An exported script (TS or Python) SHALL, for a field with `hover: true`, hover the field's resolved element with the browser's real mouse before reading it, on each row for item fields and once for page fields, aiming at the center and then at a point just inside the top-left corner when the center does not receive events. A failed hover SHALL NOT stop the script; the value is read anyway. Fields without the flag SHALL NOT be hovered.
+
+#### Scenario: Exported hover
+- **WHEN** a recipe with a `hover` field is exported and the script runs against the hover-reveal playground page
+- **THEN** its output carries the real URLs, matching `webscoop run`

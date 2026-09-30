@@ -232,3 +232,18 @@ With `gate=tabs`, `/catalog` SHALL render two tabs, `About` (active by default, 
 #### Scenario: Default has no twins
 - **WHEN** `/catalog` is requested without `twins`
 - **THEN** the page contains no `product-note` element and no `Sold by` text
+
+### Requirement: Hover-reveal links
+The catalog page SHALL accept a `hover` flag. With it, every product link SHALL render with an obfuscated `href` of the form `/r/<token>`, and the real product URL SHALL NOT appear anywhere in the DOM. A trusted `mouseover` on the link or any of its descendants SHALL replace the `href` with the real product URL synchronously, in the same event. Untrusted (script dispatched) events SHALL NOT reveal it. The option SHALL combine with every tier and seed.
+
+#### Scenario: Obfuscated until hovered
+- **WHEN** `/catalog?hover=1` is loaded and no link has been hovered
+- **THEN** every product link's `href` starts with `/r/`
+
+#### Scenario: Trusted hover reveals
+- **WHEN** the real mouse moves over a product link
+- **THEN** that link's `href` is its `/p/<id>` URL immediately afterwards
+
+#### Scenario: Synthetic event does not reveal
+- **WHEN** a script dispatches a `mouseover` event on a product link
+- **THEN** its `href` still starts with `/r/`
