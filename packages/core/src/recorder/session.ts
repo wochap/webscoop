@@ -1444,6 +1444,7 @@ export class RecorderController {
           ...(field.attr ? { attr: field.attr } : {}),
           optional: field.optional,
           key: field.key,
+          hover: field.hover ?? false,
         },
         candidates,
         primary: 0,

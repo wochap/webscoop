@@ -71,7 +71,7 @@ export function ZeroMatchWarning({
 
 /** The form's values as a field patch: every option set, an empty attribute cleared. The scope follows the table, so it is not sent. */
 export function formPatch(form: FieldOptions): FieldPatch {
-  return { name: form.name.trim(), type: form.type, attr: form.attr?.trim() || null, optional: form.optional, key: form.key };
+  return { name: form.name.trim(), type: form.type, attr: form.attr?.trim() || null, optional: form.optional, key: form.key, hover: form.hover ?? false };
 }
 
 /** Why the form's name cannot be saved, or null: empty, or taken by another field. */
@@ -81,7 +81,7 @@ export function nameProblem(name: string, taken: readonly string[]): string | nu
   return taken.includes(trimmed) ? `another field is already named ${trimmed}` : null;
 }
 
-/** Name, type, attribute, optional, and dedup key of the field the selection becomes; the scope follows the table's mode. */
+/** Name, type, attribute, optional, hover, and dedup key of the field the selection becomes; the scope follows the table's mode. */
 export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldOptions; onChange: (next: FieldOptions) => void; nameError: string | null }) {
   const set = (patch: Partial<FieldOptions>) => onChange({ ...value, ...patch });
   return (
@@ -124,6 +124,10 @@ export function FieldOptionsForm({ value, onChange, nameError }: { value: FieldO
         <span className="ws-row">
           <span className="ws-meta">optional</span>
           <Toggle on={value.optional} onChange={(optional) => set({ optional })} label="Optional" testId="pick-form-optional" />
+        </span>
+        <span className="ws-row" title="Move the mouse over the element before reading it">
+          <span className="ws-meta">hover</span>
+          <Toggle on={value.hover ?? false} onChange={(hover) => set({ hover })} label="Hover" testId="pick-form-hover" />
         </span>
         <DedupKeyToggle on={value.key} onChange={(key) => set({ key })} testId="pick-form-key" />
       </div>

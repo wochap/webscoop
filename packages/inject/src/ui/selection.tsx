@@ -81,6 +81,7 @@ export function SelectionPanel({
         attr: selected!.defaults.attr ?? "",
         optional: false,
         key: false,
+        hover: false,
       };
   // The form starts over for each new selection, and stays through re-picks while editing.
   const key = editing

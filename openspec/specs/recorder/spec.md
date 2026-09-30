@@ -1070,11 +1070,15 @@ The Recipe section SHALL offer a "Humanize input" toggle with a short hint that 
 - **THEN** the saved recipe has no `browser` block
 
 ### Requirement: Field hover toggle
-A saved field row SHALL show a `hover` toggle next to `optional`, `fallback`, and `key`, with a tooltip saying the mouse is moved over the element before it is read. Toggling it SHALL update the draft field's `hover` flag, and saving SHALL write it to the recipe (left out when false). Editing a recipe SHALL show the stored value.
+A saved field row SHALL show a `hover` toggle next to `optional`, `fallback`, and `key`, and the pick form SHALL show one next to `optional` and `key`, so the flag can be set before the field is added; both carry a tooltip saying the mouse is moved over the element before it is read. The pick form's toggle SHALL start off for a new selection and at the stored value when a saved field is opened for editing, and Add field or Update SHALL send its value. Toggling it SHALL update the draft field's `hover` flag, and saving SHALL write it to the recipe (left out when false). Editing a recipe SHALL show the stored value.
 
 #### Scenario: Turn on hover
 - **WHEN** the user turns on the `hover` toggle of a field and saves
 - **THEN** the saved recipe's field has `"hover": true`
+
+#### Scenario: Hover from the pick form
+- **WHEN** the user selects an element, turns on `hover` in the pick form, and adds the field
+- **THEN** the new field has `hover` on
 
 #### Scenario: Edit keeps hover
 - **WHEN** a recipe whose field has `"hover": true` is opened with `webscoop edit`

@@ -311,6 +311,7 @@ export const FieldOptionsSchema = z.object({
   attr: z.optional(z.string()),
   optional: z.boolean(),
   key: z.boolean(),
+  hover: z.optional(z.boolean()),
 });
 
 /** A saved field opened in the selection panel for editing. */

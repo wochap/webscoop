@@ -54,7 +54,7 @@ describe('inspector and candidates', () => {
     expect(p.qa('pick-candidate')[2]!.dataset.primary).toBe('true');
     fireEvent.click(p.q('pick-add-field')!);
     const { defaults } = proposed.selected!;
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, attr: defaults.attr ?? null, optional: false, key: false } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: defaults.name, type: defaults.type, attr: defaults.attr ?? null, optional: false, key: false, hover: false } });
   });
 });
 

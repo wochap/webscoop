@@ -167,9 +167,11 @@ describe('field options form', () => {
     fireEvent.change(name, { target: { value: 'amount' } });
     chooseOption(p.q('pick-form-type')!, 'text');
     fireEvent.click(p.q('pick-form-optional')!);
+    expect(toggle(p.q('pick-form-hover'))).toBe('false');
     fireEvent.click(p.q('pick-form-key')!);
+    fireEvent.click(p.q('pick-form-hover')!);
     fireEvent.click(p.q('pick-add-field')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', attr: null, optional: true, key: true } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addField', patch: { name: 'amount', type: 'text', attr: null, optional: true, key: true, hover: true } });
   });
 
   it('follows the type with the attribute and refuses a duplicate name', async () => {
@@ -258,7 +260,7 @@ describe('editing a saved field', () => {
     expect(p.q('pick-update')).not.toBeNull();
     chooseOption(p.q('pick-form-type')!, 'text');
     fireEvent.click(p.q('pick-update')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', attr: null, optional: true, key: false } });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateEditedField', patch: { name: 'price', type: 'text', attr: null, optional: true, key: false, hover: false } });
     fireEvent.click(p.q('pick-cancel-edit')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.cancelEdit' });
     fireEvent.keyDown(p.q('panel-body')!, { key: 'Escape' });
