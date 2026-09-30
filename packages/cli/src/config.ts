@@ -8,6 +8,7 @@ const ProxyUrlSchema = z.string().refine((v) => parseProxyUrl(v) !== null, { err
 
 /** Lifecycle events a hook can run on. */
 export const HOOK_EVENTS = [
+  'run.queued',
   'browser.starting',
   'browser.started',
   'browser.closed',
@@ -21,6 +22,9 @@ export const HOOK_EVENTS = [
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+/** Default `daemon.idleMs`: how long an idle daemon browser stays open. */
+export const DEFAULT_IDLE_MS = 60_000;
 
 /** Default `hookTimeoutMs`. */
 export const DEFAULT_HOOK_TIMEOUT_MS = 5000;
@@ -76,6 +80,21 @@ export const ConfigSchema = z.object({
       args: z.array(z.string().min(1)).optional(),
     })
     .default({ driver: 'playwright' }),
+  /** The background daemon that runs `run` and `test` jobs. */
+  daemon: z
+    .object({
+      /** Jobs one browser runs at once; the rest wait in order. Default 1. */
+      concurrency: z.number().int().positive().default(1),
+      /** Milliseconds an idle browser stays open; 0 closes it after its last job. Default 60000. */
+      idleMs: z.number().int().nonnegative().default(DEFAULT_IDLE_MS),
+    })
+    .default({ concurrency: 1, idleMs: DEFAULT_IDLE_MS }),
+  guards: z
+    .object({
+      /** False shows no banner over a page waiting for a guard, and injects nothing. Default true. */
+      banner: z.boolean().optional(),
+    })
+    .optional(),
   /** Shell commands per lifecycle event: one command line or a list, run in order. */
   hooks: z.partialRecord(z.enum(HOOK_EVENTS), HookCommandsSchema).optional(),
   /** Longest a hook command may run before it is killed. Default 5000. */

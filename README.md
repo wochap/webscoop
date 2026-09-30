@@ -125,21 +125,24 @@ starting Node.
 ## Usage
 
 ```sh
-webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms]
+webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms] [--force]
 webscoop record --edit <recipe> [--repick field]
-webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--timeout ms]
+webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--timeout ms] [--force]
 webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
-                      [--profile name] [--timeout ms] [--lock-timeout ms] [--report] [-q|--quiet]
+                      [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
                       [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
-webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--json] [--no-llm]
+webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
                        [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
 webscoop browser show|hide [--profile name]
+webscoop daemon status [--json]
+webscoop daemon stop [--force]
+webscoop attention continue|abort [run-id]
 webscoop doctor
 ```
 
@@ -153,8 +156,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   (0-based within the page).
 - `--profile` picks the browser profile. Without it, the profile is resolved
   (see [Profiles](#profiles)); with no profile config it is the recipe name.
-  Two runs cannot share a profile at once; the second waits `--lock-timeout`
-  (default 30000 ms), then exits 1.
+  Runs on one profile share its browser; see [Daemon](#daemon).
 - `--timeout` bounds navigation and network settling (default 30000 ms).
 - `--report` prints the full run report (candidate used, healing outcome, and
   status per field, and where the recipe was written back) to stderr.
@@ -166,6 +168,9 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   (dropped rows, partial or fallback fields, encoded `--var` values, profile
   warnings, guard cleared or timed out, re-pick outcomes) are muted. A clean
   quiet run leaves stderr empty; `--report` still prints.
+- `--queue-timeout` gives up (exit 1) on a run that has not started within
+  that many milliseconds, naming the profile and the jobs ahead; without it a
+  run waits until it starts.
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
@@ -185,6 +190,53 @@ matching `--var name=value` at record and run time.
 webscoop record "https://shop.test/c/{category}" --name shop
 webscoop run shop --var category="running-shoes"
 ```
+
+### Daemon
+
+`run` and `test` execute in a background daemon, one per user, which the first
+of them starts. It keeps one headed browser per profile and runs each job in a
+new tab of it, so a second run on a warm profile starts at once instead of
+launching Chrome again. The command stays in the foreground: it prints the
+job's rows and stderr lines as they come and exits with the job's exit code,
+exactly as a run without the daemon would. Each job uses the environment,
+working directory, config, and recipe of the command that submitted it (so
+`--out rows.json` lands in your current directory and `WEBSCOOP_LLM_KEY`
+comes from your shell). Ctrl+C cancels only that job and closes its tab.
+
+- `daemon.concurrency` (config, default 1) is how many jobs one browser runs
+  at once; the others wait in submission order, and each waiting command
+  prints one `queued on profile "shop": 2 jobs ahead` line (not with
+  `--quiet`). Raise it to fan out searches in parallel tabs; the default keeps
+  anti-bot guards calm.
+- `daemon.idleMs` (config, default 60000) keeps a browser open this long after
+  its last job; 0 closes it right away. The daemon exits once it has no
+  browser and no job.
+- A job whose launch settings (driver, channel, binary, proxy, timezone,
+  locale, `browser.args`) differ from its profile's open browser waits until
+  that browser has no job; the browser is then relaunched with the new
+  settings.
+- The socket is `$WEBSCOOP_HOME/run/daemon.sock` when `WEBSCOOP_HOME` is set,
+  else `$XDG_RUNTIME_DIR/webscoop/daemon.sock`, else
+  `/tmp/webscoop-<uid>/daemon.sock`, readable only by you. The log is
+  `daemon.log` in `$WEBSCOOP_HOME`, else `$XDG_STATE_HOME/webscoop/` (default
+  `~/.local/state/webscoop/`); hook output from runs goes there too.
+- After an upgrade, the first command finds a daemon of another version: that
+  daemon finishes its jobs and exits, and a new one serves the command.
+
+```sh
+webscoop daemon status          # pid, version, per browser: profile, pid, running and queued runs, attention
+webscoop daemon status --json
+webscoop daemon stop            # refuse new jobs, wait for the others, close every browser
+webscoop daemon stop --force    # cancel the jobs instead of waiting (their commands exit 1)
+```
+
+`record`, `edit`, and `bench` do not use the daemon; they open their own
+browser and take the profile lock. When the daemon has a browser open on their
+profile, they print its running and queued jobs and ask `Stop it? [y/N]`; `y`
+cancels those jobs (their commands exit 1 saying which command stopped them),
+closes that browser, and goes on. `--force` stops it without asking. Without a
+terminal and without `--force` they exit 1 naming the profile. Jobs submitted
+for that profile meanwhile wait in the queue until the exclusive command ends.
 
 ### Pagination
 
@@ -263,8 +315,9 @@ fingerprint; nothing else in the file changes. A failed run never writes.
   anything else missing is missing (exit 3 when required).
 - `--no-llm` skips the model rung for this run, whatever the config and recipe
   say.
-- `--interactive` opens the browser with the page's Content-Security-Policy
-  bypassed so the panel can load; without it a run never injects anything.
+- `--interactive` shows the re-pick panel in the run's tab, whose
+  Content-Security-Policy is bypassed (for that tab only) so the panel can
+  load.
 
 A field the model healed is logged with the model's reason, for example
 `healed price: model: css=span[data-qa="price"] (price with currency) (was
@@ -295,19 +348,42 @@ broken recipe (exit 3); with them the run pauses and waits for you.
 
 `login` and `captcha` are checked after each page loads, `zero-fields` after
 extraction; when several match, the first of `captcha`, `login`, `zero-fields`
-is reported. When one fires, the run brings the browser window to the front,
-sends one desktop notification (`notify-send`, critical urgency, naming the
-recipe, the guard, and the page; without `notify-send` the same text goes to
-stderr), and checks the page again every second. Once the guard is gone the run
-goes back to the page it meant to load if you ended up elsewhere (for example
-the home page after logging in), checks once more, and continues on the same
-page number; rows already emitted stay emitted. Nothing is injected into the
-page unless the run is `--interactive`, where a banner across the top of the
-page shows the guard, a countdown, **Continue** (check again now), and
-**Abort** (stop the run, exit 1).
+is reported.
+
+Only one run per browser asks for you at a time: it holds the browser's
+attention. A run that raises a guard while another run holds attention prints
+`waiting for run <id> to finish with the browser's attention` and waits. Once it
+gets attention it reloads its page and checks again, so one captcha you solve
+or one login frees every run behind it without asking you again (a guard on
+another site still asks). The run holding attention brings its tab to the
+front, sends one desktop notification (`notify-send`, critical urgency, naming
+the recipe, the guard, and the page; without `notify-send` the same text goes
+to stderr), shows a banner across the top of its page with the guard, a
+countdown, **Continue** (check again now), and **Abort** (stop the run, exit
+1), and checks the page again every second. `guards.banner: false` in the
+config turns the banner off, and then nothing is injected into the page;
+outside a guard nothing is injected either (CSP is bypassed for the run's tab
+only, so the banner loads). Once the guard is gone the run goes back to the
+page it meant to load if you ended up elsewhere (for example the home page
+after logging in), checks once more, and continues on the same page number;
+rows already emitted stay emitted.
+
+Besides the banner, you can answer:
+
+- at the `Solved? [Y/n/a]` prompt the command prints on its terminal (on
+  `/dev/tty`, never on stdout, even with `--quiet` or a pipe): Enter or `y`
+  checks again now and says so when the guard is still there, `n` keeps
+  waiting without asking again, `a` aborts. The prompt is taken back when the
+  guard clears any other way.
+- with `webscoop attention continue` or `webscoop attention abort`, for example
+  from a notification action or a key binding; it acts on the only run holding
+  attention, or on `[run-id]` (`WEBSCOOP_RUN_ID` in hooks, or `webscoop daemon
+  status`), and exits 1 listing the run ids when none or several hold
+  attention.
 
 All guards of a run share one wait budget, `--guard-timeout` (default 600000
-ms for `run`, 0 for `test`, so `test` exits 2 at once on a wall). When it runs
+ms for `run`, 0 for `test`, so `test` exits 2 at once on a wall), counted only
+while the run holds attention. When it runs
 out the run stops with exit 2, stderr names the guard, the page, and the URL,
 the recipe is not written back, and stdout keeps the rows of completed pages
 (in JSON array mode the array holds just those). `--no-guards` turns every
@@ -329,6 +405,7 @@ needs you, send a notification).
 
 | Event | When |
 | --- | --- |
+| `run.queued` | a `run` or `test` job waits for a free slot; the payload has `ahead`, the jobs before it |
 | `browser.starting` | before a browser launches; the launch waits for these hooks |
 | `browser.started` | the browser opened and its main process id is known (or 5 seconds passed) |
 | `browser.closed` | the browser closed |
@@ -339,8 +416,15 @@ needs you, send a notification).
 | `attention.resolved` | that need ended; exactly one follows every `attention.needed` |
 | `browser.show`, `browser.hide` | fired only by `webscoop browser show|hide` |
 
-`run`, `test`, `record`, `edit`, and `bench` fire the browser events; `run`
-and `test` also fire the run and attention events.
+`record`, `edit`, and `bench` fire the browser events for the browser they
+launch. For `run` and `test` the daemon fires `browser.starting` and
+`browser.started` when it launches a profile's browser and `browser.closed`
+when it closes it, once per browser, not per job: a run served by a warm
+browser fires only its run and attention events. Hooks of `run` and `test` run
+in the daemon, one at a time, with the environment of the command that
+submitted the job (browser events: of the job that launched the browser, or
+the last one it served for `browser.closed`); their output goes to the daemon
+log.
 
 ```json
 {
@@ -448,8 +532,11 @@ The config:
 }
 ```
 
-A Hyprland key binding for `webscoop browser show` brings a hidden run's
-browser back at any time. `webscoop doctor` lists the configured hooks.
+Runs on one profile share one browser window, each in its own tab; the run
+that needs you brings its tab to the front, so `attention.needed` shows the
+right page. A Hyprland key binding for `webscoop browser show` brings a hidden
+run's browser back at any time, and one for `webscoop attention continue`
+answers the waiting run without leaving the keyboard. `webscoop doctor` lists the configured hooks.
 
 ### Steps
 
@@ -536,8 +623,8 @@ webscoop edit shop --repick price   # pick one field again, save, and exit
 with every table, field, and step loaded. Change what you need and press
 **Ctrl+S** to save; close the window or press Ctrl+C to end. `--repick <field>`
 skips the full session and re-picks one field (see below). `edit` takes the
-same `--var`, `--profile`, `--timeout`, and `--lock-timeout` options as
-`record` and behaves exactly like `webscoop record --edit <recipe>`, which
+same `--var`, `--profile`, `--timeout`, `--lock-timeout`, and `--force`
+options as `record` and behaves exactly like `webscoop record --edit <recipe>`, which
 keeps working.
 
 ### Re-picking a field
@@ -782,9 +869,12 @@ itself, and no humanized input timing, which is a separate option.
 | Recipes | `$XDG_DATA_HOME/webscoop/recipes/<name>.json` (default `~/.local/share/webscoop/recipes/`) |
 | Browser profiles | `$XDG_DATA_HOME/webscoop/profiles/<name>/` (`<name>@chrome/` and `<name>@patchright/` for other browsers) |
 | Config | `$XDG_CONFIG_HOME/webscoop/config.json` (default `~/.config/webscoop/config.json`) |
+| Daemon socket | `$XDG_RUNTIME_DIR/webscoop/daemon.sock` (else `/tmp/webscoop-<uid>/daemon.sock`) |
+| Daemon log | `$XDG_STATE_HOME/webscoop/daemon.log` (default `~/.local/state/webscoop/daemon.log`) |
 
 `WEBSCOOP_HOME=/some/dir` replaces both roots: recipes in `/some/dir/recipes/`,
-profiles in `/some/dir/profiles/`, config at `/some/dir/config.json`.
+profiles in `/some/dir/profiles/`, config at `/some/dir/config.json`, the
+daemon socket at `/some/dir/run/daemon.sock`, its log at `/some/dir/daemon.log`.
 
 Config file, all keys optional:
 
@@ -799,6 +889,8 @@ Config file, all keys optional:
     "locale": "es-ES",
     "args": ["--class=webscoop"]
   },
+  "daemon": { "concurrency": 1, "idleMs": 60000 },
+  "guards": { "banner": true },
   "hooks": { "attention.needed": "~/bin/webscoop-window show" },
   "hookTimeoutMs": 5000,
   "profiles": {
@@ -851,8 +943,8 @@ logged in with. When they are equal, it removes any pin, and the recipe keeps
 following the config.
 
 One shared profile (for example `profiles.default`) means runs of different
-recipes wait on the same profile lock, so they cannot run in parallel. Per-host
-rules avoid that.
+recipes share one browser, and with `daemon.concurrency` 1 they queue. Raise
+the concurrency, or use per-host rules to give them browsers of their own.
 
 ### Language model
 
@@ -1038,7 +1130,7 @@ packages/
     src/recorder    recorder protocol, draft state, host-side session controller
     src/export      recipe to standalone Playwright script: plan, TypeScript and Python renderers
   browser     BrowserPort adapter over Playwright
-  cli         webscoop command, paths, config, profile lock, output
+  cli         webscoop command, paths, config, profile lock, output, browser daemon
   llm         OpenAI-compatible chat client, endpoint probe, scripted mock
   inject      recorder UI injected into the page (React in a closed shadow root, esbuild IIFE)
   playground  fixture site, dataset, tier renderers

@@ -10,11 +10,11 @@ import { log, type CliIo } from './context';
 import { CliError } from './exit';
 
 /**
- * The guard banner for `run --interactive`: the recorder bundle in guard
- * mode, shown in the run's own browser window while the run waits, and
- * taken out of the page once the guard clears.
+ * The guard banner: the recorder bundle in guard mode, shown in the run's own
+ * tab while the run holds attention for a guard, and taken out of the page
+ * once attention resolves.
  */
-export function interactiveGuardBanner(
+export function guardBanner(
   io: CliIo,
   opts: { storage: StoragePort; bundle: string; recipe: Recipe; vars: Readonly<Record<string, string>>; timeoutMs: number },
 ): GuardBannerHandler {
@@ -34,7 +34,7 @@ export function interactiveGuardBanner(
       // Set before attaching, so the page gets the banner with its first state.
       const hooks = await next.showGuard(info);
       await next.attach();
-      log(io, 'the browser window shows the guard banner: Continue checks again now, Abort stops the run');
+      log(io, 'the page shows the guard banner: Continue checks again now, Abort stops the run');
       return hooks;
     },
     async hide() {

@@ -21,6 +21,8 @@ import { chromium, errors, type BrowserContext, type Frame, type Locator, type P
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
 export const IGNORED_DEFAULT_ARGS = ['--enable-automation'];
+/** Launch flags that keep background tabs and hidden windows running at full speed, for jobs sharing one browser. */
+export const BACKGROUND_ARGS = ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
 
 export type Driver = 'playwright' | 'patchright';
 type DriverModule = typeof import('playwright');
@@ -73,7 +75,7 @@ export function launchOptions(options: PlaywrightBrowserOptions, opts: OpenOptio
     ...(opts.proxy ? { proxy: opts.proxy } : {}),
     ...(opts.timezone ? { timezoneId: opts.timezone } : {}),
     ...(opts.locale ? { locale: opts.locale } : {}),
-    args: playwright ? [...STEALTH_ARGS, ...extra] : extra,
+    args: playwright ? [...STEALTH_ARGS, ...BACKGROUND_ARGS, ...extra] : [...BACKGROUND_ARGS, ...extra],
   };
 }
 
@@ -193,6 +195,8 @@ export class PlaywrightSession implements InteractiveSession {
     private readonly driver: Driver = 'playwright',
     /** Humanized input, when the run turned it on. */
     private readonly humanizer?: Humanizer,
+    /** Set for a tab of a shared browser: closing ends only the tab, and scripts and bindings stay on its page. */
+    private readonly tab?: { close(): Promise<void> },
   ) {
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) this.navigations++;
@@ -372,7 +376,8 @@ export class PlaywrightSession implements InteractiveSession {
   }
 
   async close(): Promise<void> {
-    await this.context.close();
+    if (this.tab) await this.tab.close();
+    else await this.context.close();
   }
 
   /**
@@ -385,7 +390,7 @@ export class PlaywrightSession implements InteractiveSession {
   }
 
   async inject(source: string): Promise<void> {
-    await this.context.addInitScript({ content: source });
+    await (this.tab ? this.page : this.context).addInitScript({ content: source });
     try {
       await this.mainWorldEvaluate(source);
     } catch {
@@ -397,7 +402,7 @@ export class PlaywrightSession implements InteractiveSession {
     const known = this.bindings.has(name);
     this.bindings.set(name, fn);
     if (known) return;
-    await this.context.exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
+    await (this.tab ? this.page : this.context).exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
     if (this.driver === 'patchright' && this.bindings.size === 1) {
       // Patchright adds bindings to a document's main world only once the host evaluates there.
       this.page.on('domcontentloaded', () => void this.mainWorldEvaluate('0').catch(() => {}));
@@ -467,4 +472,102 @@ export class PlaywrightBrowser implements BrowserPort {
 /** Path of the Chromium build this driver version expects. */
 export async function expectedChromiumPath(driver: Driver = 'playwright'): Promise<string> {
   return (await loadDriver(driver)).chromium.executablePath();
+}
+
+/** Per-tab options of a shared browser. */
+export interface TabOptions {
+  /** Humanized input for this tab. */
+  humanize?: boolean;
+  /** Ignore the tab's Content-Security-Policy from its next navigation on, so the banner and re-pick can be injected. */
+  bypassCSP?: boolean;
+}
+
+/**
+ * One headed, persistent Chromium context shared by many jobs: each job gets
+ * its own tab, and closing the job's session closes only that tab and the
+ * popups opened from it. The first page stays open as an idle placeholder, so
+ * the window survives between jobs.
+ */
+export class SharedBrowser {
+  private closed = false;
+  private readonly closeListeners = new Set<() => void>();
+
+  private constructor(
+    private readonly context: BrowserContext,
+    private readonly driver: Driver,
+  ) {
+    context.on('close', () => {
+      this.closed = true;
+      for (const cb of [...this.closeListeners]) cb();
+    });
+  }
+
+  /** Launch the browser on a profile directory with the launch-level open options. */
+  static async launch(options: PlaywrightBrowserOptions, profileDir: string, opts: OpenOptions = {}): Promise<SharedBrowser> {
+    const driver = options.driver ?? 'playwright';
+    const module = await (options.load ?? loadDriver)(driver);
+    const context = await module.chromium.launchPersistentContext(profileDir, launchOptions(options, opts));
+    try {
+      context.setDefaultTimeout(options.actionTimeoutMs ?? 5000);
+      if (context.pages().length === 0) await context.newPage();
+      return new SharedBrowser(context, driver);
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  /** Pages open in the browser, the placeholder included. */
+  get pageCount(): number {
+    return this.context.pages().length;
+  }
+
+  /** Open a new tab for one job. */
+  async newSession(opts: TabOptions = {}): Promise<PlaywrightSession> {
+    const page = await this.context.newPage();
+    const owned = new Set<Page>();
+    const track = (p: Page) => {
+      p.on('popup', (popup) => {
+        owned.add(popup);
+        track(popup);
+      });
+    };
+    track(page);
+    try {
+      if (opts.bypassCSP) await bypassPageCSP(this.context, page);
+    } catch (error) {
+      await page.close().catch(() => {});
+      throw error;
+    }
+    let closing: Promise<void> | undefined;
+    const tab = {
+      close: () =>
+        (closing ??= (async () => {
+          for (const popup of owned) await popup.close().catch(() => {});
+          await page.close().catch(() => {});
+        })()),
+    };
+    return new PlaywrightSession(this.context, page, this.driver, opts.humanize ? new Humanizer(page) : undefined, tab);
+  }
+
+  /** Called once when the browser closes, by `close()` or by the user. Returns an unsubscribe function. */
+  onClosed(cb: () => void): () => void {
+    this.closeListeners.add(cb);
+    return () => this.closeListeners.delete(cb);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    await this.context.close().catch(() => {});
+  }
+}
+
+/** Turn off CSP for one page through DevTools, instead of the context-wide `bypassCSP`. */
+export async function bypassPageCSP(context: BrowserContext, page: Page): Promise<void> {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Page.setBypassCSP', { enabled: true });
 }

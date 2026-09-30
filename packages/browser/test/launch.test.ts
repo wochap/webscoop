@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DriverMissingError, IGNORED_DEFAULT_ARGS, launchOptions, loadDriver, PlaywrightBrowser, STEALTH_ARGS, type Driver } from '../src';
+import { BACKGROUND_ARGS, DriverMissingError, IGNORED_DEFAULT_ARGS, launchOptions, loadDriver, PlaywrightBrowser, STEALTH_ARGS, type Driver } from '../src';
 
 /** A driver module whose `launchPersistentContext` records its arguments and returns a one-page context. */
 function fakeDriver() {
@@ -21,15 +21,22 @@ describe('launchOptions', () => {
   it('keeps the automation flags for the playwright driver', () => {
     const options = launchOptions({}, { remoteDebuggingPort: 9222, args: ['--class=webscoop'] });
     expect(options).toMatchObject({ headless: false, viewport: null, handleSIGINT: false, ignoreDefaultArgs: IGNORED_DEFAULT_ARGS });
-    expect(options.args).toEqual([...STEALTH_ARGS, '--remote-debugging-port=9222', '--class=webscoop']);
+    expect(options.args).toEqual([...STEALTH_ARGS, ...BACKGROUND_ARGS, '--remote-debugging-port=9222', '--class=webscoop']);
   });
 
   it('leaves the flags to Patchright', () => {
     const options = launchOptions({ driver: 'patchright', executablePath: '/bin/chrome' }, { args: ['--class=webscoop'] });
     expect(options).not.toHaveProperty('ignoreDefaultArgs');
-    expect(options.args).toEqual(['--class=webscoop']);
+    expect(options.args).toEqual([...BACKGROUND_ARGS, '--class=webscoop']);
     expect(options.executablePath).toBe('/bin/chrome');
     expect(options).toMatchObject({ headless: false, viewport: null });
+  });
+
+  it('keeps background tabs and hidden windows from being throttled, under both drivers', () => {
+    for (const driver of ['playwright', 'patchright'] as const) {
+      const args = launchOptions({ driver }, {}).args ?? [];
+      for (const flag of ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows']) expect(args).toContain(flag);
+    }
   });
 
   it('maps the proxy, timezone, and locale', () => {

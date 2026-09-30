@@ -249,14 +249,24 @@ describe('webscoop run', () => {
     expect(io.browserCreated()).toBe(0);
   });
 
-  it('exits 1 when the profile is locked by another process', async () => {
+  it('waits in the queue while another process holds the profile, and gives up after --queue-timeout', async () => {
     const dir = await home();
     await mkdir(join(dir, 'profiles', 'shop'), { recursive: true });
     await writeFile(join(dir, 'profiles', 'shop', '.webscoop.lock'), `${process.ppid}\n`);
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(1) }) });
-    expect(await main(['run', 'shop', '--lock-timeout', '100'], io)).toBe(ExitCode.Error);
+    expect(await main(['run', 'shop', '--queue-timeout', '300'], io)).toBe(ExitCode.Error);
     expect(io.err()).toContain('profile "shop" is locked by process');
+    expect(io.err()).toContain('gave up after 300 ms waiting for profile "shop" (0 jobs ahead, waiting for its browser)');
     expect(io.browserCreated()).toBe(0);
+  });
+
+  it('no longer accepts --lock-timeout on run and test', async () => {
+    const dir = await home();
+    for (const command of ['run', 'test']) {
+      const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+      expect(await main([command, 'shop', '--lock-timeout', '100'], io)).toBe(ExitCode.Error);
+      expect(io.err()).toContain("unknown option '--lock-timeout'");
+    }
   });
 
   it('closes the browser, releases the lock, and exits 1 on interrupt', async () => {

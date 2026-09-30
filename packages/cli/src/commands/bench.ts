@@ -9,6 +9,7 @@ import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
+import { releaseProfile } from './daemon';
 import { BROWSER_PID_DEADLINE_MS, modelRung, testRows } from './run';
 
 export interface BenchCommandOptions {
@@ -22,6 +23,8 @@ export interface BenchCommandOptions {
   profile?: string;
   timeout: number;
   lockTimeout: number;
+  /** `--force`: stop the daemon's browser on the profile without asking. */
+  force?: boolean;
   /** False with `--no-llm`. */
   llm?: boolean;
 }
@@ -114,6 +117,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   const profile = resolved.profile;
   checkProfileName(profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
+  await releaseProfile(io, profileDir, profile, 'bench', opts.force === true);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
   log(io, `benchmarking ${recipe.name} ${profileNote(resolved)}`);
   const controller = new AbortController();

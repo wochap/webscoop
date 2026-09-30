@@ -104,18 +104,18 @@ describe('run healing flags', () => {
     expect(await readFile(file, 'utf8')).toBe(before);
   });
 
-  it('opens the browser with bypassCSP and the recorder bundle only with --interactive', async () => {
+  it('bypasses CSP on the tab for the guard banner, and not with guards.banner false unless --interactive', async () => {
     const dir = await home([recipe({ fields: [{ name: 'title', type: 'text', scope: 'item', selectors: [sel('css', 'h2')] }] })]);
     const browser = new FakeBrowser({ [PAGE]: shopPage(1) });
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_E2E_CDP_PORT: '9333' }, browser });
-    expect(await main(['run', 'shop', '--interactive'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
-    // The DevTools port is honored for every run, the recorder bundle only for interactive ones.
+    // The DevTools port is a launch setting of every run; CSP is bypassed per tab, for the banner.
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ guards: { banner: false } }));
+    expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
     expect(browser.openOptions[1]).toEqual({ remoteDebuggingPort: 9333 });
-    const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
-    expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[2]).toEqual({});
+    expect(await main(['run', 'shop', '--interactive'], t)).toBe(ExitCode.Ok);
+    expect(browser.openOptions[2]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
   });
 });
 

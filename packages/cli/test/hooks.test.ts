@@ -170,7 +170,8 @@ describe('hooks in commands', () => {
     await writeFile(join(dir, 'config.json'), JSON.stringify({ hooks: { 'run.done': 'exit 1' } }));
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, PATH: process.env.PATH }, browser: new FakeBrowser({ [PAGE]: cards(1) }) });
     expect(await main(['run', 'shop'], io)).toBe(ExitCode.Ok);
-    expect(io.err()).toContain('webscoop: warning: hook run.done command "exit 1" exited 1');
+    // Hooks of run and test run in the daemon; their output and warnings go to its log.
+    expect(io.daemonLog()).toContain('webscoop: warning: hook run.done command "exit 1" exited 1');
   });
 
   it('warns once about a leftover window block and still runs', async () => {

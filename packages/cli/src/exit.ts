@@ -29,3 +29,13 @@ export function exitCodeFor(reason: FailureReason): ExitCode {
   if (reason === 'paused') return ExitCode.Paused;
   return ExitCode.Error;
 }
+
+/** Print an error the way the CLI does and return its exit code. */
+export function reportError(io: { stderr: { write(chunk: string): unknown } }, error: unknown): ExitCode {
+  if (error instanceof CliError) {
+    io.stderr.write(`webscoop: ${error.message}\n`);
+    return error.exitCode;
+  }
+  io.stderr.write(`webscoop: unexpected error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+  return ExitCode.Error;
+}

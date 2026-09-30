@@ -24,6 +24,7 @@ import { acquireProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
+import { releaseProfile } from './daemon';
 import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings, parseVars } from './run';
 
 export interface RecordCommandOptions {
@@ -34,6 +35,8 @@ export interface RecordCommandOptions {
   profile?: string;
   timeout: number;
   lockTimeout: number;
+  /** `--force`: stop the daemon's browser on the profile without asking. */
+  force?: boolean;
   edit?: string;
   /** With `--edit`: re-pick only this field, then save and end. */
   repick?: string;
@@ -181,6 +184,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   const profile = resolved.profile;
   checkProfileName(profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);
+  await releaseProfile(io, profileDir, profile, opts.edit !== undefined ? 'edit' : 'record', opts.force === true);
   const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile });
 
   const cdpPort = io.env.WEBSCOOP_E2E_CDP_PORT?.trim();

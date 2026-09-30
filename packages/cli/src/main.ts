@@ -1,7 +1,12 @@
+import { openSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { createInterface } from 'node:readline';
+import { ReadStream, WriteStream } from 'node:tty';
 import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { browserCommand, type BrowserCommandOptions } from './commands/browser';
+import { attentionCommand, daemonStatusCommand, daemonStopCommand } from './commands/daemon';
 import { doctorCommand } from './commands/doctor';
 import { exportCommand, type ExportCommandOptions } from './commands/export';
 import { recipesCommand } from './commands/recipes';
@@ -9,12 +14,15 @@ import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
 import { loadRecorderBundle } from './bundle';
 import { probeVersion, resolveBrowser } from './browser';
-import type { CliIo } from './context';
+import type { CliIo, TtyPort } from './context';
+import { daemonLogPath, socketPath } from './daemon/paths';
+import { connectSocket, serveDaemon, spawnDaemon } from './daemon/socket';
 import { NotifySend } from './notify';
 import { findBrowserPid } from './browser-pid';
-import { CliError, ExitCode, type ExitCode as Code } from './exit';
+import { CliError, ExitCode, reportError, type ExitCode as Code } from './exit';
+import { VERSION } from './version';
 
-export const VERSION = '0.1.0';
+export { VERSION };
 
 function positiveInt(value: string): number {
   const n = Number(value);
@@ -120,7 +128,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .option('--table <name>', 'print only this table of a multi-table recipe, as a plain array (or plain JSONL rows)')
     .option('--profile <name>', 'browser profile name (default: resolved from recipe and config)')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
-    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--queue-timeout <ms>', 'give up (exit 1) when the job has not started within this time (default: wait until it starts)').argParser(positiveInt))
     .option('--report', 'print the full run report to stderr')
     .option('-q, --quiet', 'print only errors and prompts to act on stderr')
     .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
@@ -141,11 +149,19 @@ Hooks: commands in the config "hooks" block run on lifecycle events, such as
 attention.needed when a guard or a re-pick needs you in the browser; use them
 to hide and show the window with your window manager.
 
+Daemon: run and test execute in a background daemon that keeps one browser
+per profile warm and runs each job in its own tab. daemon.concurrency in the
+config sets how many jobs a browser runs at once (default 1); the others wait
+in order. --queue-timeout gives up on a job that has not started in time.
+
 Guards: when a page asks for a human (a login redirect, a bot check, or a
-short or errored page where nothing resolves), the run brings the browser
-window to the front, sends a desktop notification, and waits for you to clear
-it, then resumes on the same page. With --interactive a banner over the page
-shows a countdown with Continue and Abort. Nobody within --guard-timeout: exit 2.
+short or errored page where nothing resolves), the run waits until no other
+run of its browser needs you, reloads to check whether the guard is still
+there, then brings its tab to the front, sends a desktop notification, and
+shows a banner over the page with a countdown, Continue, and Abort
+(guards.banner: false turns it off). Answer in the page, at the Solved?
+[Y/n/a] prompt on the terminal, or with webscoop attention continue|abort.
+Nobody within --guard-timeout: exit 2.
 
 Steps: actions recorded in the recipe (accept a cookie banner, type a search,
 open a tab) are replayed after the first page loads, and after every page for
@@ -178,7 +194,7 @@ working selector first (unless --no-save).`,
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
     .option('--profile <name>', 'browser profile name (default: resolved from recipe and config)')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
-    .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .addOption(new Option('--queue-timeout <ms>', 'give up (exit 1) when the job has not started within this time (default: wait until it starts)').argParser(positiveInt))
     .option('--json', 'print the field table as a JSON array')
     .option('--no-llm', 'never ask the language model to locate a field')
     .addOption(new Option('--pages <1|N|all>', 'pages to walk (default: the first page only)').argParser(pagesArg))
@@ -201,6 +217,7 @@ working selector first (unless --no-save).`,
     .option('--repick <field>', 'with --edit: pick a new location for one field (table.field, or a name one table has), save, and exit')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .option('--force', 'stop the daemon browser on the profile, and its jobs, without asking')
     .addHelpText(
       'after',
       RECORD_KEYS_HELP,
@@ -215,6 +232,7 @@ working selector first (unless --no-save).`,
     .option('--profile <name>', 'browser profile name (default: resolved from recipe and config)')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .option('--force', 'stop the daemon browser on the profile, and its jobs, without asking')
     .addHelpText('after', RECORD_KEYS_HELP)
     .action(async (recipe: string, opts: Omit<RecordCommandOptions, 'edit'>) => setCode(await recordCommand(io, undefined, { ...opts, edit: recipe })));
 
@@ -255,6 +273,7 @@ and export again when the site changes. Needs no display.`,
     .option('--no-llm', 'never ask the language model to locate a field')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
+    .option('--force', 'stop the daemon browser on the profile, and its jobs, without asking')
     .addHelpText(
       'after',
       `
@@ -280,6 +299,44 @@ on the profile.`,
     )
     .action(async (action: 'show' | 'hide', opts: BrowserCommandOptions) => setCode(await browserCommand(io, action, opts)));
 
+  const daemon = program
+    .command('daemon')
+    .description('show or stop the background daemon that runs run and test jobs')
+    .addHelpText(
+      'after',
+      `
+status prints whether a daemon runs, its pid and version, and per browser the
+profile, the browser process id, the running and queued runs, and the run
+holding attention; it exits 0 either way. stop makes the daemon refuse new
+jobs, waits for the others (or cancels them with --force), closes every
+browser, and exits.`,
+    );
+  daemon
+    .command('status')
+    .description('print whether a daemon runs, and its browsers and jobs')
+    .option('--json', 'print JSON')
+    .action(async (opts: { json?: boolean }) => setCode(await daemonStatusCommand(io, opts)));
+  daemon
+    .command('stop')
+    .description('stop the daemon after its jobs end, closing every browser')
+    .option('--force', 'cancel running and queued jobs instead of waiting for them')
+    .action(async (opts: { force?: boolean }) => setCode(await daemonStopCommand(io, opts)));
+  daemon
+    .command('serve', { hidden: true })
+    .description('run the daemon in the foreground; started by run and test')
+    .action(async () => {
+      if (!io.serveDaemon) throw new CliError('cannot serve a daemon here');
+      setCode(await io.serveDaemon());
+    });
+
+  program
+    .command('attention')
+    .description('answer the run waiting for you in the browser: continue re-checks its guard now, abort ends it')
+    .addArgument(new Argument('<action>', 'continue or abort').choices(['continue', 'abort']))
+    .argument('[run-id]', 'the run to answer (default: the only run holding attention)')
+    .addHelpText('after', '\nExits 1 listing the run ids when none or several runs hold attention and no run id is given.')
+    .action(async (action: 'continue' | 'abort', runId: string | undefined) => setCode(await attentionCommand(io, action, runId)));
+
   program
     .command('doctor')
     .description('check paths, display, browser, proxy, profiles, hooks, and LLM configuration')
@@ -299,17 +356,41 @@ export async function main(args: readonly string[], io: CliIo): Promise<Code> {
     if (error instanceof CommanderError) {
       return error.exitCode === 0 ? ExitCode.Ok : ExitCode.Error;
     }
-    if (error instanceof CliError) {
-      io.stderr.write(`webscoop: ${error.message}\n`);
-      return error.exitCode;
-    }
-    io.stderr.write(`webscoop: unexpected error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
-    return ExitCode.Error;
+    return reportError(io, error);
   }
+}
+
+/** The controlling terminal, opened for the attention prompt when standard error is one. */
+function openTty(): TtyPort | null {
+  if (!process.stderr.isTTY) return null;
+  let input: ReadStream;
+  let output: WriteStream;
+  try {
+    input = new ReadStream(openSync('/dev/tty', 'r'));
+    output = new WriteStream(openSync('/dev/tty', 'w'));
+  } catch {
+    return null;
+  }
+  const rl = createInterface({ input, terminal: false });
+  return {
+    write: (text) => void output.write(text),
+    onLine(cb) {
+      rl.on('line', cb);
+      return () => void rl.off('line', cb);
+    },
+    close() {
+      rl.close();
+      input.destroy();
+      output.destroy();
+    },
+  };
 }
 
 /** The real world: process streams, environment, Playwright. */
 export function defaultIo(): CliIo {
+  const programPath = resolve(process.argv[1] ?? 'webscoop');
+  const socket = () => socketPath(process.env, process.getuid?.() ?? 0);
+  const logPath = () => daemonLogPath(process.env, homedir());
   return {
     stdout: process.stdout,
     stderr: process.stderr,
@@ -343,7 +424,22 @@ export function defaultIo(): CliIo {
       }
     },
     recorderBundle: loadRecorderBundle,
-    createNotify: (env) => new NotifySend({ stderr: process.stderr, env }),
+    createNotify: (env, stderr) => new NotifySend({ stderr: stderr ?? process.stderr, env }),
     findBrowserPid: (profileDir, deadlineMs) => findBrowserPid(profileDir, { deadlineMs }),
+    terminal: Boolean(process.stdin.isTTY && process.stderr.isTTY),
+    tty: openTty,
+    async launchBrowser(_config, _env, browser, profileDir, opts) {
+      const { SharedBrowser } = await import('@webscoop/browser');
+      return SharedBrowser.launch({ driver: browser.driver, ...(browser.executablePath ? { executablePath: browser.executablePath } : {}) }, profileDir, opts);
+    },
+    daemon: {
+      programPath,
+      connect: () => connectSocket(socket()),
+      spawn: async () => spawnDaemon(programPath, process.env, logPath()),
+    },
+    async serveDaemon() {
+      await serveDaemon({ socketPath: socket(), logPath: logPath(), base: defaultIo(), version: VERSION, programPath });
+      return ExitCode.Ok;
+    },
   };
 }

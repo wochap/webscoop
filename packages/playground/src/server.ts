@@ -352,6 +352,11 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
 
     if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/csp') {
+      // A strict policy: no inline or injected script or style runs unless CSP is bypassed.
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; script-src 'none'; style-src 'self'" });
+      return void res.end('<!doctype html><title>CSP</title><h1 id="strict">strict</h1>');
+    }
     if (url.pathname === '/' ) {
       res.writeHead(302, { location: '/catalog' });
       return void res.end();

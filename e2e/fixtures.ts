@@ -34,6 +34,12 @@ export function profileDir(home: string, name: string, driver: string = E2E_DRIV
   return join(home, 'profiles', driver === 'patchright' ? `${name}@chrome` : name);
 }
 
+/** The config every e2e home starts with; tests that write their own config pass their additions. */
+export function e2eConfig(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const browser = E2E_DRIVER === 'patchright' ? { driver: 'patchright', ...(CHROME ? { executablePath: CHROME } : {}) } : {};
+  return { daemon: { idleMs: 0 }, ...extra, browser: { ...browser, ...(extra.browser as object | undefined) } };
+}
+
 export interface CliResult {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -68,6 +74,8 @@ export interface Scoop {
   record(args: string[]): Promise<Recording>;
   /** Start `webscoop run --interactive` and attach once its re-pick panel shows up. */
   interactiveRun(args: string[]): Promise<Recording>;
+  /** Start a plain `webscoop run` and attach once its guard banner shows up. */
+  bannerRun(args: string[]): Promise<Recording>;
   /** Start `webscoop run` with a DevTools port and attach to its browser, to clear guards as the user would. */
   guardedRun(args: string[], env?: Record<string, string | undefined>): Promise<GuardedRun>;
 }
@@ -92,7 +100,8 @@ export const test = base.extend<{ scoop: Scoop }>({
     };
     const recipe = referenceRecipe(playground.port);
     await writeRecipe(recipe);
-    if (E2E_DRIVER === 'patchright') await writeFile(join(home, 'config.json'), `${JSON.stringify({ browser: { driver: 'patchright', ...(CHROME ? { executablePath: CHROME } : {}) } })}\n`);
+    // Each home gets its own daemon (its socket is under WEBSCOOP_HOME); browsers close after their last job.
+    await writeFile(join(home, 'config.json'), `${JSON.stringify(e2eConfig())}\n`);
 
     const children = new Set<ChildProcess>();
     const spawnCli = (args: string[], env: Record<string, string | undefined> = {}): CliRun => {
@@ -125,12 +134,15 @@ export const test = base.extend<{ scoop: Scoop }>({
       run: (args, env) => spawnCli(args, env).done,
       record: (args) => startRecording(scoop, args, cleanups),
       interactiveRun: (args) => startRecording(scoop, args, cleanups, 'run'),
+      bannerRun: (args) => startRecording(scoop, args, cleanups, 'banner'),
       guardedRun: (args, env) => startGuardedRun(scoop, args, cleanups, env),
     };
     await use(scoop);
 
     for (const cleanup of cleanups.splice(0)) await cleanup();
     for (const child of children) child.kill('SIGINT');
+    // The home's daemon: cancel what is left and close its browsers.
+    await spawnCli(['daemon', 'stop', '--force']).done;
     await Promise.race([
       Promise.all([...children].map((c) => new Promise((r) => c.once('close', r)))),
       new Promise((r) => setTimeout(r, 5000)),

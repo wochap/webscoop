@@ -41,7 +41,7 @@ test('rows equal the dataset on every recipe field', async ({ scoop }) => {
   expect(result.code, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual(expectedRows(scoop.playground.url));
   expect(result.stderr).toMatch(/24 rows from 1 page in \d+\.\d+s/);
-  expect(processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
+  await expect.poll(() => processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
 });
 
 test('--jsonl streams one row per line', async ({ scoop }) => {
@@ -149,18 +149,30 @@ async function waitFor(check: () => boolean, timeoutMs = 20_000): Promise<void> 
   }
 }
 
-test('a second concurrent run on one profile exits 1', async ({ scoop }) => {
+test('a second concurrent run on one profile waits in the queue, then runs in the same browser', async ({ scoop }) => {
+  scoop.playground.control.delayMs = 3000;
+  const lockFile = join(profileDir(scoop.home, RECIPE), '.webscoop.lock');
+  const first = scoop.spawn(['run', RECIPE]);
+  await waitFor(() => existsSync(lockFile));
+  const second = await scoop.run(['run', RECIPE]);
+  expect(second.code, second.stderr).toBe(0);
+  expect(second.stderr).toContain(`queued on profile "${RECIPE}": 1 job ahead`);
+  const firstResult = await first.done;
+  expect(firstResult.code, firstResult.stderr).toBe(0);
+  expect(JSON.parse(second.stdout)).toHaveLength(JSON.parse(firstResult.stdout).length);
+  // With daemon.idleMs 0 the browser closes after the last job and frees the profile.
+  await expect.poll(() => existsSync(lockFile)).toBe(false);
+});
+
+test('a queued run gives up after --queue-timeout', async ({ scoop }) => {
   scoop.playground.control.delayMs = 4000;
   const lockFile = join(profileDir(scoop.home, RECIPE), '.webscoop.lock');
   const first = scoop.spawn(['run', RECIPE]);
   await waitFor(() => existsSync(lockFile));
-  const second = await scoop.run(['run', RECIPE, '--lock-timeout', '500']);
+  const second = await scoop.run(['run', RECIPE, '--queue-timeout', '500']);
   expect(second.code).toBe(1);
-  expect(second.stderr).toContain(`profile "${RECIPE}"`);
-  expect(second.stderr).toContain(String(first.child.pid));
-  const firstResult = await first.done;
-  expect(firstResult.code, firstResult.stderr).toBe(0);
-  expect(existsSync(lockFile)).toBe(false);
+  expect(second.stderr).toContain(`gave up after 500 ms waiting for profile "${RECIPE}" (1 job ahead)`);
+  expect((await first.done).code).toBe(0);
 });
 
 test('SIGINT closes the browser, releases the lock, and exits 1', async ({ scoop }) => {
@@ -173,8 +185,8 @@ test('SIGINT closes the browser, releases the lock, and exits 1', async ({ scoop
   expect(result.code).toBe(1);
   expect(result.stderr).toContain('interrupted');
   expect(result.stdout).toBe('');
-  expect(existsSync(lockFile)).toBe(false);
-  expect(processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
+  await expect.poll(() => existsSync(lockFile)).toBe(false);
+  await expect.poll(() => processesUsing(profileDir(scoop.home, RECIPE))).toEqual([]);
 });
 
 test.describe('a recipe with tables', () => {

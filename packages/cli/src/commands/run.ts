@@ -5,6 +5,7 @@ import {
   DEFAULT_GUARD_TIMEOUT_MS,
   fillText,
   firstPageUrl,
+  type AttentionPort,
   type GuardBannerHandler,
   type GuardOptions,
   MissingVariableError,
@@ -30,17 +31,17 @@ import {
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, type Config } from '../config';
-import { log, type CliIo } from '../context';
+import { log, type BrowserInfo, type CliIo } from '../context';
+import { submitJob } from '../daemon/client';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, exitCodeFor, type ExitCode as Code } from '../exit';
-import { acquireProfileLock, type ProfileLock } from '../lock';
 import { resolvePaths } from '../paths';
-import { interactiveGuardBanner } from '../guard';
+import { guardBanner } from '../guard';
 import { createLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile, type ResolvedProfile } from '../profiles';
 import { FsStorage } from '../storage';
-import { HookRunner } from '../hooks';
+import { HookRunner, type HookRunnerOptions } from '../hooks';
 
 export interface RunCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -54,7 +55,8 @@ export interface RunCommandOptions {
   table?: string;
   profile?: string;
   timeout: number;
-  lockTimeout: number;
+  /** `--queue-timeout`: longest wait for the job to start. */
+  queueTimeout?: number;
   report?: boolean;
   /** False with `--no-heal`. */
   heal?: boolean;
@@ -302,21 +304,29 @@ export function checkTable(recipe: Recipe, table: string | undefined): void {
   if (!names.includes(table)) throw new CliError(`recipe "${recipe.name}" has no table "${table}" (tables: ${names.join(', ')})`);
 }
 
-/** What `run` and `test` share: the recipe, its variables, a display, and a locked profile. */
-interface Prepared {
+/** What `run` and `test` share: the recipe, its variables, a display, and a profile with its browser. */
+export interface Prepared {
   config: Config;
   storage: FsStorage;
   recipe: Recipe;
+  /** Where the recipe was loaded from, for write-backs. */
+  recipePath: string;
   vars: Record<string, string>;
   profile: ResolvedProfile;
   profileDir: string;
-  lock: ProfileLock;
+  browser: BrowserInfo;
   settings: BrowserSettings;
   hooks: HookRunner;
-  createBrowser(): Promise<BrowserPort>;
 }
 
-async function prepare(io: CliIo, command: 'run' | 'test', recipeRef: string, opts: { var: string[]; profile?: string; lockTimeout: number; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean }): Promise<Prepared> {
+/** Load and check everything a job needs before it waits for a browser. */
+export async function prepare(
+  io: CliIo,
+  command: 'run' | 'test',
+  recipeRef: string,
+  opts: { var: string[]; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean },
+  hookOpts: Partial<HookRunnerOptions> = {},
+): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths, (message) => log(io, message));
   const storage = new FsStorage(paths.recipesDir, io.cwd);
@@ -341,10 +351,51 @@ async function prepare(io: CliIo, command: 'run' | 'test', recipeRef: string, op
 
   const profile = resolveProfile({ flag: opts.profile, recipePin: recipe.browser?.profile, name: recipe.name, host: hostOf(recipe.url, vars, recipe.vars), config });
   checkProfileName(profile.profile);
-  const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
-  const lock = await acquireProfileLock(profileDir, { timeoutMs: opts.lockTimeout, profileName: profile.profile });
-  const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars } }, io);
-  return { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks };
+  const { profileDir, browser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
+  const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars } }, { stderr: io.stderr, env: io.env, ...hookOpts });
+  return { config, storage, recipe, recipePath: storage.pathFor(recipeRef), vars, profile, profileDir, browser, settings, hooks };
+}
+
+/** Launch-level options of a job's browser: network identity, extra arguments, and the e2e DevTools port. */
+export async function launchSettings(io: CliIo, prepared: Prepared): Promise<OpenOptions> {
+  const { humanize: _humanize, ...launch } = settingsOptions(prepared.settings);
+  const port = await e2ePort(io);
+  return { ...launch, ...(port !== undefined ? { remoteDebuggingPort: port } : {}) };
+}
+
+/** Browsers are shared only between jobs whose launch settings are equal. */
+export function launchKey(prepared: Prepared, launch: OpenOptions): string {
+  const { driver, channel, path } = prepared.browser;
+  return JSON.stringify({ driver, channel, path, proxy: launch.proxy ?? null, timezone: launch.timezone ?? null, locale: launch.locale ?? null, args: launch.args ?? [], port: launch.remoteDebuggingPort ?? null });
+}
+
+/** What a job gets from the daemon. */
+export interface JobContext {
+  /** Opens the job's tab in its profile's browser. */
+  browser: BrowserPort;
+  /** The browser's attention, shared with its other jobs. */
+  attention?: AttentionPort;
+  /** Write-backs to one recipe file, one at a time. */
+  saveRecipe?(path: string, save: () => Promise<string>): Promise<string>;
+  /** Receives the runner's events, to forward attention to the client. */
+  watch?(emitter: RunEmitter): void;
+}
+
+/** The guard banner, unless the config turns it off; it and re-pick need the page's CSP out of the way. */
+async function pageHelpers(
+  io: CliIo,
+  prepared: Prepared,
+  opts: { interactive?: boolean; timeout: number; quiet?: boolean },
+): Promise<{ banner?: GuardBannerHandler; repick?: RepickHandler; bypassCSP: boolean }> {
+  const showBanner = prepared.config.guards?.banner !== false;
+  if (!showBanner && !opts.interactive) return { bypassCSP: false };
+  const bundle = await io.recorderBundle((await e2ePort(io)) !== undefined ? 'e2e' : 'default');
+  const { storage, recipe, vars } = prepared;
+  return {
+    bypassCSP: true,
+    ...(showBanner ? { banner: guardBanner(io, { storage, bundle, recipe, vars, timeoutMs: opts.timeout }) } : {}),
+    ...(opts.interactive ? { repick: interactiveRepick(io, { storage, bundle, vars, timeoutMs: opts.timeout, ...(opts.quiet !== undefined ? { quiet: opts.quiet } : {}) }) } : {}),
+  };
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
@@ -394,12 +445,18 @@ export async function e2ePort(io: CliIo): Promise<number | undefined> {
   return Number(cdpPort);
 }
 
+/** `webscoop run`: submit the job to the daemon and relay its output. */
 export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandOptions): Promise<Code> {
-  const { config, storage, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks } = await prepare(io, 'run', recipeRef, opts);
+  return submitJob(io, 'run', recipeRef, opts);
+}
+
+/** A run job, inside the daemon. */
+export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommandOptions, job: JobContext): Promise<Code> {
+  const { config, storage, recipe, vars, profile, profileDir, settings, hooks } = prepared;
 
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
-    log(io, 'interrupted, closing the browser');
+    log(io, 'interrupted, closing the tab');
     controller.abort();
   });
   const tables = tablesOf(recipe).map((t) => t.name);
@@ -415,26 +472,17 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
   try {
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile, settings, tables.length > 1, opts.quiet);
-    hooks.attach(emitter, { run: true });
+    hooks.attach(emitter, { run: true, browser: false });
+    job.watch?.(emitter);
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
-    const port = await e2ePort(io);
-    let openOptions: OpenOptions = { ...settingsOptions(settings), ...(port !== undefined ? { remoteDebuggingPort: port } : {}) };
-    let repick: RepickHandler | undefined;
-    let banner: GuardBannerHandler | undefined;
-    if (opts.interactive) {
-      // Re-pick and the guard banner inject the recorder, which needs the page's CSP out of the way.
-      const bundle = await io.recorderBundle(port !== undefined ? 'e2e' : 'default');
-      openOptions = { bypassCSP: true, ...openOptions };
-      repick = interactiveRepick(io, { storage, bundle, vars, timeoutMs: opts.timeout, quiet: opts.quiet });
-      banner = interactiveGuardBanner(io, { storage, bundle, recipe, vars, timeoutMs: opts.timeout });
-    }
+    const { banner, repick, bypassCSP } = await pageHelpers(io, prepared, opts);
+    const save = (promoted: Recipe) => storage.saveTo(prepared.recipePath, promoted);
 
-    const browser = await createBrowser();
     const runner = new Runner({
       recipe,
-      browser,
+      browser: job.browser,
       profileDir,
       vars,
       timeoutMs: opts.timeout,
@@ -444,10 +492,10 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
       steps: stepsFromFlags(opts),
-      lifecycle: hooks.lifecycle((dir) => io.findBrowserPid(dir, BROWSER_PID_DEADLINE_MS)),
-      saveRecipe: (promoted) => storage.saveTo(storage.pathFor(recipeRef), promoted),
-      openOptions,
+      saveRecipe: (promoted) => (job.saveRecipe ? job.saveRecipe(prepared.recipePath, () => save(promoted)) : save(promoted)),
+      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
       ...(repick ? { repick } : {}),
+      ...(job.attention ? { attention: job.attention } : {}),
     });
     const result = await runner.run();
     await sink.finish(result.ok || result.reason === 'paused');
@@ -466,7 +514,6 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
     return ExitCode.Ok;
   } finally {
     offInterrupt();
-    lock.release();
     await hooks.drain();
   }
 }
@@ -479,7 +526,8 @@ export interface TestCommandOptions {
   var: string[];
   profile?: string;
   timeout: number;
-  lockTimeout: number;
+  /** `--queue-timeout`: longest wait for the job to start. */
+  queueTimeout?: number;
   json?: boolean;
   /** False with `--no-llm`. */
   llm?: boolean;
@@ -564,32 +612,37 @@ export function formatTable(rows: readonly TestRow[]): string {
  * resolved on at least one row, 3 when one did not.
  */
 export async function testCommand(io: CliIo, recipeRef: string, opts: TestCommandOptions): Promise<Code> {
-  const { config, recipe, vars, profile, profileDir, lock, settings, createBrowser, hooks } = await prepare(io, 'test', recipeRef, opts);
+  return submitJob(io, 'test', recipeRef, opts);
+}
+
+/** A test job, inside the daemon. */
+export async function executeTest(io: CliIo, prepared: Prepared, opts: TestCommandOptions, job: JobContext): Promise<Code> {
+  const { config, recipe, vars, profile, profileDir, settings, hooks } = prepared;
   const controller = new AbortController();
   const offInterrupt = io.onInterrupt(() => {
-    log(io, 'interrupted, closing the browser');
+    log(io, 'interrupted, closing the tab');
     controller.abort();
   });
   try {
     const emitter = new RunEmitter();
     logRunEvents(io, emitter, profile, settings);
-    hooks.attach(emitter, { run: true });
-    const port = await e2ePort(io);
-    const browser = await createBrowser();
+    hooks.attach(emitter, { run: true, browser: false });
+    job.watch?.(emitter);
+    const { banner, bypassCSP } = await pageHelpers(io, prepared, opts);
     const runner = new Runner({
       recipe,
       pagination: testPagination(opts),
-      browser,
+      browser: job.browser,
       profileDir,
       vars,
       timeoutMs: opts.timeout,
       emitter,
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
-      guards: guardsFromFlags(io, opts, 0),
+      guards: guardsFromFlags(io, opts, 0, banner),
       steps: stepsFromFlags(opts),
-      lifecycle: hooks.lifecycle((dir) => io.findBrowserPid(dir, BROWSER_PID_DEADLINE_MS)),
-      openOptions: { ...settingsOptions(settings), ...(port !== undefined ? { remoteDebuggingPort: port } : {}) },
+      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
+      ...(job.attention ? { attention: job.attention } : {}),
     });
     const result = await runner.run();
     const rows = testRows(result.report);
@@ -604,7 +657,6 @@ export async function testCommand(io: CliIo, recipeRef: string, opts: TestComman
     return exitCodeFor(result.reason);
   } finally {
     offInterrupt();
-    lock.release();
     await hooks.drain();
   }
 }

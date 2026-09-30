@@ -5,7 +5,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { CHROME, expect, hasDisplay, test } from './fixtures';
+import { CHROME, e2eConfig, expect, hasDisplay, test } from './fixtures';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -27,7 +27,7 @@ async function listen(server: Server): Promise<number> {
 
 test('the catalog recipe gives the same rows under Patchright with Chrome', async ({ scoop }) => {
   test.skip(!CHROME, 'Google Chrome is not installed');
-  await writeFile(join(scoop.home, 'config.json'), `${JSON.stringify({ browser: { driver: 'patchright' } })}\n`);
+  await writeFile(join(scoop.home, 'config.json'), `${JSON.stringify(e2eConfig({ browser: { driver: 'patchright' } }))}\n`);
   const result = await scoop.run(['run', 'playground-catalog']);
   expect(result.code, result.stderr).toBe(0);
   const rows = JSON.parse(result.stdout) as { title: string }[];

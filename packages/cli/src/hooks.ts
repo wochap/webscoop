@@ -29,6 +29,15 @@ export interface HookDetails {
 export interface HookRunnerOptions {
   stderr: Output;
   env: Env;
+  /** Run id the events carry; default a new one. */
+  runId?: string;
+  /** Queue shared with other runners, so hooks of several jobs run one at a time. */
+  queue?: HookQueue;
+}
+
+/** Hooks waiting to run, in order. */
+export interface HookQueue {
+  chain: Promise<void>;
 }
 
 /** Variables a hook gets from webscoop; unset ones are removed from the inherited environment. */
@@ -50,8 +59,10 @@ const HOOK_VARS = [
  * never changes the command's outcome.
  */
 export class HookRunner {
-  readonly runId = randomUUID();
-  private chain: Promise<void> = Promise.resolve();
+  readonly runId: string;
+  private readonly queue: HookQueue;
+  /** This runner's last queued hook. */
+  private last: Promise<void> = Promise.resolve();
   private pid: number | undefined;
   private readonly timeoutMs: number;
   private readonly profileDir: string;
@@ -61,6 +72,8 @@ export class HookRunner {
     private readonly context: HookContext,
     private readonly opts: HookRunnerOptions,
   ) {
+    this.runId = opts.runId ?? randomUUID();
+    this.queue = opts.queue ?? { chain: Promise.resolve() };
     this.timeoutMs = config.hookTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
     // Hooks and the pid scan see the profile directory as Chromium does: absolute.
     this.profileDir = resolve(context.profileDir);
@@ -79,7 +92,7 @@ export class HookRunner {
   /** Queue the event's commands; the promise settles once they ran. Never rejects. */
   fire(event: HookEvent, details: HookDetails = {}): Promise<void> {
     const commands = hookCommands(this.config, event);
-    if (commands.length === 0) return this.chain;
+    if (commands.length === 0) return this.last;
     const { url, reason, ...rest } = details;
     const pid = this.pid;
     const env: Record<string, string | undefined> = { ...this.opts.env };
@@ -109,24 +122,30 @@ export class HookRunner {
       vars: this.context.vars ?? {},
       ...rest,
     });
-    this.chain = this.chain.then(async () => {
+    this.last = this.queue.chain = this.queue.chain.then(async () => {
       for (const line of commands) await this.runOne(event, line, env, payload);
     });
-    return this.chain;
+    return this.last;
   }
 
-  /** Wait for every queued hook. */
+  /** Wait for every hook this runner queued. */
   drain(): Promise<void> {
-    return this.chain;
+    return this.last;
   }
 
-  /** Fire hooks for the runner's events; `run` adds the run and attention events to the browser ones. */
-  attach(emitter: RunEmitter, opts: { run: boolean }): void {
-    emitter.on('browser.started', (e) => {
-      this.setPid(e.pid);
-      void this.fire('browser.started');
-    });
-    emitter.on('browser.closed', () => void this.fire('browser.closed'));
+  /**
+   * Fire hooks for the runner's events; `run` adds the run and attention
+   * events to the browser ones, and `browser: false` leaves the browser events
+   * to the daemon, which fires them once per browser.
+   */
+  attach(emitter: RunEmitter, opts: { run: boolean; browser?: boolean }): void {
+    if (opts.browser !== false) {
+      emitter.on('browser.started', (e) => {
+        this.setPid(e.pid);
+        void this.fire('browser.started');
+      });
+      emitter.on('browser.closed', () => void this.fire('browser.closed'));
+    }
     if (!opts.run) return;
     emitter.on('run.start', (e) => void this.fire('run.start', { url: e.url }));
     emitter.on('attention.needed', (e) => {

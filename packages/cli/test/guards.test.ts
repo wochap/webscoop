@@ -156,7 +156,7 @@ describe('guard flags', () => {
   });
 });
 
-describe('guard banner in interactive runs', () => {
+describe('guard banner', () => {
   it('shows the banner, re-checks at once on Continue, and takes the recorder out of the page', async () => {
     const dir = await home();
     const browser = walled();
@@ -191,16 +191,40 @@ describe('guard banner in interactive runs', () => {
     while (!browser.sessions[0]?.exposed.has('__webscoopHost')) await new Promise((resolve) => setTimeout(resolve, 5));
     await browser.sessions[0]!.callHost({ kind: 'guard.abort' });
     expect(await run).toBe(ExitCode.Error);
-    expect(t.err()).toContain('aborted from the guard banner');
+    expect(t.err()).toContain('aborted while it waited for a guard');
   });
 
-  it('injects nothing in an unattended run', async () => {
+  it('shows the banner in an unattended run and takes it out once the guard clears', async () => {
     const dir = await home();
     const browser = walled();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
-    expect(await main(['run', 'shop', '--guard-timeout', '0'], t)).toBe(ExitCode.Paused);
+    const run = main(['run', 'shop', '--no-notify'], t);
+    while (!browser.sessions[0]?.exposed.has('__webscoopHost')) await new Promise((resolve) => setTimeout(resolve, 5));
+    const session = browser.sessions[0]!;
+    expect(session.injected).toEqual(['/* recorder default */']);
+    browser.setPage(PAGE, shopPage(1));
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    expect(await run).toBe(ExitCode.Ok);
+    expect(session.dispatchedOf('draft.state').at(-1)).toMatchObject({ state: { guardContext: null } });
+    expect(session.dispatchedOf('session.detach')).toHaveLength(1);
+  });
+
+  it('injects nothing with guards.banner false', async () => {
+    const dir = await home();
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ guards: { banner: false } }));
+    const browser = walled();
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--guard-timeout', '50', '--no-notify'], t)).toBe(ExitCode.Paused);
     expect(browser.sessions[0]!.injected).toEqual([]);
     expect(browser.sessions[0]!.dispatched).toEqual([]);
+  });
+
+  it('injects nothing before a guard is raised', async () => {
+    const dir = await home();
+    const browser = new FakeBrowser({ [PAGE]: shopPage(1) });
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
+    expect(browser.sessions[0]!.injected).toEqual([]);
   });
 });
 

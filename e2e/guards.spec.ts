@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
 import { dataset } from '@webscoop/playground';
-import { expect, hasDisplay, PAGED_RECIPE, referenceRecipe, profileDir, test, type Scoop } from './fixtures';
+import { e2eConfig, expect, hasDisplay, PAGED_RECIPE, referenceRecipe, profileDir, test, type Scoop } from './fixtures';
 import { ws } from './sidebar';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
@@ -146,4 +146,29 @@ test('interactive run on wall=login shows the banner, and Continue after logging
   expect(result.code, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toHaveLength(24);
   expect(result.stderr).toContain('guard login on page 1 cleared');
+});
+
+test('an unattended run on wall=captcha shows the banner, and solving the challenge takes it away', async ({ scoop }) => {
+  const name = await walled(scoop, 'guard-banner-plain', 'wall=captcha');
+  const r = await scoop.bannerRun([name, '--no-notify']);
+  const ctx = await r.until((s) => s.host?.guardContext);
+  expect(ctx).toMatchObject({ kind: 'captcha', page: 1 });
+  expect(await r.query(ws('guard-banner'))).toMatchObject({ rect: expect.objectContaining({ y: 0 }) });
+  await Promise.all([r.page.waitForEvent('load'), r.page.getByRole('button', { name: 'I am human' }).click()]);
+  const result = await r.run.done;
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toHaveLength(24);
+  expect(result.stderr).toContain('guard captcha on page 1 cleared');
+});
+
+test('guards.banner false keeps the page of an unattended run free of recorder elements', async ({ scoop }) => {
+  await writeFile(join(scoop.home, 'config.json'), `${JSON.stringify(e2eConfig({ guards: { banner: false } }))}\n`);
+  const name = await walled(scoop, 'guard-no-banner', 'wall=captcha');
+  const g = await scoop.guardedRun([name, '--no-notify']);
+  await g.raised();
+  const page = await g.page();
+  await page.waitForTimeout(1500);
+  expect(await page.locator('#ws-root').count()).toBe(0);
+  g.run.child.kill('SIGINT');
+  expect((await g.run.done).code).toBe(1);
 });

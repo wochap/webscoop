@@ -16,6 +16,8 @@ import {
   Runner,
   waitForClear,
   zeroFieldsDetector,
+  type AttentionPort,
+  type AttentionSignal,
   type GuardBannerHandler,
   type GuardBannerInfo,
   type Notification,
@@ -539,5 +541,99 @@ describe('runner lifecycle', () => {
     );
     expect((await t.runner.run()).ok).toBe(true);
     expect(t.log.of('browser.started')).toEqual([{}]);
+  });
+});
+
+/** An attention port another run holds until `free` is called. */
+function heldAttention() {
+  let free!: () => void;
+  const freed = new Promise<void>((resolve) => (free = resolve));
+  const signals = new Set<(s: AttentionSignal) => void>();
+  let released = 0;
+  let blocked = 0;
+  const port: AttentionPort = {
+    acquire: async () => {
+      await freed;
+      return {
+        waited: true,
+        onSignal: (cb) => {
+          signals.add(cb);
+          return () => signals.delete(cb);
+        },
+        stillBlocked: () => void blocked++,
+        release: () => void released++,
+      };
+    },
+  };
+  return { port, free, send: (s: AttentionSignal) => signals.forEach((cb) => cb(s)), released: () => released, blocked: () => blocked };
+}
+
+describe('runner attention', () => {
+  it('reloads after waiting for attention and continues without asking when the guard is gone', async () => {
+    const attention = heldAttention();
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, { attention: attention.port });
+    const run = t.runner.run();
+    await new Promise((r) => setTimeout(r, 20));
+    // Nothing is shown while another run holds attention.
+    expect(t.calls).not.toContain('attention.needed');
+    expect(t.notifications).toEqual([]);
+    // The other run's user logged in; the shared cookies let this run in too.
+    t.browser.setPage(PAGE, catalog(cards(2)));
+    attention.free();
+    const result = await run;
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(2);
+    expect(t.calls).not.toContain('guard.raised');
+    expect(t.calls).not.toContain('attention.needed');
+    expect(t.notifications).toEqual([]);
+    expect(attention.released()).toBe(1);
+  });
+
+  it('asks the user once it holds attention when the guard is still there', async () => {
+    const attention = heldAttention();
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, { attention: attention.port });
+    t.onRaised(async (session) => {
+      t.browser.setPage(PAGE, catalog(cards(1)));
+      await session.goto(PAGE, { timeoutMs: 1000 });
+    });
+    const run = t.runner.run();
+    attention.free();
+    const result = await run;
+    expect(result.ok).toBe(true);
+    expect(t.calls.filter((c) => c.startsWith('attention'))).toEqual(['attention.needed', 'attention.resolved']);
+    expect(t.notifications).toHaveLength(1);
+  });
+
+  it('counts the guard timeout from when attention is held, not while waiting for it', async () => {
+    const attention = heldAttention();
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, { attention: attention.port });
+    const runner = new Runner({ ...(t.runner as unknown as { opts: RunOptions }).opts, guards: { enabled: true, timeoutMs: 100, pollMs: 1 } });
+    const run = runner.run();
+    // Waiting longer than the whole guard timeout for another run's attention.
+    await new Promise((r) => setTimeout(r, 200));
+    attention.free();
+    const started = Date.now();
+    const result = await run;
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.reason).toBe('paused');
+    expect(result.report.guards[0]!.waitedMs).toBeGreaterThanOrEqual(90);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(90);
+  });
+
+  it('re-checks on a continue signal, reports a guard still there, and aborts on an abort signal', async () => {
+    const attention = heldAttention();
+    attention.free();
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, {
+      attention: attention.port,
+      guards: { enabled: true, timeoutMs: 60_000, pollMs: 60_000 },
+    });
+    t.emitter.on('attention.needed', () => {
+      setTimeout(() => attention.send('continue'), 5);
+      setTimeout(() => attention.send('abort'), 40);
+    });
+    const result = await t.runner.run();
+    expect(result.ok ? null : result.reason).toBe('aborted');
+    expect(attention.blocked()).toBe(1);
+    expect(attention.released()).toBe(1);
   });
 });

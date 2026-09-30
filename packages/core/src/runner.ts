@@ -1,6 +1,7 @@
 import { RunEmitter, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
 import { RunFailure } from './failure';
 import { countItems, extractPage, resolveFirst, resolvePaginationTarget, type PageExtraction, type ResolvedSelectors } from './extract';
+import type { AttentionLease, AttentionPort } from './guards/attention';
 import type { GuardBannerHandler, GuardBannerHooks } from './guards/banner';
 import { DEFAULT_GUARD_TIMEOUT_MS, GuardBudget } from './guards/budget';
 import { detect, enabledDetectors, guardContext, LOGIN_URL_PATTERN, type GuardDetector, type GuardMatch } from './guards/detectors';
@@ -102,6 +103,8 @@ export interface RunOptions {
   lifecycle?: LifecyclePort;
   /** Replay of the recipe's steps. Default: enabled. */
   steps?: StepOptions;
+  /** The user's attention, shared with other runs in the same browser. Default: held at once. */
+  attention?: AttentionPort;
 }
 
 export interface StepOptions {
@@ -116,7 +119,7 @@ export interface GuardOptions {
   timeoutMs: number;
   /** Told once per guard occurrence. Default: nothing. */
   notify?: NotifyPort;
-  /** Banner over the page, for interactive runs only. */
+  /** Banner over the page while the run holds attention for a guard. */
   banner?: GuardBannerHandler;
   /** Interval between re-evaluations while paused. Default 1000. */
   pollMs?: number;
@@ -169,6 +172,18 @@ export class Runner {
     this.emitter.emit('attention.resolved', { reason, outcome });
   }
 
+  /** Wait for the user's attention; a run without an attention port holds it at once. */
+  private async acquireAttention(): Promise<AttentionLease> {
+    const port = this.opts.attention;
+    if (!port) return { waited: false, onSignal: () => () => {}, stillBlocked: () => {}, release: () => {} };
+    try {
+      return await port.acquire(this.opts.signal);
+    } catch (error) {
+      if (this.opts.signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
+      throw error;
+    }
+  }
+
   private transition(to: RunState): void {
     if (!TRANSITIONS[this.currentState].includes(to)) {
       throw new Error(`invalid run state transition ${this.currentState} -> ${to}`);
@@ -188,20 +203,27 @@ export class Runner {
         const table = target.table ?? tablesOf(this.opts.recipe)[0]!.name;
         this.transition('repicking');
         this.emitter.emit('repick.requested', { page, table, target: target.name, oldSelector, fingerprint });
-        const url = await ctx.session.url().catch(() => '');
-        this.needAttention({ reason: 'repick', page, url, table, target: target.name });
-        const result = await handler({
-          page,
-          target,
-          name: target.name,
-          oldSelector,
-          fingerprint,
-          sample: fingerprint?.textSample || null,
-          session: ctx.session,
-          recipe: current(),
-        });
-        this.emitter.emit('repick.resolved', { page, table, target: target.name, result: result.kind });
-        this.resolveAttention(result.kind);
+        const lease = await this.acquireAttention();
+        let result: RepickResult;
+        try {
+          await quietly(() => ctx.session.focus());
+          const url = await ctx.session.url().catch(() => '');
+          this.needAttention({ reason: 'repick', page, url, table, target: target.name });
+          result = await handler({
+            page,
+            target,
+            name: target.name,
+            oldSelector,
+            fingerprint,
+            sample: fingerprint?.textSample || null,
+            session: ctx.session,
+            recipe: current(),
+          });
+          this.emitter.emit('repick.resolved', { page, table, target: target.name, result: result.kind });
+          this.resolveAttention(result.kind);
+        } finally {
+          lease.release();
+        }
         if (result.kind === 'abort') throw new RunFailure('aborted', `the re-pick of ${target.name} was aborted`);
         this.transition('extracting');
         if (result.kind === 'skip') return null;
@@ -371,6 +393,25 @@ export class Runner {
       const pause = async (match: GuardMatch, at: PageInfo, intended: string, check: (info: PageInfo) => Promise<GuardMatch | null>): Promise<PageInfo> => {
         const from = this.currentState;
         this.transition('guarded');
+        const lease = await this.acquireAttention();
+        try {
+          if (lease.waited) {
+            // Another run held attention; its user may have cleared this guard too.
+            const reloaded = await live.goto(intended, { timeoutMs }).catch(() => null);
+            const settled = reloaded ?? (await live.settle({ timeoutMs }).catch(() => null));
+            if (settled && (await check(settled).catch(() => match)) === null) {
+              this.transition(from);
+              return settled;
+            }
+            if (settled) at = settled;
+          }
+          return await pauseHeld(match, at, intended, check, from, lease);
+        } finally {
+          lease.release();
+        }
+      };
+      /** The guard pause proper, once the run holds attention. */
+      const pauseHeld = async (match: GuardMatch, at: PageInfo, intended: string, check: (info: PageInfo) => Promise<GuardMatch | null>, from: RunState, lease: AttentionLease): Promise<PageInfo> => {
         const { kind, reason } = match;
         const url = at.url;
         this.emitter.emit('guard.raised', { kind, page, url, reason });
@@ -391,28 +432,42 @@ export class Runner {
         if (signal?.aborted) waitAbort.abort();
         let userAborted = false;
         let hooks: GuardBannerHooks | null = null;
+        let offSignal = () => {};
         const banner = guardOpts?.banner;
         let result: Awaited<ReturnType<typeof waitForClear>>;
         try {
+          let continued = false;
+          const onContinue = () => {
+            continued = true;
+            recheck.trigger();
+          };
+          const onAbort = () => {
+            userAborted = true;
+            waitAbort.abort();
+          };
+          offSignal = lease.onSignal((sent) => (sent === 'continue' ? onContinue() : onAbort()));
           if (banner && !budget.exhausted) {
             // Without a banner the wait still works; polling alone clears the guard.
             hooks = await banner.show(live, { kind, reason, page, url, deadline: Date.now() + budget.remainingMs }).catch(() => null);
-            hooks?.onContinue(() => recheck.trigger());
-            hooks?.onAbort(() => {
-              userAborted = true;
-              waitAbort.abort();
-            });
+            hooks?.onContinue(onContinue);
+            hooks?.onAbort(onAbort);
           }
           result = await waitForClear(check, live, {
             budget,
             signal: waitAbort.signal,
             recheck,
+            onTick: () => {
+              if (!continued) return;
+              continued = false;
+              lease.stillBlocked();
+            },
             ...(guardOpts?.pollMs !== undefined ? { pollMs: guardOpts.pollMs } : {}),
           });
         } catch (error) {
-          if (userAborted) throw new RunFailure('aborted', 'the run was aborted from the guard banner');
+          if (userAborted) throw new RunFailure('aborted', 'the run was aborted while it waited for a guard');
           throw error;
         } finally {
+          offSignal();
           signal?.removeEventListener('abort', onRunAbort);
           if (hooks) await quietly(() => banner!.hide());
         }

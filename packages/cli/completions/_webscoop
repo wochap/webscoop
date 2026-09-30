@@ -47,7 +47,7 @@ _webscoop() {
   local curcontext=$curcontext state line ret=1
   typeset -A opt_args
 
-  local -a proxy_opts humanize_opts timeout_opts
+  local -a proxy_opts humanize_opts timeout_opts job_opts exclusive_opts
   proxy_opts=(
     '(--no-proxy)--proxy[route the browser through this proxy]:url:_urls'
     '(--proxy)--no-proxy[connect directly, whatever the recipe and config say]'
@@ -58,7 +58,13 @@ _webscoop() {
   )
   timeout_opts=(
     '--timeout[navigation timeout]:ms:'
+  )
+  job_opts=(
+    '--queue-timeout[give up when the job has not started within this time]:ms:'
+  )
+  exclusive_opts=(
     '--lock-timeout[how long to wait for a busy profile]:ms:'
+    '--force[stop the daemon browser on the profile without asking]'
   )
 
   _arguments -C \
@@ -79,6 +85,8 @@ _webscoop() {
         'export:write a standalone Playwright script for a recipe'
         'bench:run a playground recipe on every playground tier'
         'browser:fire the browser.show or browser.hide hooks'
+        'daemon:show or stop the background daemon'
+        'attention:answer the run waiting for you in the browser'
         'doctor:check paths, display, browser, proxy, profiles, hooks, and LLM'
       )
       _describe -t commands 'webscoop command' commands && ret=0
@@ -89,7 +97,7 @@ _webscoop() {
         # command: run
         run)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts \
+            $proxy_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
             '--jsonl[print one JSON object per line]' \
@@ -114,7 +122,7 @@ _webscoop() {
         # command: test
         test)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts \
+            $proxy_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
@@ -132,7 +140,7 @@ _webscoop() {
         # command: record
         record)
           _arguments \
-            $proxy_opts $timeout_opts \
+            $proxy_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--name[recipe name]:recipe:' \
             '*--var[set a URL template variable]:name=value:' \
@@ -144,7 +152,7 @@ _webscoop() {
         # command: edit
         edit)
           _arguments \
-            $proxy_opts $timeout_opts \
+            $proxy_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--repick[pick a new location for one field]:field:' \
             '*--var[set a URL template variable]:name=value:' \
@@ -169,7 +177,7 @@ _webscoop() {
         # command: bench
         bench)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts \
+            $proxy_opts $humanize_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--tiers[tiers to run]:range:(0-4 0 1 2 3 4 0,3-4)' \
             '--seed[playground seed]:n:' \
@@ -184,6 +192,24 @@ _webscoop() {
             '(-h --help)'{-h,--help}'[show help]' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
             '1:action:((show\:"fire the browser.show hooks" hide\:"fire the browser.hide hooks"))' && ret=0
+          ;;
+        # command: daemon
+        daemon)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '1:action:((status\:"print whether a daemon runs, and its browsers and jobs" stop\:"stop the daemon after its jobs end"))' \
+            '*:: :->daemon_args' && ret=0
+          case $words[1] in
+            status) _arguments '--json[print JSON]' && ret=0 ;;
+            stop) _arguments '--force[cancel running and queued jobs instead of waiting]' && ret=0 ;;
+          esac
+          ;;
+        # command: attention
+        attention)
+          _arguments \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '1:action:((continue\:"re-check the guard now" abort\:"end the run"))' \
+            '2::run id:' && ret=0
           ;;
         # command: doctor
         doctor)

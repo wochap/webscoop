@@ -6,7 +6,7 @@ import { freePort } from './recorder-fixture';
 export interface GuardedRun {
   run: CliRun;
   browser: Browser;
-  /** The page the runner drives. */
+  /** The page the runner drives: its own tab, the last one opened. */
   page(): Promise<Page>;
   /** Wait until the run logs a raised guard; returns that stderr line. */
   raised(timeoutMs?: number): Promise<string>;
@@ -45,7 +45,8 @@ export async function startGuardedRun(
   const page = async (): Promise<Page> => {
     const deadline = Date.now() + 15_000;
     for (;;) {
-      const found = browser.contexts().flatMap((c) => c.pages())[0];
+      // The first page is the browser's idle placeholder; the run's tab comes after it.
+      const found = browser.contexts().flatMap((c) => c.pages()).at(-1);
       if (found) return found;
       if (Date.now() > deadline) throw new Error('the runner has no page');
       await new Promise((r) => setTimeout(r, 100));

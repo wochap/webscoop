@@ -95,16 +95,18 @@ async function recorderPage(browser: Browser, timeoutMs = 30_000): Promise<Page>
 
 /**
  * Start `webscoop record` (or `webscoop run --interactive`, whose recorder
- * shows up when a re-pick is needed) with a DevTools port and attach to its page.
+ * shows up when a re-pick is needed, or a plain `webscoop run`, whose guard
+ * banner shows up on a wall) with a DevTools port and attach to its page.
  */
 export async function startRecording(
   scoop: Scoop,
   args: string[],
   cleanups: (() => Promise<void>)[],
-  command: 'record' | 'run' = 'record',
+  command: 'record' | 'run' | 'banner' = 'record',
 ): Promise<Recording> {
   const port = await freePort();
-  const argv = command === 'run' ? ['run', ...args, ...(args.includes('--interactive') ? [] : ['--interactive'])] : ['record', ...args];
+  const argv =
+    command === 'run' ? ['run', ...args, ...(args.includes('--interactive') ? [] : ['--interactive'])] : command === 'banner' ? ['run', ...args] : ['record', ...args];
   const run = scoop.spawn(argv, { WEBSCOOP_E2E_CDP_PORT: String(port) });
   const browser = await connect(port, run);
   cleanups.push(async () => {
