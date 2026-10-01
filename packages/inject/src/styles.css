@@ -217,7 +217,7 @@
 .ws-input.ws-invalid { box-shadow: inset 0 0 0 1px var(--ws-danger); }
 .ws-input-sm { height: 22px; font-size: 11px; }
 .ws-description { height: auto; min-height: 44px; padding: 6px 8px; resize: vertical; font: inherit; line-height: 1.4; }
-.ws-table-description { padding: 0 var(--ws-s3); }
+.ws-table-description { padding: 0; }
 .ws-error { color: var(--ws-danger); font-size: 11px; }
 
 .ws-card {
