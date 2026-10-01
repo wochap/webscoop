@@ -98,6 +98,8 @@ export const ConfigSchema = z.object({
       idleMs: z.number().int().nonnegative().default(DEFAULT_IDLE_MS),
     })
     .default({ concurrency: 1, idleMs: DEFAULT_IDLE_MS }),
+  /** False sends no desktop notification when a guard needs you; `--notify` or `--no-notify` overrides it. Default true. */
+  notify: z.boolean().optional(),
   guards: z
     .object({
       /** False shows no banner over a page waiting for a guard, and injects nothing. Default true. */

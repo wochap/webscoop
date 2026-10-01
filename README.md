@@ -147,10 +147,10 @@ webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
-                      [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
+                      [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-steps]
 webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
-                       [--guard-timeout ms] [--no-guards] [--no-notify] [--skip-steps]
+                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-steps]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
@@ -189,7 +189,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
-- `--guard-timeout`, `--no-guards`, and `--no-notify` control guards; see below.
+- `--guard-timeout`, `--no-guards`, and `--notify` / `--no-notify` control guards; see below.
 - `--skip-steps` replays none of the recipe's steps; see below.
 
 ```sh
@@ -403,7 +403,9 @@ out the run stops with exit 2, stderr names the guard, the page, and the URL,
 the recipe is not written back, and stdout keeps the rows of completed pages
 (in JSON array mode the array holds just those). `--no-guards` turns every
 guard off for the run; a recipe turns single guards off in its `guards` list.
-`--no-notify` skips the notification. Guards are logged on stderr
+`notify: false` in the config turns the notification off for every run and
+test; `--notify` and `--no-notify` override the config for one command, also
+for a run served by the daemon. Hooks fire either way. Guards are logged on stderr
 (`guard login on page 1: ...`), listed in the `--report` output (`guards`:
 kind, page, URL, wait, cleared), and counted in the summary line.
 
@@ -905,6 +907,7 @@ Config file, all keys optional:
     "args": ["--class=webscoop"]
   },
   "daemon": { "concurrency": 1, "idleMs": 60000 },
+  "notify": true,
   "guards": { "banner": true },
   "hooks": { "attention.needed": "~/bin/webscoop-window show" },
   "hookTimeoutMs": 5000,

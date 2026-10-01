@@ -81,6 +81,13 @@ describe('loadConfig', () => {
     return (error as Error).message;
   }
 
+  it('accepts a boolean notify and rejects any other value', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ notify: false }));
+    expect((await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'))).notify).toBe(false);
+    expect(await configError({ notify: 'no' })).toContain('notify');
+  });
+
   it('accepts hooks as a command line or a list, and hookTimeoutMs', async () => {
     const home = await tempDir();
     const hooks = { 'attention.needed': 'notify-send hi', 'browser.started': ['a', 'b'] };

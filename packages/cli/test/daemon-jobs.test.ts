@@ -254,6 +254,21 @@ describe('hooks in the daemon', () => {
     expect((await readFile(out, 'utf8')).trim()).toBe('ok');
   });
 
+  it('honors config notify false for a daemon-served run and still fires attention.needed', async () => {
+    const dir = await shopHome();
+    const out = join(dir, 'attention');
+    await import('node:fs/promises').then((fs) => fs.writeFile(join(dir, 'config.json'), JSON.stringify({ notify: false, hooks: { 'attention.needed': `echo ok > ${out}` } })));
+    const daemon = sharedDaemon();
+    const browser = walled();
+    const served = testIo({ env: { PATH: process.env.PATH }, browser });
+    daemon.spawn(served);
+    const io = client(dir, daemon, { browser });
+    expect(await main(['run', 'shop', '--guard-timeout', '0'], io)).toBe(ExitCode.Paused);
+    expect((await readFile(out, 'utf8')).trim()).toBe('ok');
+    expect(io.notifications).toEqual([]);
+    expect(served.notifications).toEqual([]);
+  });
+
   it('fires browser events once per browser, not for a job served by a warm browser', async () => {
     const dir = await shopHome();
     const log = join(dir, 'events');

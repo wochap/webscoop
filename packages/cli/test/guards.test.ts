@@ -4,6 +4,7 @@ import { loadRecipe, NoopNotify, saveRecipe, type RecipeInput } from '@webscoop/
 import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { ExitCode, exitCodeFor, main, NotifySend, type Spawn } from '../src';
+import { buildProgram } from '../src/main';
 import { guardsFromFlags, summary } from '../src/commands/run';
 import { tempDir, testIo } from './helpers';
 
@@ -86,6 +87,9 @@ describe('guard flags', () => {
     expect(guardsFromFlags(t, { guardTimeout: 300_000 }, 600_000).timeoutMs).toBe(300_000);
     expect(guardsFromFlags(t, { guards: false }, 600_000).enabled).toBe(false);
     expect(guardsFromFlags(t, { notify: false }, 600_000).notify).toBeInstanceOf(NoopNotify);
+    expect(guardsFromFlags(t, {}, 600_000, undefined, false).notify).toBeInstanceOf(NoopNotify);
+    expect(guardsFromFlags(t, { notify: true }, 600_000, undefined, false).notify).not.toBeInstanceOf(NoopNotify);
+    expect(guardsFromFlags(t, {}, 600_000).notify).not.toBeInstanceOf(NoopNotify);
     expect(guardsFromFlags(t, {}, 0).timeoutMs).toBe(0);
   });
 
@@ -109,6 +113,47 @@ describe('guard flags', () => {
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: walled() });
     expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], t)).toBe(ExitCode.Paused);
     expect(t.notifications).toEqual([]);
+  });
+
+  it('leaves notify unset on run and test when neither --notify nor --no-notify is given', () => {
+    const parsed = (args: string[]) => {
+      const program = buildProgram(testIo({}), () => {});
+      const command = program.commands.find((c) => c.name() === args[0])!;
+      command.action(() => {});
+      program.parse(args, { from: 'user' });
+      return command.opts<{ notify?: boolean }>().notify;
+    };
+    for (const name of ['run', 'test']) {
+      expect(parsed([name, 'shop'])).toBeUndefined();
+      expect(parsed([name, 'shop', '--notify'])).toBe(true);
+      expect(parsed([name, 'shop', '--no-notify'])).toBe(false);
+    }
+  });
+
+  it('sends no notification with config notify false', async () => {
+    const dir = await home();
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ notify: false }));
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: walled() });
+    expect(await main(['run', 'shop', '--guard-timeout', '0'], t)).toBe(ExitCode.Paused);
+    expect(t.notifications).toEqual([]);
+  });
+
+  it('sends one notification with --notify over config notify false', async () => {
+    const dir = await home();
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ notify: false }));
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: walled() });
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--notify'], t)).toBe(ExitCode.Paused);
+    expect(t.notifications).toHaveLength(1);
+  });
+
+  it('sends no notification from test with --no-notify and sends one by default', async () => {
+    const dir = await home();
+    const off = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: walled() });
+    expect(await main(['test', 'shop', '--no-notify'], off)).toBe(ExitCode.Paused);
+    expect(off.notifications).toEqual([]);
+    const on = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: walled() });
+    expect(await main(['test', 'shop'], on)).toBe(ExitCode.Paused);
+    expect(on.notifications).toHaveLength(1);
   });
 
   it('treats the wall like any page with --no-guards', async () => {

@@ -140,6 +140,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addOption(new Option('--guard-timeout <ms>', 'longest total wait for you to clear login walls and bot checks before exiting 2 (default: 600000)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
+    .option('--notify', 'send a desktop notification when a guard pauses the run, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
     .option('--skip-steps', "replay none of the recipe's steps (clicks, typing) before extracting, for debugging")
     .addHelpText(
@@ -202,6 +203,7 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addOption(new Option('--guard-timeout <ms>', 'how long to wait for you to clear a login wall or bot check (default: 0, exit 2 at once)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
+    .option('--notify', 'send a desktop notification when a guard is raised, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
     .option('--skip-steps', "replay none of the recipe's steps, which test replays like a run by default")
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')

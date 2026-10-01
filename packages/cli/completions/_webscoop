@@ -115,6 +115,7 @@ _webscoop() {
             '--delay[wait between pages]:ms:' \
             '--guard-timeout[longest total wait to clear guards]:ms:' \
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
             "--skip-steps[replay none of the recipe's steps]" \
             '1:recipe:_webscoop_recipes' && ret=0
@@ -133,6 +134,7 @@ _webscoop() {
             '--delay[wait between pages]:ms:' \
             '--guard-timeout[how long to wait to clear a guard]:ms:' \
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
             "--skip-steps[replay none of the recipe's steps]" \
             '1:recipe:_webscoop_recipes' && ret=0

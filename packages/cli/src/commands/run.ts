@@ -75,7 +75,7 @@ export interface RunCommandOptions {
   guardTimeout?: number;
   /** False with `--no-guards`. */
   guards?: boolean;
-  /** False with `--no-notify`. */
+  /** True with `--notify`, false with `--no-notify`, unset with neither. */
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
@@ -91,17 +91,23 @@ export function stepsFromFlags(opts: { skipSteps?: boolean }): StepOptions {
   return { enabled: opts.skipSteps !== true };
 }
 
-/** Guard options for the runner from `--guard-timeout`, `--no-guards`, and `--no-notify`. */
+/**
+ * Guard options for the runner from `--guard-timeout`, `--no-guards`, and
+ * `--notify` / `--no-notify`. Notifications follow the flag when given, else the
+ * config's `notify`, else on.
+ */
 export function guardsFromFlags(
   io: CliIo,
   opts: Pick<RunCommandOptions, 'guardTimeout' | 'guards' | 'notify'>,
   defaultTimeoutMs: number,
   banner?: GuardBannerHandler,
+  configNotify?: boolean,
 ): GuardOptions {
+  const notify = opts.notify ?? configNotify ?? true;
   return {
     enabled: opts.guards !== false,
     timeoutMs: opts.guardTimeout ?? defaultTimeoutMs,
-    notify: opts.notify === false ? new NoopNotify() : io.createNotify(io.env),
+    notify: notify ? io.createNotify(io.env) : new NoopNotify(),
     ...(banner ? { banner } : {}),
   };
 }
@@ -490,7 +496,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       signal: controller.signal,
       healing,
       pagination: paginationFromFlags(opts),
-      guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner),
+      guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner, prepared.config.notify),
       steps: stepsFromFlags(opts),
       saveRecipe: (promoted) => (job.saveRecipe ? job.saveRecipe(prepared.recipePath, () => save(promoted)) : save(promoted)),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
@@ -539,7 +545,7 @@ export interface TestCommandOptions {
   guardTimeout?: number;
   /** False with `--no-guards`. */
   guards?: boolean;
-  /** False with `--no-notify`. */
+  /** True with `--notify`, false with `--no-notify`, unset with neither. */
   notify?: boolean;
   /** `--skip-steps`: replay none of the recipe's steps. */
   skipSteps?: boolean;
@@ -639,7 +645,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       emitter,
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
-      guards: guardsFromFlags(io, opts, 0, banner),
+      guards: guardsFromFlags(io, opts, 0, banner, config.notify),
       steps: stepsFromFlags(opts),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
       ...(job.attention ? { attention: job.attention } : {}),
