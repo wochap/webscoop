@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { LocaleSchema, parseProxyUrl, PROFILE_NAME, PROXY_SCHEMES, TimezoneSchema } from '@webscoop/core';
 import { z } from 'zod';
 import { CliError } from './exit';
@@ -54,12 +56,19 @@ export const ConfigSchema = z.object({
       model: z.string().min(1).optional(),
       /** Sent as a bearer token when set. */
       apiKey: z.string().optional(),
+      /** File whose trimmed contents are the bearer token. Relative to the config file directory; `~/` is the home directory. */
+      apiKeyFile: z.string().min(1).optional(),
+      /** Shell command (`sh -c`, run in the config file directory) whose trimmed stdout is the bearer token. No default. */
+      apiKeyCommand: z.string().min(1).optional(),
       /** Context window of the model; prompts are budgeted to 40 percent of it. Default 32768. */
       contextTokens: z.number().int().positive().optional(),
       /** Per-request timeout. Default 60000. */
       timeoutMs: z.number().int().positive().optional(),
       /** Sampling temperature. Default 0. */
       temperature: z.number().min(0).max(2).optional(),
+    })
+    .refine((l) => [l.apiKey, l.apiKeyFile, l.apiKeyCommand].filter((v) => v !== undefined).length <= 1, {
+      message: 'set at most one of apiKey, apiKeyFile, apiKeyCommand',
     })
     .default({}),
   browser: z
@@ -112,6 +121,20 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+const configDirs = new WeakMap<Config, string>();
+
+/** Directory of the file a config was loaded from; undefined for defaults or a config built in code. */
+export function configDirOf(config: Config): string | undefined {
+  return configDirs.get(config);
+}
+
+/** Absolute form of `path`: a leading `~/` expands to `home`, a relative path resolves against `base`. */
+export function expandPath(path: string, base: string, home: string): string {
+  if (path === '~') return home;
+  if (path.startsWith('~/')) return join(home, path.slice(2));
+  return isAbsolute(path) ? path : resolve(base, path);
+}
 
 export interface CompiledProfileRule {
   host?: RegExp;
@@ -169,6 +192,9 @@ export async function loadConfig(paths: Paths, warn?: (message: string) => void)
     throw new CliError(`${paths.configFile}: invalid config\n${lines.join('\n')}`);
   }
   profileRules(parsed.data);
+  const configDir = dirname(paths.configFile);
+  if (parsed.data.llm.apiKeyFile) parsed.data.llm.apiKeyFile = expandPath(parsed.data.llm.apiKeyFile, configDir, homedir());
+  configDirs.set(parsed.data, configDir);
   if (parsed.data.window !== undefined) warn?.(WINDOW_CONFIG_WARNING);
   return parsed.data;
 }

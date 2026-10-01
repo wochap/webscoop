@@ -141,7 +141,7 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
     }
     lines.push(...(await profileLines(config, paths, io.cwd)));
     lines.push(...hookLines(config));
-    const llm = llmSettings(config, io.env);
+    const llm = llmSettings(config, io.env, io.cwd);
     lines.push(['llm', llm.endpoint ? `${llm.endpoint}${llm.model ? ` (model ${llm.model})` : ' (warning: no model configured, the model rung is off)'}` : 'not configured']);
     if (llm.endpoint && llm.model) {
       const adapter = createLlm(config, io.env, io.cwd);

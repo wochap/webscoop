@@ -1,10 +1,11 @@
-import { writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NoopLlm } from '@webscoop/core';
 import { MockLlm, OpenAiCompatibleLlm } from '@webscoop/llm';
 import { describe, expect, it } from 'vitest';
-import { ConfigSchema, createLlm, llmSettings } from '../src';
+import { CliError, ConfigSchema, createLlm, llmSettings, loadConfig, resolvePaths } from '../src';
 import { tempDir } from './helpers';
 
 const config = (llm: Record<string, unknown> = {}) => ConfigSchema.parse({ llm });
@@ -77,5 +78,82 @@ describe('createLlm', () => {
     expect(() => createLlm(config(), { WEBSCOOP_LLM_MOCK: 'missing.json' }, dir)).toThrow(/WEBSCOOP_LLM_MOCK: cannot read/);
     await writeFile(join(dir, 'bad.json'), JSON.stringify([{ match: 'x' }]));
     expect(() => createLlm(config(), { WEBSCOOP_LLM_MOCK: 'bad.json' }, dir)).toThrow(/exactly one of reply, error, or pick/);
+  });
+});
+
+describe('llm key sources', () => {
+  const keyOf = (llm: unknown) => (llm as { apiKey?: string }).apiKey;
+  const base = { endpoint: 'http://127.0.0.1:11434/v1', model: 'm' };
+
+  it('rejects more than one key source at $.llm', async () => {
+    for (const llm of [
+      { apiKey: 'k', apiKeyFile: 'f' },
+      { apiKeyFile: 'f', apiKeyCommand: 'c' },
+      { apiKey: 'k', apiKeyCommand: 'c' },
+    ]) {
+      const home = await tempDir();
+      await writeFile(join(home, 'config.json'), JSON.stringify({ llm }));
+      await expect(loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'))).rejects.toThrow(/\$\.llm: set at most one/);
+    }
+  });
+
+  it('resolves a relative key file against the config directory and reads it trimmed', async () => {
+    const home = await tempDir();
+    await mkdir(join(home, 'secrets'));
+    await writeFile(join(home, 'secrets', 'llm-key'), 'sk-abc\n');
+    await writeFile(join(home, 'config.json'), JSON.stringify({ llm: { ...base, apiKeyFile: 'secrets/llm-key' } }));
+    const loaded = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(loaded.llm.apiKeyFile).toBe(join(home, 'secrets', 'llm-key'));
+    expect(keyOf(createLlm(loaded, {}))).toBe('sk-abc');
+  });
+
+  it('uses the environment key without reading the file', () => {
+    const llm = createLlm(config({ ...base, apiKeyFile: '/nonexistent/key' }), { WEBSCOOP_LLM_API_KEY: 'env' });
+    expect(keyOf(llm)).toBe('env');
+  });
+
+  it('reads WEBSCOOP_LLM_API_KEY_FILE against cwd over the config key', async () => {
+    const dir = await tempDir();
+    await writeFile(join(dir, 'k'), ' sk-env-file \n');
+    const llm = createLlm(config({ ...base, apiKey: 'cfg' }), { WEBSCOOP_LLM_API_KEY_FILE: 'k' }, dir);
+    expect(keyOf(llm)).toBe('sk-env-file');
+  });
+
+  it('errors naming the path when the key file is missing or empty', async () => {
+    expect(() => createLlm(config({ ...base, apiKeyFile: '/nonexistent/key' }), {})).toThrow(/\/nonexistent\/key/);
+    const dir = await tempDir();
+    await writeFile(join(dir, 'empty'), '\n');
+    expect(() => createLlm(config({ ...base, apiKeyFile: join(dir, 'empty') }), {})).toThrow(/empty/);
+  });
+
+  it('does not read the key file without an endpoint and model', () => {
+    expect(createLlm(config({ apiKeyFile: '/nonexistent/key' }), {}).available).toBe(false);
+    expect(createLlm(config({ model: 'm', apiKeyCommand: 'exit 1' }), {}).available).toBe(false);
+  });
+
+  it('uses the trimmed stdout of the key command', () => {
+    expect(keyOf(createLlm(config({ ...base, apiKeyCommand: 'printf "sk-xyz\\n"' }), {}))).toBe('sk-xyz');
+  });
+
+  it('reports exit status and stderr, never stdout, when the key command fails', () => {
+    const run = () => createLlm(config({ ...base, apiKeyCommand: 'echo secret-out; echo boom >&2; exit 3' }), {});
+    expect(run).toThrow(CliError);
+    try {
+      run();
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toMatch(/exit status 3/);
+      expect(message).toMatch(/boom/);
+      expect(message).not.toMatch(/secret-out/);
+    }
+    expect(() => createLlm(config({ ...base, apiKeyCommand: 'true' }), {})).toThrow(/printed nothing/);
+  });
+
+  it('skips the key command when the environment key is set', async () => {
+    const dir = await tempDir();
+    const marker = join(dir, 'ran');
+    const llm = createLlm(config({ ...base, apiKeyCommand: `touch ${marker}; echo k` }), { WEBSCOOP_LLM_API_KEY: 'env' });
+    expect(keyOf(llm)).toBe('env');
+    expect(existsSync(marker)).toBe(false);
   });
 });
