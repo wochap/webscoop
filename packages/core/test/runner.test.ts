@@ -120,6 +120,7 @@ describe('Runner', () => {
           read: async () => '',
           same: async () => false,
           snapshot: async () => ({ type: 'text', text: '' }),
+          frameRoot: async () => null,
           click: async () => {},
           hover: async () => {},
           fill: async () => {},

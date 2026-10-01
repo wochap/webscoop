@@ -94,6 +94,17 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
   if (!hasTables && input.fields === undefined) {
     errors.push({ path: '$.fields', message: 'a recipe needs at least one field' });
   }
+  const nested = (owner: unknown, at: (string | number)[], what: string) => {
+    if (isRecord(owner) && isRecord(owner.frame) && owner.frame.frame !== undefined) {
+      errors.push({ path: jsonPath([...at, 'frame', 'frame']), message: `${what} has a frame inside its frame; nested iframes are not supported` });
+    }
+  };
+  if (input.tables === undefined) nested(input, [], 'the recipe');
+  if (Array.isArray(input.tables)) {
+    input.tables.forEach((table, index) => nested(table, ['tables', index], `table "${isRecord(table) && typeof table.name === 'string' ? table.name : `#${index}`}"`));
+  }
+  if (Array.isArray(input.steps)) input.steps.forEach((step, index) => nested(isRecord(step) ? step.target : undefined, ['steps', index, 'target'], `step ${index}`));
+  if (isRecord(input.pagination)) nested(input.pagination.target, ['pagination', 'target'], 'the pagination target');
   if (Array.isArray(input.fields)) errors.push(...fieldErrors(input.fields, input.item !== undefined, ['fields']));
   if (Array.isArray(input.tables)) {
     const names = new Map<string, number>();

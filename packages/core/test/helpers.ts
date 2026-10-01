@@ -1,4 +1,4 @@
-import { h } from '../src/testing';
+import { h, iframe } from '../src/testing';
 import type { RecipeInput, SelectorCandidate } from '../src';
 
 export const PAGE = 'https://shop.test/c/electronics';
@@ -106,4 +106,11 @@ export function tablesRecipe(overrides: Partial<RecipeInput> = {}): RecipeInput 
     ],
     ...overrides,
   };
+}
+
+export const frameId = (value: string): SelectorCandidate => ({ strategy: 'id', value, stability: 'stable' });
+
+/** A top page whose same-origin `iframe#<id>` holds the catalog; the top page has a heading of its own. */
+export function framedCatalog(products: CardSpec[], id = 'app') {
+  return h('html', {}, h('body', {}, h('h1', { 'data-testid': 'category' }, 'Top'), iframe({ id, src: '/inner' }, catalog(products))));
 }

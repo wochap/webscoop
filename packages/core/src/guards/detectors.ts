@@ -1,6 +1,6 @@
 import type { PageExtraction } from '../extract';
 import { resolveFirst } from '../extract';
-import type { PageInfo, SerializedNode, Session } from '../ports';
+import type { ElementRef, PageInfo, SerializedNode, Session } from '../ports';
 import type { GuardKind, Recipe } from '../recipe/schema';
 import { tablesOf } from '../recipe/tables';
 
@@ -79,13 +79,24 @@ function hidden(el: Extract<SerializedNode, { type: 'element' }>): boolean {
   return (el.bbox !== undefined && (el.bbox.w === 0 || el.bbox.h === 0)) || 'hidden' in el.attrs || el.attrs.type === 'hidden';
 }
 
-/** Whether any table's item container (or, for a table without one, any field) resolves with its stored selectors. */
+/**
+ * Whether any table's item container (or, for a table without one, any field)
+ * resolves with its stored selectors, inside the table's frame when it has
+ * one. A frame that does not resolve counts as the items not resolving.
+ */
 async function itemsPresent(ctx: GuardContext): Promise<boolean> {
   const { recipe, session } = ctx;
   for (const table of tablesOf(recipe)) {
+    let base: ElementRef | undefined;
+    if (table.frame) {
+      const frame = await resolveFirst(session, table.frame.selectors);
+      const root = frame ? await session.frameRoot(frame.refs[0]!) : null;
+      if (!root) continue;
+      base = root;
+    }
     const targets = table.item ? [table.item] : table.fields;
     for (const target of targets) {
-      if ((await resolveFirst(session, target.selectors)) !== null) return true;
+      if ((await resolveFirst(session, target.selectors, base)) !== null) return true;
     }
   }
   return false;

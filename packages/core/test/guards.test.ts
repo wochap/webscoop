@@ -28,7 +28,7 @@ import {
   type Session,
 } from '../src';
 import { FakeBrowser, h, type FakePage } from '../src/testing';
-import { catalog, cards, PAGE, recipe, tablesRecipe } from './helpers';
+import { cards, catalog, frameId, framedCatalog, PAGE, recipe, tablesRecipe } from './helpers';
 
 const LOGIN = 'https://shop.test/login?next=%2Fc%2Felectronics';
 const HOME = 'https://shop.test/';
@@ -95,6 +95,16 @@ describe('guard detectors', () => {
     (dom.children[1] as SerializedElement).children.push(h('input', { type: 'password' }));
     const { session, info } = await sessionOn(PAGE, dom);
     expect(await loginDetector.matches(guardContext({ session, recipe: shop, info, intendedUrl: PAGE }))).toBeNull();
+  });
+
+  it('counts items inside the table frame as present, and a missing frame as no items', async () => {
+    const framed = loadRecipe(recipe({ frame: { selectors: [frameId('app')] } }));
+    const dom = framedCatalog(cards(8));
+    (dom.children[0] as SerializedElement).children.push(h('input', { type: 'password' }));
+    const present = await sessionOn(PAGE, dom);
+    expect(await loginDetector.matches(guardContext({ session: present.session, recipe: framed, info: present.info, intendedUrl: PAGE }))).toBeNull();
+    const missing = await sessionOn(PAGE, loginForm());
+    expect(await loginDetector.matches(guardContext({ session: missing.session, recipe: framed, info: missing.info, intendedUrl: PAGE }))).toMatchObject({ kind: 'login' });
   });
 
   it('raises captcha on a turnstile iframe', async () => {

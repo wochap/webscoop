@@ -764,6 +764,9 @@ Use `--profile` for sites that need a login: run once headed, log in by hand
 in the window, and later runs reuse the cookies. Exit codes are 0, 1, and 3
 with the meanings below; logs go to stderr.
 
+Recipes with a `frame` on a table, step, or pagination target do not export:
+the command exits 1 and names the first table or step that uses one.
+
 The script tries each target's stored selector candidates in order and nothing
 more. It does not include fingerprint healing, model healing, guards,
 notifications, hooks, or recipe write-back; its header says so. When a
@@ -1053,6 +1056,19 @@ used by the end-to-end tests, is
   in a `type` value must be declared in `vars`), `when` (`first-page` or
   `every-page`, default `first-page`), `optional` (default false), and an
   optional `label` used in logs.
+- `frame`: for content inside a same-origin `<iframe>`, the iframe as a target
+  (`selectors` and optional `fingerprint`), resolved in the top document. On a
+  table (or the top level of a shorthand recipe) the item block, list parent,
+  exclusions, and every field resolve inside that iframe's document; on a step
+  `target` or the pagination `target`, that target does. The runner waits for
+  the iframe's document to load, within the navigation timeout. A frame that
+  does not resolve counts as its targets not resolving. Healing works inside
+  the iframe, and a healed frame is written back like any target. One level
+  only: a `frame` cannot hold another `frame`. The recorder sets a table's
+  frame from its first field or item container picked inside an iframe, and
+  shows it in the selection details and as a badge on fields and steps.
+  [`packages/cli/fixtures/playground-framed.json`](packages/cli/fixtures/playground-framed.json)
+  reads the playground's `/framed` page.
 
 ```json
 "steps": [
@@ -1136,6 +1152,17 @@ synchronously; script-dispatched events do not. It combines with every tier
 and seed.
 [`packages/cli/fixtures/playground-hover.json`](packages/cli/fixtures/playground-hover.json)
 reads the links with a `hover` field.
+
+`/framed` is a menu page whose content lives in same-origin iframes:
+`iframe#frame-catalog` loads `/framed/inner?view=catalog` (the first 8
+products as catalog cards) and `iframe#frame-about` loads
+`/framed/inner?view=about` (text only). The menu buttons show one iframe and
+hide the other without changing the URL; the catalog is shown unless
+`show=about`. Inside the catalog iframe a `Details` button (`#details-toggle`)
+fills a details panel with the first product's description, so reading it
+needs a step inside the iframe.
+[`packages/cli/fixtures/playground-framed.json`](packages/cli/fixtures/playground-framed.json)
+reads both.
 
 ## Layout
 

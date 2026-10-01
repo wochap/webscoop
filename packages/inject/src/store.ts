@@ -30,6 +30,8 @@ export interface UiState {
   hoverScore: number | null;
   /** While picking: the hover walk distance, the similar sibling count, and the labels from the hover target down to the start element. */
   hover: HoverInfo | null;
+  /** The frame target open in the frame editor, by its primary candidate (`strategy=value`). */
+  frameEdit: string | null;
   toasts: Toast[];
 }
 
@@ -53,6 +55,7 @@ export const initialUi: UiState = {
   drawerView: 'table',
   hoverScore: null,
   hover: null,
+  frameEdit: null,
   toasts: [],
 };
 

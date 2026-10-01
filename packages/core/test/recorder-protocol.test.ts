@@ -27,6 +27,7 @@ const sampleState: RecorderState = {
   guardContext: null,
   notice: null,
   otherLists: [],
+  frame: { path: [2, 1], selectors: [{ strategy: 'id', value: 'app', stability: 'stable' }] },
   test: null,
   saved: null,
   busy: null,
@@ -45,6 +46,8 @@ const selection = {
   fingerprint: fp,
   ancestors: [{ label: 'body', path: [1] }],
   containerPath: null,
+  framePath: [2, 1],
+  frame: { selectors: [{ strategy: 'id' as const, value: 'app', stability: 'stable' as const, count: 1 }], fingerprint: fp },
 };
 
 function newDraft(): Draft {
@@ -109,6 +112,8 @@ describe('protocol', () => {
     { kind: 'draft.selectTable', index: 1 },
     { kind: 'draft.moveTable', from: 1, to: 0 },
     { kind: 'panel.setCollapsed', section: 'steps', collapsed: true },
+    { kind: 'frame.edit', key: { strategy: 'id', value: 'app', stability: 'stable' }, by: 'primary', index: 1 },
+    { kind: 'frame.edit', key: { strategy: 'id', value: 'app', stability: 'stable' }, by: 'selector', selector: 'iframe.app' },
     { kind: 'draft.setName', name: 'shop' },
     { kind: 'draft.setDescription', target: { kind: 'table', index: 1 }, text: 'cards' },
     { kind: 'draft.setHumanize', on: true },
@@ -183,6 +188,7 @@ describe('protocol', () => {
           suggestion: { count: 24, samples: ['a', 'b', 'c'], more: 21 },
           outside: { table: 0, repeats: 9, pageTable: null },
           belongs: { table: 1, index: 0, of: 2, stack: { within: null, item: candidate } },
+          frameRefusal: 'the items table reads from iframe#app',
         },
         notice: 'List ready — pick fields inside an item',
         otherLists: [{ table: 1, paths: [[1, 0, 2]] }],

@@ -43,6 +43,7 @@
   --ws-chip-bg: color-mix(in srgb, var(--ws-surface) 70%, var(--ws-bg));
   --ws-divider: linear-gradient(90deg, transparent, var(--ws-neutral-800) 48px, var(--ws-neutral-800) calc(100% - 48px), transparent);
   --ws-ok: #9fdcbc;
+  --ws-frame: oklch(0.8 0.08 190);
   --ws-ok-tint: #1e3830;
   --ws-warn: #e6c98f;
   --ws-warn-tint: #3b3222;
@@ -773,3 +774,32 @@
 .ws-attr-value-cell { display: flex; min-width: 0; }
 .ws-attr-copy { cursor: pointer; border-radius: var(--ws-r-sm); padding: 0 2px; }
 .ws-attr-copy:hover, .ws-attr-copy:focus-visible { background: var(--ws-neutral-800); outline: none; }
+
+/* Frames (E, E2): teal marks an element inside an iframe. */
+.ws-frame-card {
+  gap: var(--ws-s1);
+  padding: 6px 7px;
+  border-radius: var(--ws-r-sm);
+  background: color-mix(in srgb, var(--ws-frame) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ws-frame) 35%, transparent);
+}
+.ws-frame-icon { color: var(--ws-frame); }
+.ws-frame-title { font-size: 11.5px; font-weight: 500; color: var(--ws-frame); white-space: nowrap; }
+.ws-frame-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--ws-frame) 45%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ws-frame) 10%, transparent);
+  color: var(--ws-frame);
+  font: 500 10px/1 var(--ws-mono);
+  cursor: pointer;
+  overflow: hidden;
+}
+.ws-row-indent { padding-left: 30px; }
+.ws-frame-editor { gap: var(--ws-s2); }

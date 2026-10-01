@@ -1,4 +1,5 @@
-import { resolveDocumentTarget, resolveFirst, type TargetResult } from '../extract';
+import { resolveDocumentTarget, resolveFirst, resolveFrame, type TargetResult } from '../extract';
+import type { FrameReport } from '../events';
 import { RunFailure } from '../failure';
 import { candidatesResolver } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
@@ -26,10 +27,12 @@ export interface StepReport {
   candidate: SelectorCandidate | null;
   /** Why the step was skipped or failed, and why healing rungs declined it. */
   notes?: string[];
+  /** How the target's frame resolved, for a target with `frame`. */
+  frame?: FrameReport;
 }
 
-/** Selectors `every-page` steps settled on, by step index, so later pages skip the ladder. */
-export type StepCache = Map<number, SelectorCandidate[]>;
+/** Selectors `every-page` steps settled on, for the target and its frame, by step index, so later pages skip the ladder. */
+export type StepCache = Map<number, { selectors: SelectorCandidate[]; frame?: SelectorCandidate[] }>;
 
 export interface ReplayContext {
   /** Page number of the page the batch runs on; `first-page` steps run only on page 1. */
@@ -80,12 +83,19 @@ export function stepTarget(step: Step, index: number): HealTarget | null {
   };
 }
 
-/** Resolve a step's target through the healing ladder against the document, like the pagination target. */
+/** The heal target of a step target's frame, or null when the target is in the top document. */
+export function stepFrameTarget(step: Step, index: number): (HealTarget & { kind: 'frame' }) | null {
+  const frame = step.target?.frame;
+  if (!frame) return null;
+  return { kind: 'frame', of: 'step', index, ...(step.label ? { label: step.label } : {}), selectors: frame.selectors, ...(frame.fingerprint ? { fingerprint: frame.fingerprint } : {}) };
+}
+
+/** Resolve a step's target through the healing ladder against the document or a frame root, like the pagination target. */
 export async function resolveStepTarget(
   session: Session,
   recipe: Recipe,
   index: number,
-  opts: { ladder?: readonly Resolver[]; promote?: boolean },
+  opts: { ladder?: readonly Resolver[]; promote?: boolean; within?: ElementRef },
 ): Promise<TargetResult> {
   const step = recipe.steps[index];
   const target = step ? stepTarget(step, index) : null;
@@ -118,13 +128,14 @@ export async function replaySteps(session: Session, recipe: Recipe, ctx: ReplayC
       ctx.onEvent?.(report);
       return report;
     };
-    const fail = (why: string, found: Pick<StepReport, 'heal' | 'candidate'> & { notes?: string[] }): never => {
+    const fail = (why: string, found: Pick<StepReport, 'heal' | 'candidate' | 'frame'> & { notes?: string[] }): never => {
       const notes = [...(found.notes ?? []), why];
+      const frame = found.frame ? { frame: found.frame } : {};
       if (step.optional) {
-        finish({ ...base, outcome: 'skipped', heal: found.heal, candidate: found.candidate, notes });
+        finish({ ...base, outcome: 'skipped', heal: found.heal, candidate: found.candidate, notes, ...frame });
         throw SKIPPED;
       }
-      finish({ ...base, outcome: 'failed', heal: found.heal, candidate: found.candidate, notes });
+      finish({ ...base, outcome: 'failed', heal: found.heal, candidate: found.candidate, notes, ...frame });
       throw new RunFailure('missing-required', `required step ${index} (${step.kind}) ${why}`, [stepName(step, index)]);
     };
 
@@ -136,7 +147,7 @@ export async function replaySteps(session: Session, recipe: Recipe, ctx: ReplayC
         continue;
       }
 
-      let found: { ref: ElementRef | null; heal: HealOutcome | null; candidate: SelectorCandidate | null; notes: string[] } = {
+      let found: Found = {
         ref: null,
         heal: null,
         candidate: null,
@@ -166,6 +177,7 @@ export async function replaySteps(session: Session, recipe: Recipe, ctx: ReplayC
         heal: found.heal,
         candidate: found.candidate,
         ...(found.notes.length > 0 ? { notes: found.notes } : {}),
+        ...(found.frame ? { frame: found.frame } : {}),
       });
     } catch (error) {
       if (error === SKIPPED) continue;
@@ -173,6 +185,15 @@ export async function replaySteps(session: Session, recipe: Recipe, ctx: ReplayC
     }
   }
   return { info, steps: reports };
+}
+
+/** A step's target as `locate` found it. */
+interface Found {
+  ref: ElementRef | null;
+  heal: HealOutcome | null;
+  candidate: SelectorCandidate | null;
+  notes: string[];
+  frame?: FrameReport;
 }
 
 /** Thrown by `fail` for an optional step, so the loop moves on. */
@@ -190,30 +211,47 @@ async function locate(
   index: number,
   ctx: ReplayContext,
   sleep: (ms: number) => Promise<void>,
-): Promise<{ ref: ElementRef | null; heal: HealOutcome | null; candidate: SelectorCandidate | null; notes: string[] }> {
+): Promise<Found> {
   const cached = step.when === 'every-page' ? ctx.cache.get(index) : undefined;
+  // A framed target resolves inside its iframe's document; the frame itself is found first, in the top document.
+  const frameTarget = stepFrameTarget(step, index);
+  let within: ElementRef | undefined;
+  let frameSelectors: SelectorCandidate[] | undefined;
+  let frameReport: { frame: FrameReport } | Record<string, never> = {};
+  if (frameTarget) {
+    const ladder = ctx.ladder ?? [candidatesResolver];
+    const frameOpts = { ladder, promote: ctx.promote ?? false, timeoutMs: ctx.timeoutMs };
+    let frame = cached?.frame ? await resolveFrame(session, recipe, frameTarget, { ...frameOpts, reuse: cached.frame }) : null;
+    if (!frame?.root) frame = await resolveFrame(session, recipe, frameTarget, frameOpts);
+    if (frame.promotion) ctx.onHealed?.(frame.promotion);
+    frameReport = { frame: frame.report };
+    if (!frame.root) return { ref: null, heal: { kind: 'unresolved' }, candidate: null, notes: [...(frame.report.notes ?? []), 'the frame did not resolve'], ...frameReport };
+    within = frame.root;
+    frameSelectors = frame.selectors;
+  }
   if (cached) {
-    const hit = await resolveFirst(session, cached);
-    if (hit) return { ref: hit.refs[0]!, heal: { kind: 'candidate', index: 0 }, candidate: hit.candidate, notes: [] };
+    const hit = await resolveFirst(session, cached.selectors, within);
+    if (hit) return { ref: hit.refs[0]!, heal: { kind: 'candidate', index: 0 }, candidate: hit.candidate, notes: [], ...frameReport };
   }
   if (step.kind === 'wait') {
     const deadline = Date.now() + ctx.timeoutMs;
-    const selectors = cached ?? step.target!.selectors;
+    const selectors = cached?.selectors ?? step.target!.selectors;
     for (;;) {
-      const hit = await resolveFirst(session, selectors);
-      if (hit) return { ref: hit.refs[0]!, heal: { kind: 'candidate', index: hit.index }, candidate: hit.candidate, notes: [] };
+      const hit = await resolveFirst(session, selectors, within);
+      if (hit) return { ref: hit.refs[0]!, heal: { kind: 'candidate', index: hit.index }, candidate: hit.candidate, notes: [], ...frameReport };
       if (Date.now() >= deadline) break;
       await sleep(Math.min(ctx.pollMs ?? WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
     }
   }
-  const result = await resolveStepTarget(session, recipe, index, { ladder: ctx.ladder ?? [candidatesResolver], promote: ctx.promote ?? false });
+  const result = await resolveStepTarget(session, recipe, index, { ladder: ctx.ladder ?? [candidatesResolver], promote: ctx.promote ?? false, ...(within ? { within } : {}) });
   if (result.promotion) ctx.onHealed?.(result.promotion);
-  if (result.ref && step.when === 'every-page') ctx.cache.set(index, result.selectors);
+  if (result.ref && step.when === 'every-page') ctx.cache.set(index, { selectors: result.selectors, ...(frameSelectors ? { frame: frameSelectors } : {}) });
   return {
     ref: result.ref,
     heal: result.outcome,
     candidate: result.ref ? (result.selectors[0] ?? null) : null,
     notes: result.notes,
+    ...frameReport,
   };
 }
 

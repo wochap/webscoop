@@ -1,8 +1,9 @@
 import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { defaultAttr, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch } from '@webscoop/core/page';
+import { defaultAttr, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch, type FrameTarget } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
 import { Dropdown, type DropdownOption } from './dropdown';
+import { FrameBadge } from './frame';
 import { Icon } from './icons';
 import { Toggle } from './items';
 import { HoverBadge } from './results';
@@ -160,6 +161,7 @@ export function FieldRow({
   field,
   index,
   item = null,
+  frame = null,
   focused,
   repicking,
   editing,
@@ -173,6 +175,8 @@ export function FieldRow({
   index: number;
   /** The table's item block, whose primaries head an item scoped field's chain. */
   item?: DraftItem | null;
+  /** The iframe the table reads from, shown as a badge. */
+  frame?: FrameTarget | null;
   focused: boolean;
   repicking: boolean;
   /** The field is open in the selection panel. */
@@ -244,6 +248,11 @@ export function FieldRow({
           <Icon name="x" size={11} />
         </button>
       </div>
+      {frame && (
+        <div className="ws-row ws-row-indent">
+          <FrameBadge frame={frame} />
+        </div>
+      )}
       {field.error && (
         <span className="ws-error" data-ws="field-error">
           {field.error}
@@ -309,6 +318,7 @@ export function FieldRow({
 export function FieldList({
   fields,
   item = null,
+  frame = null,
   focused,
   repick,
   editing = null,
@@ -319,6 +329,8 @@ export function FieldList({
   fields: DraftField[];
   /** The table's item block, for the item scoped fields' chains. */
   item?: DraftItem | null;
+  /** The iframe the table reads from. */
+  frame?: FrameTarget | null;
   focused: number | null;
   repick: number | null;
   /** Index of the field open in the selection panel. */
@@ -339,6 +351,7 @@ export function FieldList({
           field={field}
           index={index}
           item={item}
+          frame={frame}
           focused={focused === index}
           repicking={repick === index}
           editing={editing === index}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import { STEP_KINDS, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { ZeroMatchWarning } from './fields';
+import { FrameBadge } from './frame';
 import { Icon } from './icons';
 import { Toggle } from './items';
 import { Section } from './section';
@@ -158,6 +159,11 @@ export function StepRow({
         </button>
       </div>
       {hasValue && <ValueField step={step} index={index} vars={vars} />}
+      {step.target?.frame && (
+        <div className="ws-row ws-row-indent">
+          <FrameBadge frame={step.target.frame} />
+        </div>
+      )}
       {step.error && (
         <span className="ws-error" data-ws="step-error">
           {step.error}

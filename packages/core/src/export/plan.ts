@@ -131,8 +131,27 @@ function readMode(type: FieldType, attr: string | undefined): ReadMode {
   return type === 'html' ? 'html' : 'text';
 }
 
-/** Turn a validated recipe into the plan both renderers share. */
+/** A recipe uses something the exported script cannot do. */
+export class ExportUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExportUnsupportedError';
+  }
+}
+
+/** Where the recipe first uses an iframe target, or null when it uses none. */
+function firstFrame(recipe: Recipe): string | null {
+  const table = tablesOf(recipe).find((t) => t.frame);
+  if (table) return `table "${table.name}"`;
+  const index = recipe.steps.findIndex((s) => s.target?.frame);
+  if (index >= 0) return `step "${recipe.steps[index]!.label ?? `step:${index}`}"`;
+  return recipe.pagination.target?.frame ? 'the pagination target' : null;
+}
+
+/** Turn a validated recipe into the plan both renderers share. Throws `ExportUnsupportedError` for a recipe with iframe targets. */
 export function buildPlan(recipe: Recipe): ExportPlan {
+  const framed = firstFrame(recipe);
+  if (framed) throw new ExportUnsupportedError(`iframe targets are not supported by export: ${framed} uses frame`);
   const { pagination } = recipe;
   const recipeTables = tablesOf(recipe);
   const pageParam = pagination.kind === 'url' ? (pagination.param ?? null) : null;

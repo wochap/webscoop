@@ -18,6 +18,7 @@ import { useActions } from "./context";
 import { FieldOptionsForm, formPatch, nameProblem } from "./fields";
 import { NumberedSamples } from "./items";
 import { Icon } from "./icons";
+import { FrameCard } from "./frame";
 import { ElementInspector } from "./picking";
 import { SelectorInput } from "./selector-input";
 import { SelectorStack, stackLevels } from "./selector-stack";
@@ -439,7 +440,10 @@ function SelectionBody({
   const belongs = fresh ? selected.belongs : null;
   const suggestion = fresh ? selected.suggestion : null;
   const blocked = outside !== null || belongs !== null;
-  const hint = blocked
+  const frameRefusal = fresh ? selected.frameRefusal : null;
+  const hint = frameRefusal
+    ? `${frameRefusal[0]!.toUpperCase()}${frameRefusal.slice(1)}.`
+    : blocked
     ? `Pick inside an item of ${target.name} to add here.`
     : mode === "list"
       ? `Reads inside each of ${item?.count ?? "…"} items.`
@@ -483,6 +487,7 @@ function SelectionBody({
           </span>
         </div>
       )}
+      {selected?.selection.frame && <FrameCard frame={selected.selection.frame} />}
       {outside && (
         <OutsideBanner
           key={`${selected!.selection.path.join(".")}`}
@@ -542,7 +547,7 @@ function SelectionBody({
       ) : (
         <PickActionGrid
           repicking={host.repick !== null}
-          canAdd={nameError === null && !blocked}
+          canAdd={nameError === null && !blocked && !frameRefusal}
           hint={hint}
           onAddField={() =>
             void actions.send({

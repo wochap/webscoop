@@ -66,6 +66,32 @@ export const SnapshotSchema = z.custom<SerializedElement>((value) => {
 
 export const CrumbSchema = z.object({ label: z.string(), path: PathSchema });
 
+/** An `<iframe>` in the top document whose document holds a target: its candidates (with counts in the top document) and fingerprint. */
+export const FrameTargetSchema = z.object({
+  selectors: z.array(CandidateSchema).check(z.minLength(1)),
+  fingerprint: z.optional(ProtocolFingerprintSchema),
+});
+
+/** Short name of a frame target for the panel: `iframe#id` for an id candidate, else the primary selector. */
+export function frameLabel(frame: { selectors: readonly { strategy: string; value: string }[] }): string {
+  const primary = frame.selectors[0];
+  if (!primary) return 'iframe';
+  if (primary.strategy === 'id') return `iframe#${primary.value}`;
+  if (primary.strategy === 'css' || primary.strategy === 'class') return primary.value;
+  return `iframe ${primary.strategy}=${primary.value}`;
+}
+
+/** Whether two frame targets name the same `<iframe>`: one's primary is among the other's candidates. */
+export function sameFrame(
+  a: { selectors: readonly { strategy: string; value: string }[] } | null | undefined,
+  b: { selectors: readonly { strategy: string; value: string }[] } | null | undefined,
+): boolean {
+  if (!a || !b) return !a && !b;
+  const key = (c: { strategy: string; value: string }) => `${c.strategy}=${c.value}`;
+  const keys = new Set(a.selectors.map(key));
+  return b.selectors.some((c) => keys.has(key(c)));
+}
+
 /** What the page reports about a picked element. */
 export const SelectionSchema = z.object({
   path: PathSchema,
@@ -80,6 +106,10 @@ export const SelectionSchema = z.object({
   ancestors: z.array(CrumbSchema),
   /** Path of the item container holding the element, when an item container is set. */
   containerPath: z._default(z.nullable(PathSchema), null),
+  /** For an element inside a same-origin iframe: the `<iframe>`'s path in the top document. `path`, `ancestors`, and `containerPath` are then in the iframe's document. */
+  framePath: z._default(z.nullable(PathSchema), null),
+  /** The `<iframe>` as a target, for an element inside one. */
+  frame: z._default(z.nullable(FrameTargetSchema), null),
 });
 
 /** The two proposal fields the user edits: the list parent and the item container. */
@@ -201,7 +231,11 @@ export const DraftItemSchema = z.object({
   total: z.nullable(count()),
 });
 
-const TargetSchema = z.object({ selectors: z.array(CandidateSchema).check(z.minLength(1)), fingerprint: z.optional(ProtocolFingerprintSchema) });
+const TargetSchema = z.object({
+  selectors: z.array(CandidateSchema).check(z.minLength(1)),
+  fingerprint: z.optional(ProtocolFingerprintSchema),
+  frame: z.optional(FrameTargetSchema),
+});
 
 const LimitSchema = z.union([z.int().check(z.positive()), z.literal('all')]);
 const ParamSchema = z.object({ name: z.string(), start: z.int(), step: z.int() });
@@ -248,6 +282,8 @@ export const DescriptionTargetSchema = z.union([
 export const DraftTableSchema = z.object({
   name: z.string(),
   description: z.optional(z.string()),
+  /** The iframe the table reads from, set by its first field or item container picked inside one. */
+  frame: z.optional(FrameTargetSchema),
   item: z.nullable(DraftItemSchema),
   fields: z.array(DraftFieldSchema),
   /** Why the table does not validate as a whole, such as an invalid name or no fields. */
@@ -316,6 +352,8 @@ export const SelectedSchema = z.object({
     z.nullable(z.object({ table: index(), index: index(), of: count(), stack: z.object({ within: z.nullable(CandidateSchema), item: CandidateSchema }) })),
     null,
   ),
+  /** Why the pick cannot go into the table: it reads from another iframe, or from the top document. */
+  frameRefusal: z._default(z.nullable(z.string()), null),
 });
 
 /** The options of a field, as the selection panel's form shows them. */
@@ -440,6 +478,12 @@ export const RecorderStateSchema = z.object({
   notice: z._default(z.nullable(z.string()), null),
   /** While the active table is a list: the containers of every other list table, for muted outlines. */
   otherLists: z._default(z.array(z.object({ table: index(), paths: z.array(PathSchema) })), []),
+  /**
+   * The iframe whose document the state's paths refer to (selection, proposal,
+   * pending select, other lists): its path in the top document when known, and
+   * its candidates. Null for the top document.
+   */
+  frame: z._default(z.nullable(z.object({ path: z.nullable(PathSchema), selectors: z.array(CandidateSchema) })), null),
   /** Panel state kept for the session, across navigations; never saved in the recipe. */
   panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, steps: false, pagination: true } }),
 });
@@ -565,6 +609,12 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.selectTable', { index: index() }),
   /** Move a table to another position; the saved recipe keeps the order. */
   msg('draft.moveTable', { from: index(), to: index() }),
+  /**
+   * Edit a frame target: make one of its candidates primary, or put a typed
+   * selector first. `key` is the primary candidate of the frame being edited;
+   * every table, step, and pagination target with that frame gets the result.
+   */
+  msg('frame.edit', { key: SelectorSchema, by: z.enum(['primary', 'selector']), index: z.optional(index()), selector: z.optional(z.string()) }),
   /** Collapse or expand a panel section; session state only. */
   msg('panel.setCollapsed', { section: z.enum(PANEL_SECTIONS), collapsed: z.boolean() }),
   msg('draft.setName', { name: z.string() }),
@@ -616,6 +666,7 @@ export const MessageSchema = z.union([PageMessageSchema, HostMessageSchema]);
 export type ProtocolCandidate = z.infer<typeof CandidateSchema>;
 export type Path = z.infer<typeof PathSchema>;
 export type Crumb = z.infer<typeof CrumbSchema>;
+export type FrameTarget = z.infer<typeof FrameTargetSchema>;
 export type Selection = z.input<typeof SelectionSchema>;
 export type ParsedSelection = z.infer<typeof SelectionSchema>;
 export type LevelView = z.infer<typeof LevelSchema>;

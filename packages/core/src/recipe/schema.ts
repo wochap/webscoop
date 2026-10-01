@@ -80,10 +80,17 @@ export const FieldSchema = z.object({
   fingerprint: FingerprintSchema.optional(),
 });
 
+/** An `<iframe>` in the top document whose document holds the elements to resolve. One level only. */
+export const FrameSchema = z.object({
+  selectors: z.array(SelectorCandidateSchema).min(1),
+  fingerprint: FingerprintSchema.optional(),
+});
+
 /** An element the runner acts on or waits for: ranked selectors plus a fingerprint for healing. */
 export const TargetSchema = z.object({
   selectors: z.array(SelectorCandidateSchema).min(1),
   fingerprint: FingerprintSchema.optional(),
+  frame: FrameSchema.optional(),
 });
 
 export const PaginationSchema = z.object({
@@ -125,6 +132,8 @@ export const StepSchema = z.object({
 export const TableSchema = z.object({
   name: z.string().regex(KEBAB, 'table names must be kebab-case'),
   description: DescriptionSchema.optional(),
+  /** The table's item block and fields resolve inside this iframe's document. */
+  frame: FrameSchema.optional(),
   item: ItemSchema.optional(),
   fields: z.array(FieldSchema).min(1, 'a table needs at least one field'),
 });
@@ -201,6 +210,7 @@ const RecipeObjectSchema = z.object({
   vars: z.array(VarSchema).default([]),
   /** Shorthand for a single table named `items`; a recipe declares either this pair or `tables`. */
   item: ItemSchema.optional(),
+  frame: FrameSchema.optional(),
   fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field').optional(),
   tables: z.array(TableSchema).min(1, 'a recipe needs at least one table').optional(),
   steps: z.array(StepSchema).default([]),
@@ -240,6 +250,7 @@ export type RecipeField = Omit<ParsedField, 'scope'> & { scope: FieldScope };
 export type FieldType = RecipeField['type'];
 export type RecipeTable = Omit<z.output<typeof TableSchema>, 'fields'> & { fields: RecipeField[] };
 export type Target = z.infer<typeof TargetSchema>;
+export type Frame = z.infer<typeof FrameSchema>;
 export type Step = z.infer<typeof StepSchema>;
 export type StepKind = Step['kind'];
 export type StepWhen = Step['when'];

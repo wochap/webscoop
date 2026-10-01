@@ -28,6 +28,13 @@ export type HealTarget =
       attr?: string;
     })
   | (TargetBase & { kind: 'pagination' })
+  /**
+   * The `<iframe>` a table, step, or pagination target resolves inside:
+   * `table` names the table (the first one when absent), `index` the step.
+   */
+  | (TargetBase & { kind: 'frame'; of: 'table'; table?: string })
+  | (TargetBase & { kind: 'frame'; of: 'step'; index: number; label?: string })
+  | (TargetBase & { kind: 'frame'; of: 'pagination' })
   | (TargetBase & {
       kind: 'step';
       index: number;
@@ -37,13 +44,17 @@ export type HealTarget =
       label?: string;
     });
 
-/** Name used in reports and events: the field name, `item`, `within`, `pagination`, or the step's label or `step:N`. */
+/** Name used in reports and events: the field name, `item`, `within`, `pagination`, the step's label or `step:N`, or `frame:` and its owner. */
 export function targetName(target: HealTarget): string {
   switch (target.kind) {
     case 'field':
       return target.name;
     case 'step':
       return target.label ?? `step:${target.index}`;
+    case 'frame':
+      if (target.of === 'table') return target.table === undefined ? 'frame' : `frame:${target.table}`;
+      if (target.of === 'step') return `frame:${target.label ?? `step:${target.index}`}`;
+      return 'frame:pagination';
     default:
       return target.kind;
   }

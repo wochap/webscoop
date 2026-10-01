@@ -49,7 +49,7 @@ const levels = (el: Element | null | undefined) =>
 
 describe('icons', () => {
   it('renders every glyph as inline SVG in currentColor', () => {
-    expect(ICON_NAMES).toHaveLength(27);
+    expect(ICON_NAMES).toHaveLength(28);
     for (const name of ICON_NAMES) {
       const { container, unmount } = render(<Icon name={name} />);
       const svg = container.querySelector('svg')!;

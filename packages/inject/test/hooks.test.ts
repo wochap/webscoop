@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = join(import.meta.dirname, '../../..');
-const NAME = /^(panel|footer|section|recipe|var|steps?|pagination|tabs?|table|rows|pick|list|fields?|chip|stack|input|results|repick|guard)(-[a-z0-9]+)*$/;
+const NAME = /^(panel|footer|section|recipe|var|steps?|pagination|tabs?|table|rows|pick|list|fields?|chip|stack|input|results|repick|guard|frame)(-[a-z0-9]+)*$/;
 
 function files(dir: string, ext: RegExp): string[] {
   // The nix package build copies only `packages/`, so `e2e/` may be absent.

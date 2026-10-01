@@ -1,6 +1,6 @@
 import { RunEmitter, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
 import { RunFailure } from './failure';
-import { countItems, extractPage, resolveFirst, resolvePaginationTarget, type PageExtraction, type ResolvedSelectors } from './extract';
+import { countItems, extractPage, resolvePaginationTarget, type PageExtraction, type ResolvedSelectors } from './extract';
 import type { AttentionLease, AttentionPort } from './guards/attention';
 import type { GuardBannerHandler, GuardBannerHooks } from './guards/banner';
 import { DEFAULT_GUARD_TIMEOUT_MS, GuardBudget } from './guards/budget';
@@ -341,7 +341,9 @@ export class Runner {
         const { target } = promotion;
         this.emitter.emit('field.healed', {
           page,
-          ...(target.kind === 'field' || target.kind === 'item' || target.kind === 'within' ? { table: target.table ?? tables[0]!.name } : {}),
+          ...(target.kind === 'field' || target.kind === 'item' || target.kind === 'within' || (target.kind === 'frame' && target.of === 'table')
+            ? { table: target.table ?? tables[0]!.name }
+            : {}),
           target: targetName(target),
           outcome: promotion.outcome,
           oldPrimary: promotion.oldPrimary,
@@ -356,27 +358,31 @@ export class Runner {
       let page = 1;
       /** Per table, what page 1 (or the first page a table matched on) settled on; undefined before page 1 is extracted. */
       let resolved: (ResolvedSelectors | null)[] | undefined;
-      let targetSelectors: SelectorCandidate[] | null = null;
+      let targetSelectors: { selectors: SelectorCandidate[]; frame?: SelectorCandidate[] } | null = null;
       const pager: PagerContext = {
         session: live,
         recipe,
         timeoutMs,
         target: async () => {
           if (!recipe.pagination.target) return null;
-          if (targetSelectors) return (await resolveFirst(live, targetSelectors))?.refs[0] ?? null;
+          if (targetSelectors) return (await resolvePaginationTarget(live, recipe, { timeoutMs, reuse: targetSelectors })).ref;
           // First use: the healing ladder, like a field; later pages reuse what it settled on.
           const result = await resolvePaginationTarget(live, recipe, {
             ladder: defaultLadder({ enabled: healing.enabled, extra: resolvers }),
             promote: healing.enabled,
+            timeoutMs,
           });
           report.pagination = {
             candidate: result.ref ? (result.selectors[0] ?? null) : null,
             outcome: result.outcome,
             ...(result.notes.length > 0 ? { notes: result.notes } : {}),
+            ...(result.frame ? { frame: result.frame.report } : {}),
           };
           if (isHealed(result.outcome)) report.healed++;
+          if (isHealed(result.frame?.outcome)) report.healed++;
+          if (result.frame?.promotion) onHealed(page)(result.frame.promotion);
           if (result.promotion) onHealed(page)(result.promotion);
-          if (result.ref) targetSelectors = result.selectors;
+          if (result.ref) targetSelectors = { selectors: result.selectors, ...(result.frame ? { frame: result.frame.selectors } : {}) };
           return result.ref;
         },
         count: () => (resolved ? countItems(live, recipe, resolved) : Promise.resolve(0)),
@@ -551,6 +557,7 @@ export class Runner {
           extractPage(live, recipe, {
             pageUrl: info.url,
             page,
+            frameTimeoutMs: timeoutMs,
             ...(resolved ? { resolved } : {}),
             // Tables not settled yet go through the ladder; settled ones reuse their selectors.
             ...(resolved?.every((r) => r !== null)
@@ -574,7 +581,7 @@ export class Runner {
           const match = await detect(detectors, 'extract', zeroCtx(info, extraction));
           if (!match) break;
           info = await pause(match, info, intended, async (settled) =>
-            detect(only(match.kind), 'extract', zeroCtx(settled, await extractPage(live, recipe, { pageUrl: settled.url, page, ...(resolved ? { resolved } : {}) }))),
+            detect(only(match.kind), 'extract', zeroCtx(settled, await extractPage(live, recipe, { pageUrl: settled.url, page, frameTimeoutMs: timeoutMs, ...(resolved ? { resolved } : {}) }))),
           );
           extraction = await extract();
         }
@@ -588,8 +595,12 @@ export class Runner {
             const table = report.tables[index]!;
             table.item = found.item;
             table.fields = found.fields;
+            if (found.frame) table.frame = found.frame;
             report.healed +=
-              found.fields.filter((f) => isHealed(f.outcome)).length + (isHealed(found.item?.outcome) ? 1 : 0) + (isHealed(found.item?.within?.outcome) ? 1 : 0);
+              found.fields.filter((f) => isHealed(f.outcome)).length +
+              (isHealed(found.item?.outcome) ? 1 : 0) +
+              (isHealed(found.item?.within?.outcome) ? 1 : 0) +
+              (isHealed(found.frame?.outcome) ? 1 : 0);
             if (index === mirror) {
               report.item = found.item;
               report.fields = found.fields;

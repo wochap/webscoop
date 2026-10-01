@@ -1,4 +1,4 @@
-/** A CSS pixel box in the viewport, as Playwright's `boundingBox()` returns it. */
+/** A CSS pixel box in the page's viewport, as Playwright's `boundingBox()` returns it, including for elements inside iframes. */
 export interface Box {
   x: number;
   y: number;
@@ -6,20 +6,7 @@ export interface Box {
   height: number;
 }
 
-/** Something that runs a function over its matched elements in one page call; a Playwright `Locator` satisfies it. */
+/** Something that measures its first matched element in page coordinates; a Playwright `Locator` satisfies it. */
 export interface Measurable {
-  evaluateAll<R>(fn: (els: Element[]) => R): Promise<R>;
-}
-
-/**
- * The first matched element's box, or null when nothing matches or it has no layout.
- * One page call, without Patchright's full-document element finder.
- */
-export function boxOf(target: Measurable): Promise<Box | null> {
-  return target.evaluateAll((els) => {
-    const el = els[0];
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return r.width === 0 && r.height === 0 && el.getClientRects().length === 0 ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
-  });
+  boundingBox(): Promise<Box | null>;
 }

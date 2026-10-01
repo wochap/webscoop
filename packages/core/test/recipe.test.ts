@@ -287,6 +287,22 @@ describe('tables', () => {
     expect(errors[0]!.message).toContain('"heading"');
   });
 
+  it('accepts a framed table and a framed shorthand, and reads the shorthand frame into its table', () => {
+    const frame = { selectors: [{ strategy: 'id' as const, value: 'iframeApplication', stability: 'stable' as const }] };
+    const item = { selectors: [{ strategy: 'css', value: 'li', stability: 'medium' }] };
+    expect(validateRecipe(withTables([table('results', { frame, item })])).ok).toBe(true);
+    const recipe = loadRecipe(base({ frame }));
+    expect(tablesOf(recipe)[0]!.frame).toEqual(frame);
+  });
+
+  it('rejects a frame inside a frame, naming the table', () => {
+    const frame = { selectors: [{ strategy: 'id', value: 'outer', stability: 'stable' }], frame: { selectors: [{ strategy: 'id', value: 'inner', stability: 'stable' }] } };
+    const errors = errorsOf(withTables([table('results', { frame })]));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.tables[0].frame.frame');
+    expect(errors[0]!.message).toContain('"results"');
+  });
+
   it('accepts the same field name in two tables', () => {
     expect(validateRecipe(withTables([table('page'), table('products')])).ok).toBe(true);
   });

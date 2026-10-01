@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dataset, formatPrice, MAX_TIER, render, renderResults, startPlayground, type Playground } from '../src';
+import { dataset, formatPrice, MAX_TIER, productDescription, render, renderResults, startPlayground, type Playground } from '../src';
 
 const running: Playground[] = [];
 async function start() {
@@ -559,5 +559,42 @@ describe('focus thief', () => {
     doc.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     expect(JSON.parse(doc.getElementById('counts')!.textContent!)).toEqual({ keydown: 1, click: 1 });
     window.close();
+  });
+});
+
+describe('framed page', () => {
+  const doc = (html: string) => new JSDOM(html).window.document;
+
+  it('serves a menu with one same-origin iframe per entry, the catalog shown unless show=about', async () => {
+    const pg = await start();
+    const top = doc(await (await fetch(`${pg.url}/framed`)).text());
+    expect(top.querySelectorAll('[data-testid="product-card"]')).toHaveLength(0);
+    const catalog = top.getElementById('frame-catalog') as HTMLIFrameElement;
+    const about = top.getElementById('frame-about') as HTMLIFrameElement;
+    expect(catalog.getAttribute('src')).toBe('/framed/inner?view=catalog');
+    expect(about.getAttribute('src')).toBe('/framed/inner?view=about');
+    expect(catalog.hidden).toBe(false);
+    expect(about.hidden).toBe(true);
+    expect(Array.from(top.querySelectorAll('.menu-item')).map((b) => b.textContent)).toEqual(['Catalog', 'About']);
+    const swapped = doc(await (await fetch(`${pg.url}/framed?show=about`)).text());
+    expect((swapped.getElementById('frame-catalog') as HTMLIFrameElement).hidden).toBe(true);
+    expect((swapped.getElementById('frame-about') as HTMLIFrameElement).hidden).toBe(false);
+  });
+
+  it('renders 8 catalog cards and a hidden details panel inside the catalog iframe, and text only in the about iframe', async () => {
+    const pg = await start();
+    const inner = doc(await (await fetch(`${pg.url}/framed/inner?view=catalog`)).text());
+    expect(inner.querySelectorAll('[data-testid="product-card"]')).toHaveLength(8);
+    expect(inner.getElementById('details-toggle')!.textContent).toBe('Details');
+    expect((inner.getElementById('details') as HTMLElement).hidden).toBe(true);
+    expect(inner.querySelector('.details-text')).toBeNull();
+    const live = new JSDOM(await (await fetch(`${pg.url}/framed/inner?view=catalog`)).text(), { runScripts: 'dangerously' }).window.document;
+    (live.getElementById('details-toggle') as HTMLButtonElement).click();
+    expect((live.getElementById('details') as HTMLElement).hidden).toBe(false);
+    expect(live.querySelector('.details-text')!.textContent).toBe(productDescription(dataset[0]!));
+    const about = doc(await (await fetch(`${pg.url}/framed/inner?view=about`)).text());
+    expect(about.querySelectorAll('[data-testid="product-card"]')).toHaveLength(0);
+    expect(about.body.textContent).toContain('About the shop');
+    expect((await fetch(`${pg.url}/framed/inner?view=nope`)).status).toBe(400);
   });
 });

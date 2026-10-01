@@ -82,6 +82,8 @@ export function plausible(node: AnnotatedNode, target: HealTarget): boolean {
       return node.children.filter((c) => c.type === 'element').length > 1;
     case 'pagination':
       return node.tag === 'a' || node.tag === 'button' || node.role === 'link' || node.role === 'button';
+    case 'frame':
+      return node.tag === 'iframe';
     case 'step':
       return actionable(node, target.step);
     case 'field':
@@ -184,6 +186,8 @@ function describeTarget(target: HealTarget): string[] {
       return ['Field: within', 'Type: list that holds every repeated result'];
     case 'pagination':
       return ['Field: pagination', 'Type: link or button to the next page'];
+    case 'frame':
+      return [`Field: ${targetName(target)}`, 'Type: iframe that holds the content'];
     case 'step':
       return [`Field: ${targetName(target)}`, `Type: ${STEP_TARGETS[target.step]}`];
     case 'field':

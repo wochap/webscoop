@@ -12,7 +12,7 @@ import {
   type RunOptions,
   type SerializedElement,
 } from '../src';
-import { FakeBrowser, h, type FakePage } from '../src/testing';
+import { FakeBrowser, h, iframe, type FakePage } from '../src/testing';
 import { catalog, cards, css, PAGE, recipe } from './helpers';
 
 const LOGIN = 'https://shop.test/login';
@@ -184,3 +184,31 @@ describe('runner steps', () => {
 function recipeInput(steps: RecipeInput['steps'], extra: Partial<RecipeInput> = {}): RecipeInput {
   return recipe({ url: PAGE, vars: [], steps, ...extra });
 }
+
+describe('runner steps inside an iframe', () => {
+  /** A catalog shown once a button inside `iframe#app` is clicked. */
+  const framedGate = (): FakePage => ({
+    dom: h('html', {}, h('body', {}, iframe({ id: 'app' }, h('html', {}, h('body', {}, h('button', { id: 'go' }, 'Show')))))),
+    on: { click: (el) => (el?.attrs.id === 'go' ? catalog(cards(3)) : undefined) },
+  });
+  const target = { selectors: [css('#go')], frame: { selectors: [{ strategy: 'id' as const, value: 'app', stability: 'stable' as const }] } };
+
+  it('clicks a required step target inside the iframe and reports the frame', async () => {
+    const t = setup({ [PAGE]: framedGate() }, withSteps([{ kind: 'click', target }]));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(3);
+    expect(t.browser.clicks).toEqual(['id=app >> nth=0 >> frame >> css=#go >> nth=0']);
+    expect(result.report.steps[0]).toMatchObject({ outcome: 'ok', frame: { candidateIndex: 0 } });
+  });
+
+  it('fails a required step with missing-required when the iframe is missing, and skips an optional one', async () => {
+    const page = { dom: catalog(cards(2)) };
+    const required = await setup({ [PAGE]: page }, withSteps([{ kind: 'click', target }])).runner.run();
+    expect(required).toMatchObject({ ok: false, reason: 'missing-required', fields: ['step:0'] });
+    expect(required.report.steps[0]).toMatchObject({ outcome: 'failed', frame: { outcome: { kind: 'unresolved' } } });
+    const optional = await setup({ [PAGE]: page }, withSteps([{ kind: 'click', target, optional: true }])).runner.run();
+    expect(optional.ok).toBe(true);
+    expect(optional.report.steps[0]).toMatchObject({ outcome: 'skipped' });
+  });
+});

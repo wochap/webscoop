@@ -1,5 +1,5 @@
 import { convertValue, defaultAttr } from './convert';
-import type { FieldReport, Row, RunReport } from './events';
+import type { FieldReport, FrameReport, Row, RunReport } from './events';
 import { healContext, SnapshotCache } from './healing/context';
 import { rankMatches } from './healing/fuzzy';
 import { candidatesResolver, firstCandidateResolver, resolveTarget } from './healing/ladder';
@@ -7,7 +7,7 @@ import { promote, type Promotion } from './healing/promote';
 import type { Viewport } from './healing/score';
 import { isHealed, targetName, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import type { ElementRef, Session } from './ports';
-import type { Fingerprint, Recipe, RecipeField, RecipeTable, SelectorCandidate } from './recipe/schema';
+import type { Fingerprint, Frame, Recipe, RecipeField, RecipeTable, SelectorCandidate } from './recipe/schema';
 import { primaryTableIndex, tablesOf } from './recipe/tables';
 import type { AnnotatedNode } from './selectors/annotated';
 import { normalize, textContent } from './selectors/aria';
@@ -53,6 +53,8 @@ export interface TableExtraction {
   promotions: Promotion[];
   /** Selectors each target resolved with, for later pages to reuse without the ladder; null for an item table that matched nothing. */
   resolved: ResolvedSelectors | null;
+  /** How the table's frame resolved, for a table with `frame`. */
+  frame?: FrameReport;
 }
 
 /** Every table of one page, in recipe order. */
@@ -77,6 +79,8 @@ export interface ResolvedSelectors {
   within?: SelectorCandidate[] | null;
   /** Per table field, in table order: the selectors that resolved it, or null when nothing did. */
   fields: (SelectorCandidate[] | null)[];
+  /** Frame selectors, for a table with `frame`. */
+  frame?: SelectorCandidate[];
 }
 
 export interface ExtractOptions {
@@ -98,6 +102,8 @@ export interface ExtractOptions {
   fromIndex?: number;
   /** Move the mouse over the elements of `hover` fields before reading them. Default true; the recorder preview turns it off. */
   hover?: boolean;
+  /** How long a table's iframe document may take to load, in ms; the run's navigation timeout. */
+  frameTimeoutMs?: number;
 }
 
 export interface TableExtractOptions extends Omit<ExtractOptions, 'resolved'> {
@@ -107,15 +113,16 @@ export interface TableExtractOptions extends Omit<ExtractOptions, 'resolved'> {
   label?: string;
 }
 
-/** Drop containers that also match one of the exclusion candidates. */
+/** Drop containers that also match one of the exclusion candidates, looked up in `base` (a frame root) or the document. */
 export async function excludeContainers(
   session: Session,
   containers: ElementRef[],
   exclude: readonly SelectorCandidate[],
+  base?: ElementRef,
 ): Promise<ElementRef[]> {
   if (exclude.length === 0) return containers;
   const excluded: ElementRef[] = [];
-  for (const candidate of exclude) excluded.push(...(await session.resolve(candidate)));
+  for (const candidate of exclude) excluded.push(...(await session.resolve(candidate, base)));
   if (excluded.length === 0) return containers;
   const kept: ElementRef[] = [];
   for (const container of containers) {
@@ -177,24 +184,25 @@ const settleWith =
     return { resolution, selectors: promotion.selectors, promotion };
   };
 
-/** Item containers the selectors find (inside the list parent, when given), minus the exclusions. */
+/** Item containers the selectors find (inside the list parent, else `base`), minus the exclusions. */
 export async function containersFor(
   session: Session,
   selectors: readonly SelectorCandidate[],
   exclude: readonly SelectorCandidate[],
   within?: ElementRef,
+  base?: ElementRef,
 ): Promise<ElementRef[]> {
-  const found = await resolveFirst(session, selectors, within);
-  return found ? excludeContainers(session, found.refs, exclude) : [];
+  const found = await resolveFirst(session, selectors, within ?? base);
+  return found ? excludeContainers(session, found.refs, exclude, base) : [];
 }
 
 /**
  * The list parent: the first element the first resolving `within` candidate
  * matches. Undefined for a recipe without `within`; null when nothing resolves.
  */
-export async function listParent(session: Session, within: readonly SelectorCandidate[] | undefined | null): Promise<ElementRef | null | undefined> {
+export async function listParent(session: Session, within: readonly SelectorCandidate[] | undefined | null, base?: ElementRef): Promise<ElementRef | null | undefined> {
   if (!within) return undefined;
-  const found = await resolveFirst(session, within);
+  const found = await resolveFirst(session, within, base);
   return found?.refs[0] ?? null;
 }
 
@@ -209,9 +217,16 @@ export async function countItems(session: Session, recipe: Recipe, resolved: rea
   const item = tables[primary]!.item!;
   const selectors = resolved[primary];
   if (!selectors?.item) return 0;
-  const parent = item.within ? await listParent(session, selectors.within ?? item.within) : undefined;
+  let base: ElementRef | undefined;
+  if (selectors.frame) {
+    const frame = await resolveFirst(session, selectors.frame);
+    const root = frame ? await session.frameRoot(frame.refs[0]!) : null;
+    if (!root) return 0;
+    base = root;
+  }
+  const parent = item.within ? await listParent(session, selectors.within ?? item.within, base) : undefined;
   if (parent === null) return 0;
-  return (await containersFor(session, selectors.item, item.exclude ?? [], parent)).length;
+  return (await containersFor(session, selectors.item, item.exclude ?? [], parent, base)).length;
 }
 
 export interface TargetResult {
@@ -224,15 +239,17 @@ export interface TargetResult {
   notes: string[];
 }
 
-export type PaginationTargetResult = TargetResult;
+export type PaginationTargetResult = FramedTargetResult;
 
 export interface TargetOptions {
   ladder?: readonly Resolver[];
   promote?: boolean;
   viewport?: Viewport;
+  /** A frame root to resolve in instead of the document. */
+  within?: ElementRef;
 }
 
-/** Resolve a page scoped target (the pagination target, a step target) through the healing ladder against the document. */
+/** Resolve a page scoped target (the pagination target, a step target, a frame) through the healing ladder against the document or a frame root. */
 export async function resolveDocumentTarget(session: Session, recipe: Recipe, target: HealTarget, opts: TargetOptions): Promise<TargetResult> {
   const notes: string[] = [];
   const ctx = healContext({
@@ -240,6 +257,7 @@ export async function resolveDocumentTarget(session: Session, recipe: Recipe, ta
     cache: new SnapshotCache(session),
     threshold: recipe.healing.fuzzyThreshold,
     recipe,
+    ...(opts.within ? { within: opts.within } : {}),
     note: (_, text) => notes.push(text),
     ...(opts.viewport ? { viewport: opts.viewport } : {}),
   });
@@ -254,12 +272,105 @@ export async function resolveDocumentTarget(session: Session, recipe: Recipe, ta
   };
 }
 
-/** Resolve `pagination.target` through the healing ladder, like a page scoped field. */
-export async function resolvePaginationTarget(session: Session, recipe: Recipe, opts: TargetOptions): Promise<PaginationTargetResult> {
+/** A resolved frame: the root of its document to pass as `within`, or null when it is missing or does not load. */
+export interface FrameResult extends TargetResult {
+  root: ElementRef | null;
+  report: FrameReport;
+}
+
+export interface FrameOptions extends Omit<TargetOptions, 'within'> {
+  /** How long the iframe's document may take to load, in ms. */
+  timeoutMs?: number;
+  /** Selectors an earlier page settled on: used as they are, with no healing ladder. */
+  reuse?: SelectorCandidate[];
+}
+
+/**
+ * Resolve a frame target in the top document, through the healing ladder or
+ * with reused selectors, then wait for its document. The frame target's
+ * owner is named by `target`, so a healed frame is written back to it.
+ */
+export async function resolveFrame(session: Session, recipe: Recipe, target: HealTarget & { kind: 'frame' }, opts: FrameOptions): Promise<FrameResult> {
+  let result: TargetResult;
+  if (opts.reuse) {
+    const found = await resolveFirst(session, opts.reuse);
+    result = {
+      ref: found?.refs[0] ?? null,
+      selectors: opts.reuse,
+      outcome: found ? { kind: 'candidate', index: 0 } : UNRESOLVED,
+      promotion: null,
+      notes: [],
+    };
+  } else {
+    result = await resolveDocumentTarget(session, recipe, target, opts);
+  }
+  const root = result.ref ? await session.frameRoot(result.ref, opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : undefined) : null;
+  const notes = [...result.notes, ...(result.ref && !root ? ['the frame is not a same-origin iframe, or its document did not load in time'] : [])];
+  const report: FrameReport = {
+    candidateIndex: result.outcome.kind === 'candidate' ? result.outcome.index : null,
+    candidate: result.ref ? (result.selectors[0] ?? null) : null,
+    outcome: result.outcome,
+    ...(notes.length > 0 ? { notes } : {}),
+  };
+  return { ...result, root, report };
+}
+
+/** The heal target for a table's frame. */
+export function tableFrameTarget(frame: Frame, table: string): HealTarget & { kind: 'frame' } {
+  return { kind: 'frame', of: 'table', table, selectors: frame.selectors, ...(frame.fingerprint ? { fingerprint: frame.fingerprint } : {}) };
+}
+
+/** A target resolved through its frame, when it has one. */
+export interface FramedTargetResult extends TargetResult {
+  /** How the frame resolved, for a target with a frame. */
+  frame?: FrameResult;
+}
+
+export interface FramedTargetOptions extends Omit<TargetOptions, 'within'> {
+  /** How long the iframe's document may take to load, in ms. */
+  timeoutMs?: number;
+  /** Selectors an earlier page settled on, for the target and its frame: used as they are, with no healing ladder. */
+  reuse?: { selectors: SelectorCandidate[]; frame?: SelectorCandidate[] };
+}
+
+/**
+ * Resolve a target that may sit inside an iframe: the frame first, in the top
+ * document, then the target inside the frame's document. A frame that does
+ * not resolve or load leaves the target unresolved.
+ */
+export async function resolveFramedTarget(
+  session: Session,
+  recipe: Recipe,
+  target: HealTarget,
+  frame: (HealTarget & { kind: 'frame' }) | null,
+  opts: FramedTargetOptions,
+): Promise<FramedTargetResult> {
+  const { reuse, timeoutMs, ...rest } = opts;
+  let framed: FrameResult | undefined;
+  if (frame) {
+    framed = await resolveFrame(session, recipe, frame, { ...rest, ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(reuse?.frame ? { reuse: reuse.frame } : {}) });
+    if (!framed.root) return { ref: null, selectors: target.selectors, outcome: UNRESOLVED, promotion: null, notes: framed.report.notes ?? [], frame: framed };
+  }
+  const within = framed?.root ?? undefined;
+  let result: TargetResult;
+  if (reuse) {
+    const found = await resolveFirst(session, reuse.selectors, within);
+    result = { ref: found?.refs[0] ?? null, selectors: reuse.selectors, outcome: found ? { kind: 'candidate', index: 0 } : UNRESOLVED, promotion: null, notes: [] };
+  } else {
+    result = await resolveDocumentTarget(session, recipe, target, { ...rest, ...(within ? { within } : {}) });
+  }
+  return { ...result, ...(framed ? { frame: framed } : {}) };
+}
+
+/** Resolve `pagination.target` through the healing ladder, like a page scoped field, inside its frame when it has one. */
+export async function resolvePaginationTarget(session: Session, recipe: Recipe, opts: FramedTargetOptions): Promise<FramedTargetResult> {
   const stored = recipe.pagination.target;
   if (!stored) return { ref: null, selectors: [], outcome: UNRESOLVED, promotion: null, notes: [] };
   const target: HealTarget = { kind: 'pagination', selectors: stored.selectors, ...(stored.fingerprint ? { fingerprint: stored.fingerprint } : {}) };
-  return resolveDocumentTarget(session, recipe, target, opts);
+  const frame: (HealTarget & { kind: 'frame' }) | null = stored.frame
+    ? { kind: 'frame', of: 'pagination', selectors: stored.frame.selectors, ...(stored.frame.fingerprint ? { fingerprint: stored.frame.fingerprint } : {}) }
+    : null;
+  return resolveFramedTarget(session, recipe, target, frame, opts);
 }
 
 function fieldTarget(field: RecipeField, index: number, table: string): HealTarget {
@@ -306,11 +417,12 @@ async function probeContainer(
   recorded: Fingerprint | undefined,
   shape: Fingerprint | undefined,
   threshold: number,
+  base?: ElementRef,
 ): Promise<ElementRef | undefined> {
   const first = containers[0];
   const fp = shape ?? recorded;
   if (!fp || containers.length < 2) return first;
-  const root = await cache.get();
+  const root = await cache.get(base);
   const matches = rankMatches({ kind: 'item', selectors: [], fingerprint: fp }, root, { outerAncestors: [] }, true);
   let best: AnnotatedNode | undefined;
   if (recorded && shape && shape !== recorded && recorded.textSample) {
@@ -322,7 +434,7 @@ async function probeContainer(
     best = matches[0].node;
   }
   if (!best) return first;
-  const ref = await refForNode(session, best);
+  const ref = await refForNode(session, best, base);
   if (!ref) return first;
   for (const container of containers) if (await session.same(container, ref)) return container;
   return first;
@@ -340,6 +452,26 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   const cache = new SnapshotCache(session);
   const threshold = recipe.healing.fuzzyThreshold;
   const promotions: Promotion[] = [];
+
+  // A framed table resolves everything inside its iframe's document: `base` stands for the document below.
+  let base: ElementRef | undefined;
+  let frame: FrameResult | undefined;
+  if (table.frame) {
+    frame = await resolveFrame(session, recipe, tableFrameTarget(table.frame, table.name), {
+      ladder,
+      promote: opts.promote ?? false,
+      ...(opts.viewport ? { viewport: opts.viewport } : {}),
+      ...(opts.frameTimeoutMs !== undefined ? { timeoutMs: opts.frameTimeoutMs } : {}),
+      ...(opts.resolved?.frame ? { reuse: opts.resolved.frame } : {}),
+    });
+    if (frame.promotion) {
+      promotions.push(frame.promotion);
+      opts.onHealed?.(frame.promotion);
+    }
+    if (!frame.root) return framelessTable(table, frame, promotions, opts);
+    base = frame.root;
+  }
+
   const notes = new Map<string, string[]>();
   const note = (target: HealTarget, text: string) => {
     const name = targetName(target);
@@ -348,14 +480,14 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   const context = (
     extra: { within?: ElementRef; containers?: readonly ElementRef[]; probe?: () => Promise<ElementRef | undefined>; outerAncestors?: readonly string[] } = {},
   ): HealContext =>
-    healContext({ session, cache, threshold, note, recipe, ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
+    healContext({ session, cache, threshold, note, recipe, ...(base ? { within: base } : {}), ...extra, ...(opts.viewport ? { viewport: opts.viewport } : {}) });
 
   const settle = (target: HealTarget, ctx: HealContext) => settleWith(target, ctx, opts.promote ?? false);
   const reused = opts.resolved;
   /** A target settled on page 1, replayed with its selectors and no ladder. */
   const replay = async (selectors: SelectorCandidate[] | null, within?: ElementRef): Promise<Settled | null> => {
     if (!selectors) return null;
-    const found = await resolveFirst(session, selectors, within);
+    const found = await resolveFirst(session, selectors, within ?? base);
     const selector = found?.candidate ?? selectors[0]!;
     return {
       resolution: { refs: found?.refs ?? [], outcome: found ? { kind: 'candidate', index: found.index } : UNRESOLVED, selector },
@@ -383,7 +515,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   if (table.item?.within) {
     if (reused) {
       withinSelectors = reused.within ?? null;
-      const found = withinSelectors ? await resolveFirst(session, withinSelectors) : null;
+      const found = withinSelectors ? await resolveFirst(session, withinSelectors, base) : null;
       parent = found?.refs[0];
       withinReport = {
         candidateIndex: found ? 0 : null,
@@ -427,7 +559,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   } else if (table.item && reused) {
     const selectors = reused.item;
     itemSelectors = selectors;
-    const kept = selectors ? await containersFor(session, selectors, table.item.exclude ?? [], parent) : [];
+    const kept = selectors ? await containersFor(session, selectors, table.item.exclude ?? [], parent, base) : [];
     containers = kept;
     item = {
       candidateIndex: kept.length > 0 ? 0 : null,
@@ -450,11 +582,11 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
     if (settled) {
       refs = settled.resolution.refs;
       if (settled.resolution.outcome.kind !== 'candidate' && settled.selectors[0]) {
-        const all = await session.resolve(settled.selectors[0], parent);
+        const all = await session.resolve(settled.selectors[0], parent ?? base);
         if (all.length > refs.length) refs = all;
       }
     }
-    const kept = await excludeContainers(session, refs, table.item.exclude ?? []);
+    const kept = await excludeContainers(session, refs, table.item.exclude ?? [], base);
     containers = kept;
     const outcome = settled?.resolution.outcome ?? UNRESOLVED;
     item = {
@@ -486,7 +618,7 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
   const firstContainer = containers[0];
   const realContainers = containers.filter((c): c is ElementRef => c !== undefined);
   let probed: Promise<ElementRef | undefined> | undefined;
-  const probe = () => (probed ??= probeContainer(session, cache, realContainers, table.item?.fingerprint, itemFingerprint, threshold));
+  const probe = () => (probed ??= probeContainer(session, cache, realContainers, table.item?.fingerprint, itemFingerprint, threshold, base));
   for (const [index, field] of table.fields.entries()) {
     const target = fieldTarget(field, index, table.name);
     if (reused) {
@@ -610,8 +742,52 @@ export async function extractTable(session: Session, recipe: Recipe, table: Reci
           item: itemSelectors,
           ...(table.item?.within ? { within: withinSelectors } : {}),
           fields: states.map((s) => s.settled?.selectors ?? null),
+          ...(frame ? { frame: frame.selectors } : {}),
         };
-  return { name: table.name, rows, containerCount, firstRow: extracted[0] ?? null, dropped, item, fields, missingRequired, warnings, promotions, resolved };
+  return {
+    name: table.name,
+    rows,
+    containerCount,
+    firstRow: extracted[0] ?? null,
+    dropped,
+    item,
+    fields,
+    missingRequired,
+    warnings,
+    promotions,
+    resolved,
+    ...(frame ? { frame: frame.report } : {}),
+  };
+}
+
+/** A framed table whose frame did not resolve or load: no rows, and every required target missing. */
+function framelessTable(table: RecipeTable, frame: FrameResult, promotions: Promotion[], opts: TableExtractOptions): TableExtraction {
+  const prefix = opts.label ? `table "${opts.label}": ` : '';
+  const fields: FieldReport[] = table.fields.map((field) => ({
+    name: field.name,
+    type: field.type,
+    optional: field.optional,
+    candidateIndex: null,
+    candidate: null,
+    outcome: UNRESOLVED,
+    status: 'missing',
+    missingRows: [],
+    notes: ['the frame did not resolve'],
+  }));
+  return {
+    name: table.name,
+    rows: [],
+    containerCount: 0,
+    firstRow: null,
+    dropped: [],
+    item: table.item ? { candidateIndex: null, candidate: null, count: 0, outcome: UNRESOLVED, notes: ['the frame did not resolve'] } : null,
+    fields,
+    missingRequired: ['frame', ...(table.item ? ['item'] : []), ...table.fields.filter((f) => !f.optional).map((f) => f.name)],
+    warnings: [`${prefix}frame missing on page ${opts.page}`],
+    promotions,
+    resolved: null,
+    frame: frame.report,
+  };
 }
 
 /**

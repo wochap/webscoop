@@ -48,6 +48,18 @@ describe('webscoop export', () => {
     expect(io.out()).toContain('const RECIPE_NAME = "playground-catalog";');
   });
 
+  it('exits 1 naming the table for a recipe with an iframe target, and writes no file', async () => {
+    const dir = await home();
+    const recipe = JSON.parse(await readFile(CATALOG, 'utf8')) as Record<string, unknown>;
+    recipe.name = 'sunat';
+    recipe.frame = { selectors: [{ strategy: 'id', value: 'iframeApplication', stability: 'stable' }] };
+    await writeFile(join(dir, 'recipes', 'sunat.json'), JSON.stringify(recipe));
+    const io = testIo({ env: { WEBSCOOP_HOME: dir }, cwd: dir });
+    expect(await main(['export', 'sunat', '--out', 'sunat.ts'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toMatch(/iframe targets are not supported by export: table "items"/);
+    await expect(stat(join(dir, 'sunat.ts'))).rejects.toThrow();
+  });
+
   it('exits 1 naming the flag for an unknown format', async () => {
     const dir = await home();
     const io = testIo({ env: { WEBSCOOP_HOME: dir } });

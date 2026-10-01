@@ -27,9 +27,11 @@ export {
   type TierRenderer,
 } from './render';
 export {
+  FRAMED_COUNT,
   INITIAL_CONTROL,
   PAGE_COOKIE,
   PAGE_SIZE,
+  productDescription,
   startPlayground,
   VISITOR_COOKIE,
   type ControlState,

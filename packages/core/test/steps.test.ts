@@ -158,7 +158,7 @@ describe('replaySteps', () => {
     await replaySteps(session, recipe, { page: 1, timeoutMs: 1000, cache, ladder: [counting] });
     await replaySteps(session, recipe, { page: 2, timeoutMs: 1000, cache, ladder: [counting] });
     expect(ladderRuns).toBe(1);
-    expect(cache.get(0)).toEqual([css('#tab')]);
+    expect(cache.get(0)).toEqual({ selectors: [css('#tab')] });
   });
 
   it('heals a renamed consent button by fingerprint and promotes it', async () => {

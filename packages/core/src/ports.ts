@@ -85,6 +85,13 @@ export interface Session {
   /** Whether two refs point at the same element. */
   same(a: ElementRef, b: ElementRef): Promise<boolean>;
   snapshot(within?: ElementRef): Promise<SerializedNode>;
+  /**
+   * The `<html>` element of a same-origin iframe's document, once it has
+   * loaded, to pass as `within`. Null when the element is not such an iframe
+   * or its document does not load within the navigation timeout. Inside it an
+   * xpath starting with `/` is absolute in the iframe's document.
+   */
+  frameRoot(frame: ElementRef, opts?: { timeoutMs: number }): Promise<ElementRef | null>;
   /** Scroll the element into view and click it. */
   click(ref: ElementRef): Promise<void>;
   /**

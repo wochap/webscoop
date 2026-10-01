@@ -6,7 +6,7 @@ import type { Promotion } from './promote';
  * A copy of the recipe with each promoted target's selectors and fingerprint
  * replaced. Everything else is a structural clone of the input, so writing it
  * back changes the file only where a target healed. Item, list parent, and
- * field targets are addressed by table (the first one when the target names
+ * field targets, and table frames, are addressed by table (the first one when the target names
  * none), and the recipe keeps the form it was loaded in.
  */
 export function applyPromotions(recipe: Recipe, promotions: readonly Promotion[]): Recipe {
@@ -38,6 +38,18 @@ export function applyPromotions(recipe: Recipe, promotions: readonly Promotion[]
       case 'step': {
         const step = out.steps[p.target.index];
         if (step?.target) out.steps[p.target.index] = { ...step, target: { ...step.target, ...patch } };
+        break;
+      }
+      case 'frame': {
+        if (p.target.of === 'table') {
+          const table = tableOf(p.target.table);
+          if (table?.frame) table.frame = { ...table.frame, ...patch };
+        } else if (p.target.of === 'step') {
+          const step = out.steps[p.target.index];
+          if (step?.target?.frame) out.steps[p.target.index] = { ...step, target: { ...step.target, frame: { ...step.target.frame, ...patch } } };
+        } else if (out.pagination.target?.frame) {
+          out.pagination.target = { ...out.pagination.target, frame: { ...out.pagination.target.frame, ...patch } };
+        }
         break;
       }
     }

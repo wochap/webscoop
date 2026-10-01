@@ -48,7 +48,9 @@ import { RecorderEmitter } from './events';
 import {
   currentTable,
   descriptionKey,
+  frameLabel,
   HOST_BINDING,
+  sameFrame,
   parsePageMessage,
   scopeForTable,
   tableMode,
@@ -56,6 +58,7 @@ import {
   type DraftTable,
   type Draft,
   type FieldPatch,
+  type FrameTarget,
   type HostMessage,
   type ItemLadderRow,
   type LevelView,
@@ -242,11 +245,41 @@ export class RecorderController {
   private repickResolve!: (outcome: RepickOutcome) => void;
   private readonly repickPromise: Promise<RepickOutcome>;
   private readonly guardListeners = { continue: new Set<() => void>(), abort: new Set<() => void>() };
+  /**
+   * The session as host lookups see it: `resolve` and `snapshot` without a
+   * scope work in the current frame's document (see `scopeFrame`), so every
+   * count, verification, and snapshot follows the iframe being worked on.
+   */
+  private readonly view: InteractiveSession;
+  /** The frame lookups run in while set, instead of the selection's or the active table's. */
+  private frameOverride: { frame: FrameTarget | null } | null = null;
+  /** The current frame's document root, resolved once per message. */
+  private frameMemo: { key: string; root: Promise<ElementRef | null> } | null = null;
   /** Set by `detach`: pages that load afterwards are told to remove the recorder. */
   private detached = false;
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
+    const raw = opts.session;
+    const resolve: InteractiveSession['resolve'] = async (candidate, within) => {
+      if (within) return raw.resolve(candidate, within);
+      const base = await this.frameBase();
+      return base === null ? [] : raw.resolve(candidate, base);
+    };
+    const snapshot: InteractiveSession['snapshot'] = async (within) => {
+      if (within) return raw.snapshot(within);
+      const base = await this.frameBase();
+      if (base === null) throw new Error(`${frameLabel(this.scopeFrame()!)} is not on the page`);
+      return raw.snapshot(base);
+    };
+    this.view = new Proxy(raw, {
+      get(target, prop) {
+        if (prop === 'resolve') return resolve;
+        if (prop === 'snapshot') return snapshot;
+        const value = Reflect.get(target, prop, target) as unknown;
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
     const mode = opts.mode ?? { kind: 'full' };
     let repickContext: RepickContext | null = null;
     let draft = opts.draft;
@@ -289,6 +322,7 @@ export class RecorderController {
       guardContext: null,
       notice: null,
       otherLists: [],
+      frame: null,
       test: null,
       saved: null,
       busy: null,
@@ -322,8 +356,85 @@ export class RecorderController {
     return this.closedPromise;
   }
 
+  /** The frame-scoped session; see `view`. */
   private get session(): InteractiveSession {
+    return this.view;
+  }
+
+  /** The session itself, for work that finds frames on its own: test runs, step replays, navigation. */
+  private get raw(): InteractiveSession {
     return this.opts.session;
+  }
+
+  /** The frame host lookups run in: the override, else the selection's (null in the top document), else the active table's. */
+  private scopeFrame(): FrameTarget | null {
+    if (this.frameOverride) return this.frameOverride.frame;
+    const selected = this.current.selected;
+    if (selected) return selected.selection.frame;
+    return this.table().frame ?? null;
+  }
+
+  /** The current frame's document root: undefined for the top document, null when the frame is missing or does not load. */
+  private frameBase(): Promise<ElementRef | null> | undefined {
+    const frame = this.scopeFrame();
+    if (!frame) return undefined;
+    const key = frame.selectors.map((c) => `${c.strategy}=${c.value}`).join('|');
+    if (this.frameMemo?.key !== key) {
+      const raw = this.raw;
+      const timeoutMs = this.opts.timeoutMs ?? 30_000;
+      this.frameMemo = {
+        key,
+        root: (async () => {
+          const found = await resolveFirst(raw, frame.selectors.map(bare));
+          return found ? raw.frameRoot(found.refs[0]!, { timeoutMs }) : null;
+        })(),
+      };
+    }
+    return this.frameMemo.root;
+  }
+
+  /** Run lookups in one frame (null: the top document), whatever the selection or the active table. */
+  private async inFrame<T>(frame: FrameTarget | null, work: () => Promise<T>): Promise<T> {
+    const before = this.frameOverride;
+    this.frameOverride = { frame };
+    try {
+      return await work();
+    } finally {
+      this.frameOverride = before;
+    }
+  }
+
+  /** Put the current frame in the state, for the page to read paths in the right document. */
+  private syncFrame(): void {
+    const frame = this.scopeFrame();
+    const path = this.current.selected?.selection.framePath ?? null;
+    const view = frame ? { path, selectors: frame.selectors } : null;
+    if (JSON.stringify(view) !== JSON.stringify(this.current.frame)) this.current = { ...this.current, frame: view };
+  }
+
+  /** The frame candidates counted in the top document; those that match nothing are dropped, unique ones first. */
+  private async verifyFrame(frame: FrameTarget): Promise<FrameTarget> {
+    const counted: ProtocolCandidate[] = [];
+    for (const c of frame.selectors) {
+      let count = 0;
+      try {
+        count = (await this.raw.resolve(bare(c))).length;
+      } catch {
+        // An invalid selector matches nothing.
+      }
+      counted.push({ ...c, count });
+    }
+    const found = counted.filter((c) => (c.count ?? 0) > 0);
+    const selectors = [...found.filter((c) => c.count === 1), ...found.filter((c) => c.count !== 1)];
+    return { ...frame, selectors: selectors.length > 0 ? selectors : counted };
+  }
+
+  /** Why a pick in `frame` cannot go into a table: the table already reads from another frame, or from the top document. */
+  private frameRefusal(table: number | null, frame: FrameTarget | null): string | null {
+    const t = table === null ? null : this.draft.tables[table];
+    if (!t || (t.fields.length === 0 && !t.item)) return null;
+    if (sameFrame(t.frame ?? null, frame)) return null;
+    return t.frame ? `the ${t.name} table reads from ${frameLabel(t.frame)}` : `the ${t.name} table reads from the page, not from an iframe`;
   }
 
   private now(): Date {
@@ -414,11 +525,14 @@ export class RecorderController {
   }
 
   private async process(raw: unknown): Promise<HostMessage> {
+    // Frame documents may have been replaced since the last message.
+    this.frameMemo = null;
     try {
       const msg = parsePageMessage(raw);
       const reply = await this.route(msg);
       if (this.current.error) this.current = { ...this.current, error: null };
-      return reply ?? this.stateMessage();
+      this.syncFrame();
+      return reply && 'state' in reply ? { ...reply, state: this.current } : (reply ?? this.stateMessage());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.current = { ...this.current, error: message, busy: null };
@@ -428,6 +542,7 @@ export class RecorderController {
   }
 
   private stateMessage(): HostMessage {
+    this.syncFrame();
     return { kind: 'draft.state', state: this.current };
   }
 
@@ -695,6 +810,8 @@ export class RecorderController {
         await this.refreshOtherLists();
         return;
       }
+      case 'frame.edit':
+        return void (await this.editFrame(msg.key, msg.by, msg.index, msg.selector));
       case 'panel.setCollapsed':
         this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, [msg.section]: msg.collapsed } } };
         return;
@@ -793,7 +910,10 @@ export class RecorderController {
 
   /** Run work on the message queue, reporting errors to the page. */
   private handleInternal(work: () => Promise<unknown>): Promise<void> {
-    const run = this.queue.then(work).then(
+    const run = this.queue.then(() => {
+      this.frameMemo = null;
+      return work();
+    }).then(
       () => {},
       async (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -823,6 +943,9 @@ export class RecorderController {
 
   private async containersOf(item: DraftItem | null): Promise<ElementRef[]> {
     if (!item) return [];
+    // A list in another document than the one lookups run in has no containers here.
+    const owner = this.draft.tables.find((t) => t.item === item);
+    if (owner && !sameFrame(owner.frame ?? null, this.scopeFrame())) return [];
     const parent = await listParent(this.session, item.within?.map(bare));
     if (parent === null) return [];
     return containersFor(this.session, item.selectors.map(bare), item.exclude.map(bare), parent);
@@ -905,9 +1028,12 @@ export class RecorderController {
 
   /** Refresh every table's item and field counts, and the step counts, on the current page. */
   async recount(): Promise<void> {
-    for (let t = 0; t < this.draft.tables.length; t++) await this.recountTable(t);
+    for (let t = 0; t < this.draft.tables.length; t++) await this.inFrame(this.draft.tables[t]!.frame ?? null, () => this.recountTable(t));
     const stepCounts: (number | null)[] = [];
-    for (const step of this.draft.steps) stepCounts.push(step.target ? await this.countPage(step.target.selectors[0]!) : null);
+    for (const step of this.draft.steps) {
+      const target = step.target;
+      stepCounts.push(target ? await this.inFrame(target.frame ?? null, () => this.countPage(target.selectors[0]!)) : null);
+    }
     this.apply({ type: 'setStepCounts', counts: stepCounts });
     await this.refreshOtherLists();
   }
@@ -966,7 +1092,13 @@ export class RecorderController {
 
   // Selection ---------------------------------------------------------------
 
+  /** Take a pick: inside an iframe, its frame candidates are checked in the top document and lookups run in that frame. */
   private async select(selection: ParsedSelection, snapshot: AnnotatedNode): Promise<void> {
+    const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
+    await this.inFrame(frame, () => this.selectIn({ ...selection, frame }, snapshot));
+  }
+
+  private async selectIn(selection: ParsedSelection, snapshot: AnnotatedNode): Promise<void> {
     const root = annotate(snapshot);
     const node = nodeAt(root, selection.path);
     if (!node) throw new Error('the selected element is not in the page snapshot');
@@ -1022,7 +1154,17 @@ export class RecorderController {
     );
     this.current = {
       ...this.current,
-      selected: { selection: { ...selection, candidates }, scope, defaults: { ...defaults, table }, primary: 0, table, suggestion: null, outside: null, belongs: null },
+      selected: {
+        selection: { ...selection, candidates },
+        scope,
+        defaults: { ...defaults, table },
+        primary: 0,
+        table,
+        suggestion: null,
+        outside: null,
+        belongs: null,
+        frameRefusal: this.frameRefusal(table, selection.frame),
+      },
       proposal: null,
       levelPick: null,
       pendingSelect: null,
@@ -1037,7 +1179,14 @@ export class RecorderController {
     const repickStep = this.current.repickStep;
     if (repickStep !== null && this.draft.steps[repickStep]) {
       const selectors = orderForSave(rank(await this.withCounts(generate(node), 'page', [])), 0);
-      this.apply({ type: 'replaceStepTarget', index: repickStep, selectors, fingerprint: selection.fingerprint, count: selectors[0]?.count ?? null });
+      this.apply({
+        type: 'replaceStepTarget',
+        index: repickStep,
+        selectors,
+        fingerprint: selection.fingerprint,
+        ...(selection.frame ? { frame: selection.frame } : {}),
+        count: selectors[0]?.count ?? null,
+      });
       this.current = { ...this.current, repickStep: null };
       return;
     }
@@ -1284,7 +1433,14 @@ export class RecorderController {
     if (scope === 'page') candidates = rank(await this.withCounts(dedupe(generate(node)), 'page', []));
     this.current = {
       ...this.current,
-      selected: { ...selected, scope, primary: 0, table, selection: { ...selected.selection, candidates, containerPath } },
+      selected: {
+        ...selected,
+        scope,
+        primary: 0,
+        table,
+        selection: { ...selected.selection, candidates, containerPath },
+        frameRefusal: this.frameRefusal(table, selected.selection.frame),
+      },
     };
     if (!this.current.editing) await this.classify();
   }
@@ -2047,6 +2203,12 @@ export class RecorderController {
     const within = proposal.within && withinNode ? orderForSave(proposal.within.selectors, proposal.within.primary) : [];
     const holder = proposal.origin === 'edit' || !this.node ? null : this.holderOf(this.node);
     const origin = proposal.origin;
+    const frame = this.scopeFrame();
+    if (origin !== 'edit') {
+      const refusal = this.frameRefusal(this.draft.activeTable, frame);
+      if (refusal) throw new Error(`${refusal}: set up the list inside it, or in another table`);
+      if (this.table().fields.length === 0) this.apply({ type: 'setTableFrame', frame });
+    }
     this.apply({
       type: 'setItem',
       item: {
@@ -2155,6 +2317,8 @@ export class RecorderController {
       if (this.current.selected.table !== null) await this.retarget(null);
     }
     const selected = this.current.selected!;
+    const refusal = typeof target === 'number' ? this.frameRefusal(target, selected.selection.frame) : null;
+    if (refusal) throw new Error(`${refusal}: pick inside it, or add the field to another table`);
     if (selected.outside) throw new Error(`the selection is outside the ${this.draft.tables[selected.outside.table]!.name} list: add it to a page table or re-pick`);
     if (selected.belongs) throw new Error(`the selection belongs to the ${this.draft.tables[selected.belongs.table]!.name} list: switch to it or re-pick`);
     // The scope follows the table's mode, never a choice.
@@ -2168,6 +2332,8 @@ export class RecorderController {
     }
     const selectors = orderForSave(selected.selection.candidates, selected.primary);
     if (selectors.length === 0) throw new Error('the selection has no selector candidates');
+    // The first field or item container sets the table's frame.
+    if (this.table().fields.length === 0 && !this.table().item) this.apply({ type: 'setTableFrame', frame: selected.selection.frame });
     const type = patch.type ?? selected.defaults.type;
     const attr = patch.attr === null ? undefined : (patch.attr ?? (patch.type && patch.type !== selected.defaults.type ? defaultAttr(type) : selected.defaults.attr));
     const taken = this.table().fields.map((f) => f.name);
@@ -2203,14 +2369,18 @@ export class RecorderController {
    * such as a key press on whatever has focus.
    */
   private async addStep(step: NewStep, selection: ParsedSelection | null | undefined): Promise<void> {
-    let target: { selectors: ProtocolCandidate[]; fingerprint: ParsedSelection['fingerprint'] } | undefined;
+    let target: { selectors: ProtocolCandidate[]; fingerprint: ParsedSelection['fingerprint']; frame?: FrameTarget } | undefined;
     if (selection) {
-      target = { selectors: orderForSave(rank(dedupe(selection.candidates)), 0), fingerprint: selection.fingerprint };
+      const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
+      target = { selectors: orderForSave(rank(dedupe(selection.candidates)), 0), fingerprint: selection.fingerprint, ...(frame ? { frame } : {}) };
     } else if (selection === undefined) {
       const selected = this.current.selected;
-      if (!selected || !this.node) throw new Error('select an element first');
-      // The pick may be item scoped; a step target is always found in the whole document.
-      target = { selectors: orderForSave(rank(await this.withCounts(generate(this.node), 'page', [])), 0), fingerprint: selected.selection.fingerprint };
+      const node = this.node;
+      if (!selected || !node) throw new Error('select an element first');
+      const frame = selected.selection.frame;
+      // The pick may be item scoped; a step target is always found in the whole document (of its frame).
+      const selectors = orderForSave(rank(await this.inFrame(frame, () => this.withCounts(generate(node), 'page', []))), 0);
+      target = { selectors, fingerprint: selected.selection.fingerprint, ...(frame ? { frame } : {}) };
     }
     if (target && target.selectors.length === 0) throw new Error('the element has no selector candidates');
     this.apply({
@@ -2246,7 +2416,7 @@ export class RecorderController {
       const recipe = { ...validated.recipe, steps: [validated.recipe.steps[index]!] };
       const values = Object.fromEntries(this.draft.vars.filter((v) => v.value !== '').map((v) => [v.name, v.value]));
       try {
-        const result = await replaySteps(this.session, recipe, { page: 1, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache: new Map() });
+        const result = await replaySteps(this.raw, recipe, { page: 1, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache: new Map() });
         const report = result.steps[0];
         ok = report?.outcome === 'ok' || report?.outcome === 'healed';
         message = ok ? `replayed step ${index + 1} (${step.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
@@ -2276,10 +2446,55 @@ export class RecorderController {
         ...rest,
         kind: detected.kind,
         ...(detected.param ? { param: detected.param } : {}),
-        target: { selectors: orderForSave(selection.candidates, selected.primary), fingerprint: selection.fingerprint },
+        target: {
+          selectors: orderForSave(selection.candidates, selected.primary),
+          fingerprint: selection.fingerprint,
+          ...(selection.frame ? { frame: selection.frame } : {}),
+        },
       },
     });
     this.emitter.emit('recorder.paginationSet', { kind: detected.kind });
+  }
+
+  /**
+   * Edit a frame target: make a candidate primary, or put a typed selector
+   * first once it matches a same-origin iframe. Every table, step, and
+   * pagination target with that frame, and the selection, get the result.
+   */
+  private async editFrame(key: { strategy: string; value: string }, by: 'primary' | 'selector', index: number | undefined, typed: string | undefined): Promise<void> {
+    const id = `${key.strategy}=${key.value}`;
+    const isKey = (f: FrameTarget | null | undefined): f is FrameTarget => !!f && `${f.selectors[0]?.strategy}=${f.selectors[0]?.value}` === id;
+    const selected = this.current.selected;
+    const owned = [
+      ...this.draft.tables.map((t) => t.frame),
+      ...this.draft.steps.map((s) => s.target?.frame),
+      this.draft.pagination?.target?.frame,
+      selected?.selection.frame,
+    ];
+    const frame = owned.find(isKey);
+    if (!frame) throw new Error(`no frame target ${id}`);
+    let selectors: ProtocolCandidate[];
+    if (by === 'primary') {
+      selectors = toFront(frame.selectors, index ?? 0);
+    } else {
+      const candidate: ProtocolCandidate = parseSelector(typed ?? '');
+      let refs: ElementRef[];
+      try {
+        refs = await this.raw.resolve(bare(candidate));
+      } catch (error) {
+        throw new Error(`invalid frame selector "${typed}": ${(error as Error).message.split('\n')[0]}`, { cause: error });
+      }
+      if (refs.length === 0) throw new Error(`no iframe matches ${candidate.strategy}=${candidate.value}`);
+      if (!(await this.raw.frameRoot(refs[0]!, { timeoutMs: this.opts.timeoutMs ?? 30_000 }))) {
+        throw new Error(`${candidate.strategy}=${candidate.value} does not match a same-origin iframe`);
+      }
+      selectors = [{ ...candidate, count: refs.length }, ...frame.selectors.filter((c) => !sameSelector(c, candidate))];
+    }
+    const next: FrameTarget = { ...frame, selectors };
+    this.apply({ type: 'replaceFrame', key: id, frame: next });
+    if (selected && isKey(selected.selection.frame)) {
+      this.current = { ...this.current, selected: { ...selected, selection: { ...selected.selection, frame: next } } };
+    }
   }
 
   // Test run and save --------------------------------------------------------
@@ -2297,7 +2512,7 @@ export class RecorderController {
         error: validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n'),
       };
     } else {
-      const extracted = (await extractPage(this.session, validated.recipe, { pageUrl: this.current.url, page: 1, hover: false })).tables;
+      const extracted = (await extractPage(this.raw, validated.recipe, { pageUrl: this.current.url, page: 1, hover: false, frameTimeoutMs: this.opts.timeoutMs ?? 30_000 })).tables;
       const recipeTables = tablesOf(validated.recipe);
       results = {
         tables: extracted.map((extraction, t): TestTable => {

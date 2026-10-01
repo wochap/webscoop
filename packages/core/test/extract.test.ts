@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { countItems, extractPage, loadRecipe, resolveFirst } from '../src';
 import { FakeBrowser } from '../src/testing';
-import { catalog, cards, css, mixedPage, PAGE, recipe, tablesRecipe, testid } from './helpers';
+import { catalog, cards, css, frameId, framedCatalog, mixedPage, PAGE, recipe, tablesRecipe, testid } from './helpers';
 
 async function session(dom: ReturnType<typeof catalog>) {
   const s = await new FakeBrowser({ [PAGE]: dom }).open('/profile');
@@ -340,5 +340,28 @@ describe('hover before read', () => {
     const out = (await extractPage(s, withHover(true), { pageUrl: PAGE, page: 1 })).tables[0]!;
     expect(out.dropped).toEqual([{ index: 1, fields: ['url'] }]);
     expect(browser.hovers).toHaveLength(3);
+  });
+});
+
+describe('framed tables', () => {
+  it('extracts every row from the catalog inside the iframe and reports the frame candidate', async () => {
+    const s = await session(framedCatalog(cards(8)));
+    const r = loadRecipe(recipe({ frame: { selectors: [frameId('gone'), frameId('app')] } }));
+    const page = await extractPage(s, r, { pageUrl: PAGE, page: 1 });
+    const out = page.tables[0]!;
+    expect(out.rows).toHaveLength(8);
+    expect(out.rows[0]).toMatchObject({ title: 'Product 1', category: 'Electronics' });
+    expect(out.frame).toMatchObject({ candidateIndex: 1, candidate: frameId('app') });
+    expect(out.resolved?.frame).toEqual([frameId('app')]);
+    expect(await countItems(s, r, page.resolved)).toBe(8);
+  });
+
+  it('yields no rows and counts the required fields missing when the frame is missing', async () => {
+    const s = await session(catalog(cards(3)));
+    const r = loadRecipe(recipe({ frame: { selectors: [frameId('app')] } }));
+    const out = (await extractPage(s, r, { pageUrl: PAGE, page: 1 })).tables[0]!;
+    expect(out.rows).toEqual([]);
+    expect(out.missingRequired).toEqual(['frame', 'item', 'title', 'price', 'url', 'category']);
+    expect(out.frame?.outcome).toEqual({ kind: 'unresolved' });
   });
 });

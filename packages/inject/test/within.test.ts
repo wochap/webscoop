@@ -60,6 +60,7 @@ describe('runtime with a list parent', () => {
       setHover: () => {},
       setStrip: () => {},
       setMatches: () => {},
+      setShields: () => {},
       setOutlines: () => {},
       setItems: (items: readonly Element[], _variant: string, excluded: readonly Element[] = []) => calls.push({ items: [...items], excluded: [...excluded] }),
     } as unknown as Overlay;

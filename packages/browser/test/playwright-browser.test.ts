@@ -412,3 +412,87 @@ describe.skipIf(!hasDisplay).each(drivers)('PlaywrightBrowser (integration, %s)'
     expect(await texts(c('css', 'h2.product-title'), fifth)).toEqual([dataset[4]!.title]);
   });
 });
+
+/** A page whose same-origin iframe sits 300 px from the left edge, with a button that marks a click. */
+async function framedServer(): Promise<{ url: string; close(): Promise<void> }> {
+  const server: Server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    if (req.url === '/inner') {
+      res.end('<!doctype html><body style="margin:0"><h1 class="title">Inner</h1><p class="note">Hello</p><input id="q"><button id="go" style="margin:200px 0 0 40px" onclick="document.body.dataset.clicked=\'yes\'">Go</button></body>');
+      return;
+    }
+    res.end('<!doctype html><body style="margin:0"><h1 class="title">Top</h1><div style="margin-left:300px"><iframe id="app" src="/inner" style="width:600px;height:500px;border:0"></iframe></div><div id="plain"></div></body>');
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+    },
+  };
+}
+
+describe.skipIf(!hasDisplay).each([false, true])('PlaywrightSession iframes (integration, humanize %s)', (humanize) => {
+  let profileDir: string;
+  let session: PlaywrightSession;
+  let site: Awaited<ReturnType<typeof framedServer>>;
+
+  beforeAll(async () => {
+    process.env.WEBSCOOP_HUMANIZE_SPEED = '20';
+    site = await framedServer();
+    profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    session = (await new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }).open(profileDir, { humanize })) as PlaywrightSession;
+  });
+
+  afterAll(async () => {
+    await session?.close();
+    await site?.close();
+    if (profileDir) await rm(profileDir, { recursive: true, force: true });
+  });
+
+  it('returns the frame root of a same-origin iframe, and null for an element that is not one', async () => {
+    await session.goto(site.url, { timeoutMs: 10_000 });
+    const [frame] = await session.resolve(c('id', 'app'));
+    expect(await session.frameRoot(frame!)).not.toBeNull();
+    const [plain] = await session.resolve(c('id', 'plain'));
+    expect(await session.frameRoot(plain!)).toBeNull();
+  });
+
+  it('resolves every strategy, reads, compares, snapshots, and types inside the iframe', async () => {
+    await session.goto(site.url, { timeoutMs: 10_000 });
+    const root = (await session.frameRoot((await session.resolve(c('id', 'app')))[0]!))!;
+    const read = async (candidate: SelectorCandidate) => {
+      const refs = await session.resolve(candidate, root);
+      return Promise.all(refs.map(async (r) => (await session.read(r, { mode: 'text' })).trim()));
+    };
+    expect(await read(c('css', '.title'))).toEqual(['Inner']);
+    expect(await read(c('class', '.note'))).toEqual(['Hello']);
+    expect(await read(c('role', 'heading|Inner'))).toEqual(['Inner']);
+    expect(await read(c('text', 'Hello'))).toEqual(['Hello']);
+    expect(await read(c('id', 'go'))).toEqual(['Go']);
+    expect(await read(c('xpath', '/html[1]/body[1]/p[1]'))).toEqual(['Hello']);
+    expect(await read(c('xpath', '//h1'))).toEqual(['Inner']);
+    const [a] = await session.resolve(c('css', '.note'), root);
+    const [b] = await session.resolve(c('text', 'Hello'), root);
+    expect(await session.same(a!, b!)).toBe(true);
+    const snapshot = await session.snapshot(root);
+    const node = descendantsOf(annotate(snapshot as SerializedElement)).find((n) => n.tag === 'p')!;
+    expect(await session.read((await refForNode(session, node, root))!, { mode: 'text' })).toBe('Hello');
+    const [input] = await session.resolve(c('id', 'q'), root);
+    await session.fill(input!, 'abc');
+    await session.press('Enter', input!);
+    await session.hover(a!);
+    expect(await session.read(input!, { attr: 'id', mode: 'text' })).toBe('q');
+  });
+
+  it('clicks a button inside an iframe offset 300 pixels, and measures it in page coordinates', async () => {
+    await session.goto(site.url, { timeoutMs: 10_000 });
+    const root = (await session.frameRoot((await session.resolve(c('id', 'app')))[0]!))!;
+    const [button] = await session.resolve(c('id', 'go'), root);
+    expect((await session.geometry(button!)).x).toBeGreaterThanOrEqual(340);
+    await session.click(button!);
+    const [body] = await session.resolve(c('css', 'body'), root);
+    expect(await session.read(body!, { attr: 'data-clicked', mode: 'text' })).toBe('yes');
+  });
+});

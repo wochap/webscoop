@@ -12,6 +12,7 @@ import type {
   DraftStep,
   DraftTable,
   FieldPatch,
+  FrameTarget,
   PaginationPatch,
   ProtocolCandidate,
   StepPatch,
@@ -141,6 +142,33 @@ function recipeItem(item: DraftItem) {
   };
 }
 
+function recipeFrame(frame: FrameTarget) {
+  return { selectors: frame.selectors.map(bare), ...(frame.fingerprint ? { fingerprint: frame.fingerprint } : {}) };
+}
+
+/** A step or pagination target as the recipe stores it. */
+function recipeTarget(target: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget }) {
+  return {
+    selectors: target.selectors.map(bare),
+    ...(target.fingerprint ? { fingerprint: target.fingerprint } : {}),
+    ...(target.frame ? { frame: recipeFrame(target.frame) } : {}),
+  };
+}
+
+/** A recipe frame as the draft holds it, counts unknown. */
+function draftFrame(frame: { selectors: SelectorCandidate[]; fingerprint?: DraftField['fingerprint'] }): FrameTarget {
+  return { selectors: frame.selectors.map(bare), ...(frame.fingerprint ? { fingerprint: frame.fingerprint } : {}) };
+}
+
+/** A recipe step or pagination target as the draft holds it. */
+function draftTarget(target: { selectors: SelectorCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: { selectors: SelectorCandidate[]; fingerprint?: DraftField['fingerprint'] } }) {
+  return {
+    selectors: target.selectors.map(bare),
+    ...(target.fingerprint ? { fingerprint: target.fingerprint } : {}),
+    ...(target.frame ? { frame: draftFrame(target.frame) } : {}),
+  };
+}
+
 function recipeField(f: DraftField) {
   return {
     name: f.name,
@@ -175,6 +203,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
           tables: draft.tables.map((t) => ({
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
+            ...(t.frame ? { frame: recipeFrame(t.frame) } : {}),
             ...(t.item ? { item: recipeItem(t.item) } : {}),
             fields: t.fields.map(recipeField),
           })),
@@ -183,7 +212,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   if (draft.steps.length > 0) {
     recipe.steps = draft.steps.map((s) => ({
       kind: s.kind,
-      ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+      ...(s.target ? { target: recipeTarget(s.target) } : {}),
       ...(s.value !== undefined ? { value: s.value } : {}),
       when: s.when,
       optional: s.optional,
@@ -191,10 +220,11 @@ export function draftToRecipe(draft: Draft): RecipeInput {
     }));
   }
   if (shorthand && first.item) recipe.item = recipeItem(first.item);
+  if (shorthand && first.frame) recipe.frame = recipeFrame(first.frame);
   const p = draft.pagination ?? DEFAULT_PAGINATION;
   recipe.pagination = {
     kind: p.kind,
-    ...(p.target ? { target: { selectors: p.target.selectors.map(bare), ...(p.target.fingerprint ? { fingerprint: p.target.fingerprint } : {}) } } : {}),
+    ...(p.target ? { target: recipeTarget(p.target) } : {}),
     ...(p.param ? { param: p.param } : {}),
     limit: p.limit,
     stopRules: p.stopRules,
@@ -265,7 +295,7 @@ export function validateDraft(draft: Draft): Draft {
 export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
   const steps: DraftStep[] = recipe.steps.map((s) => ({
     kind: s.kind,
-    ...(s.target ? { target: { selectors: s.target.selectors.map(bare), ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+    ...(s.target ? { target: draftTarget(s.target) } : {}),
     ...(s.value !== undefined ? { value: s.value } : {}),
     when: s.when,
     optional: s.optional,
@@ -283,6 +313,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
   const tables: DraftTable[] = tablesOf(recipe).map((table) => ({
     name: table.name,
     ...(table.description ? { description: table.description } : {}),
+    ...(table.frame ? { frame: draftFrame(table.frame) } : {}),
     item: table.item
       ? {
           selectors: table.item.selectors.map(bare),
@@ -317,7 +348,7 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
       ? null
       : {
           kind: p.kind,
-          ...(p.target ? { target: { selectors: p.target.selectors.map(bare), ...(p.target.fingerprint ? { fingerprint: p.target.fingerprint } : {}) } } : {}),
+          ...(p.target ? { target: draftTarget(p.target) } : {}),
           ...(p.param ? { param: p.param } : {}),
           limit: p.limit,
           stopRules: p.stopRules,
@@ -387,7 +418,7 @@ export interface NewField {
 
 export interface NewDraftStep {
   kind: StepKind;
-  target?: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint'] };
+  target?: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget };
   value?: string;
   when?: DraftStep['when'];
   optional?: boolean;
@@ -439,7 +470,11 @@ export type DraftAction =
   | { type: 'updatePagination'; patch: PaginationPatch }
   | { type: 'addStep'; step: NewDraftStep }
   | { type: 'updateStep'; index: number; patch: StepPatch }
-  | { type: 'replaceStepTarget'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; count: number | null }
+  | { type: 'replaceStepTarget'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget; count: number | null }
+  /** Set or clear (null) the active table's frame. */
+  | { type: 'setTableFrame'; frame: FrameTarget | null }
+  /** Replace every frame target whose primary candidate is `key` (`strategy=value`): tables, step targets, and the pagination target. */
+  | { type: 'replaceFrame'; key: string; frame: FrameTarget }
   | { type: 'removeStep'; index: number }
   | { type: 'moveStep'; from: number; to: number }
   | { type: 'setStepCounts'; counts: (number | null)[] }
@@ -569,9 +604,30 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = withTable(draft, at, { ...rest, name: action.name });
       break;
     }
-    case 'clearTable':
-      next = setActive({ item: null, fields: [] });
+    case 'clearTable': {
+      const { frame: _frame, ...rest } = table;
+      next = withTable(draft, at, { ...rest, item: null, fields: [] });
       break;
+    }
+    case 'setTableFrame': {
+      const { frame: _frame, ...rest } = table;
+      next = withTable(draft, at, action.frame ? { ...rest, frame: action.frame } : rest);
+      break;
+    }
+    case 'replaceFrame': {
+      const swap = <T extends { frame?: FrameTarget }>(owner: T): T => {
+        const primary = owner.frame?.selectors[0];
+        return primary && `${primary.strategy}=${primary.value}` === action.key ? { ...owner, frame: action.frame } : owner;
+      };
+      const pagination = draft.pagination;
+      next = {
+        ...draft,
+        tables: draft.tables.map(swap),
+        steps: draft.steps.map((st) => (st.target ? { ...st, target: swap(st.target) } : st)),
+        pagination: pagination?.target ? { ...pagination, target: swap(pagination.target) } : pagination,
+      };
+      break;
+    }
     case 'moveFieldToPage': {
       const field = table.fields[action.index];
       if (!field) return draft;
@@ -712,7 +768,9 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       const s = action.step;
       const step: DraftStep = {
         kind: s.kind,
-        ...(s.target ? { target: { selectors: s.target.selectors, ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}) } } : {}),
+        ...(s.target
+          ? { target: { selectors: s.target.selectors, ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}), ...(s.target.frame ? { frame: s.target.frame } : {}) } }
+          : {}),
         ...(s.value !== undefined ? { value: s.value } : {}),
         when: s.when ?? 'first-page',
         optional: s.optional ?? false,
@@ -732,7 +790,11 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
         ...draft,
         steps: draft.steps.map((s, i) =>
           i === action.index
-            ? { ...s, target: { selectors: action.selectors, ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}) }, count: action.count }
+            ? {
+                ...s,
+                target: { selectors: action.selectors, ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}), ...(action.frame ? { frame: action.frame } : {}) },
+                count: action.count,
+              }
             : s,
         ),
       };

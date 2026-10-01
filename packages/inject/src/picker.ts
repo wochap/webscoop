@@ -17,6 +17,8 @@ export interface PickerHooks {
   onKey?(e: KeyboardEvent): void;
   /** Focus is in a text input inside the panel, which a closed shadow root hides from the event path. */
   isPanelTyping?(): boolean;
+  /** The cross-origin iframe covered at a viewport point, when the recorder's own cover took the event. */
+  shieldAt?(x: number, y: number): Element | null;
 }
 
 const WALK_UP = new Set(['ArrowUp', '[']);
@@ -135,7 +137,15 @@ export class Picker {
     this.emit();
   }
 
+  /** A cross-origin iframe whose cover the pointer is on: picking it picks the `<iframe>` element. */
+  private shielded(e: Event): Element | null {
+    if (!isOwn(e.target as Node) || !('clientX' in e)) return null;
+    return this.hooks.shieldAt?.((e as MouseEvent).clientX, (e as MouseEvent).clientY) ?? null;
+  }
+
   private target(e: MouseEvent): Element | null {
+    const shield = this.shielded(e);
+    if (shield) return shield;
     const doc = this.win.document;
     const raw = e.altKey ? elementThrough(doc, e.clientX, e.clientY) : (e.target as Element | null);
     if (!raw || raw.nodeType !== 1 || isOwn(raw)) return null;
@@ -144,7 +154,7 @@ export class Picker {
 
   private readonly onMove = (e: MouseEvent) => {
     if (!this.hooks.isActive()) return;
-    if (isOwn(e.target as Node)) {
+    if (isOwn(e.target as Node) && !this.shielded(e)) {
       if (this.start) {
         this.reset();
         this.hooks.onHover(null);
@@ -160,7 +170,7 @@ export class Picker {
   };
 
   private readonly onBlocked = (e: Event) => {
-    if (!this.hooks.isActive() || isOwn(e.target as Node)) return;
+    if (!this.hooks.isActive() || (isOwn(e.target as Node) && !this.shielded(e))) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type !== 'click') return;

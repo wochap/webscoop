@@ -14,9 +14,8 @@ import {
   type SettleOptions,
   type SerializedNode,
 } from '@webscoop/core';
-import { boxOf } from './box';
 import { HOVER_INSET, HOVER_TIMEOUT_MS, Humanizer, type HoverOptions } from './humanize';
-import { chromium, errors, type BrowserContext, type Frame, type Locator, type Page } from 'playwright';
+import { chromium, errors, type BrowserContext, type Frame, type FrameLocator, type Locator, type Page } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
@@ -107,6 +106,8 @@ function isDriverTimeout(error: unknown): boolean {
 
 /** How long `settle` waits for a navigation to start after an action. */
 const SETTLE_GRACE_MS = 500;
+/** How long `frameRoot` waits for an iframe's document to load when the caller gives no timeout. */
+const FRAME_LOAD_MS = 30_000;
 /** How long `settle` waits for network idle when the action did not navigate. */
 const SETTLE_IDLE_MS = 2000;
 
@@ -114,10 +115,12 @@ class PwRef implements ElementRef {
   constructor(
     readonly locator: Locator,
     readonly description: string,
+    /** Set on a frame root: the iframe's document, where an absolute xpath starts. */
+    readonly frame?: FrameLocator,
   ) {}
 }
 
-type Root = Page | Locator;
+type Root = Page | Locator | FrameLocator;
 
 /**
  * A role candidate's name as a pattern that ignores whitespace: accessible
@@ -226,7 +229,9 @@ export class PlaywrightSession implements InteractiveSession {
 
   async resolve(candidate: SelectorCandidate, within?: ElementRef): Promise<ElementRef[]> {
     const scope = within ? (within as PwRef) : undefined;
-    const locator = locate(scope?.locator ?? this.page, candidate);
+    // In a chained locator an xpath starting with `/` is relative; inside a frame root it is absolute in the iframe's document.
+    const root = scope?.frame && candidate.strategy === 'xpath' && candidate.value.startsWith('/') ? scope.frame : (scope?.locator ?? this.page);
+    const locator = locate(root, candidate);
     const count = await locator.evaluateAll((els) => els.length);
     const prefix = `${scope ? `${scope.description} >> ` : ''}${candidate.strategy}=${candidate.value}`;
     return Array.from({ length: count }, (_, i) => new PwRef(locator.nth(i), `${prefix} >> nth=${i}`));
@@ -276,6 +281,34 @@ export class PlaywrightSession implements InteractiveSession {
     } catch (error) {
       throw new Error(`snapshot: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
+  }
+
+  async frameRoot(frame: ElementRef, opts?: { timeoutMs: number }): Promise<ElementRef | null> {
+    const { locator, description } = frame as PwRef;
+    const reachable = await locator
+      .evaluateAll((els) => {
+        const el = els[0];
+        if (!(el instanceof HTMLIFrameElement)) return false;
+        try {
+          return el.contentDocument !== null;
+        } catch {
+          return false;
+        }
+      })
+      .catch(() => false);
+    if (!reachable) return null;
+    const timeout = opts?.timeoutMs ?? FRAME_LOAD_MS;
+    try {
+      const handle = await locator.first().elementHandle({ timeout });
+      const content = await handle?.contentFrame();
+      await handle?.dispose();
+      if (!content) return null;
+      await content.waitForLoadState('load', { timeout });
+    } catch {
+      return null;
+    }
+    const inner = locator.first().contentFrame();
+    return new PwRef(inner.locator(':root'), `${description} >> frame`, inner);
   }
 
   async click(ref: ElementRef): Promise<void> {
@@ -445,7 +478,8 @@ export class PlaywrightSession implements InteractiveSession {
   }
 
   async geometry(ref: ElementRef): Promise<Geometry> {
-    const box = await boxOf((ref as PwRef).locator);
+    // Page coordinates, so an element inside an iframe is measured from the top viewport.
+    const box = await (ref as PwRef).locator.boundingBox({ timeout: 1000 }).catch(() => null);
     return box ? { x: box.x, y: box.y, w: box.width, h: box.height } : { x: 0, y: 0, w: 0, h: 0 };
   }
 }

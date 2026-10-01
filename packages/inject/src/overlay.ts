@@ -15,7 +15,9 @@ export type BoxVariant =
   | 'item'
   | 'other-list'
   | 'start'
-  | 'dim';
+  | 'dim'
+  /** A transparent cover over a cross-origin iframe while picking, so the top page gets its pointer events. */
+  | 'shield';
 
 /** The hover walk parts of the tag: steps above the start element, similar siblings at the target's level, the target's size. */
 export interface HoverWalkInfo {
@@ -60,6 +62,7 @@ export const OVERLAY_CSS = `
 .ws-box-list { outline: 2px dotted #e6c98f; outline-offset: 3px; border-radius: 6px; }
 .ws-box-blocked { border: 2px dashed #f0a9a9; background: rgba(240, 169, 169, 0.08); }
 .ws-box-match { border: 1px solid #9fdcbc; background: rgba(159, 220, 188, 0.12); }
+.ws-box-shield { pointer-events: auto; background: transparent; }
 .ws-box-list-parent { border: 2px solid ${LEVEL_COLORS.list}; border-radius: 6px; }
 .ws-box-item { border: 1.5px dashed ${LEVEL_COLORS.item}; border-radius: 5px; }
 .ws-box-other-list { border: 1px dashed ${MUTED_OUTLINE}; border-radius: 5px; }
@@ -124,9 +127,44 @@ interface Tracked {
   light: boolean;
 }
 
+/** A viewport box in the top page's coordinates. */
+export interface PageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * The element's box in the top page's viewport: `getBoundingClientRect`
+ * plus the content-box offset of each iframe it sits in.
+ */
+export function pageRect(el: Element): PageRect {
+  const r = el.getBoundingClientRect();
+  let left = r.left;
+  let top = r.top;
+  for (let win: Window | null = el.ownerDocument.defaultView; win && win.parent !== win; win = win.parent) {
+    let frame: Element | null;
+    try {
+      frame = win.frameElement;
+    } catch {
+      break;
+    }
+    if (!frame) break;
+    const f = frame.getBoundingClientRect();
+    const style = frame.ownerDocument.defaultView!.getComputedStyle(frame);
+    left += f.left + frame.clientLeft + (parseFloat(style.paddingLeft) || 0);
+    top += f.top + frame.clientTop + (parseFloat(style.paddingTop) || 0);
+  }
+  return { left, top, width: r.width, height: r.height, right: left + r.width, bottom: top + r.height };
+}
+
 /**
  * Imperative highlight layer: plain elements positioned from
- * `getBoundingClientRect`, updated at most once per animation frame.
+ * `getBoundingClientRect` (offset by the iframes an element sits in),
+ * updated at most once per animation frame.
  */
 export class Overlay {
   private hover: Tracked | null = null;
@@ -139,6 +177,7 @@ export class Overlay {
   private matches: Tracked[] = [];
   private outlines: Tracked[] = [];
   private dim: Tracked | null = null;
+  private shields: Tracked[] = [];
   /** Containers cut out of the dim. */
   private holes: Element[] = [];
   private readonly tag: HTMLDivElement;
@@ -156,9 +195,38 @@ export class Overlay {
     win.addEventListener('resize', this.onViewport, { passive: true });
   }
 
+  /** Reposition boxes when an iframe's window scrolls or resizes too. Returns an unsubscribe function. */
+  watch(win: Window): () => void {
+    win.addEventListener('scroll', this.onViewport, { capture: true, passive: true });
+    win.addEventListener('resize', this.onViewport, { passive: true });
+    this.schedule();
+    return () => {
+      win.removeEventListener('scroll', this.onViewport, { capture: true });
+      win.removeEventListener('resize', this.onViewport);
+    };
+  }
+
+  /** Cover these iframes (cross-origin ones while picking) so pointer events over them reach the top page; empty removes the covers. */
+  setShields(frames: readonly Element[]): void {
+    if (frames.length === this.shields.length && frames.every((el, i) => this.shields[i]!.el === el)) return;
+    for (const t of this.shields) t.box.remove();
+    this.shields = frames.map((el) => this.make(el, 'shield'));
+    this.schedule();
+  }
+
+  /** The covered iframe under a point of the top viewport, or null. */
+  shieldAt(x: number, y: number): Element | null {
+    for (const t of this.shields) {
+      const r = pageRect(t.el);
+      if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return t.el;
+    }
+    return null;
+  }
+
   /** Remove every box and stop listening to the page. */
   dispose(): void {
     this.clear();
+    this.setShields([]);
     const win = this.layer.ownerDocument.defaultView!;
     win.removeEventListener('scroll', this.onViewport, { capture: true });
     win.removeEventListener('resize', this.onViewport);
@@ -364,7 +432,7 @@ export class Overlay {
 
   /** Reposition every box now. */
   update(): void {
-    for (const t of [...this.outlines, this.hover, this.start, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
+    for (const t of [...this.shields, ...this.outlines, this.hover, this.start, this.selected, this.list, ...this.groups, ...this.matches]) if (t) place(t);
     if (this.dim) this.placeDim(this.dim);
     this.placeTag();
   }
@@ -382,7 +450,7 @@ export class Overlay {
     s.display = 'block';
     let path = `M0 0H${w}V${h}H0Z`;
     for (const el of this.holes) {
-      const r = el.getBoundingClientRect();
+      const r = pageRect(el);
       if (r.width === 0 && r.height === 0) continue;
       path += `M${Math.round(r.left)} ${Math.round(r.top)}h${Math.round(r.width)}v${Math.round(r.height)}h${-Math.round(r.width)}Z`;
     }
@@ -395,13 +463,14 @@ export class Overlay {
       this.tag.style.display = 'none';
       return;
     }
-    const r = hover.el.getBoundingClientRect();
+    const r = pageRect(hover.el);
     this.tag.innerHTML = this.tagText;
     this.tag.style.display = 'block';
     const height = 20;
     const above = r.top - height - 4;
     // Flip below when the space above is off screen or covered by a fixed host header.
-    const flip = above < 0 || coveredByFixed(hover.el.ownerDocument, r.left + 4, above + height / 2, hover.el);
+    const top = hover.el.ownerDocument === this.layer.ownerDocument;
+    const flip = above < 0 || (top && coveredByFixed(hover.el.ownerDocument, r.left + 4, above + height / 2, hover.el));
     this.tag.style.top = `${Math.round(flip ? r.bottom + 4 : above)}px`;
     this.tag.style.left = `${Math.round(Math.max(0, r.left))}px`;
     this.tag.dataset.flipped = String(flip);
@@ -409,7 +478,7 @@ export class Overlay {
 }
 
 function place(t: Tracked): void {
-  const r = t.el.getBoundingClientRect();
+  const r = pageRect(t.el);
   const s = t.box.style;
   s.top = `${r.top}px`;
   s.left = `${r.left}px`;

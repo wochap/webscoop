@@ -6,6 +6,7 @@ import {
   scoreFingerprint,
   type HostMessage,
   type PageMessage,
+  type FrameTarget,
   type Path,
   type ProtocolCandidate,
   type DraftItem,
@@ -27,6 +28,7 @@ import {
   similarSiblings,
   snapshotOf,
 } from './dom';
+import { crossOriginFrames, frameDocument, frameElementOf } from './frames';
 import type { HoverPlace, HoverWalkInfo, ListOutlines, Overlay } from './overlay';
 import { walkChain, type HoverWalk, type ObservedAction } from './picker';
 import { Store, type Actions, type Toast, type UiState } from './store';
@@ -73,8 +75,33 @@ export class Runtime implements Actions {
     return this.opts.win;
   }
 
-  private get doc(): Document {
+  /** The top page's document, where the panel, the overlay, and iframe elements live. */
+  private get topDoc(): Document {
     return this.opts.win.document;
+  }
+
+  /**
+   * The document the host's paths refer to: the iframe's the host works in
+   * (the selection's, else the active table's), else the top page's.
+   */
+  private get doc(): Document {
+    const frame = this.store.get().host?.frame;
+    if (!frame) return this.topDoc;
+    const el = frame.path ? elementAt(frame.path, this.topDoc) : (resolveFirstLocal(frame.selectors, this.topDoc)[0] ?? null);
+    return frameDocument(el) ?? this.topDoc;
+  }
+
+  /** An iframe was attached or went away: paths into it may resolve differently now. */
+  framesChanged(): void {
+    this.syncOverlay();
+  }
+
+  /** The `<iframe>` holding an element, as its path in the top document and its target; nulls in the top document. */
+  private frameOf(el: Element): { framePath: Path | null; frame: FrameTarget | null } {
+    const iframe = frameElementOf(el.ownerDocument, this.topDoc);
+    if (!iframe) return { framePath: null, frame: null };
+    const { selection } = describeSelection(iframe, [], this.topDoc);
+    return { framePath: pathOfElement(iframe), frame: { selectors: selection.candidates, fingerprint: selection.fingerprint } };
   }
 
   private hostFn(): HostFn | null {
@@ -275,12 +302,13 @@ export class Runtime implements Actions {
    * same task as the event, so a navigation the action starts cannot drop it.
    */
   record(action: ObservedAction): void {
-    const { selection } = describeSelection(action.el, [], this.doc);
-    const candidates = selection.candidates.map((c) => ({ ...c, count: resolveLocal(c, undefined, this.doc).length }));
+    const doc = action.el.ownerDocument;
+    const { selection } = describeSelection(action.el, [], doc);
+    const candidates = selection.candidates.map((c) => ({ ...c, count: resolveLocal(c, undefined, doc).length }));
     void this.send({
       kind: 'draft.addStep',
       step: { kind: action.kind, ...('value' in action ? { value: action.value } : {}) },
-      selection: { ...selection, candidates },
+      selection: { ...selection, candidates, ...this.frameOf(action.el) },
     });
   }
 
@@ -294,7 +322,7 @@ export class Runtime implements Actions {
     const pick = host?.levelPick;
     if (!pick) return null;
     const tag = el.tagName.toLowerCase();
-    if (tag === 'html' || tag === 'body') return 'outside the list';
+    if (tag === 'html' || tag === 'body' || el.ownerDocument !== this.doc) return 'outside the list';
     const path = pathOfElement(el);
     const strictPrefix = (a: readonly number[], b: readonly number[]) => a.length < b.length && a.every((v, i) => b[i] === v);
     if (pick.ancestorOf.length > 0 && !pick.ancestorOf.some((p) => strictPrefix(path, p))) return 'outside the list';
@@ -399,6 +427,7 @@ export class Runtime implements Actions {
     this.store.setUi({ picking: false });
     this.clearHover();
     this.opts.overlay.setStrip(null);
+    this.opts.overlay.setShields([]);
     void this.select(el, true);
   }
 
@@ -409,12 +438,14 @@ export class Runtime implements Actions {
 
   private select(el: Element, newTrail: boolean): Promise<void> {
     const run = this.selecting.then(async () => {
+      // Inside an iframe, paths and the snapshot are the iframe document's.
+      const doc = el.ownerDocument;
       const item = activeItem(this.store.get().host);
-      const containers = item ? containersLocal(item, this.doc) : [];
-      const { selection, snapshot } = describeSelection(el, containers, this.doc);
+      const containers = item && doc === this.doc ? containersLocal(item, doc) : [];
+      const { selection, snapshot } = describeSelection(el, containers, doc);
       if (newTrail) this.store.setUi({ trail: selection.ancestors });
       this.opts.overlay.setSelected(el);
-      await this.send({ kind: 'picker.select', url: this.win.location.href, selection, snapshot });
+      await this.send({ kind: 'picker.select', url: this.win.location.href, selection: { ...selection, ...this.frameOf(el) }, snapshot });
     });
     this.selecting = run.catch(() => {});
     return run;
@@ -435,6 +466,8 @@ export class Runtime implements Actions {
     const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
     overlay.setSelected(selected);
     overlay.setStrip(this.picking ? this.stripTitle() : null);
+    // Cross-origin iframes stay opaque: while picking, a cover over each lets the pick select the `<iframe>` itself.
+    overlay.setShields(this.picking ? crossOriginFrames(this.topDoc) : []);
     const lists = this.listPicking();
     overlay.setOutlines(lists && { table: lists.name, parent: lists.parent, items: lists.items, others: lists.others });
     if (!host || host.guardContext) {

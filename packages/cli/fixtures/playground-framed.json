@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "name": "playground-framed",
+  "description": "The playground catalog shown inside an iframe of a menu page, with its details panel opened by a step inside the iframe.",
+  "url": "http://127.0.0.1:{port}/framed",
+  "vars": [
+    {
+      "name": "port",
+      "type": "string",
+      "default": "4777"
+    }
+  ],
+  "tables": [
+    {
+      "name": "products",
+      "frame": {
+        "selectors": [
+          { "strategy": "id", "value": "frame-catalog", "stability": "stable" },
+          { "strategy": "css", "value": "iframe[name=\"catalog\"]", "stability": "medium" }
+        ]
+      },
+      "item": {
+        "selectors": [{ "strategy": "testid", "value": "product-card", "stability": "stable" }],
+        "exclude": []
+      },
+      "fields": [
+        {
+          "name": "title",
+          "type": "text",
+          "scope": "item",
+          "selectors": [{ "strategy": "css", "value": "h2.product-title", "stability": "medium" }],
+          "key": true
+        },
+        {
+          "name": "price",
+          "type": "number",
+          "scope": "item",
+          "selectors": [{ "strategy": "testid", "value": "price", "stability": "stable" }]
+        }
+      ]
+    },
+    {
+      "name": "details",
+      "frame": {
+        "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }]
+      },
+      "fields": [
+        {
+          "name": "description",
+          "type": "text",
+          "scope": "page",
+          "selectors": [{ "strategy": "css", "value": ".details-text", "stability": "medium" }]
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "kind": "click",
+      "label": "details",
+      "target": {
+        "selectors": [{ "strategy": "id", "value": "details-toggle", "stability": "stable" }],
+        "frame": {
+          "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }]
+        }
+      }
+    }
+  ]
+}

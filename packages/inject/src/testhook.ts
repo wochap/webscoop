@@ -1,5 +1,5 @@
 import type { Mounted } from './mount';
-import type { Overlay } from './overlay';
+import { pageRect, type Overlay } from './overlay';
 import type { Runtime } from './runtime';
 import { modeOf } from './store';
 
@@ -74,8 +74,9 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
     strip: () => overlay.stripText,
     boxes: () =>
       overlay.boxes().map(({ variant, light, el }) => {
-        const r = el.getBoundingClientRect();
-        return { variant, light, rect: { x: r.x, y: r.y, w: r.width, h: r.height } };
+        // Where the overlay draws the box: offset by the iframes the element sits in.
+        const r = pageRect(el);
+        return { variant, light, rect: { x: r.left, y: r.top, w: r.width, h: r.height } };
       }),
     fontsReady: async () => {
       await win.document.fonts.ready;

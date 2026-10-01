@@ -15,7 +15,7 @@ import {
   type SelectorCandidate,
   type SerializedElement,
 } from '../src';
-import { FakeBrowser, h } from '../src/testing';
+import { FakeBrowser, h, iframe } from '../src/testing';
 import { catalogSnapshot, fingerprintedRecipe } from './healing-helpers';
 import { card, cards, catalog, css, recipe, testid } from './helpers';
 import { CATALOG } from './recorder-helpers';
@@ -231,5 +231,39 @@ describe('list parent healing', () => {
     expect(result.ok).toBe(true);
     expect(result.rows).toHaveLength(24);
     expect(result.report.item!.outcome.kind).toBe('fuzzy');
+  });
+});
+
+describe('runner healing inside an iframe', () => {
+  const frameOf = (id: string, inner: SerializedElement) =>
+    h('html', {}, h('body', {}, h('header', {}, h('h1', {}, 'Portal')), h('main', {}, iframe({ id, class: 'app-frame', src: '/app' }, inner))));
+  const frameFingerprint = () => {
+    const root = annotate(frameOf('app', h('html', {})));
+    return fingerprint(descendantsOf(root).find((n) => n.tag === 'iframe')!);
+  };
+  const framed = (recipe: Recipe): Recipe => ({ ...recipe, frame: { selectors: [{ strategy: 'id', value: 'app', stability: 'stable' }], fingerprint: frameFingerprint() } });
+
+  it('heals a field inside the iframe and writes back the recipe with its frame', async () => {
+    const t = setup(frameOf('app', catalogSnapshot(1)), framed(fingerprintedRecipe()));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows.length).toBeGreaterThan(0);
+    expect(result.report.fields.find((f) => f.name === 'price')).toMatchObject({ status: 'healed' });
+    expect(result.report.tables[0]!.frame).toMatchObject({ candidateIndex: 0 });
+    expect(t.saved[0]!.frame?.selectors[0]).toEqual({ strategy: 'id', value: 'app', stability: 'stable' });
+    expect(t.saved[0]!.fields!.find((f) => f.name === 'price')!.selectors[0]).not.toEqual(testid('price'));
+  });
+
+  it('heals the frame target when the iframe id changes, and writes back a candidate for iframe#app2', async () => {
+    const t = setup(frameOf('app2', catalogSnapshot(0)), framed(fingerprintedRecipe()));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.report.tables[0]!.frame?.outcome.kind).toBe('fuzzy');
+    expect(t.log.of('field.healed').map((e) => e.target)).toContain('frame:items');
+    const selectors = t.saved[0]!.frame!.selectors;
+    const live = await t.browser.open('/q');
+    await live.goto(CATALOG, { timeoutMs: 1000 });
+    const [hit] = await live.resolve(selectors[0]!);
+    expect(await live.read(hit!, { attr: 'id', mode: 'text' })).toBe('app2');
   });
 });

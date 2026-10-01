@@ -78,7 +78,7 @@ function target(scene: Scene, box: Box | null = BOX, spots: ('center' | 'inset')
       if (!spots.includes(spot)) throw new Error('element is covered');
     },
     scrollIntoViewIfNeeded: async () => void scene.calls.push('scrollIntoView'),
-    evaluateAll: async () => box as never,
+    boundingBox: async () => box,
     click: async (o) => void scene.calls.push(o?.trial ? 'trial' : 'click'),
     fill: async (v) => void scene.calls.push(`fill:${v}`),
     inputValue: async () => 'old',

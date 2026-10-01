@@ -27,8 +27,8 @@ The design is implemented by three OpenSpec changes: `frame-support` (elements i
 | `D2 Password secret` | `forms` | todo |
 | `D3 File path` | `forms` | todo |
 | `D4 Variables` | `forms` | todo |
-| `E Iframe` | `frame-support` | todo |
-| `E2 Frame target` | `frame-support` | todo |
+| `E Iframe` | `frame-support` | done |
+| `E2 Frame target` | `frame-support` | done |
 | `G Automation only` | `forms` | todo |
 | `F1 Multi window` | `flows` | todo |
 | `F2 Popup expanded` | `flows` | todo |
@@ -56,7 +56,7 @@ Agreed differences between the frames and the panel.
 |---|---|---|
 | `C2` paginate stop rules "no new rows / target disabled or missing" | The recipe's stop rules: `no-new-items`, `first-item-repeats`, `target-missing` | Stop rules are defined by the pagination spec |
 | `D3` "Browse…" button on a path variable | Text input with a host-side "file exists" check | The page only sees `C:\fakepath\…`; a real path needs a host-side dialog |
-| `E2` "Changing it re-targets every step and field that shares this frame" | The recipe stores the frame on each step and field; the panel applies an edit to every identical frame target | No shared frame entity in the recipe |
+| `E2` "Changing it re-targets every step and field that shares this frame" | The recipe stores one frame per table and per step or pagination target; the panel applies an edit to every identical frame target | No shared frame entity in the recipe |
 | `B2` list shows only the called group | The switcher lists every flow, grouped called and reactive | Reactive flows can be recorded into too |
 | Footer counts differ between `A` and `C4` | One format: tables · fields · flows · steps | One footer |
 | `D4` "from config: command" | "from config" or "from CLI" | The panel only knows where the value is bound |

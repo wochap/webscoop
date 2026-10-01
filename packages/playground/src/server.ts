@@ -115,6 +115,58 @@ go.addEventListener('click', () => { document.getElementById('result').textConte
  * phase) whose target is not an input moves focus to `#q`. Bubble `keydown`
  * and `click` counts are kept on `window.__thief` and in `#counts`.
  */
+/** Iframes of the framed page, in menu order: the menu label, the iframe `id`, and the inner view. */
+const FRAMED_VIEWS = [
+  { label: 'Catalog', id: 'frame-catalog', view: 'catalog' },
+  { label: 'About', id: 'frame-about', view: 'about' },
+] as const;
+/** Products the framed catalog shows. */
+export const FRAMED_COUNT = 8;
+
+/** A short description of a product, for the framed catalog's details panel. */
+export function productDescription(p: Product): string {
+  return `${p.title}: ${p.category.toLowerCase()} from ${p.seller}, rated ${p.rating} out of 5.`;
+}
+
+/**
+ * A menu page whose content lives in same-origin iframes, like a portal that
+ * loads each option into an application frame. The menu shows one iframe and
+ * hides the others without changing the URL; `show` picks the one shown first.
+ */
+function framedPage(show: string): string {
+  const shown = FRAMED_VIEWS.some((v) => v.view === show) ? show : 'catalog';
+  const buttons = FRAMED_VIEWS.map((v) => `<button type="button" class="menu-item" data-view="${v.view}">${v.label}</button>`).join('');
+  const frames = FRAMED_VIEWS.map(
+    (v) => `<iframe id="${v.id}" class="app-frame" name="${v.view}" src="/framed/inner?view=${v.view}" title="${v.label}"${v.view === shown ? '' : ' hidden'}></iframe>`,
+  ).join('\n');
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Framed portal</title>
+<style>body{font-family:sans-serif;margin:0;display:flex;min-height:100vh}nav{width:220px;padding:20px;display:flex;flex-direction:column;gap:8px;background:#f2f2f5}main{flex:1;padding:20px}.app-frame{width:100%;height:900px;border:1px solid #ccc}</style></head>
+<body><nav aria-label="Menu"><h1 class="portal-title">Portal</h1>${buttons}</nav>
+<main>${frames}</main>
+<script>
+document.querySelectorAll('.menu-item').forEach((button) => button.addEventListener('click', () => {
+  document.querySelectorAll('.app-frame').forEach((frame) => { frame.hidden = frame.name !== button.dataset.view; });
+}));
+</script>
+</body></html>`;
+}
+
+/** The document inside a framed page iframe: the catalog cards with a details panel, or text only. */
+function framedInner(view: string, products: readonly Product[], seed: number): string {
+  if (view === 'about') {
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About</title></head><body><h1>About the shop</h1><p class="about">A playground shop rendered inside an iframe.</p></body></html>';
+  }
+  if (view !== 'catalog') throw new HttpError(400, `invalid view ${JSON.stringify(view)}, expected catalog or about`);
+  const shown = products.slice(0, FRAMED_COUNT);
+  const first = shown[0];
+  const details = first
+    ? `<section class="framed-details"><button type="button" id="details-toggle">Details</button><div id="details" class="details-panel" hidden></div></section>
+<script>document.getElementById('details-toggle').addEventListener('click', () => { const panel = document.getElementById('details'); panel.innerHTML = ${JSON.stringify(`<p class="details-text">${escapeHtml(productDescription(first))}</p>`)}; panel.hidden = false; });</script>`
+    : '';
+  return render(shown, { tier: 0, seed, category: first?.category }).replace('</body>', `${details}\n</body>`);
+}
+
 function focusThiefPage(): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Focus thief</title>
@@ -351,6 +403,8 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
     if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/framed') return send(res, 200, framedPage(url.searchParams.get('show') ?? 'catalog'), 'text/html; charset=utf-8');
+    if (url.pathname === '/framed/inner') return send(res, 200, framedInner(url.searchParams.get('view') ?? 'catalog', products, control.seed), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/csp') {
       // A strict policy: no inline or injected script or style runs unless CSP is bypassed.

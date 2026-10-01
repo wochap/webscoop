@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SelectorCandidate, Session } from '../src';
-import { FakeBrowser, h, type FakeSession } from '../src/testing';
+import { FakeBrowser, h, iframe, type FakeSession } from '../src/testing';
 import { catalog, cards, PAGE } from './helpers';
 
 async function open(dom = catalog(cards(3))): Promise<Session> {
@@ -208,5 +208,32 @@ describe('FakeBrowser page actions', () => {
     expect(await session.resolve(c('css', 'li'))).toHaveLength(0);
     await new Promise((r) => setTimeout(r, 40));
     expect(await session.resolve(c('css', 'li'))).toHaveLength(2);
+  });
+});
+
+describe('FakeBrowser iframes', () => {
+  const page = () =>
+    h('html', {}, h('body', {}, h('h1', { class: 'title' }, 'Top'), iframe({ id: 'app' }, h('html', {}, h('body', {}, h('h1', { class: 'title' }, 'Inner'), h('p', { class: 'note' }, 'Hello'))))));
+
+  it('keeps unscoped lookups, the document xpath, snapshots, and page text out of the iframe', async () => {
+    const session = await open(page());
+    expect(await texts(session, c('css', '.title'))).toEqual(['Top']);
+    expect(await session.resolve(c('xpath', '//p'))).toHaveLength(0);
+    expect(JSON.stringify(await session.snapshot())).not.toContain('Inner');
+    expect(await session.pageText()).not.toContain('Inner');
+  });
+
+  it('returns the iframe document root, and null for an element that is not an iframe', async () => {
+    const session = await open(page());
+    const [frame] = await session.resolve(c('id', 'app'));
+    const root = (await session.frameRoot(frame!))!;
+    expect(root).not.toBeNull();
+    expect(await session.frameRoot((await session.resolve(c('css', 'h1')))[0]!)).toBeNull();
+    const inner = await session.resolve(c('css', '.title'), root);
+    expect(await session.read(inner[0]!, { mode: 'text' })).toBe('Inner');
+    const [byPath] = await session.resolve(c('xpath', '/html[1]/body[1]/p[1]'), root);
+    expect(await session.read(byPath!, { mode: 'text' })).toBe('Hello');
+    expect((await session.snapshot(root)).type).toBe('element');
+    expect(JSON.stringify(await session.snapshot(root))).toContain('Inner');
   });
 });

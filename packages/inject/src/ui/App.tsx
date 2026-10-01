@@ -12,6 +12,7 @@ import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
 import { ResultsDrawer } from './results';
 import { Section } from './section';
+import { FrameEditor } from './frame';
 import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
 import { StepList } from './steps';
@@ -276,6 +277,7 @@ export function ScoopRoot() {
                 </Section>
               )}
               <Section id="pick" title="Pick">
+                {ui.frameEdit && <FrameEditor host={host} frameKey={ui.frameEdit} />}
                 <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} hover={ui.hover} />
                 <SelectionPanel host={host} trail={ui.trail} />
               </Section>
@@ -284,6 +286,7 @@ export function ScoopRoot() {
                   <FieldList
                     fields={table.fields}
                     item={table.item}
+                    frame={table.frame ?? null}
                     focused={ui.focusedField}
                     repick={host.repick}
                     editing={host.editing?.index ?? null}

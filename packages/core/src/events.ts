@@ -55,6 +55,15 @@ export interface ItemReport {
   };
 }
 
+/** How a frame target (the `<iframe>` a table, step, or pagination target resolves in) resolved. */
+export interface FrameReport {
+  candidateIndex: number | null;
+  candidate: SelectorCandidate | null;
+  outcome: HealOutcome;
+  /** Why healing rungs declined the frame, or that its document did not load. */
+  notes?: string[];
+}
+
 /** One table of the run: its counts and how its targets resolved. */
 export interface TableReport {
   name: string;
@@ -67,6 +76,8 @@ export interface TableReport {
   /** Null for a table without an item block, or before the table first resolved. */
   item: ItemReport | null;
   fields: FieldReport[];
+  /** How the table's frame resolved, for a table with `frame`. */
+  frame?: FrameReport;
 }
 
 export interface RunReport {
@@ -89,6 +100,8 @@ export interface RunReport {
     candidate: SelectorCandidate | null;
     outcome: HealOutcome;
     notes?: string[];
+    /** How the target's frame resolved, for a target with `frame`. */
+    frame?: FrameReport;
   } | null;
   /** Rows of the primary table dropped because an earlier page already had them; per table counts are in `tables`. */
   duplicateCount: number;

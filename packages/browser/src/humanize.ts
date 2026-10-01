@@ -9,7 +9,7 @@ export interface Point {
   y: number;
 }
 
-import { boxOf, type Box, type Measurable } from './box';
+import type { Box, Measurable } from './box';
 
 export type { Box };
 
@@ -224,7 +224,7 @@ export class Humanizer {
     await target.scrollIntoViewIfNeeded();
     // Playwright's own actionability checks and timeouts: visible, enabled, stable, receives events.
     await target.click({ trial: true });
-    let box = await boxOf(target);
+    let box = await target.boundingBox();
     if (!box) {
       await target.click();
       return;
@@ -232,7 +232,7 @@ export class Humanizer {
     await this.moveTo(this.targetPoint(box));
     await this.sleep(this.uniform(60, 250));
     // The target may have moved during the path; correct with a short final move.
-    box = await boxOf(target);
+    box = await target.boundingBox();
     if (box && !inside(this.pointer!, box)) await this.moveTo(this.targetPoint(box));
     await this.page.mouse.down();
     await this.sleep(this.hold());
@@ -248,7 +248,7 @@ export class Humanizer {
     await target.scrollIntoViewIfNeeded().catch(() => {});
     const spot = await hoverSpot(target);
     if (!spot) return;
-    const box = await boxOf(target).catch(() => null);
+    const box = await target.boundingBox().catch(() => null);
     if (!box) return;
     const point =
       spot === 'center'

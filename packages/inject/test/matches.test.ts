@@ -46,6 +46,7 @@ function matches(s: RecorderState): Element[] {
     setOutlines: () => {},
     setItems: () => {},
     setMatches: (els: readonly Element[]) => (last = [...els]),
+    setShields: () => {},
   } as unknown as Overlay;
   (window as unknown as Record<string, unknown>)[HOST_BINDING] = async () => ({ kind: 'draft.state', state: s });
   const runtime = new Runtime({ win: window, overlay });

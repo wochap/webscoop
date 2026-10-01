@@ -18,6 +18,22 @@ import { compileCss } from './css';
 import { accessibleName, indexTree, innerHtml, normalize, roleOf, textContent, type DomNode } from './dom';
 import { evaluateXPath } from './xpath';
 
+/**
+ * An iframe in a fake page: an `<iframe>` whose only element child is a
+ * `#document` holding the frame's `<html>`. Unscoped lookups, the document
+ * xpath, `snapshot()`, and `pageText()` do not see into it; `frameRoot` does.
+ */
+export function iframe(attrs: Record<string, string>, html: SerializedElement): SerializedElement {
+  return { type: 'element', tag: 'iframe', attrs, children: [{ type: 'element', tag: FRAME_DOCUMENT, attrs: {}, children: [html] }] };
+}
+
+const FRAME_DOCUMENT = '#document';
+
+/** A copy of an element without the documents of the iframes inside it. */
+function withoutFrames(el: SerializedElement): SerializedElement {
+  return { ...el, attrs: { ...el.attrs }, children: el.children.filter((c) => c.type === 'text' || c.tag !== FRAME_DOCUMENT).map((c) => (c.type === 'text' ? { ...c } : withoutFrames(c))) };
+}
+
 export interface FakePage {
   /** Root element, normally `<html>`. */
   dom: SerializedElement;
@@ -66,7 +82,7 @@ export interface FakeActionRecord {
   value: string;
 }
 
-const HIDDEN_TAGS = new Set(['script', 'style', 'template', 'noscript', 'head']);
+const HIDDEN_TAGS = new Set(['script', 'style', 'template', 'noscript', 'head', FRAME_DOCUMENT]);
 
 function visibleText(el: SerializedElement): string {
   if (HIDDEN_TAGS.has(el.tag) || 'hidden' in el.attrs) return '';
@@ -287,8 +303,10 @@ export class FakeSession implements Session {
     const { root, document } = this.assertOpen();
     const scope = within ? (within as FakeRef).node : null;
     const pool: DomNode[] = [];
+    // Like Playwright, a lookup never crosses into an iframe's document.
     const collect = (node: DomNode) => {
       for (const child of node.children) {
+        if (child.el.tag === FRAME_DOCUMENT) continue;
         pool.push(child);
         collect(child);
       }
@@ -327,9 +345,11 @@ export class FakeSession implements Session {
         break;
       }
       case 'xpath': {
-        const expr = scope && candidate.value.startsWith('/') ? `.${candidate.value}` : candidate.value;
-        const inPool = new Set(pool);
-        matches = evaluateXPath(expr, scope ?? document, document).filter((n) => inPool.has(n));
+        // Inside a frame root an absolute path is absolute in the iframe's document.
+        const frameDocument = scope?.parent?.el.tag === FRAME_DOCUMENT ? scope.parent : null;
+        const expr = scope && !frameDocument && candidate.value.startsWith('/') ? `.${candidate.value}` : candidate.value;
+        const inPool = new Set(frameDocument ? [scope!, ...pool] : pool);
+        matches = evaluateXPath(expr, scope ?? document, frameDocument ?? document).filter((n) => inPool.has(n));
         break;
       }
     }
@@ -350,7 +370,15 @@ export class FakeSession implements Session {
 
   async snapshot(within?: ElementRef): Promise<SerializedNode> {
     const { root } = this.assertOpen();
-    return structuredClone((within ? (within as FakeRef).node : root).el);
+    return withoutFrames((within ? (within as FakeRef).node : root).el);
+  }
+
+  async frameRoot(frame: ElementRef): Promise<ElementRef | null> {
+    this.assertOpen();
+    const node = (frame as FakeRef).node;
+    if (node.el.tag !== 'iframe') return null;
+    const html = node.children.find((c) => c.el.tag === FRAME_DOCUMENT)?.children[0];
+    return html ? new FakeRef(html, `${frame.description} >> frame`) : null;
   }
 
   async close(): Promise<void> {
