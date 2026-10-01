@@ -116,3 +116,10 @@ An exported script (TS or Python) SHALL, for a field with `hover: true`, hover t
 #### Scenario: Exported hover
 - **WHEN** a recipe with a `hover` field is exported and the script runs against the hover-reveal playground page
 - **THEN** its output carries the real URLs, matching `webscoop run`
+
+### Requirement: Frames not exported
+Exporting a recipe that uses `frame` on any table, step target, or pagination target SHALL fail with exit 1 and a message saying iframe targets are not supported by export, naming the first table or step that uses one. No file SHALL be written.
+
+#### Scenario: Framed recipe
+- **WHEN** `webscoop export sunat` runs on a recipe whose table has `frame`
+- **THEN** the command exits 1, names that table, and writes no file

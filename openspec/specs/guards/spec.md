@@ -98,3 +98,10 @@ The run report SHALL list every guard occurrence with kind, page number, URL whe
 #### Scenario: Report after a cleared guard
 - **WHEN** a `login` guard on page 1 clears after 12 seconds
 - **THEN** the report lists one guard entry with kind `login`, page 1, cleared, and a wait time near 12 seconds
+
+### Requirement: Frame-aware item checks
+Where guard detection checks whether a table's item container or required fields resolve, it SHALL resolve them through the table's `frame` as the runner does. A frame that does not resolve SHALL count as the items not resolving. Other detection rules SHALL look at the top document only.
+
+#### Scenario: Framed items count as present
+- **WHEN** a recipe's only table has `frame` `id=app`, the iframe shows 8 cards, and the top page has a visible password input elsewhere
+- **THEN** the `login` guard is not raised

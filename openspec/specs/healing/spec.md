@@ -167,3 +167,14 @@ The list parent in `item.within` SHALL be a healing target with its own fingerpr
 #### Scenario: List parent renamed
 - **WHEN** the list's class changes and its role stays `list`
 - **THEN** `within` heals through its `role` candidate or the fuzzy rung and the run proceeds with 24 rows
+
+### Requirement: Healing inside an iframe
+The healing ladder SHALL run for a frame target in the top document like any other target. For a target inside an iframe, every rung SHALL work on the iframe's document: candidates resolve there, the fuzzy fingerprint match and the model rung read a snapshot of that document, and promoted selectors are generated relative to it. A healed frame target SHALL be promoted and written back with the recipe like other targets, and the inner targets SHALL keep their `frame` on write-back.
+
+#### Scenario: Framed field heals
+- **WHEN** a field inside `iframe#app` loses its stored class and its fingerprint matches the renamed element in the iframe
+- **THEN** the field heals inside the iframe and the written-back recipe keeps the table's `frame`
+
+#### Scenario: Frame target heals
+- **WHEN** the iframe's id changes from `app` to `app2` and its fingerprint still matches
+- **THEN** the frame target heals and is written back with a candidate that matches `iframe#app2`

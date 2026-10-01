@@ -220,3 +220,22 @@ A recipe MAY declare a `description`, each table MAY declare a `description`, an
 #### Scenario: Recipes without descriptions stay valid
 - **WHEN** a recipe written before this change is loaded
 - **THEN** validation succeeds unchanged
+
+### Requirement: Frame targets
+A recipe MAY name an `<iframe>` whose document holds elements to resolve, with a `frame` object: `selectors` (a ranked non-empty list of selector candidates) and an optional `fingerprint`, both shaped as for any target. A frame target SHALL be resolved in the top document. A `frame` object SHALL NOT itself contain `frame`.
+
+`frame` MAY appear on:
+- a table, applying to its `item` block (selectors, `within`, `exclude`) and to every field of the table
+- the top-level shorthand form, applying to its single table
+- a step `target`
+- the pagination `target`
+
+A recipe without any `frame` SHALL validate and run exactly as before.
+
+#### Scenario: Table inside an iframe
+- **WHEN** a table declares `frame` with an `id` candidate `iframeApplication`, an `item` block, and two fields
+- **THEN** the recipe validates and the item block and fields apply inside that iframe's document
+
+#### Scenario: Nested frame rejected
+- **WHEN** a table's `frame` object contains its own `frame`
+- **THEN** validation fails with an error naming the table

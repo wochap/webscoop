@@ -244,3 +244,18 @@ Without humanize, the read SHALL follow the hover within one animation frame and
 #### Scenario: Humanized dwell
 - **WHEN** humanize is on and a flagged field is read
 - **THEN** the pointer moves along a humanized path and waits 80 to 250 ms before the read
+
+### Requirement: Targets inside an iframe
+For a table, step target, or pagination target with `frame`, the runner SHALL first resolve the frame target in the top document, using its candidates in order and then the healing ladder, and take the first match. The element SHALL be an `<iframe>` whose document has the same origin as the top page. The runner SHALL wait for that document to finish loading, bounded by the navigation timeout. It SHALL then resolve the table's item block, list parent, exclusions, and fields, or the step or pagination target, inside that document exactly as it does in the top document. A frame target that does not resolve SHALL be treated as the inner target not resolving: a table yields no rows and its required fields count as missing, a required step fails with `missing-required`, an optional step is skipped, and pagination stops as when its target is missing. The run report SHALL record the frame candidate or healing rung used. Clicks, hovers, and typing on an element inside an iframe SHALL land on that element, including when input is humanized.
+
+#### Scenario: Extract a framed catalog
+- **WHEN** a table has `frame` `id=app` and the page's `iframe#app` shows 8 product cards
+- **THEN** the table yields 8 rows
+
+#### Scenario: Frame missing
+- **WHEN** a required step targets a button inside `iframe#app` and the page has no such iframe
+- **THEN** the run fails with `missing-required` naming the step
+
+#### Scenario: Humanized click inside an iframe
+- **WHEN** humanized input clicks a button inside an iframe offset 300 pixels from the left edge of the page
+- **THEN** the click lands on the button

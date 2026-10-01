@@ -1133,3 +1133,27 @@ An edit SHALL be committed when the input loses focus. Leading and trailing whit
 #### Scenario: Line break refused for a variable
 - **WHEN** the user presses Enter in a variable's description input
 - **THEN** no line break is inserted
+
+### Requirement: Picking inside iframes
+Hover highlighting, picking, Alt-click-through, the page overlay, list setup, and browse-mode step recording SHALL work on elements inside same-origin iframes. Iframes added or reloaded during the session SHALL be included, and overlay boxes SHALL follow the element when the iframe or its document scrolls. The panel SHALL stay in the top window. An iframe whose document is not reachable (cross-origin) SHALL stay opaque: hovering or picking it selects the `<iframe>` element.
+
+When the selection is inside an iframe, the selection details SHALL say so and show the frame target: candidates generated for the `<iframe>` element in the top document, ranked and verified like any other target. Fields and steps whose target is inside an iframe SHALL show a frame badge. Choosing the badge, or the "Edit" action in the selection details, SHALL open the frame target editor: its candidates with stability and match count, and a selector input, as for any target. Saving a frame edit SHALL apply it to every target of the draft that has the same frame target.
+
+#### Scenario: Pick a field inside an iframe
+- **WHEN** the user hovers and picks a product title inside a same-origin iframe
+- **THEN** the overlay outlines the title, and the selection details show it inside the iframe with the frame target `id` `app`
+
+#### Scenario: Cross-origin iframe
+- **WHEN** the user picks inside a cross-origin iframe
+- **THEN** the `<iframe>` element itself is selected
+
+#### Scenario: Record a click inside an iframe
+- **WHEN** browse mode is on and the user clicks a menu button inside a same-origin iframe
+- **THEN** a `click` step is recorded with a target that has the iframe's `frame`
+
+### Requirement: One frame per table
+A table SHALL take its frame from its first field or item container: picked inside an iframe, the table gets that frame; picked in the top document, it has none. Once a table has a field or an item container, adding a field or setting an item container from a different frame, or from the top document when the table has a frame, SHALL be refused with a reason naming the table's frame. Clearing the table SHALL clear its frame.
+
+#### Scenario: Field from another frame refused
+- **WHEN** the active table reads from `iframe#app` and the user picks an element in the top document
+- **THEN** "Add field" is disabled with a reason saying the table reads from `iframe#app`

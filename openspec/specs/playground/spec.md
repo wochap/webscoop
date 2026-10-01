@@ -254,3 +254,14 @@ The playground SHALL serve `/focus-thief`, a page with a search box and bubble-p
 #### Scenario: Thief steals focus from the page
 - **WHEN** the page body has focus and the user presses `h`
 - **THEN** the search box gains focus and the `keydown` count increases
+
+### Requirement: Framed page
+The playground SHALL serve `/framed`: a page with a menu of buttons and one same-origin `<iframe>` per menu entry, each with a stable `id` (`frame-catalog`, `frame-about`). Clicking a menu button SHALL show its iframe and hide the others, client-side, without changing the URL. `frame-catalog` SHALL load `/framed/inner?view=catalog`, which renders the first 8 products of the dataset as the catalog cards. `frame-about` SHALL load `/framed/inner?view=about`, which renders text only. The catalog iframe SHALL be visible by default unless `show=about` is given. Inside the catalog iframe, a `Details` button SHALL reveal a details panel holding the first product's description, client-side, so a step inside the iframe is needed to see it.
+
+#### Scenario: Catalog inside the iframe
+- **WHEN** `/framed` is loaded
+- **THEN** the top document has no product cards and `iframe#frame-catalog` holds 8
+
+#### Scenario: Menu swaps the visible iframe
+- **WHEN** `/framed?show=about` is loaded and the user clicks the Catalog menu button
+- **THEN** `iframe#frame-catalog` is visible, `iframe#frame-about` is hidden, and the URL is unchanged
