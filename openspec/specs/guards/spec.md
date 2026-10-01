@@ -33,7 +33,7 @@ Guards SHALL be evaluated only when enabled in the recipe's `guards` list (all e
 - **THEN** no guard is raised and the page is extracted as is
 
 ### Requirement: Pause, notify, and focus
-When a guard is raised, the runner SHALL enter a paused state. Once the run holds attention for its browser, as defined by the browser-daemon capability, and the guard is still present, the runner SHALL bring its tab to the front and send one desktop notification with the recipe name, the guard kind, and the page number. It SHALL NOT send more than one notification per guard occurrence, and SHALL send none when the guard cleared while the run waited for attention. While paused, no rows SHALL be emitted and no navigation SHALL be initiated by the runner, except the reload that re-checks the guard after waiting for attention.
+When a guard is raised, the runner SHALL enter a paused state. Once the run holds attention for its browser, as defined by the browser-daemon capability, and the guard is still present, the runner SHALL bring its tab to the front and, when notifications are on as defined by the cli capability, send one desktop notification with the recipe name, the guard kind, and the page number. It SHALL NOT send more than one notification per guard occurrence, and SHALL send none when the guard cleared while the run waited for attention. While paused, no rows SHALL be emitted and no navigation SHALL be initiated by the runner, except the reload that re-checks the guard after waiting for attention.
 
 #### Scenario: Notification sent once
 - **WHEN** a `login` guard is raised on page 2 of recipe `shop`
@@ -42,6 +42,10 @@ When a guard is raised, the runner SHALL enter a paused state. Once the run hold
 #### Scenario: No notification after another run's solve
 - **WHEN** a run waits for attention on a captcha and the captcha is gone when it reloads
 - **THEN** no notification is sent for it
+
+#### Scenario: Notifications off
+- **WHEN** notifications are off and a `login` guard is raised
+- **THEN** the tab is brought to the front, the run pauses, and no notification is sent
 
 ### Requirement: Clearing and resuming
 While paused, the runner SHALL re-evaluate the guard at least every second. The guard clears when the detection rule no longer matches and the page has settled. After clearing, if the current URL differs from the intended URL for that page, the runner SHALL navigate to the intended URL, wait for it to settle, and re-check guards once before extracting. Resuming SHALL continue the run at the same page number and preserve rows already emitted.

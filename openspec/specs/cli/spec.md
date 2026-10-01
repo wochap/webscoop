@@ -271,11 +271,25 @@ For a `url` kind recipe, a `--var` for the page parameter SHALL set the starting
 - **THEN** the process exits 2 without waiting
 
 ### Requirement: Desktop notification
-When a guard is raised, the CLI SHALL send a desktop notification through `notify-send` when it is on the PATH, with critical urgency, the recipe name, the guard kind, and the page number. When `notify-send` is absent, the CLI SHALL log the same text to stderr and continue. `--no-notify` SHALL suppress notifications.
+When a guard is raised and notifications are on, the CLI SHALL send a desktop notification through `notify-send` when it is on the PATH, with critical urgency, the recipe name, the guard kind, and the page number. When `notify-send` is absent, the CLI SHALL log the same text to stderr and continue.
+
+Notifications SHALL be on unless turned off. The config file MAY declare `notify`, a boolean defaulting to `true`; `false` turns notifications off. `webscoop run` and `webscoop test` SHALL accept `--notify` and `--no-notify`; a flag given on the command line SHALL override the config key. A run or test served by the daemon SHALL use the setting resolved by the command that submitted it. The setting SHALL NOT change which hooks fire.
 
 #### Scenario: notify-send absent
 - **WHEN** `notify-send` is not installed and a guard is raised
 - **THEN** stderr carries the notification text and the run keeps waiting
+
+#### Scenario: Turned off in config
+- **WHEN** the config sets `notify` to `false` and a guard is raised during `webscoop run shop`
+- **THEN** no desktop notification is sent and the `attention.needed` hook still runs
+
+#### Scenario: Flag overrides config
+- **WHEN** the config sets `notify` to `false` and the user runs `webscoop run shop --notify` and a guard is raised
+- **THEN** one desktop notification is sent
+
+#### Scenario: Flag turns it off
+- **WHEN** the config has no `notify` key and the user runs `webscoop test shop --no-notify` and a guard is raised
+- **THEN** no desktop notification is sent
 
 ### Requirement: Exit 2 semantics
 Exit code 2 SHALL be used only when a run was paused on a guard and the guard timeout elapsed. The stderr message SHALL name the guard kind, the page, and the URL. Rows emitted before the guard SHALL remain on stdout in JSONL mode; in JSON array mode the array SHALL contain the rows of completed pages.
