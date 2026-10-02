@@ -14,10 +14,12 @@
 // When the site changes, re-record the recipe with webscoop and export it
 // again rather than editing selectors here; the recipe is the source of truth.
 
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { accessSync, appendFileSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import { chromium, errors, type Locator, type Page } from 'playwright';
+import { createInterface } from 'node:readline';
+import { chromium, errors, type BrowserContext, type FrameLocator, type Locator, type Page } from 'playwright';
 
 // ---------------------------------------------------------------------------
 // Recipe shapes (the constants at the end of the file)
@@ -28,28 +30,44 @@ interface Selector {
   strategy: Strategy;
   value: string;
 }
+interface Target {
+  selectors: Selector[];
+  /** The iframe the selectors resolve in, or null for the top document. */
+  frame: Selector[] | null;
+}
 interface Var {
   name: string;
   default: string | null;
   required: boolean;
+  secret: boolean;
+  path: boolean;
 }
 type Action =
   | { kind: 'click' }
-  | { kind: 'fill'; text: string }
+  | { kind: 'fill'; text: string; path: string | null; vars: string[] }
   | { kind: 'press'; key: string }
   | { kind: 'wait-for' }
-  | { kind: 'sleep'; ms: number };
+  | { kind: 'sleep'; ms: number }
+  | { kind: 'await-user'; until: 'appears' | 'disappears'; timeoutMs: number | null; label: string };
 interface Step {
-  index: number;
   flow: string;
-  step: number;
+  index: number;
   kind: string;
   name: string;
-  when: 'first-page' | 'every-page';
   optional: boolean;
-  target: Selector[] | null;
+  window: 'same' | 'popup';
+  target: Target | null;
   action: Action;
 }
+interface Flow {
+  name: string;
+  trigger: Target | null;
+  maxRetries: number;
+  recover: boolean;
+  steps: Step[];
+}
+type Inner = { flow: string } | { extract: string };
+type Block = Inner | { paginate: Inner[] };
 interface Item {
   selectors: Selector[];
   /** The list parent: containers are found inside its first match. */
@@ -70,7 +88,9 @@ interface Field {
 }
 interface Table {
   name: string;
-  /** Item container, or null for a table that yields one row per page. */
+  /** The iframe whose document holds the table, or null for the top document. */
+  frame: Selector[] | null;
+  /** Item container, or null for a table that yields one row per extraction. */
   item: Item | null;
   fields: Field[];
   /** Field that identifies a row across pages, or null to compare all field values. */
@@ -78,9 +98,11 @@ interface Table {
 }
 interface Pagination {
   kind: 'none' | 'url' | 'next' | 'more' | 'scroll';
+  /** The driving table, whose item count drives growth and the stop rules. */
+  table: string | null;
   param: { name: string; start: number; step: number } | null;
   paramInTemplate: boolean;
-  target: Selector[] | null;
+  target: Target | null;
   limit: number | 'all';
   stopRules: string[];
   delayMs: number;
@@ -89,12 +111,14 @@ type Value = string | number | null;
 type Row = Record<string, Value>;
 
 // ---------------------------------------------------------------------------
-// Exit codes and failures (cli exit.ts)
+// Exit codes, failures, and secret redaction (cli exit.ts, redact.ts)
 // ---------------------------------------------------------------------------
 
 const EXIT_OK = 0;
-/** Bad arguments, a missing variable, a timeout, or any other error. */
+/** Bad arguments, a missing variable, a timeout, a reactive flow loop, lost pagination, or any other error. */
 const EXIT_ERROR = 1;
+/** An await-user step was not completed in time. */
+const EXIT_PAUSED = 2;
 /** A required field, the item container, or a required step matched nothing. */
 const EXIT_UNRESOLVED = 3;
 
@@ -102,23 +126,43 @@ class Failure extends Error {
   constructor(
     message: string,
     readonly code: number,
+    /** Print the rows of the pages done before it, as the CLI does for a timed out wait and lost pagination. */
+    readonly keepRows = code === EXIT_PAUSED,
   ) {
     super(message);
   }
 }
 
+/** Values of the secret variables, longest first, masked in everything the script prints. */
+let secrets: string[] = [];
+
+function redact(text: string): string {
+  for (const secret of secrets) text = text.split(secret).join('***');
+  return text;
+}
+
 function log(message: string): void {
-  process.stderr.write(RECIPE_NAME + ': ' + message + '\n');
+  process.stderr.write(redact(RECIPE_NAME + ': ' + message) + '\n');
 }
 
 const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** A function evaluated in the page, from its source text. */
+function pageFn(name: string): (...args: any[]) => any {
+  return new Function('return (' + PAGE_JS[name] + ')')();
+}
 
 // ---------------------------------------------------------------------------
 // Command line
 // ---------------------------------------------------------------------------
 
+type Source = { kind: 'value'; value: string } | { kind: 'file'; path: string } | { kind: 'command'; command: string };
+
 interface Options {
-  vars: Record<string, string>;
+  /** Variable sources given on the command line, by name. */
+  vars: Record<string, Source>;
   jsonl: boolean;
   out: string | null;
   /** --out names a directory: one file per table goes into it. */
@@ -126,27 +170,33 @@ interface Options {
   /** --table: only this table, in the single table shapes. */
   table: string | null;
   pages: number | 'all' | null;
+  awaitTimeoutMs: number;
   headless: boolean;
   profile: string | null;
 }
 
-const USAGE = [
-  'usage: npx tsx <script> [options]',
-  '',
-  'options:',
-  '  --var <name=value>  set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too',
-  '  --jsonl             print one JSON object per line instead of a JSON array',
-  '  --out <path>        write the rows to a file instead of stdout; a directory (existing, or ending',
-  '                      with a separator) gets one <table>.json or <table>.jsonl per table',
-  '  --table <name>      print only this table, as a plain array (or plain JSONL rows)',
-  '  --pages <1|N|all>   pages to walk, replacing the recipe limit',
-  '  --headless          run the browser without a window',
-  '  --headed            show the browser window',
-  '  --profile <dir>     browser profile directory to keep (default: a temporary one)',
-  '  -h, --help          show this help',
-  '',
-  'exit codes: 0 success, 1 error, 3 a required field or step matched no element',
-].join('\n');
+function usage(): string {
+  return [
+    'usage: npx tsx <script> [options]',
+    '',
+    'options:',
+    '  --var <name=value>       set a recipe variable (repeatable); WEBSCOOP_VAR_<NAME> works too',
+    '  --var-file <name=path>   set a variable to a file\'s content, one trailing newline removed (repeatable)',
+    '  --var-command <name=cmd> set a variable to the trimmed output of a shell command (repeatable)',
+    '  --jsonl                  print one JSON object per line instead of a JSON array',
+    '  --out <path>             write the rows to a file instead of stdout; a directory (existing, or ending',
+    '                           with a separator) gets one <table>.json or <table>.jsonl per table',
+    '  --table <name>           print only this table, as a plain array (or plain JSONL rows)',
+    '  --pages <1|N|all>        pages to walk, replacing the recipe limit',
+    '  --await-timeout <ms>     how long an await-user step waits for you (default ' + DEFAULT_AWAIT_TIMEOUT_MS + ')',
+    '  --headless               run the browser without a window',
+    '  --headed                 show the browser window',
+    '  --profile <dir>          browser profile directory to keep (default: a temporary one)',
+    '  -h, --help               show this help',
+    '',
+    'exit codes: 0 success, 1 error, 2 an await-user step timed out, 3 a required field or step matched no element',
+  ].join('\n');
+}
 
 class HelpRequested extends Error {}
 
@@ -157,7 +207,17 @@ function parsePages(value: string): number | 'all' {
 }
 
 function parseArgs(argv: readonly string[]): Options {
-  const opts: Options = { vars: {}, jsonl: false, out: null, outDir: false, table: null, pages: null, headless: DEFAULT_HEADLESS, profile: null };
+  const opts: Options = {
+    vars: {},
+    jsonl: false,
+    out: null,
+    outDir: false,
+    table: null,
+    pages: null,
+    awaitTimeoutMs: DEFAULT_AWAIT_TIMEOUT_MS,
+    headless: DEFAULT_HEADLESS,
+    profile: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
@@ -169,14 +229,24 @@ function parseArgs(argv: readonly string[]): Options {
       if (next === undefined) throw new Failure('option ' + flag + ' needs a value', EXIT_ERROR);
       return next;
     };
+    const source = (expected: string, make: (rest: string) => Source): void => {
+      const pair = value();
+      const at = pair.indexOf('=');
+      if (at <= 0) throw new Failure('invalid ' + flag + ' "' + pair + '", expected name=' + expected, EXIT_ERROR);
+      const name = pair.slice(0, at);
+      if (opts.vars[name]) throw new Failure('variable "' + name + '" is given more than once on the command line; pass one of --var, --var-file, --var-command', EXIT_ERROR);
+      opts.vars[name] = make(pair.slice(at + 1));
+    };
     switch (flag) {
-      case '--var': {
-        const pair = value();
-        const at = pair.indexOf('=');
-        if (at <= 0) throw new Failure('invalid --var "' + pair + '", expected name=value', EXIT_ERROR);
-        opts.vars[pair.slice(0, at)] = pair.slice(at + 1);
+      case '--var':
+        source('value', (v) => ({ kind: 'value', value: v }));
         break;
-      }
+      case '--var-file':
+        source('PATH', (path) => ({ kind: 'file', path: expandPath(path) }));
+        break;
+      case '--var-command':
+        source('CMD', (command) => ({ kind: 'command', command }));
+        break;
       case '--jsonl':
         opts.jsonl = true;
         break;
@@ -192,6 +262,12 @@ function parseArgs(argv: readonly string[]): Options {
       case '--pages':
         opts.pages = parsePages(value());
         break;
+      case '--await-timeout': {
+        const ms = value();
+        if (!/^\d+$/.test(ms)) throw new Failure('invalid --await-timeout "' + ms + '", expected milliseconds', EXIT_ERROR);
+        opts.awaitTimeoutMs = Number(ms);
+        break;
+      }
       case '--headless':
         opts.headless = true;
         break;
@@ -205,7 +281,7 @@ function parseArgs(argv: readonly string[]): Options {
       case '--help':
         throw new HelpRequested();
       default:
-        throw new Failure('unknown option "' + arg + '"\n' + USAGE, EXIT_ERROR);
+        throw new Failure('unknown option "' + arg + '"\n' + usage(), EXIT_ERROR);
     }
   }
   if (opts.table !== null && !TABLES.some((t) => t.name === opts.table)) {
@@ -222,20 +298,51 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** A path as the CLI reads it: ~ is the home directory, relative paths start at the working directory. */
+function expandPath(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return resolve(path);
+}
+
 // ---------------------------------------------------------------------------
-// Variables and templates (core template.ts)
+// Variables and templates (cli vars.ts, core template.ts)
 // ---------------------------------------------------------------------------
 
 const VARIABLE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 const envName = (name: string) => 'WEBSCOOP_VAR_' + name.toUpperCase();
 
-/** A value the user gave: the --var argument first, then the environment. */
+/** A command line source's value; failures never hold a file's content or a command's output. */
+function readSource(name: string, source: Source): string {
+  if (source.kind === 'value') return source.value;
+  if (source.kind === 'file') {
+    try {
+      return readFileSync(source.path, 'utf8').replace(/\r?\n$/, '');
+    } catch (error) {
+      throw new Failure('variable "' + name + '": cannot read the command line file source ' + source.path + ' (' + ((error as NodeJS.ErrnoException).code ?? 'error') + ')', EXIT_ERROR);
+    }
+  }
+  const result = spawnSync('/bin/sh', ['-c', source.command], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: VAR_COMMAND_TIMEOUT_MS });
+  if (result.error || result.status !== 0) {
+    const why = result.error
+      ? (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
+        ? 'timed out after ' + VAR_COMMAND_TIMEOUT_MS / 1000 + ' seconds'
+        : 'cannot start (' + ((result.error as NodeJS.ErrnoException).code ?? 'error') + ')'
+      : result.status !== null
+        ? 'exit status ' + result.status
+        : 'killed by ' + result.signal;
+    throw new Failure('variable "' + name + '": the command line command source failed: ' + why, EXIT_ERROR);
+  }
+  return result.stdout.trim();
+}
+
+/** A value the user gave: a command line source first, then the environment. */
 function givenValue(given: Record<string, string>, name: string): string | undefined {
   return given[name] ?? process.env[envName(name)];
 }
 
-/** Every variable value for the run: given values first, recipe defaults second. */
+/** Every variable value for the run: given values first, recipe defaults second. Secret values are masked from here on. */
 function resolveVars(given: Record<string, string>): Record<string, string> {
   const values: Record<string, string> = { ...given };
   const missing: string[] = [];
@@ -244,6 +351,9 @@ function resolveVars(given: Record<string, string>): Record<string, string> {
     if (value !== undefined) values[v.name] = value;
     else if (v.required) missing.push(v.name);
   }
+  secrets = VARS.filter((v) => v.secret && values[v.name])
+    .map((v) => values[v.name]!)
+    .sort((a, b) => b.length - a.length);
   if (missing.length > 0) {
     const first = missing[0]!;
     throw new Failure(
@@ -262,6 +372,25 @@ function fillTemplate(template: string, values: Record<string, string>): string 
 /** Fill a typed value: inserted as it is. */
 function fillText(template: string, values: Record<string, string>): string {
   return template.replace(VARIABLE, (_, name: string) => values[name] ?? '');
+}
+
+/** The files of a fill whose value is one path variable alone: split on ":", each checked readable before the step acts. */
+function pathFiles(action: Extract<Action, { kind: 'fill' }>, values: Record<string, string>): string[] | null {
+  if (action.path === null) return null;
+  const files: string[] = [];
+  for (const path of fillText(action.text, values).split(':').map((p) => p.trim()).filter((p) => p !== '')) {
+    const absolute = expandPath(path);
+    let readable = false;
+    try {
+      accessSync(absolute, constants.R_OK);
+      readable = statSync(absolute).isFile();
+    } catch {
+      readable = false;
+    }
+    if (!readable) throw new Failure('variable "' + action.path + '": no readable file at ' + path, EXIT_ERROR);
+    files.push(absolute);
+  }
+  return files;
 }
 
 /** First value of the page variable: the user's value when given, else the recipe's start. */
@@ -285,6 +414,14 @@ function urlFor(values: Record<string, string>, start: number, page: number): st
   const url = new URL(filled);
   url.searchParams.set(param.name, value);
   return url.href;
+}
+
+function sameUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return a === b;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +502,7 @@ function convertValue(type: FieldType, raw: string, pageUrl: string): Value {
 }
 
 // ---------------------------------------------------------------------------
-// Browser session (browser playwright-browser.ts)
+// Browser windows (browser playwright-browser.ts, core flows/windows.ts)
 // ---------------------------------------------------------------------------
 
 /** Launch flags that keep Chromium from advertising automation. */
@@ -376,6 +513,10 @@ function isTimeout(error: unknown): boolean {
   return error instanceof errors.TimeoutError;
 }
 
+/** A step's element showed no option or opened no file chooser: the step found no element. */
+class Unresolved extends Error {}
+
+/** One browser window: navigation, settling, and the actions steps take. */
 class Session {
   /** Main frame navigations so far, so settling can tell whether an action navigated. */
   private navigations = 0;
@@ -388,12 +529,16 @@ class Session {
     });
   }
 
-  /** Load the URL, then wait for network idle, within the navigation timeout. */
+  isClosed(): boolean {
+    return this.page.isClosed();
+  }
+
+  /** Load the URL; network idle is only a short grace, since some pages never stop requesting. */
   async goto(url: string): Promise<string> {
     const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
     try {
       await this.page.goto(url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS });
-      await this.page.waitForLoadState('networkidle', { timeout: Math.max(1, deadline - Date.now()) });
+      await this.page.waitForLoadState('networkidle', { timeout: Math.max(1, Math.min(SETTLE_IDLE_MS, deadline - Date.now())) }).catch(() => {});
       return this.page.url();
     } catch (error) {
       if (isTimeout(error)) throw new Failure('navigation to ' + url + ' timed out after ' + NAVIGATION_TIMEOUT_MS + ' ms', EXIT_ERROR);
@@ -435,50 +580,164 @@ class Session {
     }
   }
 
-  async click(target: Locator): Promise<string> {
-    const before = this.mark();
+  async click(target: Locator): Promise<void> {
+    this.mark();
     await target.scrollIntoViewIfNeeded();
     await target.click();
-    return before;
   }
 
-  async fill(target: Locator, text: string): Promise<string> {
-    const before = this.mark();
-    await target.fill(text);
-    return before;
-  }
-
-  async press(key: string, target: Locator | null): Promise<string> {
-    const before = this.mark();
+  async press(key: string, target: Locator | null): Promise<void> {
+    this.mark();
     if (target) await target.press(key);
     else await this.page.keyboard.press(key);
-    return before;
   }
 
-  /** Select an option by value first, then by visible label. */
-  async select(target: Locator, value: string): Promise<string> {
-    const before = this.mark();
-    const option = await target.evaluate((el, wanted) => {
-      const options = Array.from((el as HTMLSelectElement).options ?? []);
-      const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
-      return hit ? hit.value : null;
-    }, value);
-    if (option === null) throw new Error('no option ' + JSON.stringify(value));
-    await target.selectOption({ value: option });
-    return before;
+  /**
+   * Set an element by its fill kind, as the runner's browser adapter does:
+   * files, a file chooser, checkbox, switch, or radio, select options,
+   * a combobox option, one-character boxes, or typed text.
+   */
+  async fill(target: Locator, value: string, files: string[] | null): Promise<void> {
+    this.mark();
+    const kind = (await target.evaluate(pageFn('classifyFill'))) as string;
+    if (kind === 'file') return target.setInputFiles(files ?? value.split(':').filter(Boolean));
+    if (files) return this.chooseFiles(target, files);
+    switch (kind) {
+      case 'toggle':
+      case 'radio':
+        return this.setChecked(target, kind, value);
+      case 'select':
+        return this.selectOptions(target, value);
+      case 'combobox':
+        return this.fillCombobox(target, value);
+      case 'otp':
+        if ([...value].length > 1) return this.typeKeys(target, value);
+        return this.fillText(target, value);
+      default:
+        return this.fillText(target, value);
+    }
+  }
+
+  /** Click the element and hand the files to the chooser it opens. */
+  private async chooseFiles(target: Locator, files: string[]): Promise<void> {
+    const chooser = this.page.waitForEvent('filechooser', { timeout: FILE_CHOOSER_TIMEOUT_MS }).catch(() => null);
+    await this.click(target);
+    const opened = await chooser;
+    if (!opened) throw new Unresolved('the element opened no file chooser within ' + FILE_CHOOSER_TIMEOUT_MS / 1000 + ' seconds');
+    await opened.setFiles(files);
+  }
+
+  /** Click a checkbox, switch, or radio only when its checked state differs from true or false. */
+  private async setChecked(target: Locator, kind: string, value: string): Promise<void> {
+    const wanted = value.trim().toLowerCase();
+    if (wanted !== 'true' && wanted !== 'false') throw new Error('a checkbox, switch, or radio takes true or false, not ' + JSON.stringify(value));
+    if (kind === 'radio' && wanted === 'false') throw new Error('a radio cannot be set to false; fill the radio to choose instead');
+    const checked = (await target.evaluate(pageFn('isChecked'))) as boolean;
+    if (checked !== (wanted === 'true')) await this.click(target);
+  }
+
+  /** Choose the option whose value or visible label equals the value; for a multiple select, each line's option. */
+  private async selectOptions(target: Locator, value: string): Promise<void> {
+    const found = (await target.evaluate(pageFn('selectValues'), value)) as { values: string[] } | { missing: string };
+    if ('missing' in found) throw new Error('no option ' + JSON.stringify(found.missing));
+    await target.selectOption(found.values.map((v) => ({ value: v })));
+  }
+
+  /** Type into a combobox, then click the visible option whose accessible name is the value. */
+  private async fillCombobox(target: Locator, value: string): Promise<void> {
+    if ((await target.evaluate(pageFn('isEditable'))) as boolean) await this.fillText(target, value);
+    else {
+      await this.click(target);
+      await this.page.keyboard.type(value);
+    }
+    const handle = await target.elementHandle();
+    const frame = (await handle?.ownerFrame()) ?? this.page.mainFrame();
+    await handle?.dispose();
+    const option = frame.getByRole('option', { name: value, exact: true }).filter({ visible: true }).first();
+    try {
+      await option.waitFor({ state: 'visible', timeout: NAVIGATION_TIMEOUT_MS });
+    } catch {
+      throw new Unresolved('the combobox showed no option ' + JSON.stringify(value) + ' within ' + NAVIGATION_TIMEOUT_MS + ' ms');
+    }
+    await option.click();
+  }
+
+  /** Focus the first box and press each character, so the page moves focus from box to box. */
+  private async typeKeys(target: Locator, value: string): Promise<void> {
+    await target.click();
+    await target.fill('');
+    await this.page.keyboard.type(value, { delay: 20 });
+  }
+
+  /** Clear and type; when the value read back still differs, type key by key. */
+  private async fillText(target: Locator, value: string): Promise<void> {
+    await target.fill(value);
+    if (((await target.evaluate(pageFn('readBack'))) as string) === value) return;
+    await target.fill('');
+    await target.pressSequentially(value, { delay: 10 });
   }
 
   async scrollToBottom(): Promise<void> {
     this.mark();
-    await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await this.page.evaluate(pageFn('scrollToBottom'));
+  }
+}
+
+/**
+ * The windows of the run: the main window, where extraction happens, and the
+ * popups opened since, in the order they opened.
+ */
+class Windows {
+  private readonly popups: { session: Session; seq: number }[] = [];
+  private seq = 0;
+
+  constructor(
+    context: BrowserContext,
+    readonly main: Session,
+  ) {
+    context.on('page', (page) => {
+      if (page !== main.page) this.popups.push({ session: new Session(page), seq: ++this.seq });
+    });
+  }
+
+  /** A mark for newestSince: popups opened after it are newer. */
+  mark(): number {
+    return this.seq;
+  }
+
+  /** The main window and every popup still open, oldest popup first. */
+  open(): Session[] {
+    return [this.main, ...this.popups.filter((p) => !p.session.isClosed()).map((p) => p.session)];
+  }
+
+  /** The newest popup opened after the mark, or null when none did or it has closed. */
+  newestSince(mark: number): Session | null {
+    const newest = this.popups.filter((p) => p.seq > mark).at(-1);
+    return newest && !newest.session.isClosed() ? newest.session : null;
+  }
+
+  /** Whether any popup opened after the mark, open or closed by now. */
+  openedSince(mark: number): boolean {
+    return this.popups.some((p) => p.seq > mark);
+  }
+
+  /** Wait up to the navigation timeout for a popup opened after the mark. */
+  async waitForPopup(mark: number): Promise<Session | null> {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    for (;;) {
+      if (this.openedSince(mark)) return this.newestSince(mark);
+      if (Date.now() >= deadline) return null;
+      await sleep(50);
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Selectors (browser locate, core resolveFirst)
+// Selectors and frames (browser locate, core resolveFirst, extract resolveFrame)
 // ---------------------------------------------------------------------------
 
-type Root = Page | Locator;
+/** Where candidates resolve: a window, an element, or an iframe's document. */
+type Root = Page | Locator | FrameLocator;
 
 /** A role name as a pattern that ignores whitespace: accessible name implementations differ on spaces between child elements. */
 function roleName(name: string): RegExp {
@@ -525,115 +784,114 @@ async function resolveFirst(root: Root, selectors: readonly Selector[]): Promise
   return null;
 }
 
-/** Item containers the candidates found, minus those an exclusion candidate matches anywhere in the document. */
-async function keptContainers(page: Page, found: Found, exclude: readonly Selector[]): Promise<Locator[]> {
+/**
+ * Resolve an iframe in the top document and wait for its document: the root
+ * to resolve inside, with the candidates from the one that matched on. Null
+ * when it is missing, not a same-origin iframe, or its document does not load.
+ */
+async function frameRoot(page: Page, selectors: readonly Selector[], timeoutMs: number): Promise<{ root: FrameLocator; selectors: Selector[] } | null> {
+  const found = await resolveFirst(page, selectors);
+  if (!found) return null;
+  const element = found.locator.nth(0);
+  if (!((await element.evaluate(pageFn('frameReachable')).catch(() => false)) as boolean)) return null;
+  try {
+    const handle = await element.elementHandle({ timeout: timeoutMs });
+    const content = await handle?.contentFrame();
+    await handle?.dispose();
+    if (!content) return null;
+    await content.waitForLoadState('load', { timeout: timeoutMs });
+  } catch {
+    return null;
+  }
+  return { root: element.contentFrame(), selectors: selectors.slice(found.index) };
+}
+
+/** Item containers the candidates found, minus those an exclusion candidate matches anywhere in the base document. */
+async function keptContainers(base: Root, found: Found, exclude: readonly Selector[]): Promise<Locator[]> {
   const all = Array.from({ length: found.count }, (_, i) => found.locator.nth(i));
   if (exclude.length === 0) return all;
   const excluded = [];
-  for (const selector of exclude) excluded.push(...(await locate(page, selector).elementHandles()));
+  for (const selector of exclude) excluded.push(...(await locate(base, selector).elementHandles()));
   if (excluded.length === 0) return all;
-  const handles = await found.locator.elementHandles();
   try {
-    const drop = await page.evaluate(([containers, others]) => containers.map((c) => others.includes(c)), [handles, excluded] as const);
+    const drop = (await found.locator.evaluateAll(pageFn('excludedMask'), excluded)) as boolean[];
     return all.filter((_, i) => !drop[i]);
   } finally {
-    await Promise.all([...handles, ...excluded].map((h) => h.dispose()));
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Steps (core flows/replay.ts)
-// ---------------------------------------------------------------------------
-
-/** Selectors every-page steps settled on, by step index. */
-type StepCache = Map<number, Selector[]>;
-
-/** A step's target: cached selectors first, polling until the timeout for wait steps, then the stored candidates. */
-async function findStepTarget(page: Page, step: Step, cache: StepCache): Promise<Locator | null> {
-  const stored = step.target!;
-  const cached = step.when === 'every-page' ? cache.get(step.index) : undefined;
-  if (cached) {
-    const hit = await resolveFirst(page, cached);
-    if (hit) return hit.locator.nth(0);
-  }
-  if (step.action.kind === 'wait-for') {
-    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
-    for (;;) {
-      const hit = await resolveFirst(page, cached ?? stored);
-      if (hit) return hit.locator.nth(0);
-      if (Date.now() >= deadline) break;
-      await sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
-    }
-  }
-  const found = await resolveFirst(page, stored);
-  if (!found) return null;
-  if (step.when === 'every-page') cache.set(step.index, stored.slice(found.index));
-  return found.locator.nth(0);
-}
-
-async function act(session: Session, step: Step, target: Locator | null, values: Record<string, string>): Promise<string> {
-  const { action } = step;
-  switch (action.kind) {
-    case 'click':
-      return session.click(target!);
-    case 'fill': {
-      // A native select is set by option value or label, like the runner's fill.
-      const text = fillText(action.text, values);
-      const tag = await target!.evaluate((el) => el.tagName);
-      return tag === 'SELECT' ? session.select(target!, text) : session.fill(target!, text);
-    }
-    case 'press':
-      return session.press(action.key, target);
-    case 'wait-for':
-    case 'sleep':
-      return session.page.url();
+    await Promise.all(excluded.map((h) => h.dispose()));
   }
 }
 
 /**
- * Replay the steps that apply to the page, in order. An optional step whose
- * target is missing is skipped; a required one fails the run with exit 3.
+ * Whether a target resolves to at least one element in a window, with its
+ * stored candidates only. A closed window holds nothing.
  */
-async function replaySteps(session: Session, page: number, values: Record<string, string>, cache: StepCache): Promise<void> {
-  for (const step of STEPS) {
-    if (step.when !== 'every-page' && page !== 1) continue;
-    const label = 'flow "' + step.flow + '" step ' + step.step + (step.name === step.flow + ':' + step.step ? '' : ' "' + step.name + '"') + ' (' + step.kind + ') on page ' + page;
-    const fail = (why: string): void => {
-      if (!step.optional) throw new Failure('required step ' + step.step + ' (' + step.kind + ') of flow "' + step.flow + '" ' + why + ' [' + step.name + ']', EXIT_UNRESOLVED);
-      log(label + ': skipped (' + why + ')');
-    };
-    if (step.action.kind === 'sleep') {
-      await sleep(step.action.ms);
-      log(label + ': ok');
-      continue;
+async function targetPresent(session: Session, target: Target): Promise<boolean> {
+  if (session.isClosed()) return false;
+  try {
+    let root: Root = session.page;
+    if (target.frame) {
+      const frame = await frameRoot(session.page, target.frame, 1000);
+      if (!frame) return false;
+      root = frame.root;
     }
-    let target: Locator | null = null;
-    if (step.target) {
-      target = await findStepTarget(session.page, step, cache);
-      if (!target) {
-        fail(step.action.kind === 'wait-for' ? 'found no element within ' + NAVIGATION_TIMEOUT_MS + ' ms' : 'found no element');
-        continue;
-      }
-    }
-    let previousUrl: string;
-    try {
-      previousUrl = await act(session, step, target, values);
-    } catch (error) {
-      if (error instanceof Failure) throw error;
-      fail('could not run: ' + (error instanceof Error ? error.message : String(error)));
-      continue;
-    }
-    if (step.action.kind !== 'wait-for') await session.settle(previousUrl);
-    log(label + ': ok');
+    return (await resolveFirst(root, target.selectors)) !== null;
+  } catch {
+    // The window is mid-navigation or closing.
+    return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Step targets (core flows/replay.ts)
+// ---------------------------------------------------------------------------
+
+/** Selectors steps settled on, for the target and its frame, keyed by flow:index. */
+type StepCache = Map<string, { selectors: Selector[]; frame: Selector[] | null }>;
+
+/**
+ * Find a step's target: the selectors an earlier run of the step settled on
+ * first, else the stored candidates. A wait step looks until the timeout.
+ * A framed target resolves inside its iframe, which is found first.
+ */
+async function findStepTarget(session: Session, step: Step, cache: StepCache): Promise<{ locator: Locator | null; why: string }> {
+  const key = step.flow + ':' + step.index;
+  const cached = cache.get(key);
+  const target = step.target!;
+  let root: Root = session.page;
+  let frameSelectors: Selector[] | null = null;
+  if (target.frame) {
+    let frame = cached?.frame ? await frameRoot(session.page, cached.frame, NAVIGATION_TIMEOUT_MS) : null;
+    frame ??= await frameRoot(session.page, target.frame, NAVIGATION_TIMEOUT_MS);
+    if (!frame) return { locator: null, why: 'found no element: the frame did not resolve' };
+    root = frame.root;
+    frameSelectors = frame.selectors;
+  }
+  if (cached) {
+    const hit = await resolveFirst(root, cached.selectors);
+    if (hit) return { locator: hit.locator.nth(0), why: '' };
+  }
+  if (step.action.kind === 'wait-for') {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    for (;;) {
+      const hit = await resolveFirst(root, cached?.selectors ?? target.selectors);
+      if (hit) return { locator: hit.locator.nth(0), why: '' };
+      if (Date.now() >= deadline) break;
+      await sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
+    }
+  }
+  const found = await resolveFirst(root, target.selectors);
+  if (!found) return { locator: null, why: step.action.kind === 'wait-for' ? 'found no element within ' + NAVIGATION_TIMEOUT_MS + ' ms' : 'found no element' };
+  cache.set(key, { selectors: target.selectors.slice(found.index), frame: frameSelectors });
+  return { locator: found.locator.nth(0), why: '' };
 }
 
 // ---------------------------------------------------------------------------
 // Extraction and the missing field policy (core extract.ts)
 // ---------------------------------------------------------------------------
 
-/** The selectors a table settled on the first page it matched; later pages use them as they are. */
+/** The selectors a table settled on the first time it matched; later extractions use them as they are. */
 interface Resolved {
+  frame: Selector[] | null;
   item: Selector[] | null;
   within: Selector[] | null;
   fields: (Selector[] | null)[];
@@ -649,16 +907,11 @@ interface Extraction {
   firstRow: Row | null;
   /** Required fields that caused a drop, in recipe order. */
   droppedFields: string[];
-  /** Required fields that matched on no row, "item" when no container matched, and "within" when the list parent did not. */
+  /** Required fields that matched on no row, "item" when no container matched, "within" when the list parent did not, and "frame" when the iframe did not. */
   missingRequired: string[];
   warnings: string[];
-  /** What later pages reuse; null for an item table that matched nothing, so a later page resolves it afresh. */
+  /** What later extractions reuse; null for a table that matched nothing, so a later one resolves it afresh. */
   resolved: Resolved | null;
-}
-
-/** Index of the primary table: the first with an item container; it drives item counts and the stop rules. -1 when none has one. */
-function primaryIndex(): number {
-  return TABLES.findIndex((t) => t.item !== null);
 }
 
 async function readValue(field: Field, element: Locator, pageUrl: string): Promise<Value> {
@@ -681,10 +934,7 @@ async function hoverFirst(element: Locator): Promise<void> {
     } catch {
       continue;
     }
-    await element
-      .page()
-      .evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
-      .catch(() => {});
+    await element.evaluate(pageFn('nextFrame')).catch(() => {});
     return;
   }
 }
@@ -706,15 +956,52 @@ async function settleSelectors(selectors: readonly Selector[], scopes: readonly 
   return null;
 }
 
+/** Where item containers are searched: inside the list parent's first match, else the base. */
+async function listParent(base: Root, item: Item, resolved: Resolved | null): Promise<{ root: Root; selectors: Selector[] | null; missing: boolean }> {
+  if (!item.within) return { root: base, selectors: null, missing: false };
+  const selectors = resolved ? resolved.within : item.within;
+  const found = selectors ? await resolveFirst(base, selectors) : null;
+  if (!found) return { root: base, selectors: null, missing: true };
+  return { root: found.locator.nth(0), selectors: resolved ? resolved.within : item.within.slice(found.index), missing: false };
+}
+
+/** A table's base: the window, or its iframe's document. Null when the iframe does not resolve or load. */
+async function tableBase(page: Page, table: Table, resolved: Resolved | null): Promise<{ base: Root; frame: Selector[] | null } | null> {
+  if (!table.frame) return { base: page, frame: null };
+  const frame = await frameRoot(page, resolved?.frame ?? table.frame, NAVIGATION_TIMEOUT_MS);
+  return frame ? { base: frame.root, frame: frame.selectors } : null;
+}
+
+/** How many containers of a table the window holds now, with the selectors an earlier extraction settled on. A table without an item block, or no table, counts one. */
+async function countItems(page: Page, table: Table | null, resolved: Resolved | null | undefined): Promise<number> {
+  if (!table?.item) return 1;
+  if (!resolved?.item) return 0;
+  const at = await tableBase(page, table, resolved);
+  if (!at) return 0;
+  const parent = await listParent(at.base, table.item, resolved);
+  if (parent.missing) return 0;
+  const found = await resolveFirst(parent.root, resolved.item);
+  return found ? (await keptContainers(at.base, found, table.item.exclude)).length : 0;
+}
+
 /** Every row of one table on the current page, from item container fromIndex on (a page that grew). */
-async function extractTable(
-  page: Page,
-  table: Table,
-  pageNumber: number,
-  pageUrl: string,
-  resolved: Resolved | null,
-  fromIndex: number,
-): Promise<Extraction> {
+async function extractTable(page: Page, table: Table, pageNumber: number, pageUrl: string, resolved: Resolved | null, fromIndex: number): Promise<Extraction> {
+  const prefix = TABLES.length > 1 ? 'table "' + table.name + '": ' : '';
+  const at = await tableBase(page, table, resolved);
+  if (!at) {
+    // A framed table whose frame did not resolve or load: no rows, and every required target missing.
+    return {
+      name: table.name,
+      rows: [],
+      containerCount: 0,
+      firstRow: null,
+      droppedFields: [],
+      missingRequired: ['frame', ...(table.item ? ['item'] : []), ...table.fields.filter((f) => !f.optional).map((f) => f.name)],
+      warnings: [prefix + 'frame missing on page ' + pageNumber],
+      resolved: null,
+    };
+  }
+  const { base } = at;
   const { item } = table;
   // List parent, then the item container inside it.
   let containers: (Locator | undefined)[] = [undefined];
@@ -722,12 +1009,12 @@ async function extractTable(
   let withinSelectors: Selector[] | null = null;
   let withinMissing = false;
   if (item) {
-    const parent = await listParent(page, item, resolved);
+    const parent = await listParent(base, item, resolved);
     withinSelectors = parent.selectors;
     withinMissing = parent.missing;
     const selectors = resolved ? resolved.item : item.selectors;
     const found = selectors && !withinMissing ? await resolveFirst(parent.root, selectors) : null;
-    containers = found ? await keptContainers(page, found, item.exclude) : [];
+    containers = found ? await keptContainers(base, found, item.exclude) : [];
     itemSelectors = resolved ? resolved.item : found ? item.selectors.slice(found.index) : null;
   }
   const real = containers.filter((c): c is Locator => c !== undefined);
@@ -743,12 +1030,12 @@ async function extractTable(
   for (const [index, field] of table.fields.entries()) {
     let selectors: Selector[] | null;
     if (resolved) selectors = resolved.fields[index] ?? null;
-    else if (field.scope === 'page') selectors = await settleSelectors(field.selectors, [page]);
+    else if (field.scope === 'page') selectors = await settleSelectors(field.selectors, [base]);
     else if (item && real.length === 0) selectors = null;
-    else selectors = await settleSelectors(field.selectors, real.length > 0 ? real : [page]);
+    else selectors = await settleSelectors(field.selectors, real.length > 0 ? real : [base]);
     const state: State = { field, selectors, missingRows: [] };
     if (field.scope === 'page') {
-      const found = selectors ? await resolveFirst(page, selectors) : null;
+      const found = selectors ? await resolveFirst(base, selectors) : null;
       state.pageValue = await fieldValue(field, found ? found.locator.nth(0) : null, pageUrl);
     }
     states.push(state);
@@ -762,7 +1049,7 @@ async function extractTable(
       if (!result) {
         // Only the settled primary per row, unless the field falls back to later candidates.
         const selectors = state.selectors && !state.field.fallback ? state.selectors.slice(0, 1) : state.selectors;
-        const found = selectors ? await resolveFirst(container ?? page, selectors) : null;
+        const found = selectors ? await resolveFirst(container ?? base, selectors) : null;
         result = await fieldValue(state.field, found ? found.locator.nth(0) : null, pageUrl);
       }
       if (!result.found) state.missingRows.push(index);
@@ -779,7 +1066,6 @@ async function extractTable(
     if (!required.some((s) => s.missingRows.includes(index))) rows.push({ ...row, _index: rows.length });
   }
 
-  const prefix = TABLES.length > 1 ? 'table "' + table.name + '": ' : '';
   const missingRequired: string[] = [];
   const warnings: string[] = [];
   const droppedFields: string[] = [];
@@ -803,33 +1089,8 @@ async function extractTable(
     droppedFields,
     missingRequired,
     warnings,
-    resolved: item && containerCount === 0 && !resolved ? null : { item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) },
+    resolved: item && containerCount === 0 && !resolved ? null : { frame: at.frame, item: itemSelectors, within: withinSelectors, fields: states.map((s) => s.selectors) },
   };
-}
-
-/** Every table on the current page, in recipe order; fromIndex applies to the primary table only, the others are read in full and left to dedup. */
-async function extractPage(
-  page: Page,
-  pageNumber: number,
-  pageUrl: string,
-  resolved: readonly (Resolved | null)[] | null,
-  fromIndex: number,
-): Promise<Extraction[]> {
-  const primary = primaryIndex();
-  const out: Extraction[] = [];
-  for (const [index, table] of TABLES.entries()) {
-    out.push(await extractTable(page, table, pageNumber, pageUrl, resolved?.[index] ?? null, index === primary ? fromIndex : 0));
-  }
-  return out;
-}
-
-/** Where item containers are searched: inside the list parent's first match, else the page. */
-async function listParent(page: Page, item: Item, resolved: Resolved | null): Promise<{ root: Root; selectors: Selector[] | null; missing: boolean }> {
-  if (!item.within) return { root: page, selectors: null, missing: false };
-  const selectors = resolved ? resolved.within : item.within;
-  const found = selectors ? await resolveFirst(page, selectors) : null;
-  if (!found) return { root: page, selectors: null, missing: true };
-  return { root: found.locator.nth(0), selectors: resolved ? resolved.within : item.within.slice(found.index), missing: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -882,89 +1143,6 @@ function evaluateStop(
   if (limit !== 'all' && current.page >= limit) return { reason: 'limit', discard: false };
   if (limit === 'all' && current.page >= DEFAULT_PAGE_CAP) return { reason: 'cap', discard: false };
   return { reason: null, discard: false };
-}
-
-// ---------------------------------------------------------------------------
-// Pagination strategies (core pagination/strategies.ts)
-// ---------------------------------------------------------------------------
-
-type Advance = { kind: 'page'; url: string } | { kind: 'grown'; from: number } | { kind: 'stop'; reason: StopReason };
-
-interface Pager {
-  session: Session;
-  values: Record<string, string>;
-  start: number;
-  /** Selectors the pagination target settled on the first time it was found. */
-  targetSelectors: Selector[] | null;
-  /** Primary table item containers on the page now, with the selectors it settled on. */
-  count(): Promise<number>;
-}
-
-/** Whether a next or load-more control is disabled: disabled, aria-disabled="true", or an anchor without href. */
-async function isDisabled(target: Locator): Promise<boolean> {
-  return target.evaluate(
-    (el) => el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || (el.tagName.toLowerCase() === 'a' && !el.hasAttribute('href')),
-  );
-}
-
-/** The pagination target, or null when it is missing or disabled. */
-async function usableTarget(pager: Pager): Promise<Locator | null> {
-  if (!PAGINATION.target) return null;
-  const page = pager.session.page;
-  let found: Found | null;
-  if (pager.targetSelectors) {
-    found = await resolveFirst(page, pager.targetSelectors);
-  } else {
-    found = await resolveFirst(page, PAGINATION.target);
-    if (found) pager.targetSelectors = PAGINATION.target.slice(found.index);
-  }
-  const target = found ? found.locator.nth(0) : null;
-  if (!target || (await isDisabled(target))) return null;
-  return target;
-}
-
-/** Poll the item count until it exceeds before or the timeout passes. */
-async function waitForGrowth(pager: Pager, before: number): Promise<boolean> {
-  const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
-  for (;;) {
-    if ((await pager.count()) > before) return true;
-    if (Date.now() >= deadline) return false;
-    await sleep(GROWTH_POLL_MS);
-  }
-}
-
-async function nextPage(pager: Pager, page: number): Promise<Advance> {
-  const { session } = pager;
-  switch (PAGINATION.kind) {
-    case 'none':
-      return { kind: 'stop', reason: 'none' };
-    case 'url': {
-      const url = await session.goto(urlFor(pager.values, pager.start, page + 1));
-      log('page ' + (page + 1) + ': url');
-      return { kind: 'page', url };
-    }
-    case 'next': {
-      const target = await usableTarget(pager);
-      if (!target) return { kind: 'stop', reason: 'target-missing' };
-      log('page ' + (page + 1) + ': next');
-      const previousUrl = await session.click(target);
-      return { kind: 'page', url: await session.settle(previousUrl) };
-    }
-    case 'more': {
-      const target = await usableTarget(pager);
-      if (!target) return { kind: 'stop', reason: 'target-missing' };
-      const before = await pager.count();
-      log('page ' + (page + 1) + ': more');
-      await session.click(target);
-      return (await waitForGrowth(pager, before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
-    }
-    case 'scroll': {
-      const before = await pager.count();
-      log('page ' + (page + 1) + ': scroll');
-      await session.scrollToBottom();
-      return (await waitForGrowth(pager, before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,14 +1209,508 @@ class RowSink {
     else for (const table of this.selected) this.write(table, JSON.stringify(rowsOf(table), null, 2) + '\n');
   }
 }
+// ---------------------------------------------------------------------------
+// The sequence (core sequence/index.ts)
+// ---------------------------------------------------------------------------
+
+type Advance = { kind: 'page'; url: string } | { kind: 'grown'; from: number } | { kind: 'stop'; reason: StopReason };
+
+/** One table's state across the run. */
+interface TableState {
+  table: Table;
+  /** Selectors the table settled on: undefined before its first extraction, null while it still has to be resolved. */
+  resolved: Resolved | null | undefined;
+  /** Item tables only: keys of rows seen on earlier pages. */
+  seen: Set<string> | null;
+}
+
+/** One extraction: the table as found, and its rows after dedup, not yet emitted. */
+interface Extracted {
+  found: Extraction;
+  kept: Row[];
+  keys: string[];
+}
+
+/** Thrown for an optional step that is skipped, so the loop moves on. */
+const SKIPPED = Symbol('skipped');
+
+/** Re-checks an await-user condition at once when Enter is pressed on a terminal. */
+class Recheck {
+  private wake: (() => void) | null = null;
+  private readonly lines = process.stdin.isTTY ? createInterface({ input: process.stdin }) : null;
+
+  constructor() {
+    this.lines?.on('line', () => this.wake?.());
+  }
+
+  get interactive(): boolean {
+    return this.lines !== null;
+  }
+
+  /** Wait the interval, or less when Enter is pressed. */
+  wait(ms: number): Promise<void> {
+    return new Promise<void>((done) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.wake = null;
+        done();
+      };
+      const timer = setTimeout(finish, ms);
+      this.wake = finish;
+    });
+  }
+
+  close(): void {
+    this.lines?.close();
+  }
+}
+
+/** A target as stderr names it: its first candidate, and the iframe it sits in. */
+function describe(target: Target): string {
+  const first = target.selectors[0];
+  const text = first ? first.strategy + '=' + first.value : 'the target';
+  return target.frame?.[0] ? text + ' inside iframe ' + target.frame[0].strategy + '=' + target.frame[0].value : text;
+}
+
+/**
+ * Runs the recipe's sequence on the main window: called flows, extractions,
+ * and the paginate block's page loop, with reactive flows at every
+ * checkpoint and recovery of the page state after one.
+ */
+class Run {
+  private readonly tables: TableState[] = TABLES.map((table) => ({ table, resolved: undefined, seen: table.item ? new Set<string>() : null }));
+  private readonly lead = LEAD >= 0 ? TABLES[LEAD]!.name : null;
+  private readonly reactive = FLOWS.filter((f) => f.trigger !== null);
+  private readonly retries = new Map<string, number>();
+  private readonly cache: StepCache = new Map();
+  private page = 1;
+  /** The main window's URL as the run last saw it settle. */
+  private pageUrl = '';
+  /** Where the batch began (the last page the run navigated to itself) and the called flows it ran, for recovery. */
+  private batch: { url: string; flowsRun: string[] };
+  /** The paginate block is running, for recovery. */
+  private paginating = false;
+  /** A reactive flow is running: no trigger fires until it ends. */
+  private reacting = false;
+  /** Selectors the pagination target and its frame settled on the first time they were found. */
+  private targetSelectors: { selectors: Selector[]; frame: Selector[] | null } | null = null;
+  rowCount = 0;
+  /** Pages whose rows were emitted; a discarded last page does not count. */
+  pageCount = 0;
+
+  constructor(
+    private readonly windows: Windows,
+    private readonly values: Record<string, string>,
+    private readonly sink: RowSink,
+    private readonly firstUrl: string,
+    private readonly start: number,
+    private readonly limit: number | 'all',
+    private readonly awaitTimeoutMs: number,
+  ) {
+    this.batch = { url: firstUrl, flowsRun: [] };
+  }
+
+  private get main(): Session {
+    return this.windows.main;
+  }
+
+  /** Navigate to the first page, then run every block of the sequence. Returns why the page loop ended. */
+  async run(): Promise<StopReason> {
+    log('running ' + RECIPE_NAME + ': ' + this.firstUrl);
+    await this.loaded(await this.main.goto(this.firstUrl));
+    let reason: StopReason = 'none';
+    for (const block of SEQUENCE) {
+      if ('paginate' in block) reason = await this.paginate(block.paginate);
+      else await this.inner(block, null);
+    }
+    // Without pagination the run is one page, with rows or not.
+    if (!SEQUENCE.some((b) => 'paginate' in b)) this.pageCount = 1;
+    return reason;
+  }
+
+  /** A settled main window page: let reactive flows look at it. */
+  private async loaded(url: string): Promise<void> {
+    this.pageUrl = url;
+    await this.checkpoint();
+  }
+
+  /** A flow or extract block, outside or inside the paginate block. */
+  private async inner(block: Inner, driving: { name: string | null; fromIndex: number } | null): Promise<Extracted | null> {
+    if ('flow' in block) {
+      await this.calledFlow(block.flow);
+      return null;
+    }
+    const extracted = await this.extract(block.extract, driving && driving.name === block.extract ? driving.fromIndex : 0);
+    if (!driving) this.emit(extracted);
+    return extracted;
+  }
+
+  // Flows
+
+  private async calledFlow(name: string): Promise<void> {
+    await this.runFlow(FLOWS.find((f) => f.name === name)!, 'called', this.main);
+    this.batch.flowsRun.push(name);
+  }
+
+  /**
+   * Replay a flow's steps in order, in the window each step names: same is
+   * the window the flow started in, popup the newest popup opened since. An
+   * optional step whose target or window is not found is skipped; a required
+   * one fails the run with exit 3 naming the flow and the step.
+   */
+  private async runFlow(flow: Flow, kind: 'called' | 'reactive', origin: Session): Promise<void> {
+    log('flow ' + flow.name + ' (' + kind + ') on page ' + this.page);
+    const mark = this.windows.mark();
+    for (const step of flow.steps) {
+      await this.checkpoint();
+      const label = 'flow "' + step.flow + '" step ' + step.index + (step.name === step.flow + ':' + step.index ? '' : ' "' + step.name + '"') + ' (' + step.kind + ') on page ' + this.page;
+      const fail = (why: string): never => {
+        if (!step.optional) {
+          // Names, never values: a fill's value may hold a secret.
+          const uses = step.action.kind === 'fill' ? step.action.vars : [];
+          const from = uses.length > 0 ? ' (value from variable' + (uses.length > 1 ? 's ' : ' ') + uses.join(', ') + ')' : '';
+          throw new Failure('required step ' + step.index + ' (' + step.kind + ') of flow "' + step.flow + '" ' + why + from + ' [' + step.name + ']', EXIT_UNRESOLVED);
+        }
+        log(label + ': skipped (' + why + ')');
+        throw SKIPPED;
+      };
+      try {
+        let window = step.window === 'popup' ? await this.windows.waitForPopup(mark) : origin;
+        // Once the popup of an await-user step is gone, its condition is checked from the flow's window.
+        if (step.action.kind === 'await-user' && (!window || window.isClosed()) && this.windows.openedSince(mark)) window = origin;
+        if (!window || window.isClosed()) fail(step.window === 'popup' ? 'found no popup within ' + NAVIGATION_TIMEOUT_MS + ' ms' : 'found its window closed');
+        const session = window!;
+        const { action } = step;
+        if (action.kind === 'sleep') {
+          await sleep(action.ms);
+          log(label + ': ok');
+          continue;
+        }
+        if (action.kind === 'await-user') {
+          await this.awaitUser(step, action, session);
+          log(label + ': ok');
+          continue;
+        }
+        let target: Locator | null = null;
+        if (step.target) {
+          const found = await findStepTarget(session, step, this.cache);
+          if (!found.locator) fail(found.why);
+          target = found.locator;
+        }
+        const files = action.kind === 'fill' ? pathFiles(action, this.values) : null;
+        const previousUrl = session.page.url();
+        try {
+          if (action.kind === 'click') await session.click(target!);
+          else if (action.kind === 'fill') await session.fill(target!, fillText(action.text, this.values), files);
+          else if (action.kind === 'press') await session.press(action.key, target);
+        } catch (error) {
+          if (error instanceof Failure) throw error;
+          if (error instanceof Unresolved) fail('found no element: ' + error.message);
+          fail('could not run: ' + errorText(error));
+        }
+        if (action.kind !== 'wait-for' && !session.isClosed()) {
+          // A step that closes its popup (a login that is done) has nothing to settle.
+          const settled = await session.settle(previousUrl).catch((error: unknown) => {
+            if (session.isClosed()) return null;
+            throw error;
+          });
+          if (settled !== null && session === this.main) this.pageUrl = settled;
+        }
+        log(label + ': ok');
+      } catch (error) {
+        if (error === SKIPPED) continue;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * A checkpoint: fire the first reactive flow, in recipe order, whose trigger
+   * resolves in any open window. Nothing fires while a reactive flow runs. A
+   * flow that would fire more than its maxRetries since the last successful
+   * extraction fails the run.
+   */
+  private async checkpoint(): Promise<void> {
+    if (this.reacting || this.reactive.length === 0) return;
+    const open = this.windows.open();
+    for (const flow of this.reactive) {
+      for (const window of open) {
+        if (!(await targetPresent(window, flow.trigger!))) continue;
+        const fired = (this.retries.get(flow.name) ?? 0) + 1;
+        if (fired > flow.maxRetries) {
+          throw new Failure('reactive flow "' + flow.name + '" fired more than ' + flow.maxRetries + ' times without a successful extraction in between', EXIT_ERROR);
+        }
+        this.retries.set(flow.name, fired);
+        this.reacting = true;
+        try {
+          await this.runFlow(flow, 'reactive', window);
+        } finally {
+          this.reacting = false;
+        }
+        if (flow.recover) await this.recover();
+        return;
+      }
+    }
+  }
+
+  /** Whether an await-user condition holds: the target resolves (appears) or resolves nowhere (disappears), in any open window. */
+  private async awaitHolds(target: Target, until: 'appears' | 'disappears'): Promise<boolean> {
+    let present = false;
+    for (const window of this.windows.open()) {
+      if (await targetPresent(window, target)) {
+        present = true;
+        break;
+      }
+    }
+    return until === 'disappears' ? !present : present;
+  }
+
+  /**
+   * An await-user step: print what it waits for on stderr, then check the
+   * condition every second (each tick a checkpoint) or at once on Enter,
+   * until it holds or the timeout runs out (exit 2).
+   */
+  private async awaitUser(step: Step, action: Extract<Action, { kind: 'await-user' }>, window: Session): Promise<void> {
+    const target = step.target!;
+    if (await this.awaitHolds(target, action.until)) return;
+    const timeoutMs = action.timeoutMs ?? this.awaitTimeoutMs;
+    const recheck = new Recheck();
+    log(
+      'waiting for you: ' + action.label + ' (until ' + describe(target) + (action.until === 'appears' ? ' appears' : ' disappears') + ', up to ' + timeoutMs + ' ms' + (recheck.interactive ? '; press Enter to check again' : '') + ')',
+    );
+    await window.page.bringToFront().catch(() => {});
+    const deadline = Date.now() + timeoutMs;
+    try {
+      for (;;) {
+        await this.checkpoint();
+        if (await this.awaitHolds(target, action.until)) return;
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          throw new Failure('await-user step "' + action.label + '" of flow "' + step.flow + '" was not completed within ' + timeoutMs + ' ms', EXIT_PAUSED);
+        }
+        await recheck.wait(Math.min(AWAIT_POLL_MS, left));
+      }
+    } finally {
+      recheck.close();
+    }
+  }
+
+  /**
+   * Restore the state the sequence had built: go back to where the batch
+   * began and replay the called flows it ran. Skipped when no flow ran and
+   * the main window is already there. On page 2 or later of next or more
+   * pagination the state cannot be rebuilt: the run fails.
+   */
+  private async recover(): Promise<void> {
+    const kind = PAGINATION.kind;
+    if (this.paginating && (kind === 'next' || kind === 'more') && this.page >= 2) {
+      throw new Failure(
+        'run failed (pagination-lost): the page state of page ' + this.page + ' cannot be rebuilt after an interruption, since ' + kind + ' pagination reached it by clicking; rows of earlier pages are kept',
+        EXIT_ERROR,
+        true,
+      );
+    }
+    const flows = [...this.batch.flowsRun];
+    if (flows.length === 0 && sameUrl(this.main.page.url(), this.batch.url)) return;
+    log('recovering page ' + this.page + ': ' + this.batch.url);
+    const url = await this.main.goto(this.batch.url);
+    this.batch.flowsRun = [];
+    await this.loaded(url);
+    for (const name of flows) await this.calledFlow(name);
+  }
+
+  // Extraction
+
+  /** Extract one table on the main window's current page. The rows are deduplicated, not emitted. */
+  private async extract(name: string, fromIndex: number): Promise<Extracted> {
+    await this.checkpoint();
+    const state = this.tables.find((t) => t.table.name === name)!;
+    const found = await extractTable(this.main.page, state.table, this.page, this.pageUrl, state.resolved ?? null, fromIndex);
+    this.settle(state, found);
+    // A successful extraction gives every reactive flow its retries back.
+    this.retries.clear();
+    if (!state.seen) return { found, kept: found.rows, keys: [] };
+    const { kept, keys } = dedupRows(state.table, found.rows, this.page, state.seen);
+    return { found, kept, keys };
+  }
+
+  /** Apply the first extraction rules: required targets and rows; later pages fail only for a field gone from every item. */
+  private settle(state: TableState, found: Extraction): void {
+    const at = TABLES.length > 1 ? 'table "' + found.name + '": ' : '';
+    const first = state.resolved === undefined;
+    let names = found.missingRequired;
+    if (first && found.name !== this.lead && (names.includes('item') || names.includes('within'))) {
+      // A secondary list absent from the page is normal: no rows for it, not a failure.
+      log('warning: ' + at + 'the item container matched no element on page ' + this.page + '; the table yields no rows');
+      names = names.filter((n) => n !== 'item' && n !== 'within');
+    }
+    if (first) {
+      if (names.length > 0) {
+        const message = names.includes('within')
+          ? 'the list parent (item.within) matched no element, so the item container is unresolved'
+          : names.includes('item')
+            ? 'the item container matched no element'
+            : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element';
+        throw new Failure(at + message, EXIT_UNRESOLVED);
+      }
+      if (found.containerCount > 0 && found.rows.length === 0) {
+        const fields = found.droppedFields;
+        throw new Failure(at + 'every row on page ' + this.page + ' was dropped for missing required field' + (fields.length > 1 ? 's ' : ' ') + fields.join(', '), EXIT_UNRESOLVED);
+      }
+    } else {
+      // A later page with no items is the end of the list, not a failure; a field gone from every item is.
+      const gone = names.filter((n) => n !== 'item' && n !== 'within');
+      if (gone.length > 0) {
+        throw new Failure(at + 'required field' + (gone.length > 1 ? 's ' : ' ') + gone.join(', ') + ' matched no element on page ' + this.page, EXIT_UNRESOLVED);
+      }
+    }
+    if (!state.resolved) state.resolved = found.resolved;
+    for (const warning of found.warnings) log('warning: ' + warning);
+  }
+
+  /** Emit an extraction's rows. */
+  private emit({ found, kept, keys }: Extracted): void {
+    const state = this.tables.find((t) => t.table.name === found.name)!;
+    for (const key of keys) state.seen?.add(key);
+    kept.forEach((row, at) => {
+      row._index = at;
+      this.sink.row(found.name, row);
+    });
+    this.rowCount += kept.length;
+    this.pageCount = Math.max(this.pageCount, this.page);
+  }
+
+  // Pagination
+
+  /** The page loop: run the inner blocks on each page, then advance, until a stop rule, the limit, or the cap. */
+  private async paginate(blocks: Inner[]): Promise<StopReason> {
+    const driving = PAGINATION.table;
+    const lead = this.tables.find((t) => t.table.name === driving);
+    this.paginating = true;
+    let previous: PageSummary | null = null;
+    let fromIndex = 0;
+    try {
+      for (;;) {
+        const extracted: Extracted[] = [];
+        for (const block of blocks) {
+          const result = await this.inner(block, { name: driving, fromIndex });
+          if (result) extracted.push(result);
+        }
+        const page = this.page;
+        const head = extracted.find((e) => e.found.name === driving);
+        // Without a driving table every page counts as one item, so only the limit, the cap, or a missing target stop the run.
+        const summary: PageSummary =
+          head && lead?.seen
+            ? { page, url: this.pageUrl, firstKey: head.found.firstRow ? keyOf(lead.table, head.found.firstRow) : null, raw: head.found.containerCount, kept: head.kept.length }
+            : { page, url: this.pageUrl, firstKey: null, raw: 1, kept: 1 };
+        const verdict = evaluateStop(summary, previous, this.limit);
+        if (!verdict.discard) {
+          for (const e of extracted) this.emit(e);
+          this.pageCount = page;
+        }
+        if (verdict.reason) return verdict.reason;
+
+        if (PAGINATION.delayMs > 0) await sleep(PAGINATION.delayMs);
+        const advance = await this.nextPage(page);
+        if (advance.kind === 'stop') return advance.reason;
+        previous = summary;
+        this.page++;
+        if (advance.kind === 'page') {
+          fromIndex = 0;
+          // Only a page the run navigated to itself starts a new batch.
+          if (PAGINATION.kind === 'url') this.batch = { url: advance.url, flowsRun: [] };
+          await this.loaded(advance.url);
+        } else {
+          fromIndex = advance.from;
+        }
+      }
+    } finally {
+      this.paginating = false;
+    }
+  }
+
+  /** Driving table item containers on the main window now. */
+  private count(): Promise<number> {
+    const state = this.tables.find((t) => t.table.name === PAGINATION.table);
+    return countItems(this.main.page, state?.table ?? null, state?.resolved);
+  }
+
+  /** The pagination target, or null when it is missing or disabled. */
+  private async usableTarget(): Promise<Locator | null> {
+    const stored = PAGINATION.target;
+    if (!stored) return null;
+    const page = this.main.page;
+    const settled = this.targetSelectors;
+    let root: Root = page;
+    let frameSelectors: Selector[] | null = null;
+    const frameAt = settled?.frame ?? stored.frame;
+    if (frameAt) {
+      const frame = await frameRoot(page, frameAt, NAVIGATION_TIMEOUT_MS);
+      if (!frame) return null;
+      root = frame.root;
+      frameSelectors = frame.selectors;
+    }
+    const found = await resolveFirst(root, settled?.selectors ?? stored.selectors);
+    if (!found) return null;
+    if (!settled) this.targetSelectors = { selectors: stored.selectors.slice(found.index), frame: frameSelectors };
+    const target = found.locator.nth(0);
+    return (await target.evaluate(pageFn('isDisabled'))) ? null : target;
+  }
+
+  /** Poll the item count until it exceeds before or the timeout passes. */
+  private async waitForGrowth(before: number): Promise<boolean> {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    for (;;) {
+      if ((await this.count()) > before) return true;
+      if (Date.now() >= deadline) return false;
+      await sleep(GROWTH_POLL_MS);
+    }
+  }
+
+  private async nextPage(page: number): Promise<Advance> {
+    const session = this.main;
+    switch (PAGINATION.kind) {
+      case 'none':
+        return { kind: 'stop', reason: 'none' };
+      case 'url': {
+        log('page ' + (page + 1) + ': url');
+        return { kind: 'page', url: await session.goto(urlFor(this.values, this.start, page + 1)) };
+      }
+      case 'next': {
+        const target = await this.usableTarget();
+        if (!target) return { kind: 'stop', reason: 'target-missing' };
+        log('page ' + (page + 1) + ': next');
+        const previousUrl = session.page.url();
+        await session.click(target);
+        return { kind: 'page', url: await session.settle(previousUrl) };
+      }
+      case 'more': {
+        const target = await this.usableTarget();
+        if (!target) return { kind: 'stop', reason: 'target-missing' };
+        const before = await this.count();
+        log('page ' + (page + 1) + ': more');
+        await session.click(target);
+        return (await this.waitForGrowth(before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
+      }
+      case 'scroll': {
+        const before = await this.count();
+        log('page ' + (page + 1) + ': scroll');
+        await session.scrollToBottom();
+        return (await this.waitForGrowth(before)) ? { kind: 'grown', from: before } : { kind: 'stop', reason: 'no-growth' };
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The run (core runner.ts)
 // ---------------------------------------------------------------------------
 
 async function scrape(opts: Options): Promise<number> {
-  const values = resolveVars(opts.vars);
-  const start = pageStart(opts.vars);
+  const given: Record<string, string> = {};
+  for (const [name, source] of Object.entries(opts.vars)) given[name] = readSource(name, source);
+  const values = resolveVars(given);
+  const start = pageStart(given);
   const firstUrl = urlFor(values, start, 1);
   const limit = opts.pages ?? PAGINATION.limit;
 
@@ -1054,146 +1726,21 @@ async function scrape(opts: Options): Promise<number> {
     args: STEALTH_ARGS,
     ...(executablePath ? { executablePath } : {}),
   });
+  const sink = new RowSink(opts.jsonl, opts.out, opts.outDir, opts.table);
   try {
     context.setDefaultTimeout(ACTION_TIMEOUT_MS);
     context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
-    const session = new Session(context.pages()[0] ?? (await context.newPage()));
-    const page = session.page;
-    const sink = new RowSink(opts.jsonl, opts.out, opts.outDir, opts.table);
-    const stepCache: StepCache = new Map();
-    const primary = primaryIndex();
-    /** Keys seen so far, per table; tables without an item container are never deduplicated. */
-    const seen = TABLES.map(() => new Set<string>());
-    /** Per table, what the first page it matched on settled; null before page 1 is extracted. */
-    let resolved: (Resolved | null)[] | null = null;
-    const pager: Pager = {
-      session,
-      values,
-      start,
-      targetSelectors: null,
-      async count() {
-        // Without an item table every page counts as one item.
-        if (primary < 0) return 1;
-        const item = TABLES[primary]!.item!;
-        const settled = resolved?.[primary];
-        if (!settled?.item) return 0;
-        const parent = await listParent(page, item, settled);
-        if (parent.missing) return 0;
-        const found = await resolveFirst(parent.root, settled.item);
-        return found ? (await keptContainers(page, found, item.exclude)).length : 0;
-      },
-    };
-
-    log('running ' + RECIPE_NAME + ': ' + firstUrl);
-    let url = await session.goto(firstUrl);
-    let pageNumber = 1;
-    let navigated = true;
-    let fromIndex = 0;
-    let previous: PageSummary | null = null;
-    let rowCount = 0;
-    /** Pages whose rows were emitted; a discarded last page does not count. */
-    let pageCount = 0;
-    let reason: StopReason;
-    for (;;) {
-      if (navigated) {
-        await replaySteps(session, pageNumber, values, stepCache);
-        url = page.url();
-      }
-      const extractions = await extractPage(page, pageNumber, url, resolved, fromIndex);
-      const firstPage = resolved === null;
-      const settled: (Resolved | null)[] = resolved ?? TABLES.map(() => null);
-      for (const [index, found] of extractions.entries()) {
-        const at = TABLES.length > 1 ? 'table "' + found.name + '": ' : '';
-        let names = found.missingRequired;
-        if (firstPage && index !== primary && (names.includes('item') || names.includes('within'))) {
-          // A secondary list absent from the page is normal: no rows for it, not a failure.
-          log('warning: ' + at + 'the item container matched no element on page ' + pageNumber + '; the table yields no rows');
-          names = names.filter((name) => name !== 'item' && name !== 'within');
-        }
-        if (firstPage) {
-          if (names.length > 0) {
-            const message = names.includes('within')
-              ? 'the list parent (item.within) matched no element, so the item container is unresolved'
-              : names.includes('item')
-              ? 'the item container matched no element'
-              : 'required field' + (names.length > 1 ? 's ' : ' ') + names.join(', ') + ' matched no element';
-            throw new Failure(at + message, EXIT_UNRESOLVED);
-          }
-          if (found.containerCount > 0 && found.rows.length === 0) {
-            const fields = found.droppedFields;
-            throw new Failure(
-              at + 'every row on page ' + pageNumber + ' was dropped for missing required field' + (fields.length > 1 ? 's ' : ' ') + fields.join(', '),
-              EXIT_UNRESOLVED,
-            );
-          }
-        } else {
-          // A later page with no items is the end of the list, not a failure; a field gone from every item is.
-          const gone = names.filter((name) => name !== 'item' && name !== 'within');
-          if (gone.length > 0) {
-            throw new Failure(at + 'required field' + (gone.length > 1 ? 's ' : ' ') + gone.join(', ') + ' matched no element on page ' + pageNumber, EXIT_UNRESOLVED);
-          }
-        }
-        settled[index] ??= found.resolved;
-        for (const warning of found.warnings) log('warning: ' + warning);
-      }
-      resolved = settled;
-
-      const fresh = extractions.map((found, index) => {
-        const table = TABLES[index]!;
-        return table.item ? dedupRows(table, found.rows, pageNumber, seen[index]!) : { kept: found.rows, keys: [] };
-      });
-      const lead = primary >= 0 ? extractions[primary]! : null;
-      // Without an item table every page counts as one item, so only the limit, the cap, or a missing target stop the run.
-      const summary: PageSummary = lead
-        ? {
-            page: pageNumber,
-            url,
-            firstKey: lead.firstRow ? keyOf(TABLES[primary]!, lead.firstRow) : null,
-            raw: lead.containerCount,
-            kept: fresh[primary]!.kept.length,
-          }
-        : { page: pageNumber, url, firstKey: null, raw: 1, kept: 1 };
-      const verdict = evaluateStop(summary, previous, limit);
-      if (!verdict.discard) {
-        for (const [index, found] of extractions.entries()) {
-          const { kept, keys } = fresh[index]!;
-          for (const key of keys) seen[index]!.add(key);
-          kept.forEach((row, at) => {
-            row._index = at;
-            sink.row(found.name, row);
-          });
-          rowCount += kept.length;
-        }
-        pageCount = pageNumber;
-      }
-      if (verdict.reason) {
-        reason = verdict.reason;
-        break;
-      }
-
-      if (PAGINATION.delayMs > 0) await sleep(PAGINATION.delayMs);
-      const advance = await nextPage(pager, pageNumber);
-      if (advance.kind === 'stop') {
-        reason = advance.reason;
-        break;
-      }
-      previous = summary;
-      pageNumber++;
-      if (advance.kind === 'page') {
-        url = advance.url;
-        fromIndex = 0;
-        navigated = true;
-      } else {
-        fromIndex = advance.from;
-        navigated = false;
-      }
-    }
-
+    const main = new Session(context.pages()[0] ?? (await context.newPage()));
+    const run = new Run(new Windows(context, main), values, sink, firstUrl, start, limit, opts.awaitTimeoutMs);
+    const reason = await run.run();
     if (reason === 'cap') log('warning: stopped at the page cap of ' + DEFAULT_PAGE_CAP + ' pages');
-    else if (reason !== 'limit' && reason !== 'none') log('pagination stopped after page ' + pageCount + ': ' + reason);
+    else if (reason !== 'limit' && reason !== 'none') log('pagination stopped after page ' + run.pageCount + ': ' + reason);
     sink.finish();
-    log(rowCount + ' row' + (rowCount === 1 ? '' : 's') + ' from ' + pageCount + ' page' + (pageCount === 1 ? '' : 's'));
+    log(run.rowCount + ' row' + (run.rowCount === 1 ? '' : 's') + ' from ' + run.pageCount + ' page' + (run.pageCount === 1 ? '' : 's'));
     return EXIT_OK;
+  } catch (error) {
+    if (error instanceof Failure && error.keepRows) sink.finish();
+    throw error;
   } finally {
     await context.close().catch(() => {});
     if (!opts.profile) rmSync(profileDir, { recursive: true, force: true });
@@ -1205,14 +1752,14 @@ async function main(argv: readonly string[]): Promise<number> {
     return await scrape(parseArgs(argv));
   } catch (error) {
     if (error instanceof HelpRequested) {
-      process.stdout.write(USAGE + '\n');
+      process.stdout.write(usage() + '\n');
       return EXIT_OK;
     }
     if (error instanceof Failure) {
       log(error.message);
       return error.code;
     }
-    log('error: ' + (error instanceof Error ? error.message : String(error)));
+    log('error: ' + errorText(error));
     return EXIT_ERROR;
   }
 }
@@ -1237,58 +1784,80 @@ const SETTLE_IDLE_MS = 2000;
 const WAIT_POLL_MS = 200;
 /** Interval between item counts while a page grows. */
 const GROWTH_POLL_MS = 200;
+/** Interval between checks of an await-user condition. */
+const AWAIT_POLL_MS = 1000;
+/** How long an await-user step waits unless --await-timeout is given. */
+const DEFAULT_AWAIT_TIMEOUT_MS = 600000;
+/** Longest a --var-command may run. */
+const VAR_COMMAND_TIMEOUT_MS = 30000;
+/** How long a file chooser may take to open. */
+const FILE_CHOOSER_TIMEOUT_MS = 5000;
 /** Most pages --pages all walks. */
 const DEFAULT_PAGE_CAP = 500;
 
 /** Page URL; {name} marks a variable. */
 const URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?tier={tier}&gate=cookie";
 const VARS: Var[] = [
-  { "name": "port", "default": "4777", "required": true },
-  { "name": "tier", "default": "0", "required": true }
+  { "name": "port", "default": "4777", "required": true, "secret": false, "path": false },
+  { "name": "tier", "default": "0", "required": true, "secret": false, "path": false }
 ];
-const STEPS: Step[] = [
+const FLOWS: Flow[] = [
   {
-    "index": 0,
-    "flow": "setup",
-    "step": 0,
-    "kind": "click",
-    "name": "accept cookies",
-    "when": "first-page",
-    "optional": false,
-    "target": [
-      { "strategy": "role", "value": "button|Accept all" },
-      { "strategy": "id", "value": "consent-accept" },
-      { "strategy": "css", "value": "button.consent-button" }
-    ],
-    "action": { "kind": "click" }
-  },
-  {
-    "index": 1,
-    "flow": "setup",
-    "step": 1,
-    "kind": "wait",
-    "name": "setup:1",
-    "when": "first-page",
-    "optional": false,
-    "target": [{ "strategy": "testid", "value": "product-card" }],
-    "action": { "kind": "wait-for" }
-  },
-  {
-    "index": 2,
-    "flow": "setup",
-    "step": 2,
-    "kind": "wait",
-    "name": "setup:2",
-    "when": "first-page",
-    "optional": true,
-    "target": null,
-    "action": { "kind": "sleep", "ms": 100 }
+    "name": "setup",
+    "trigger": null,
+    "maxRetries": 2,
+    "recover": false,
+    "steps": [
+      {
+        "flow": "setup",
+        "index": 0,
+        "kind": "click",
+        "name": "accept cookies",
+        "optional": false,
+        "window": "same",
+        "target": {
+          "selectors": [
+            { "strategy": "role", "value": "button|Accept all" },
+            { "strategy": "id", "value": "consent-accept" },
+            { "strategy": "css", "value": "button.consent-button" }
+          ],
+          "frame": null
+        },
+        "action": { "kind": "click" }
+      },
+      {
+        "flow": "setup",
+        "index": 1,
+        "kind": "wait",
+        "name": "setup:1",
+        "optional": false,
+        "window": "same",
+        "target": {
+          "selectors": [{ "strategy": "testid", "value": "product-card" }],
+          "frame": null
+        },
+        "action": { "kind": "wait-for" }
+      },
+      {
+        "flow": "setup",
+        "index": 2,
+        "kind": "wait",
+        "name": "setup:2",
+        "optional": true,
+        "window": "same",
+        "target": null,
+        "action": { "kind": "sleep", "ms": 100 }
+      }
+    ]
   }
 ];
-/** Tables in recipe order; the first with an item container drives item counts and the stop rules. */
+/** Blocks in run order: called flows, extractions, and the paginate block. */
+const SEQUENCE: Block[] = [{ "flow": "setup" }, { "extract": "items" }];
+/** Tables in sequence order. */
 const TABLES: Table[] = [
   {
     "name": "items",
+    "frame": null,
     "item": {
       "selectors": [
         { "strategy": "testid", "value": "product-card" },
@@ -1383,14 +1952,32 @@ const TABLES: Table[] = [
     "key": "url"
   }
 ];
+/** Index of the table whose absence on its first extraction fails the run; -1 when none. */
+const LEAD = 0;
 const PAGINATION: Pagination = {
   "kind": "none",
+  "table": null,
   "param": null,
   "paramInTemplate": false,
   "target": null,
   "limit": 1,
   "stopRules": [],
   "delayMs": 0
+};
+/** Functions evaluated in the page, from webscoop core. */
+const PAGE_JS: Record<string, string> = {
+  "classifyFill": "function classifyFillElement(el) {\n\tconst tag = el.tagName.toLowerCase();\n\tconst role = (el.getAttribute(\"role\") ?? \"\").toLowerCase();\n\tconst type = tag === \"input\" ? (el.type || \"text\").toLowerCase() : \"\";\n\tif (type === \"file\") return \"file\";\n\tif (type === \"checkbox\" || role === \"checkbox\" || role === \"switch\") return \"toggle\";\n\tif (type === \"radio\" || role === \"radio\") return \"radio\";\n\tif (tag === \"select\") return \"select\";\n\tconst autocomplete = (el.getAttribute(\"aria-autocomplete\") ?? \"\").toLowerCase();\n\tif (role === \"combobox\" || tag === \"input\" && (autocomplete !== \"\" && autocomplete !== \"none\" || el.hasAttribute(\"list\"))) return \"combobox\";\n\tconst nonText = [\n\t\t\"button\",\n\t\t\"submit\",\n\t\t\"reset\",\n\t\t\"image\",\n\t\t\"hidden\",\n\t\t\"range\",\n\t\t\"color\"\n\t];\n\tif (tag === \"input\" && nonText.includes(type)) return \"none\";\n\tif (tag === \"input\" && el.getAttribute(\"maxlength\") === \"1\") return \"otp\";\n\tconst editable = el.isContentEditable || [\n\t\t\"\",\n\t\t\"true\",\n\t\t\"plaintext-only\"\n\t].includes(el.getAttribute(\"contenteditable\") ?? \"false\");\n\tif (tag === \"input\" || tag === \"textarea\" || editable || role === \"textbox\") return \"text\";\n\treturn \"none\";\n}",
+  "isChecked": "function isChecked(el) {\n\treturn el instanceof HTMLInputElement ? el.checked : el.getAttribute(\"aria-checked\") === \"true\";\n}",
+  "selectValues": "function selectValues(el, wanted) {\n\tconst select = el;\n\tconst options = Array.from(select.options ?? []);\n\tconst want = select.multiple ? wanted.split(\"\\n\").filter((w) => w !== \"\") : [wanted];\n\tconst values = [];\n\tfor (const w of want) {\n\t\tconst hit = options.find((o) => o.value === w) ?? options.find((o) => o.label.trim() === w || o.text.trim() === w);\n\t\tif (!hit) return { missing: w };\n\t\tvalues.push(hit.value);\n\t};\n\treturn { values };\n}",
+  "isEditable": "function isEditable(el) {\n\treturn el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable;\n}",
+  "readBack": "function readBack(el) {\n\treturn el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent ?? \"\";\n}",
+  "frameReachable": "function frameReachable(el) {\n\tif (!(el instanceof HTMLIFrameElement)) return false;\n\ttry {\n\t\treturn el.contentDocument !== null;\n\t} catch {\n\t\treturn false;\n\t}\n}",
+  "isDisabled": "function isDisabled(el) {\n\treturn el.hasAttribute(\"disabled\") || el.getAttribute(\"aria-disabled\") === \"true\" || el.tagName.toLowerCase() === \"a\" && !el.hasAttribute(\"href\");\n}",
+  "excludedMask": "function excludedMask(els, others) {\n\treturn els.map((el) => others.includes(el));\n}",
+  "nextFrame": "function nextFrame() {\n\treturn new Promise((resolve) => requestAnimationFrame(() => resolve()));\n}",
+  "scrollToBottom": "function scrollToBottom() {\n\twindow.scrollTo(0, document.documentElement.scrollHeight);\n}",
+  "resolveUrl": "function resolveUrl([raw, base]) {\n\ttry {\n\t\treturn new URL(raw, base).href;\n\t} catch {\n\t\treturn raw;\n\t}\n}",
+  "setQueryParam": "function setQueryParam([href, name, value]) {\n\tconst url = new URL(href);\n\turl.searchParams.set(name, value);\n\treturn url.href;\n}"
 };
 
 main(process.argv.slice(2)).then((code) => {

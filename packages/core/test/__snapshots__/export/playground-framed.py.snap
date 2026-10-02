@@ -1,4 +1,4 @@
-# Standalone Playwright script exported from the webscoop recipe "playground-catalog".
+# Standalone Playwright script exported from the webscoop recipe "playground-framed".
 # Exported at 2026-01-02T03:04:05.000Z by webscoop 0.0.0-test.
 #
 # It navigates, replays the recipe steps, extracts rows, and paginates like
@@ -1647,7 +1647,7 @@ def main(argv):
 # Recipe
 # ---------------------------------------------------------------------------
 
-RECIPE_NAME = "playground-catalog"
+RECIPE_NAME = "playground-framed"
 # Run without a window unless --headed is given.
 DEFAULT_HEADLESS = False
 
@@ -1675,26 +1675,42 @@ FILE_CHOOSER_TIMEOUT_MS = 5000
 DEFAULT_PAGE_CAP = 500
 
 # Page URL; {name} marks a variable.
-URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?tier={tier}"
-VARS = [
-    {"name": "port", "default": "4777", "required": True, "secret": False, "path": False},
-    {"name": "tier", "default": "0", "required": True, "secret": False, "path": False},
+URL_TEMPLATE = "http://127.0.0.1:{port}/framed"
+VARS = [{"name": "port", "default": "4777", "required": True, "secret": False, "path": False}]
+FLOWS = [
+    {
+        "name": "setup",
+        "trigger": None,
+        "maxRetries": 2,
+        "recover": False,
+        "steps": [
+            {
+                "flow": "setup",
+                "index": 0,
+                "kind": "click",
+                "name": "details",
+                "optional": False,
+                "window": "same",
+                "target": {
+                    "selectors": [{"strategy": "id", "value": "details-toggle"}],
+                    "frame": [{"strategy": "id", "value": "frame-catalog"}],
+                },
+                "action": {"kind": "click"},
+            },
+        ],
+    },
 ]
-FLOWS = []
 # Blocks in run order: called flows, extractions, and the paginate block.
-SEQUENCE = [{"extract": "items"}]
+SEQUENCE = [{"flow": "setup"}, {"extract": "products"}, {"extract": "details"}]
 # Tables in sequence order.
 TABLES = [
     {
-        "name": "items",
-        "frame": None,
-        "item": {
-            "selectors": [
-                {"strategy": "testid", "value": "product-card"},
-                {"strategy": "css", "value": "article.product-card"},
-            ],
-            "exclude": [],
-        },
+        "name": "products",
+        "frame": [
+            {"strategy": "id", "value": "frame-catalog"},
+            {"strategy": "css", "value": "iframe[name=\"catalog\"]"},
+        ],
+        "item": {"selectors": [{"strategy": "testid", "value": "product-card"}], "exclude": []},
         "fields": [
             {
                 "name": "title",
@@ -1703,11 +1719,7 @@ TABLES = [
                 "optional": False,
                 "fallback": False,
                 "hover": False,
-                "selectors": [
-                    {"strategy": "role", "value": "heading"},
-                    {"strategy": "css", "value": "h2.product-title"},
-                    {"strategy": "xpath", "value": ".//h2"},
-                ],
+                "selectors": [{"strategy": "css", "value": "h2.product-title"}],
                 "read": "text",
                 "attr": None,
             },
@@ -1718,68 +1730,31 @@ TABLES = [
                 "optional": False,
                 "fallback": False,
                 "hover": False,
-                "selectors": [
-                    {"strategy": "testid", "value": "price"},
-                    {"strategy": "css", "value": ".product-price"},
-                ],
+                "selectors": [{"strategy": "testid", "value": "price"}],
                 "read": "text",
                 "attr": None,
             },
+        ],
+        "key": "title",
+    },
+    {
+        "name": "details",
+        "frame": [{"strategy": "id", "value": "frame-catalog"}],
+        "item": None,
+        "fields": [
             {
-                "name": "url",
-                "type": "url",
-                "scope": "item",
-                "optional": False,
-                "fallback": False,
-                "hover": False,
-                "selectors": [
-                    {"strategy": "css", "value": "a.product-link"},
-                    {"strategy": "role", "value": "link|View details"},
-                ],
-                "read": "attr",
-                "attr": "href",
-            },
-            {
-                "name": "image",
-                "type": "image",
-                "scope": "item",
-                "optional": False,
-                "fallback": False,
-                "hover": False,
-                "selectors": [{"strategy": "css", "value": "img.product-image"}],
-                "read": "attr",
-                "attr": "src",
-            },
-            {
-                "name": "rating",
-                "type": "number",
-                "scope": "item",
-                "optional": False,
-                "fallback": False,
-                "hover": False,
-                "selectors": [
-                    {"strategy": "testid", "value": "rating"},
-                    {"strategy": "css", "value": ".product-rating"},
-                ],
-                "read": "text",
-                "attr": None,
-            },
-            {
-                "name": "category",
+                "name": "description",
                 "type": "text",
                 "scope": "page",
                 "optional": False,
                 "fallback": False,
                 "hover": False,
-                "selectors": [
-                    {"strategy": "testid", "value": "category"},
-                    {"strategy": "css", "value": "h1.category-heading"},
-                ],
+                "selectors": [{"strategy": "css", "value": ".details-text"}],
                 "read": "text",
                 "attr": None,
             },
         ],
-        "key": "url",
+        "key": None,
     },
 ]
 # Index of the table whose absence on its first extraction fails the run; -1 when none.

@@ -11,9 +11,9 @@ import {
   convertValue,
   Dedup,
   EXCLUDED_BEHAVIORS,
-  ExportUnsupportedError,
   header,
   loadRecipe,
+  PAGE_HELPERS,
   parseDate,
   parseNumber,
   PY_PRELUDE,
@@ -35,7 +35,7 @@ const NOW = new Date('2026-01-02T03:04:05.000Z');
 const OPTS = { version: '0.0.0-test', now: NOW };
 
 const fixture = (name: string): Recipe => loadRecipe(readFileSync(join(FIXTURES, `${name}.json`), 'utf8'));
-const FIXTURE_NAMES = ['playground-catalog', 'playground-positional', 'playground-paged', 'playground-steps', 'playground-tables'] as const;
+const FIXTURE_NAMES = ['playground-catalog', 'playground-positional', 'playground-paged', 'playground-steps', 'playground-tables', 'playground-framed'] as const;
 
 /** Scratch files inside the repository, so `playwright` resolves from the generated code. */
 const scratch: string[] = [];
@@ -75,6 +75,46 @@ function withinRecipe(): Recipe {
   };
 }
 
+const css = (value: string) => ({ selectors: [{ strategy: 'css' as const, value, stability: 'medium' as const }] });
+
+/**
+ * The SPA login as a reactive flow that fills the popup from variables (the
+ * password secret), and a framed upload step from a path variable.
+ */
+function flowsRecipe(): Recipe {
+  const framed = fixture('playground-framed');
+  const frame = { selectors: [{ strategy: 'id' as const, value: 'frame-catalog', stability: 'stable' as const, fingerprint: { tag: 'iframe' } }] };
+  return loadRecipe({
+    schemaVersion: 2,
+    name: 'flows-export',
+    url: 'http://127.0.0.1:{port}/spa',
+    vars: [
+      { name: 'port', type: 'string', default: '4777' },
+      { name: 'user', type: 'string', default: 'u' },
+      { name: 'pass', type: 'string', secret: true },
+      { name: 'resume', type: 'path' },
+    ],
+    tables: [framed.tables![0]!],
+    flows: [
+      {
+        name: 'login-wall',
+        trigger: { appears: css('#spa-login') },
+        maxRetries: 4,
+        recover: true,
+        steps: [
+          { kind: 'click', target: css('#spa-login') },
+          { kind: 'fill', target: css('#spa-user-input'), value: '{user}', window: 'popup' },
+          { kind: 'fill', target: css('#spa-password-input'), value: '{pass}', window: 'popup' },
+          { kind: 'click', target: css('#spa-sign-in'), window: 'popup' },
+          { kind: 'await-user', target: css('#spa-login'), until: 'disappears' },
+        ],
+      },
+      { name: 'upload', steps: [{ kind: 'fill', target: { ...css('#file'), frame }, value: '{resume}' }] },
+    ],
+    sequence: [{ flow: 'upload' }, { extract: 'products' }],
+  });
+}
+
 describe('buildPlan', () => {
   it('carries the list parent and class candidates, and leaves within out without one', () => {
     const plan = buildPlan(withinRecipe());
@@ -95,13 +135,14 @@ describe('buildPlan', () => {
     const plan = buildPlan(fixture('playground-catalog'));
     expect(plan.recipe).toBe('playground-catalog');
     expect(plan.vars).toEqual([
-      { name: 'port', default: '4777', required: true },
-      { name: 'tier', default: '0', required: true },
+      { name: 'port', default: '4777', required: true, secret: false, path: false },
+      { name: 'tier', default: '0', required: true, secret: false, path: false },
     ]);
     expect(plan.tables).toHaveLength(1);
     expect(plan.primary).toBe(0);
     const [table] = plan.tables;
     expect(table!.name).toBe('items');
+    expect(table!.frame).toBeNull();
     expect(table!.item).toEqual({
       selectors: [
         { strategy: 'testid', value: 'product-card' },
@@ -118,9 +159,11 @@ describe('buildPlan', () => {
       ['category', 'page', 'text', null],
     ]);
     expect(table!.key).toBe('url');
-    expect(plan.steps).toEqual([]);
+    expect(plan.flows).toEqual([]);
+    expect(plan.sequence).toEqual([{ extract: 'items' }]);
     expect(plan.pagination).toEqual({
       kind: 'none',
+      table: null,
       param: null,
       paramInTemplate: false,
       target: null,
@@ -129,7 +172,18 @@ describe('buildPlan', () => {
       stopRules: [],
       delayMs: 0,
     });
-    expect(plan.timings).toEqual({ navigationMs: 30_000, actionMs: 5000, settleGraceMs: 500, settleIdleMs: 2000, waitPollMs: 200, growthPollMs: 200 });
+    expect(plan.timings).toEqual({
+      navigationMs: 30_000,
+      actionMs: 5000,
+      settleGraceMs: 500,
+      settleIdleMs: 2000,
+      waitPollMs: 200,
+      growthPollMs: 200,
+      awaitPollMs: 1000,
+      awaitTimeoutMs: 600_000,
+      varCommandMs: 30_000,
+      fileChooserMs: 5000,
+    });
   });
 
   it('renders the same plan for a shorthand recipe and its one entry tables form', () => {
@@ -150,6 +204,7 @@ describe('buildPlan', () => {
     ]);
     expect(plan.primary).toBe(1);
     expect(plan.tables[2]!.item).toEqual({ selectors: [{ strategy: 'css', value: 'article.mixed-questions' }], exclude: [] });
+    expect(plan.sequence).toEqual([{ extract: 'page' }, { extract: 'products' }, { extract: 'questions' }]);
     // A recipe without any item table has no primary table.
     const pageOnly = fixture('playground-tables');
     expect(buildPlan({ ...pageOnly, tables: [pageOnly.tables![0]!] }).primary).toBe(-1);
@@ -194,9 +249,10 @@ describe('buildPlan', () => {
 
   it('resolves url pagination: the page variable is not required and sits in the template', () => {
     const plan = buildPlan(fixture('playground-paged'));
-    expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false });
+    expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false, secret: false, path: false });
     expect(plan.pagination).toMatchObject({
       kind: 'url',
+      table: 'items',
       param: { name: 'page', start: 1, step: 1 },
       paramInTemplate: true,
       limit: 'all',
@@ -208,24 +264,35 @@ describe('buildPlan', () => {
 
   it('normalizes steps: labels, click targets, wait on a target versus a sleep', () => {
     const plan = buildPlan(fixture('playground-steps'));
-    expect(plan.steps).toEqual([
+    expect(plan.sequence).toEqual([{ flow: 'setup' }, { extract: 'items' }]);
+    expect(plan.flows).toEqual([
       {
-        index: 0,
-        flow: 'setup',
-        step: 0,
-        kind: 'click',
-        name: 'accept cookies',
-        when: 'first-page',
-        optional: false,
-        target: [
-          { strategy: 'role', value: 'button|Accept all' },
-          { strategy: 'id', value: 'consent-accept' },
-          { strategy: 'css', value: 'button.consent-button' },
+        name: 'setup',
+        trigger: null,
+        maxRetries: 2,
+        recover: false,
+        steps: [
+          {
+            flow: 'setup',
+            index: 0,
+            kind: 'click',
+            name: 'accept cookies',
+            optional: false,
+            window: 'same',
+            target: {
+              selectors: [
+                { strategy: 'role', value: 'button|Accept all' },
+                { strategy: 'id', value: 'consent-accept' },
+                { strategy: 'css', value: 'button.consent-button' },
+              ],
+              frame: null,
+            },
+            action: { kind: 'click' },
+          },
+          { flow: 'setup', index: 1, kind: 'wait', name: 'setup:1', optional: false, window: 'same', target: { selectors: [{ strategy: 'testid', value: 'product-card' }], frame: null }, action: { kind: 'wait-for' } },
+          { flow: 'setup', index: 2, kind: 'wait', name: 'setup:2', optional: true, window: 'same', target: null, action: { kind: 'sleep', ms: 100 } },
         ],
-        action: { kind: 'click' },
       },
-      { index: 1, flow: 'setup', step: 1, kind: 'wait', name: 'setup:1', when: 'first-page', optional: false, target: [{ strategy: 'testid', value: 'product-card' }], action: { kind: 'wait-for' } },
-      { index: 2, flow: 'setup', step: 2, kind: 'wait', name: 'setup:2', when: 'first-page', optional: true, target: null, action: { kind: 'sleep', ms: 100 } },
     ]);
   });
 
@@ -240,11 +307,15 @@ describe('buildPlan', () => {
       sequence: [{ flow: 'search' }, { extract: 'items' }],
     });
     const plan = buildPlan(recipe);
-    expect(plan.vars).toEqual([{ name: 'q', default: null, required: true }]);
-    expect(plan.steps.map((s) => s.action)).toEqual([{ kind: 'fill', text: '{q} shoes' }, { kind: 'press', key: 'Enter' }, { kind: 'fill', text: 'price' }]);
+    expect(plan.vars).toEqual([{ name: 'q', default: null, required: true, secret: false, path: false }]);
+    expect(plan.flows[0]!.steps.map((s) => s.action)).toEqual([
+      { kind: 'fill', text: '{q} shoes', path: null, vars: ['q'] },
+      { kind: 'press', key: 'Enter' },
+      { kind: 'fill', text: 'price', path: null, vars: [] },
+    ]);
   });
 
-  it('runs flows before the paginate block on the first page and flows inside it on every page, tables in sequence order', () => {
+  it('keeps any sequence: flows after extracts and inside the paginate block, tables in sequence order', () => {
     const base = JSON.parse(readFileSync(join(FIXTURES, 'playground-tables.json'), 'utf8'));
     const click = { kind: 'click', target: { selectors: [{ strategy: 'css', value: 'button', stability: 'medium' }] } };
     const names = base.tables.map((t: { name: string }) => t.name) as string[];
@@ -255,26 +326,46 @@ describe('buildPlan', () => {
           { name: 'consent', steps: [click] },
           { name: 'tab', steps: [click] },
         ],
-        sequence: [{ flow: 'consent' }, { paginate: { kind: 'scroll', do: [{ flow: 'tab' }, ...[...names].reverse().map((extract) => ({ extract }))] } }],
+        sequence: [{ extract: 'page' }, { flow: 'consent' }, { paginate: { kind: 'scroll', do: [{ flow: 'tab' }, ...['questions', 'products'].map((extract) => ({ extract }))] } }],
       }),
     );
-    expect(plan.steps.map((s) => [s.flow, s.when, s.name])).toEqual([
-      ['consent', 'first-page', 'consent:0'],
-      ['tab', 'every-page', 'tab:0'],
-    ]);
-    expect(plan.tables.map((t) => t.name)).toEqual([...names].reverse());
-    expect(plan.pagination.kind).toBe('scroll');
+    expect(plan.sequence).toEqual([{ extract: 'page' }, { flow: 'consent' }, { paginate: [{ flow: 'tab' }, { extract: 'questions' }, { extract: 'products' }] }]);
+    expect(plan.tables.map((t) => t.name)).toEqual(['page', 'questions', 'products']);
+    expect(names).toHaveLength(3);
+    // The driving table is the first item table of the paginate block.
+    expect(plan.pagination).toMatchObject({ kind: 'scroll', table: 'questions' });
+    expect(plan.primary).toBe(1);
   });
 
-  it('rejects reactive flows, await-user and popup steps, and sequences of another shape, naming the offender', () => {
-    const base = JSON.parse(readFileSync(join(FIXTURES, 'playground-catalog.json'), 'utf8'));
-    const target = { selectors: [{ strategy: 'css', value: 'button', stability: 'medium' }] };
-    const plan = (extra: Record<string, unknown>) => () => buildPlan(loadRecipe({ ...base, ...extra }));
-    expect(plan({ flows: [{ name: 'login-wall', trigger: { appears: target }, steps: [{ kind: 'click', target }] }] })).toThrow(/reactive flow "login-wall"/);
-    expect(plan({ flows: [{ name: 'login', steps: [{ kind: 'await-user', target, until: 'disappears' }] }], sequence: [{ flow: 'login' }, { extract: 'items' }] })).toThrow(/"login:0" of flow "login" is an await-user step/);
-    expect(plan({ flows: [{ name: 'login', steps: [{ kind: 'click', target, window: 'popup' }] }], sequence: [{ flow: 'login' }, { extract: 'items' }] })).toThrow(/acts in a popup/);
-    expect(plan({ flows: [{ name: 'tab', steps: [{ kind: 'click', target }] }], sequence: [{ extract: 'items' }, { flow: 'tab' }] })).toThrow(ExportUnsupportedError);
-    expect(plan({ flows: [{ name: 'tab', steps: [{ kind: 'click', target }] }], sequence: [{ extract: 'items' }, { flow: 'tab' }] })).toThrow(/block 1 breaks that shape/);
+  it('carries reactive flows, await-user and popup steps, frames, and secret and path variables', () => {
+    const plan = buildPlan(flowsRecipe());
+    expect(plan.vars).toEqual([
+      { name: 'port', default: '4777', required: true, secret: false, path: false },
+      { name: 'user', default: 'u', required: true, secret: false, path: false },
+      { name: 'pass', default: null, required: true, secret: true, path: false },
+      { name: 'resume', default: null, required: true, secret: false, path: true },
+    ]);
+    const [login, upload] = plan.flows;
+    expect(login).toMatchObject({ name: 'login-wall', maxRetries: 4, recover: true, trigger: { selectors: [{ strategy: 'css', value: '#spa-login' }], frame: null } });
+    expect(login!.steps.map((s) => [s.window, s.action.kind])).toEqual([
+      ['same', 'click'],
+      ['popup', 'fill'],
+      ['popup', 'fill'],
+      ['popup', 'click'],
+      ['same', 'await-user'],
+    ]);
+    expect(login!.steps[2]!.action).toEqual({ kind: 'fill', text: '{pass}', path: null, vars: ['pass'] });
+    expect(login!.steps[4]!.action).toEqual({ kind: 'await-user', until: 'disappears', timeoutMs: null, label: 'login-wall step 5' });
+    expect(upload!.trigger).toBeNull();
+    expect(upload!.steps[0]!.target!.frame).toEqual([{ strategy: 'id', value: 'frame-catalog' }]);
+    expect(upload!.steps[0]!.action).toEqual({ kind: 'fill', text: '{resume}', path: 'resume', vars: ['resume'] });
+    expect(plan.tables[0]!.frame).toEqual([
+      { strategy: 'id', value: 'frame-catalog' },
+      { strategy: 'css', value: 'iframe[name="catalog"]' },
+    ]);
+    expect(plan.sequence).toEqual([{ flow: 'upload' }, { extract: 'products' }]);
+    // Fingerprints never reach the script.
+    expect(JSON.stringify(plan)).not.toContain('fingerprint');
   });
 
   it('keeps next and more targets and marks variables without a default', () => {
@@ -287,12 +378,95 @@ describe('buildPlan', () => {
         sequence: [{ paginate: { ...base.sequence[0].paginate, kind: 'next', limit: 3 } }],
       }),
     );
-    expect(plan.vars).toEqual([{ name: 'section', default: null, required: true }]);
+    expect(plan.vars).toEqual([{ name: 'section', default: null, required: true, secret: false, path: false }]);
     expect(plan.pagination).toMatchObject({ kind: 'next', param: null, limit: 3 });
-    expect(plan.pagination.target).toEqual([
-      { strategy: 'role', value: 'link|Next' },
-      { strategy: 'css', value: 'a.pager-next' },
-    ]);
+    expect(plan.pagination.target).toEqual({
+      selectors: [
+        { strategy: 'role', value: 'link|Next' },
+        { strategy: 'css', value: 'a.pager-next' },
+      ],
+      frame: null,
+    });
+  });
+});
+
+describe('page helpers', () => {
+  /** Each helper as the page gets it: its source text alone, with no closure. */
+  const helper = (name: string) => new Function(`return (${PAGE_HELPERS[name as keyof typeof PAGE_HELPERS]})`)() as (...args: unknown[]) => unknown;
+
+  class FakeElement {
+    constructor(
+      readonly tagName: string,
+      private readonly attrs: Record<string, string> = {},
+      props: Record<string, unknown> = {},
+    ) {
+      Object.assign(this, props);
+    }
+    getAttribute(name: string): string | null {
+      return this.attrs[name] ?? null;
+    }
+    hasAttribute(name: string): boolean {
+      return name in this.attrs;
+    }
+  }
+  const el = (tag: string, attrs: Record<string, string> = {}, props: Record<string, unknown> = {}) => new FakeElement(tag.toUpperCase(), attrs, props);
+
+  it('evaluates every serialized helper in isolation', () => {
+    expect(Object.keys(PAGE_HELPERS).sort()).toEqual(
+      ['classifyFill', 'excludedMask', 'frameReachable', 'isChecked', 'isDisabled', 'isEditable', 'nextFrame', 'readBack', 'resolveUrl', 'scrollToBottom', 'selectValues', 'setQueryParam'].sort(),
+    );
+    for (const source of Object.values(PAGE_HELPERS)) expect(typeof new Function(`return (${source})`)()).toBe('function');
+
+    const classify = helper('classifyFill');
+    expect(classify(el('input', { type: 'file' }, { type: 'file' }))).toBe('file');
+    expect(classify(el('input', { type: 'checkbox' }, { type: 'checkbox' }))).toBe('toggle');
+    expect(classify(el('button', { role: 'switch' }))).toBe('toggle');
+    expect(classify(el('input', { type: 'radio' }, { type: 'radio' }))).toBe('radio');
+    expect(classify(el('select'))).toBe('select');
+    expect(classify(el('input', { role: 'combobox' }, { type: 'text' }))).toBe('combobox');
+    expect(classify(el('input', { maxlength: '1' }, { type: 'text' }))).toBe('otp');
+    expect(classify(el('input', {}, { type: 'password' }))).toBe('text');
+    expect(classify(el('div', { contenteditable: 'true' }))).toBe('text');
+    expect(classify(el('input', { type: 'submit' }, { type: 'submit' }))).toBe('none');
+
+    const options = [
+      { value: 'PE', label: 'Peru', text: 'Peru' },
+      { value: 'es', label: 'Spanish', text: 'Spanish' },
+      { value: 'qu', label: 'Quechua', text: 'Quechua' },
+    ];
+    const selectValues = helper('selectValues');
+    expect(selectValues(el('select', {}, { options, multiple: false }), 'Peru')).toEqual({ values: ['PE'] });
+    expect(selectValues(el('select', {}, { options, multiple: true }), 'Spanish\nqu')).toEqual({ values: ['es', 'qu'] });
+    expect(selectValues(el('select', {}, { options, multiple: false }), 'Chile')).toEqual({ missing: 'Chile' });
+
+    const isDisabled = helper('isDisabled');
+    expect(isDisabled(el('a'))).toBe(true);
+    expect(isDisabled(el('a', { href: '/2' }))).toBe(false);
+    expect(isDisabled(el('button', { 'aria-disabled': 'true' }))).toBe(true);
+    expect(isDisabled(el('button', { disabled: '' }))).toBe(true);
+
+    const a = el('article');
+    const b = el('article');
+    expect(helper('excludedMask')([a, b], [b])).toEqual([false, true]);
+    expect(helper('resolveUrl')(['/p/1', 'https://shop.test/c/'])).toBe('https://shop.test/p/1');
+    expect(helper('resolveUrl')(['http://[bad', 'https://shop.test/'])).toBe('http://[bad');
+    expect(helper('setQueryParam')(['https://shop.test/c?page=1&x=y', 'page', '3'])).toBe('https://shop.test/c?page=3&x=y');
+    // DOM classes are absent here: a helper that needs them reports a non-element as such.
+    const globals = globalThis as Record<string, unknown>;
+    class Base {}
+    globals.HTMLInputElement = class extends Base {};
+    globals.HTMLTextAreaElement = class extends Base {};
+    globals.HTMLIFrameElement = class extends Base {};
+    try {
+      expect(helper('isChecked')(el('div', { 'aria-checked': 'true' }))).toBe(true);
+      expect(helper('readBack')(el('div', {}, { textContent: 'typed' }))).toBe('typed');
+      expect(helper('isEditable')(el('div', {}, { isContentEditable: true }))).toBe(true);
+      expect(helper('frameReachable')(el('div'))).toBe(false);
+    } finally {
+      delete globals.HTMLInputElement;
+      delete globals.HTMLTextAreaElement;
+      delete globals.HTMLIFrameElement;
+    }
   });
 });
 
@@ -451,6 +625,7 @@ describe.skipIf(!hasPython)('Python prelude parity', () => {
       await writeFile(
         file,
         `${PYTHON_STUB}\n${PY_PRELUDE}\n
+PAGE_JS = ${JSON.stringify(PAGE_HELPERS)}
 TABLE = {"name": "items", "item": None, "fields": ${JSON.stringify(DEDUP_FIELDS.map((name) => ({ name })))}, "key": ${key === null ? 'None' : JSON.stringify(key)}}
 data = json.loads(sys.argv[1])
 seen = set()
@@ -476,7 +651,11 @@ print(json.dumps({"conversions": conversions, "pages": pages}))
 // Renderers
 // ---------------------------------------------------------------------------
 
-const plans = (): [string, ExportPlan][] => [...FIXTURE_NAMES.map((name): [string, ExportPlan] => [name, buildPlan(fixture(name))]), ['playground-within', buildPlan(withinRecipe())]];
+const plans = (): [string, ExportPlan][] => [
+  ...FIXTURE_NAMES.map((name): [string, ExportPlan] => [name, buildPlan(fixture(name))]),
+  ['playground-within', buildPlan(withinRecipe())],
+  ['flows-export', buildPlan(flowsRecipe())],
+];
 
 describe('renderTs', () => {
   it.each(FIXTURE_NAMES)('matches the snapshot for %s', async (name) => {
@@ -533,7 +712,8 @@ describe('renderPy', () => {
     expect(out).toContain('DEFAULT_HEADLESS = True');
     expect(out).toContain('"key": "url"');
     expect(out).toContain('"attr": None');
-    expect(out.slice(out.indexOf('# Recipe'))).not.toMatch(/\b(null|true|false)\b/);
+    // The page helpers are JavaScript source; the recipe data before them is Python.
+    expect(out.slice(out.indexOf('# Recipe'), out.indexOf('PAGE_JS = '))).not.toMatch(/\b(null|true|false)\b/);
     expect(out.trimEnd().endsWith('    sys.exit(main(sys.argv[1:]))')).toBe(true);
   });
 

@@ -48,28 +48,19 @@ describe('webscoop export', () => {
     expect(io.out()).toContain('const RECIPE_NAME = "playground-catalog";');
   });
 
-  it('exits 1 naming the table for a recipe with an iframe target, and writes no file', async () => {
+  it('exports a recipe with a framed table and secret and path variables', async () => {
     const dir = await home();
     const recipe = JSON.parse(await readFile(CATALOG, 'utf8')) as Record<string, unknown>;
     recipe.name = 'sunat';
     recipe.frame = { selectors: [{ strategy: 'id', value: 'iframeApplication', stability: 'stable' }] };
+    recipe.vars = [...((recipe.vars as unknown[]) ?? []), { name: 'pass', type: 'string', secret: true }, { name: 'video', type: 'path' }];
     await writeFile(join(dir, 'recipes', 'sunat.json'), JSON.stringify(recipe));
     const io = testIo({ env: { WEBSCOOP_HOME: dir }, cwd: dir });
-    expect(await main(['export', 'sunat', '--out', 'sunat.ts'], io)).toBe(ExitCode.Error);
-    expect(io.err()).toMatch(/iframe targets are not supported by export: table "items"/);
-    await expect(stat(join(dir, 'sunat.ts'))).rejects.toThrow();
-  });
-
-  it('exits 1 naming the first secret or path variable, and writes no file', async () => {
-    const dir = await home();
-    const recipe = JSON.parse(await readFile(CATALOG, 'utf8')) as Record<string, unknown>;
-    recipe.name = 'sunat-menu';
-    recipe.vars = [...((recipe.vars as unknown[]) ?? []), { name: 'pass', type: 'string', secret: true }, { name: 'video', type: 'path' }];
-    await writeFile(join(dir, 'recipes', 'sunat-menu.json'), JSON.stringify(recipe));
-    const io = testIo({ env: { WEBSCOOP_HOME: dir }, cwd: dir });
-    expect(await main(['export', 'sunat-menu', '--out', 'sunat.ts'], io)).toBe(ExitCode.Error);
-    expect(io.err()).toContain('variable "pass" is secret, which export does not support');
-    await expect(stat(join(dir, 'sunat.ts'))).rejects.toThrow();
+    expect(await main(['export', 'sunat', '--out', 'sunat.ts'], io)).toBe(ExitCode.Ok);
+    const script = await readFile(join(dir, 'sunat.ts'), 'utf8');
+    expect(script).toContain('"frame": [{ "strategy": "id", "value": "iframeApplication" }]');
+    expect(script).toContain('"name": "pass", "default": null, "required": false, "secret": true, "path": false');
+    expect(script).toContain('"name": "video", "default": null, "required": false, "secret": false, "path": true');
   });
 
   it('exits 1 naming the flag for an unknown format', async () => {

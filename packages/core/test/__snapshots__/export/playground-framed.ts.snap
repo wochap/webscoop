@@ -1,14 +1,20 @@
-/**
- * Runtime of an exported TypeScript script: everything except the recipe
- * constants, which the renderer emits after it. It interprets the recipe the
- * way the runner does; each section mirrors the runner module named in its
- * comment, and the constants it reads (`NAVIGATION_TIMEOUT_MS`,
- * `SETTLE_GRACE_MS`, ...) carry the runner's names.
- *
- * Kept free of backticks and template placeholders so it can live in a raw
- * string literal.
- */
-export const TS_PRELUDE = String.raw`import { spawnSync } from 'node:child_process';
+// Standalone Playwright script exported from the webscoop recipe "playground-framed".
+// Exported at 2026-01-02T03:04:05.000Z by webscoop 0.0.0-test.
+//
+// It navigates, replays the recipe steps, extracts rows, and paginates like
+// `webscoop run` on a healthy site. Selector candidates are tried in their
+// stored order; nothing else heals. Not included:
+//   - fingerprint healing
+//   - model healing
+//   - guards
+//   - notifications
+//   - hooks
+//   - recipe write-back
+//
+// When the site changes, re-record the recipe with webscoop and export it
+// again rather than editing selectors here; the recipe is the source of truth.
+
+import { spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -1757,4 +1763,149 @@ async function main(argv: readonly string[]): Promise<number> {
     return EXIT_ERROR;
   }
 }
-`;
+
+// ---------------------------------------------------------------------------
+// Recipe
+// ---------------------------------------------------------------------------
+
+const RECIPE_NAME = "playground-framed";
+/** Run without a window unless --headed is given. */
+const DEFAULT_HEADLESS = false;
+
+/** Navigation, settle, wait step, and growth timeout. */
+const NAVIGATION_TIMEOUT_MS = 30000;
+/** Default timeout of element actions. */
+const ACTION_TIMEOUT_MS = 5000;
+/** How long settling waits for an action to start a navigation. */
+const SETTLE_GRACE_MS = 500;
+/** How long settling waits for network idle when nothing navigated. */
+const SETTLE_IDLE_MS = 2000;
+/** Interval between looks for a wait step target. */
+const WAIT_POLL_MS = 200;
+/** Interval between item counts while a page grows. */
+const GROWTH_POLL_MS = 200;
+/** Interval between checks of an await-user condition. */
+const AWAIT_POLL_MS = 1000;
+/** How long an await-user step waits unless --await-timeout is given. */
+const DEFAULT_AWAIT_TIMEOUT_MS = 600000;
+/** Longest a --var-command may run. */
+const VAR_COMMAND_TIMEOUT_MS = 30000;
+/** How long a file chooser may take to open. */
+const FILE_CHOOSER_TIMEOUT_MS = 5000;
+/** Most pages --pages all walks. */
+const DEFAULT_PAGE_CAP = 500;
+
+/** Page URL; {name} marks a variable. */
+const URL_TEMPLATE = "http://127.0.0.1:{port}/framed";
+const VARS: Var[] = [{ "name": "port", "default": "4777", "required": true, "secret": false, "path": false }];
+const FLOWS: Flow[] = [
+  {
+    "name": "setup",
+    "trigger": null,
+    "maxRetries": 2,
+    "recover": false,
+    "steps": [
+      {
+        "flow": "setup",
+        "index": 0,
+        "kind": "click",
+        "name": "details",
+        "optional": false,
+        "window": "same",
+        "target": {
+          "selectors": [{ "strategy": "id", "value": "details-toggle" }],
+          "frame": [{ "strategy": "id", "value": "frame-catalog" }]
+        },
+        "action": { "kind": "click" }
+      }
+    ]
+  }
+];
+/** Blocks in run order: called flows, extractions, and the paginate block. */
+const SEQUENCE: Block[] = [{ "flow": "setup" }, { "extract": "products" }, { "extract": "details" }];
+/** Tables in sequence order. */
+const TABLES: Table[] = [
+  {
+    "name": "products",
+    "frame": [
+      { "strategy": "id", "value": "frame-catalog" },
+      { "strategy": "css", "value": "iframe[name=\"catalog\"]" }
+    ],
+    "item": { "selectors": [{ "strategy": "testid", "value": "product-card" }], "exclude": [] },
+    "fields": [
+      {
+        "name": "title",
+        "type": "text",
+        "scope": "item",
+        "optional": false,
+        "fallback": false,
+        "hover": false,
+        "selectors": [{ "strategy": "css", "value": "h2.product-title" }],
+        "read": "text",
+        "attr": null
+      },
+      {
+        "name": "price",
+        "type": "number",
+        "scope": "item",
+        "optional": false,
+        "fallback": false,
+        "hover": false,
+        "selectors": [{ "strategy": "testid", "value": "price" }],
+        "read": "text",
+        "attr": null
+      }
+    ],
+    "key": "title"
+  },
+  {
+    "name": "details",
+    "frame": [{ "strategy": "id", "value": "frame-catalog" }],
+    "item": null,
+    "fields": [
+      {
+        "name": "description",
+        "type": "text",
+        "scope": "page",
+        "optional": false,
+        "fallback": false,
+        "hover": false,
+        "selectors": [{ "strategy": "css", "value": ".details-text" }],
+        "read": "text",
+        "attr": null
+      }
+    ],
+    "key": null
+  }
+];
+/** Index of the table whose absence on its first extraction fails the run; -1 when none. */
+const LEAD = 0;
+const PAGINATION: Pagination = {
+  "kind": "none",
+  "table": null,
+  "param": null,
+  "paramInTemplate": false,
+  "target": null,
+  "limit": 1,
+  "stopRules": [],
+  "delayMs": 0
+};
+/** Functions evaluated in the page, from webscoop core. */
+const PAGE_JS: Record<string, string> = {
+  "classifyFill": "function classifyFillElement(el) {\n\tconst tag = el.tagName.toLowerCase();\n\tconst role = (el.getAttribute(\"role\") ?? \"\").toLowerCase();\n\tconst type = tag === \"input\" ? (el.type || \"text\").toLowerCase() : \"\";\n\tif (type === \"file\") return \"file\";\n\tif (type === \"checkbox\" || role === \"checkbox\" || role === \"switch\") return \"toggle\";\n\tif (type === \"radio\" || role === \"radio\") return \"radio\";\n\tif (tag === \"select\") return \"select\";\n\tconst autocomplete = (el.getAttribute(\"aria-autocomplete\") ?? \"\").toLowerCase();\n\tif (role === \"combobox\" || tag === \"input\" && (autocomplete !== \"\" && autocomplete !== \"none\" || el.hasAttribute(\"list\"))) return \"combobox\";\n\tconst nonText = [\n\t\t\"button\",\n\t\t\"submit\",\n\t\t\"reset\",\n\t\t\"image\",\n\t\t\"hidden\",\n\t\t\"range\",\n\t\t\"color\"\n\t];\n\tif (tag === \"input\" && nonText.includes(type)) return \"none\";\n\tif (tag === \"input\" && el.getAttribute(\"maxlength\") === \"1\") return \"otp\";\n\tconst editable = el.isContentEditable || [\n\t\t\"\",\n\t\t\"true\",\n\t\t\"plaintext-only\"\n\t].includes(el.getAttribute(\"contenteditable\") ?? \"false\");\n\tif (tag === \"input\" || tag === \"textarea\" || editable || role === \"textbox\") return \"text\";\n\treturn \"none\";\n}",
+  "isChecked": "function isChecked(el) {\n\treturn el instanceof HTMLInputElement ? el.checked : el.getAttribute(\"aria-checked\") === \"true\";\n}",
+  "selectValues": "function selectValues(el, wanted) {\n\tconst select = el;\n\tconst options = Array.from(select.options ?? []);\n\tconst want = select.multiple ? wanted.split(\"\\n\").filter((w) => w !== \"\") : [wanted];\n\tconst values = [];\n\tfor (const w of want) {\n\t\tconst hit = options.find((o) => o.value === w) ?? options.find((o) => o.label.trim() === w || o.text.trim() === w);\n\t\tif (!hit) return { missing: w };\n\t\tvalues.push(hit.value);\n\t};\n\treturn { values };\n}",
+  "isEditable": "function isEditable(el) {\n\treturn el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable;\n}",
+  "readBack": "function readBack(el) {\n\treturn el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent ?? \"\";\n}",
+  "frameReachable": "function frameReachable(el) {\n\tif (!(el instanceof HTMLIFrameElement)) return false;\n\ttry {\n\t\treturn el.contentDocument !== null;\n\t} catch {\n\t\treturn false;\n\t}\n}",
+  "isDisabled": "function isDisabled(el) {\n\treturn el.hasAttribute(\"disabled\") || el.getAttribute(\"aria-disabled\") === \"true\" || el.tagName.toLowerCase() === \"a\" && !el.hasAttribute(\"href\");\n}",
+  "excludedMask": "function excludedMask(els, others) {\n\treturn els.map((el) => others.includes(el));\n}",
+  "nextFrame": "function nextFrame() {\n\treturn new Promise((resolve) => requestAnimationFrame(() => resolve()));\n}",
+  "scrollToBottom": "function scrollToBottom() {\n\twindow.scrollTo(0, document.documentElement.scrollHeight);\n}",
+  "resolveUrl": "function resolveUrl([raw, base]) {\n\ttry {\n\t\treturn new URL(raw, base).href;\n\t} catch {\n\t\treturn raw;\n\t}\n}",
+  "setQueryParam": "function setQueryParam([href, name, value]) {\n\tconst url = new URL(href);\n\turl.searchParams.set(name, value);\n\treturn url.href;\n}"
+};
+
+main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});

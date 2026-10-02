@@ -1,6 +1,7 @@
 import { commentBlock, header } from './header';
 import { formatLiteral } from './literal';
 import type { ExportPlan } from './plan';
+import { PAGE_HELPERS } from './page-helpers';
 import { TS_PRELUDE } from './prelude-ts';
 
 export interface RenderOptions {
@@ -41,16 +42,30 @@ function constants(plan: ExportPlan, opts: RenderOptions): string {
     `const WAIT_POLL_MS = ${t.waitPollMs};`,
     '/** Interval between item counts while a page grows. */',
     `const GROWTH_POLL_MS = ${t.growthPollMs};`,
+    '/** Interval between checks of an await-user condition. */',
+    `const AWAIT_POLL_MS = ${t.awaitPollMs};`,
+    '/** How long an await-user step waits unless --await-timeout is given. */',
+    `const DEFAULT_AWAIT_TIMEOUT_MS = ${t.awaitTimeoutMs};`,
+    '/** Longest a --var-command may run. */',
+    `const VAR_COMMAND_TIMEOUT_MS = ${t.varCommandMs};`,
+    '/** How long a file chooser may take to open. */',
+    `const FILE_CHOOSER_TIMEOUT_MS = ${t.fileChooserMs};`,
     '/** Most pages --pages all walks. */',
     `const DEFAULT_PAGE_CAP = ${plan.pagination.cap};`,
     '',
     '/** Page URL; {name} marks a variable. */',
     `const URL_TEMPLATE = ${literal(plan.url)};`,
     `const VARS: Var[] = ${literal(plan.vars)};`,
-    `const STEPS: Step[] = ${literal(plan.steps)};`,
-    '/** Tables in recipe order; the first with an item container drives item counts and the stop rules. */',
+    `const FLOWS: Flow[] = ${literal(plan.flows)};`,
+    '/** Blocks in run order: called flows, extractions, and the paginate block. */',
+    `const SEQUENCE: Block[] = ${literal(plan.sequence)};`,
+    '/** Tables in sequence order. */',
     `const TABLES: Table[] = ${literal(plan.tables)};`,
+    '/** Index of the table whose absence on its first extraction fails the run; -1 when none. */',
+    `const LEAD = ${plan.primary};`,
     `const PAGINATION: Pagination = ${literal(pagination)};`,
+    '/** Functions evaluated in the page, from webscoop core. */',
+    `const PAGE_JS: Record<string, string> = ${literal(PAGE_HELPERS)};`,
     '',
     'main(process.argv.slice(2)).then((code) => {',
     '  process.exitCode = code;',

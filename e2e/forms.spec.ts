@@ -1,60 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadRecipe, type RecipeInput } from '@webscoop/core';
-import { expect, hasDisplay, test } from './fixtures';
+import { expect, formsRecipe, hasDisplay, test } from './fixtures';
 
 test.skip(!hasDisplay, 'the recorder and the CLI need WAYLAND_DISPLAY or DISPLAY');
-
-const css = (value: string) => ({ selectors: [{ strategy: 'css' as const, value, stability: 'medium' as const }] });
-type Step = NonNullable<RecipeInput['flows']>[number]['steps'][number];
-const fill = (selector: string, value: string): Step => ({ kind: 'fill', target: css(selector), value });
-
-/** A recipe that fills every kind on the forms page from variables, submits, and extracts the echo. */
-function formsRecipe(port: number): RecipeInput {
-  return {
-    schemaVersion: 2,
-    name: 'forms',
-    url: `http://127.0.0.1:${port}/forms`,
-    vars: [
-      { name: 'user', type: 'string', default: 'Ada Lovelace' },
-      { name: 'pass', type: 'string', secret: true },
-      { name: 'city', type: 'string', default: 'Lima' },
-      { name: 'code', type: 'string', default: '482913' },
-      { name: 'resume', type: 'path' },
-      { name: 'video', type: 'path' },
-    ],
-    flows: [
-      {
-        name: 'fill-form',
-        steps: [
-          fill('#text', '{user}'),
-          fill('#email', 'ada@example.test'),
-          fill('#password', '{pass}'),
-          fill('#textarea', 'line one'),
-          fill('#select', 'Peru'),
-          fill('#multiselect', 'Spanish\nqu'),
-          fill('#checkbox', 'true'),
-          fill('#radio-pro', 'true'),
-          fill('#switch', 'true'),
-          fill('#date', '1815-12-10'),
-          fill('#controlled', 'Ada'),
-          fill('#combobox', '{city}'),
-          fill('#otp-0', '{code}'),
-          fill('#notes', 'some notes'),
-          fill('#shadow', 'in the shadow'),
-          fill('#file', '{resume}'),
-          fill('#chooser-button', '{video}'),
-          { kind: 'click', target: css('#submit') },
-          { kind: 'wait', target: css('#echo') },
-        ],
-      },
-    ],
-    fields: [{ name: 'echo', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: '#echo', stability: 'medium' }] }],
-    sequence: [{ flow: 'fill-form' }, { extract: 'items' }],
-    // The password input would read as a login wall.
-    guards: [{ kind: 'login', enabled: false }],
-  } as RecipeInput;
-}
 
 test('a recipe fills every kind from variables: the password from --var-command, files from path variables', async ({ scoop }) => {
   await scoop.writeRecipe(formsRecipe(scoop.playground.port));

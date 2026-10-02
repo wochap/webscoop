@@ -873,12 +873,20 @@ export too: the script extracts every table on each page, in sequence order,
 dedups each item table on its own, and drives pagination from the driving
 table.
 
-Export supports sequences of the classic shape: called flows, then either
-extract blocks or one paginate block whose `do` holds flows followed by
-extracts. Flows before the extracts run once, flows inside `do` on every page.
-A recipe with a secret or path variable, a reactive flow, an `await-user`
-step, a `window: popup` step, or a sequence of another shape does not export:
-the command exits 1 naming the first one.
+The script runs any valid sequence the way the runner does: called flows,
+extracts, and the paginate block in recipe order. Reactive flows fire at the
+same checkpoints (after a page settles, before each step and each extraction,
+and every second while waiting), with `maxRetries`, the `flow-loop` failure,
+and `recover`, which reloads the batch URL and replays its called flows; on
+page 2 or later of `next` or `more` pagination that fails with
+`pagination-lost`. `window: popup` steps act in the newest popup the flow
+opened, `frame` targets on tables, steps, and the pagination target resolve
+inside their iframe, and `fill` sets each element by its kind with the
+runner's own classifier (files, file choosers, checkboxes and switches,
+radios, selects, comboboxes, one-character boxes, text). An `await-user` step
+prints its label and condition on stderr, checks the condition every second in
+every open window (Enter on a terminal checks at once), and exits 2 when
+`--await-timeout` runs out.
 
 Run the TypeScript script with `npx tsx shop.ts` in a directory where the
 `playwright` package is installed (`npm install playwright`, then
@@ -888,20 +896,23 @@ later with Playwright for Python (`pip install playwright`, then
 
 | Flag | Meaning |
 | ---- | ------- |
-| `--var name=value` | a recipe variable (repeatable); `WEBSCOOP_VAR_<NAME>` (uppercased) works too, `--var` wins, recipe defaults fill the rest |
+| `--var name=value` | a recipe variable (repeatable); `WEBSCOOP_VAR_<NAME>` (uppercased) works too, the command line wins, recipe defaults fill the rest |
+| `--var-file name=PATH` | a variable from a file's content, one trailing newline removed |
+| `--var-command name=CMD` | a variable from the trimmed output of `/bin/sh -c CMD` |
 | `--jsonl` | one JSON object per line instead of a JSON array (rows carry `_table` when several tables share the output) |
 | `--out <path>` | rows to a file instead of stdout; a directory (existing, or ending with `/`) gets one `<table>.json` (or `.jsonl`) per table |
 | `--table <name>` | only this table of a multi-table recipe, as a plain array (or plain JSONL rows) |
 | `--pages <1\|N\|all>` | pages to walk, replacing the recipe limit (`all` stops at 500) |
+| `--await-timeout <ms>` | how long an `await-user` step waits for you (default 600000) |
 | `--headless` / `--headed` | run without or with a browser window (default: headed, or headless when exported with `--headless`) |
 | `--profile <dir>` | keep the browser profile in this directory; without it each run uses a temporary profile removed at exit |
 
 Use `--profile` for sites that need a login: run once headed, log in by hand
-in the window, and later runs reuse the cookies. Exit codes are 0, 1, and 3
-with the meanings below; logs go to stderr.
-
-Recipes with a `frame` on a table, step, or pagination target do not export
-either: the command exits 1 and names the first table or step that uses one.
+in the window, and later runs reuse the cookies. Exit codes are 0, 1, 2, and
+3 with the meanings below; logs go to stderr. Secret variables are never
+printed: their values are masked in every message. A `fill` whose value is a
+path variable alone splits it on `:` and checks each file is readable before
+the step acts.
 
 The script tries each target's stored selector candidates in order and nothing
 more. It does not include fingerprint healing, model healing, guards,

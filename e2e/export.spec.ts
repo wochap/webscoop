@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportAndRun, hasPythonPlaywright, PYTHON, type ExportFormat } from './export-fixture';
-import { expect, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, TABLES_RECIPE, test, type Scoop } from './fixtures';
+import type { RecipeInput } from '@webscoop/core';
+import { expect, formsRecipe, FRAMED_RECIPE, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, TABLES_RECIPE, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'webscoop run, the reference for the rows, needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -12,6 +13,50 @@ async function runRows(scoop: Scoop, recipe: string, args: string[] = []): Promi
   const run = await scoop.run(['run', recipe, ...args]);
   expect(run.code, run.stderr).toBe(0);
   return JSON.parse(run.stdout) as unknown[];
+}
+
+const css = (value: string) => ({ selectors: [{ strategy: 'css' as const, value, stability: 'medium' as const }] });
+
+/** The SPA's catalog, behind the "Log in" button. */
+const SPA_PRODUCTS = {
+  name: 'products',
+  item: { selectors: [{ strategy: 'testid' as const, value: 'product-card', stability: 'stable' as const }] },
+  fields: [{ name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h2.product-title', stability: 'medium' as const }], key: true }],
+};
+
+/**
+ * A reactive login: "Log in" opens the popup, the popup's inputs are filled
+ * from variables (the password secret) and submitted, and the popup closes
+ * itself; then the menu flow opens the catalog.
+ */
+function spaLoginRecipe(port: number): RecipeInput {
+  return {
+    schemaVersion: 2,
+    name: 'spa-export',
+    url: `http://127.0.0.1:${port}/spa`,
+    vars: [
+      { name: 'user', type: 'string', default: 'ada' },
+      { name: 'pass', type: 'string', secret: true },
+    ],
+    tables: [SPA_PRODUCTS],
+    flows: [
+      { name: 'open-catalog', steps: [{ kind: 'click', target: css('#spa-catalog') }] },
+      {
+        name: 'login-wall',
+        trigger: { appears: css('#spa-login') },
+        steps: [
+          { kind: 'click', target: css('#spa-login') },
+          { kind: 'fill', target: css('#spa-user-input'), value: '{user}', window: 'popup' },
+          { kind: 'fill', target: css('#spa-password-input'), value: '{pass}', window: 'popup' },
+          { kind: 'click', target: css('#spa-sign-in'), window: 'popup' },
+          { kind: 'wait', target: css('#spa-catalog') },
+        ],
+      },
+    ],
+    sequence: [{ flow: 'open-catalog' }, { extract: 'products' }],
+    // The "Log in" button is the reactive flow's to handle.
+    guards: [{ kind: 'login', enabled: false }],
+  } as RecipeInput;
 }
 
 for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
@@ -148,6 +193,64 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       expect(lines).toHaveLength(24);
       for (const line of lines) expect(JSON.parse(line)).toMatchObject({ _page: 1, title: expect.any(String) });
       expect(jsonl.rows).toEqual(await runRows(scoop, 'playground-catalog'));
+    });
+
+    test('the framed recipe extracts both tables inside the iframe like webscoop run', async ({ scoop }) => {
+      await scoop.writeRecipe(referenceRecipe(scoop.playground.port, FRAMED_RECIPE));
+      const framed = await exportAndRun(scoop, 'playground-framed', format);
+      expect(framed.code, framed.stderr).toBe(0);
+      expect(framed.stderr).toMatch(/flow "setup" step 0 "details" \(click\) on page 1: ok/);
+      const tables = JSON.parse(framed.stdout) as Record<string, unknown[]>;
+      expect(tables.products).toHaveLength(8);
+      expect(tables.details).toHaveLength(1);
+      const run = await scoop.run(['run', 'playground-framed']);
+      expect(run.code, run.stderr).toBe(0);
+      expect(tables).toEqual(JSON.parse(run.stdout));
+    });
+
+    test('a reactive login through the popup fills it from variables, the password from --var-command', async ({ scoop }) => {
+      await scoop.writeRecipe(spaLoginRecipe(scoop.playground.port));
+      const args = ['--var-command', 'pass=printf hunter2'];
+      const spa = await exportAndRun(scoop, 'spa-export', format, args);
+      expect(spa.code, spa.stderr).toBe(0);
+      expect(spa.stderr).toMatch(/flow login-wall \(reactive\) on page 1/);
+      expect(spa.stderr).toMatch(/flow "login-wall" step 3 \(click\) on page 1: ok/);
+      expect(spa.stderr).not.toContain('hunter2');
+      expect(spa.rows).toHaveLength(8);
+      expect(spa.rows).toEqual(await runRows(scoop, 'spa-export', args));
+    });
+
+    test('the forms recipe sets every kind like webscoop run, by the echo page', async ({ scoop }) => {
+      await scoop.writeRecipe(formsRecipe(scoop.playground.port));
+      const a = join(scoop.home, 'a.txt');
+      const clip = join(scoop.home, 'clip.bin');
+      await writeFile(a, 'twelve bytes');
+      await writeFile(clip, Buffer.alloc(300));
+      const args = ['--var-command', 'pass=printf hunter2', '--var', `resume=${a}:${clip}`, '--var', `video=${a}`];
+      const forms = await exportAndRun(scoop, 'forms', format, args);
+      expect(forms.code, forms.stderr).toBe(0);
+      expect(forms.stderr).not.toContain('hunter2');
+      const [row] = forms.rows as { echo: string }[];
+      expect(JSON.parse(row!.echo)).toMatchObject({ password: 'hunter2', select: 'PE', multiselect: ['es', 'qu'], combobox: 'Lima', otp: '482913', chooser: [{ name: 'a.txt', size: 12 }] });
+      expect(forms.rows).toEqual(await runRows(scoop, 'forms', args));
+
+      const missing = await exportAndRun(scoop, 'forms', format, ['--var-command', 'pass=printf hunter2', '--var', `resume=${a}`, '--var', 'video=missing.mp4']);
+      expect(missing.code).toBe(1);
+      expect(missing.stderr).toMatch(/variable "video": no readable file at missing\.mp4/);
+    });
+
+    test('an await-user step that is not completed exits 2 after printing its label', async ({ scoop }) => {
+      await scoop.writeRecipe({
+        ...spaLoginRecipe(scoop.playground.port),
+        name: 'spa-await',
+        vars: [],
+        flows: [{ name: 'login', steps: [{ kind: 'await-user', target: css('#spa-catalog'), until: 'appears', label: 'Log in to the portal' }] }],
+        sequence: [{ flow: 'login' }, { extract: 'products' }],
+      } as RecipeInput);
+      const waited = await exportAndRun(scoop, 'spa-await', format, ['--await-timeout', '0']);
+      expect(waited.code, waited.stderr).toBe(2);
+      expect(waited.stderr).toMatch(/waiting for you: Log in to the portal \(until css=#spa-catalog appears/);
+      expect(waited.stderr).toMatch(/await-user step "Log in to the portal" of flow "login" was not completed within 0 ms/);
     });
   });
 }

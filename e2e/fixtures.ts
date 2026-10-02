@@ -87,6 +87,57 @@ export function referenceRecipe(port: number, path = REFERENCE_RECIPE): RecipeIn
   return recipe;
 }
 
+const formCss = (value: string) => ({ selectors: [{ strategy: 'css' as const, value, stability: 'medium' as const }] });
+type FormStep = NonNullable<RecipeInput['flows']>[number]['steps'][number];
+const fill = (selector: string, value: string): FormStep => ({ kind: 'fill', target: formCss(selector), value });
+
+/** The forms page recipe: it fills every kind on the forms page from variables, submits, and extracts the echo. */
+export function formsRecipe(port: number): RecipeInput {
+  return {
+    schemaVersion: 2,
+    name: 'forms',
+    url: `http://127.0.0.1:${port}/forms`,
+    vars: [
+      { name: 'user', type: 'string', default: 'Ada Lovelace' },
+      { name: 'pass', type: 'string', secret: true },
+      { name: 'city', type: 'string', default: 'Lima' },
+      { name: 'code', type: 'string', default: '482913' },
+      { name: 'resume', type: 'path' },
+      { name: 'video', type: 'path' },
+    ],
+    flows: [
+      {
+        name: 'fill-form',
+        steps: [
+          fill('#text', '{user}'),
+          fill('#email', 'ada@example.test'),
+          fill('#password', '{pass}'),
+          fill('#textarea', 'line one'),
+          fill('#select', 'Peru'),
+          fill('#multiselect', 'Spanish\nqu'),
+          fill('#checkbox', 'true'),
+          fill('#radio-pro', 'true'),
+          fill('#switch', 'true'),
+          fill('#date', '1815-12-10'),
+          fill('#controlled', 'Ada'),
+          fill('#combobox', '{city}'),
+          fill('#otp-0', '{code}'),
+          fill('#notes', 'some notes'),
+          fill('#shadow', 'in the shadow'),
+          fill('#file', '{resume}'),
+          fill('#chooser-button', '{video}'),
+          { kind: 'click', target: formCss('#submit') },
+          { kind: 'wait', target: formCss('#echo') },
+        ],
+      },
+    ],
+    fields: [{ name: 'echo', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: '#echo', stability: 'medium' }] }],
+    sequence: [{ flow: 'fill-form' }, { extract: 'items' }],
+    // The password input would read as a login wall.
+    guards: [{ kind: 'login', enabled: false }],
+  } as RecipeInput;
+}
+
 export const test = base.extend<{ scoop: Scoop }>({
   // eslint-disable-next-line no-empty-pattern
   scoop: async ({}, use) => {
