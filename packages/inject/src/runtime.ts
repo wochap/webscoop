@@ -19,6 +19,7 @@ import {
   elementAt,
   excerpt,
   excludedLocal,
+  inputHint,
   isOwn,
   nodeForScore,
   pathOfElement,
@@ -363,11 +364,18 @@ export class Runtime implements Actions {
     const doc = action.el.ownerDocument;
     const { selection } = describeSelection(action.el, [], doc);
     const candidates = selection.candidates.map((c) => ({ ...c, count: resolveLocal(c, undefined, doc).length }));
-    // Typing and choosing an option are both a fill.
-    const kind = action.kind === 'type' || action.kind === 'select' ? 'fill' : action.kind;
+    // Typing, choosing an option, toggling, and choosing files are all a fill.
+    const kind = action.kind === 'type' || action.kind === 'select' || action.kind === 'fill' ? 'fill' : action.kind;
+    const password = action.kind === 'type' && action.el instanceof HTMLInputElement && action.el.type === 'password';
+    const variable = action.kind === 'fill' ? action.variable : password ? { name: inputHint(action.el) || 'password', secret: true } : undefined;
     void this.send({
       kind: 'draft.addStep',
-      step: { kind, ...('value' in action ? { value: action.value } : {}) },
+      step: {
+        kind,
+        ...('value' in action && !(action.kind === 'fill' && action.variable) ? { value: action.value } : {}),
+        ...(variable ? { variable } : {}),
+        ...(action.kind === 'fill' && action.replacesClick ? { replacesClick: true } : {}),
+      },
       selection: { ...selection, candidates, ...this.frameOf(action.el) },
     });
   }

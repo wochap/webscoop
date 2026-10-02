@@ -15,6 +15,8 @@ import {
 import { log, type CliIo, type Output, type SharedBrowserHandle } from '../context';
 import { reportError } from '../exit';
 import type { HookQueue } from '../hooks';
+import { Redactor } from '../redact';
+import type { ResolvedVars } from '../vars';
 import { acquireProfileLock } from '../lock';
 import { writeMarker } from '../profiles';
 import type { ClientMessage, DaemonMessage } from './protocol';
@@ -37,10 +39,13 @@ export interface DaemonShared {
 /** The job's view of the world: the submitting command's environment and directory, with output sent back to it. */
 export function jobIo(base: CliIo, submit: Submit, send: (m: DaemonMessage) => void): CliIo & { interrupt(message?: string): void } {
   const handlers = new Set<() => void>();
+  const resolved = (submit.options as { resolvedVars?: ResolvedVars }).resolvedVars;
+  const redactor = Redactor.of(resolved?.values, resolved?.secrets);
   const io: CliIo & { interrupt(message?: string): void } = {
     ...base,
+    // Rows are page data and pass as they are; everything webscoop says about the run is masked.
     stdout: { write: (data: string) => send({ type: 'stdout', data }) },
-    stderr: { write: (data: string) => send({ type: 'stderr', data }) },
+    stderr: { write: (data: string) => send({ type: 'stderr', data: redactor.redact(data) }) },
     env: submit.env,
     cwd: submit.cwd,
     terminal: false,

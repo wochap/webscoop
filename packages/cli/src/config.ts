@@ -48,6 +48,22 @@ export const ProfileRuleSchema = z
   .object({ host: PatternSchema.optional(), name: PatternSchema.optional(), profile: ProfileNameSchema })
   .refine((r) => r.host !== undefined || r.name !== undefined, { message: 'a profile rule needs host, name, or both' });
 
+/** Where a variable's value comes from: exactly one of a literal, a file, or a command. */
+export const VarBindingSchema = z
+  .object({
+    value: z.string().optional(),
+    /** Relative to the config file directory; `~/` is the home directory. */
+    file: z.string().min(1).optional(),
+    /** Shell command (`sh -c`, run in the config file directory) whose trimmed stdout is the value. */
+    command: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((b) => [b.value, b.file, b.command].filter((v) => v !== undefined).length === 1, {
+    message: 'set exactly one of value, file, command',
+  });
+
+export type VarBinding = z.infer<typeof VarBindingSchema>;
+
 export const ConfigSchema = z.object({
   llm: z
     .object({
@@ -108,6 +124,8 @@ export const ConfigSchema = z.object({
     .optional(),
   /** Shell commands per lifecycle event: one command line or a list, run in order. */
   hooks: z.partialRecord(z.enum(HOOK_EVENTS), HookCommandsSchema).optional(),
+  /** Variable values per recipe name, then variable name. */
+  vars: z.record(z.string(), z.record(z.string(), VarBindingSchema)).optional(),
   /** Longest a hook command may run before it is killed. Default 5000. */
   hookTimeoutMs: z.number().int().positive().optional(),
   /** No longer supported; loaded with a warning and ignored. */
@@ -196,6 +214,11 @@ export async function loadConfig(paths: Paths, warn?: (message: string) => void)
   profileRules(parsed.data);
   const configDir = dirname(paths.configFile);
   if (parsed.data.llm.apiKeyFile) parsed.data.llm.apiKeyFile = expandPath(parsed.data.llm.apiKeyFile, configDir, homedir());
+  for (const bindings of Object.values(parsed.data.vars ?? {})) {
+    for (const binding of Object.values(bindings)) {
+      if (binding.file !== undefined) binding.file = expandPath(binding.file, configDir, homedir());
+    }
+  }
   configDirs.set(parsed.data, configDir);
   if (parsed.data.window !== undefined) warn?.(WINDOW_CONFIG_WARNING);
   return parsed.data;

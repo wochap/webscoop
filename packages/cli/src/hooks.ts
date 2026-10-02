@@ -5,6 +5,7 @@ import type { LifecyclePort, RunEmitter } from '@webscoop/core';
 import { DEFAULT_HOOK_TIMEOUT_MS, hookCommands, type Config, type HookEvent } from './config';
 import type { Output } from './context';
 import type { Env } from './paths';
+import { Redactor } from './redact';
 
 /** The webscoop subcommand a hook fires for. */
 export type HookCommand = 'run' | 'test' | 'record' | 'edit' | 'bench' | 'browser';
@@ -17,6 +18,8 @@ export interface HookContext {
   recipe?: string;
   /** The recipe's variable values; sent on stdin only, never in the environment. */
   vars?: Readonly<Record<string, string>>;
+  /** Names of secret variables: left out of `vars`, and their values masked everywhere. */
+  secrets?: readonly string[];
 }
 
 /** Per-event values: the ones with a variable, plus details that go only in the stdin payload. */
@@ -66,6 +69,8 @@ export class HookRunner {
   private pid: number | undefined;
   private readonly timeoutMs: number;
   private readonly profileDir: string;
+  private readonly redactor: Redactor;
+  private readonly stderr: Output;
 
   constructor(
     private readonly config: Config,
@@ -77,6 +82,8 @@ export class HookRunner {
     this.timeoutMs = config.hookTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
     // Hooks and the pid scan see the profile directory as Chromium does: absolute.
     this.profileDir = resolve(context.profileDir);
+    this.redactor = Redactor.of(context.vars, context.secrets);
+    this.stderr = this.redactor.wrap(opts.stderr);
   }
 
   /** Whether any command is configured for the event. */
@@ -105,10 +112,12 @@ export class HookRunner {
       WEBSCOOP_RUN_ID: this.runId,
       ...(pid !== undefined ? { WEBSCOOP_BROWSER_PID: String(pid) } : {}),
       ...(this.context.recipe !== undefined ? { WEBSCOOP_RECIPE: this.context.recipe } : {}),
-      ...(url ? { WEBSCOOP_URL: url } : {}),
-      ...(reason !== undefined ? { WEBSCOOP_REASON: reason } : {}),
+      ...(url ? { WEBSCOOP_URL: this.redactor.redact(url) } : {}),
+      ...(reason !== undefined ? { WEBSCOOP_REASON: this.redactor.redact(reason) } : {}),
     });
-    const payload = JSON.stringify({
+    const secrets = new Set(this.context.secrets ?? []);
+    const vars = Object.fromEntries(Object.entries(this.context.vars ?? {}).filter(([name]) => !secrets.has(name)));
+    const payload = this.redactor.redact(JSON.stringify({
       event,
       at: new Date().toISOString(),
       command: this.context.command,
@@ -119,9 +128,9 @@ export class HookRunner {
       ...(this.context.recipe !== undefined ? { recipe: this.context.recipe } : {}),
       ...(url ? { url } : {}),
       ...(reason !== undefined ? { reason } : {}),
-      vars: this.context.vars ?? {},
+      vars,
       ...rest,
-    });
+    }));
     this.last = this.queue.chain = this.queue.chain.then(async () => {
       for (const line of commands) await this.runOne(event, line, env, payload);
     });
@@ -170,7 +179,7 @@ export class HookRunner {
   }
 
   private runOne(event: HookEvent, line: string, env: Record<string, string | undefined>, payload: string): Promise<void> {
-    const warn = (why: string) => this.opts.stderr.write(`webscoop: warning: hook ${event} command "${line}" ${why}\n`);
+    const warn = (why: string) => this.stderr.write(`webscoop: warning: hook ${event} command "${line}" ${why}\n`);
     return new Promise((done) => {
       let settled = false;
       let timedOut = false;
@@ -192,8 +201,8 @@ export class HookRunner {
         }
       }, this.timeoutMs);
       // Hook output never reaches stdout, which carries rows.
-      child.stdout.on('data', (chunk: Buffer) => this.opts.stderr.write(chunk.toString()));
-      child.stderr.on('data', (chunk: Buffer) => this.opts.stderr.write(chunk.toString()));
+      child.stdout.on('data', (chunk: Buffer) => this.stderr.write(chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => this.stderr.write(chunk.toString()));
       child.stdin.on('error', () => {
         // The command did not read its stdin.
       });

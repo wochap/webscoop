@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadRecipe, saveRecipe, type RecipeInput, type RunReport, type StepReport } from '@webscoop/core';
 import { FakeBrowser, h, type FakePage } from '@webscoop/core/testing';
@@ -55,6 +55,28 @@ const report = (extra: Partial<StepReport> = {}): StepReport => ({
   heal: { kind: 'candidate', index: 0 },
   candidate: sel('css', '#accept'),
   ...extra,
+});
+
+describe('secret variables', () => {
+  it('keeps a secret value out of stderr, the report, and hook stdin when its fill step fails', async () => {
+    const dir = await home([
+      recipe({
+        vars: [{ name: 'pass', type: 'string', secret: true }],
+        flows: [{ name: 'setup', steps: [{ kind: 'fill', target: { selectors: [sel('css', '#password')] }, value: 'x{pass}x', label: 'type {pass}' }] }],
+      }),
+    ]);
+    const payload = join(dir, 'payload');
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ hooks: { 'run.start': `cat > ${payload}`, 'run.failed': `cat >> ${payload}` } }));
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, PATH: process.env.PATH }, browser: new FakeBrowser({ [PAGE]: shop(1) }) });
+    const code = await main(['run', 'shop', '--report', '--var-command', 'pass=echo hunter2'], io);
+    expect(code).not.toBe(ExitCode.Ok);
+    expect(io.err()).toContain('required step 0 (fill) of flow "setup" found no element (value from variable pass)');
+    expect(io.err()).not.toContain('hunter2');
+    const text = await readFile(payload, 'utf8');
+    expect(text).toContain('run.failed');
+    expect(text).not.toContain('hunter2');
+    expect(text).not.toContain('"pass"');
+  });
 });
 
 describe('flow flags and logs', () => {

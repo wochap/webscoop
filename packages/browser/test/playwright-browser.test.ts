@@ -340,11 +340,11 @@ describe.skipIf(!hasDisplay).each(drivers)('PlaywrightBrowser (integration, %s)'
       document.body.insertAdjacentHTML('beforeend', '<select id="sort"><option value="a">Name</option><option value="p">Price</option></select>');
     });
     const [select] = await session.resolve(c('id', 'sort'));
-    await session.selectOption(select!, 'Price');
+    await session.fill(select!, 'Price');
     expect(await page.locator('#sort').inputValue()).toBe('p');
-    await session.selectOption(select!, 'a');
+    await session.fill(select!, 'a');
     expect(await page.locator('#sort').inputValue()).toBe('a');
-    await expect(session.selectOption(select!, 'Rating')).rejects.toThrow(/no option/);
+    await expect(session.fill(select!, 'Rating')).rejects.toThrow(/no option/);
   });
 
   const html = (body: string) => `data:text/html,${encodeURIComponent(`<!doctype html><body>${body}</body>`)}`;

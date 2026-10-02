@@ -211,6 +211,8 @@ function unsupportedFlow(recipe: Recipe): string | null {
 
 /** Turn a validated recipe into the plan both renderers share. Throws `ExportUnsupportedError` for a recipe export cannot run. */
 export function buildPlan(recipe: Recipe): ExportPlan {
+  const kind = recipe.vars.find((v) => v.secret || v.type === 'path');
+  if (kind) throw new ExportUnsupportedError(`variable "${kind.name}" is ${kind.secret ? 'secret' : 'a path variable'}, which export does not support`);
   const unsupported = unsupportedFlow(recipe);
   if (unsupported) throw new ExportUnsupportedError(unsupported);
   const framed = firstFrame(recipe);

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dataset, type Product } from './dataset';
+import { formsPage, formsSubmitPage } from './forms';
 import {
   CHROME_MODES,
   escapeHtml,
@@ -420,11 +421,16 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       const ttl = intParam(url.searchParams.get('ttl'), 'ttl', 1) ?? null;
       return send(res, 200, spaPage(products, { loggedIn: spaLoggedIn(cookies(req).get(SPA_COOKIE)), ttl, seed: control.seed }), 'text/html; charset=utf-8');
     }
+    if (url.pathname === '/forms/submit' && method === 'POST') {
+      const form = new URLSearchParams(await readBody(req));
+      return send(res, 200, formsSubmitPage(form.get('payload') ?? '{}'), 'text/html; charset=utf-8');
+    }
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
     if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/framed') return send(res, 200, framedPage(url.searchParams.get('show') ?? 'catalog'), 'text/html; charset=utf-8');
     if (url.pathname === '/framed/inner') return send(res, 200, framedInner(url.searchParams.get('view') ?? 'catalog', products, control.seed), 'text/html; charset=utf-8');
+    if (url.pathname === '/forms') return send(res, 200, formsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/csp') {
       // A strict policy: no inline or injected script or style runs unless CSP is bypassed.

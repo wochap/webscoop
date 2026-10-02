@@ -60,6 +60,18 @@ describe('webscoop export', () => {
     await expect(stat(join(dir, 'sunat.ts'))).rejects.toThrow();
   });
 
+  it('exits 1 naming the first secret or path variable, and writes no file', async () => {
+    const dir = await home();
+    const recipe = JSON.parse(await readFile(CATALOG, 'utf8')) as Record<string, unknown>;
+    recipe.name = 'sunat-menu';
+    recipe.vars = [...((recipe.vars as unknown[]) ?? []), { name: 'pass', type: 'string', secret: true }, { name: 'video', type: 'path' }];
+    await writeFile(join(dir, 'recipes', 'sunat-menu.json'), JSON.stringify(recipe));
+    const io = testIo({ env: { WEBSCOOP_HOME: dir }, cwd: dir });
+    expect(await main(['export', 'sunat-menu', '--out', 'sunat.ts'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain('variable "pass" is secret, which export does not support');
+    await expect(stat(join(dir, 'sunat.ts'))).rejects.toThrow();
+  });
+
   it('exits 1 naming the flag for an unknown format', async () => {
     const dir = await home();
     const io = testIo({ env: { WEBSCOOP_HOME: dir } });

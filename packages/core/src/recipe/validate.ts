@@ -78,10 +78,22 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
       ? input.vars.filter(isRecord).map((v) => v.name).filter((n): n is string => typeof n === 'string')
       : [],
   );
+  const secrets = new Set<string>();
+  if (Array.isArray(input.vars)) {
+    input.vars.forEach((v, index) => {
+      if (!isRecord(v) || v.secret !== true || typeof v.name !== 'string') return;
+      secrets.add(v.name);
+      if (v.default !== undefined) {
+        errors.push({ path: jsonPath(['vars', index, 'default']), message: `secret variable "${v.name}" cannot have a default` });
+      }
+    });
+  }
   if (typeof input.url === 'string') {
     for (const name of templateVariables(input.url)) {
       if (!declared.has(name)) {
         errors.push({ path: '$.url', message: `template variable "${name}" is not declared under vars` });
+      } else if (secrets.has(name)) {
+        errors.push({ path: '$.url', message: `secret variable "${name}" cannot be used in the url` });
       }
     }
   }

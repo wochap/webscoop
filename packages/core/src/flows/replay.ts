@@ -4,9 +4,9 @@ import { RunFailure } from '../failure';
 import { candidatesResolver } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type HealOutcome, type HealTarget, type Resolver } from '../healing/types';
-import type { ElementRef, PageInfo, Session } from '../ports';
+import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type PageInfo, type Session } from '../ports';
 import type { Flow, Recipe, SelectorCandidate, Step, StepKind } from '../recipe/schema';
-import { fillText } from '../template';
+import { fillText, templateVariables } from '../template';
 import { targetPresent, type RunWindows } from './windows';
 
 /** How long a `wait` step sleeps between looks for its target. */
@@ -58,6 +58,8 @@ export interface FlowContext {
   windows: RunWindows;
   /** Run variable values for `{name}` in step values. */
   vars?: Readonly<Record<string, string>>;
+  /** Host files for `path` variables. Default: paths used as given, unchecked. */
+  files?: FilePort;
   /** Bound for settling after each action, for `wait` steps, and for a popup to open. */
   timeoutMs: number;
   /** Healing ladder. Default: the stored candidates only. */
@@ -187,7 +189,10 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         throw SKIPPED;
       }
       finish({ ...base, outcome: 'failed', heal: found.heal, candidate: found.candidate, notes, ...frame });
-      throw new RunFailure('missing-required', `required step ${index} (${step.kind}) of flow "${flow.name}" ${why}`, [stepName(flow.name, step, index)]);
+      // Names, never values: a fill's value may hold a secret.
+      const uses = step.kind === 'fill' && step.value ? templateVariables(step.value) : [];
+      const from = uses.length > 0 ? ` (value from variable${uses.length > 1 ? 's' : ''} ${uses.join(', ')})` : '';
+      throw new RunFailure('missing-required', `required step ${index} (${step.kind}) of flow "${flow.name}" ${why}${from}`, [stepName(flow.name, step, index)]);
     };
 
     try {
@@ -230,11 +235,13 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         }
       }
 
+      const fillOpts = step.kind === 'fill' ? await fillOptions(recipe, step, ctx) : undefined;
       const previousUrl = await session.url();
       try {
-        await act(session, recipe, step, found.ref, ctx.vars);
+        await act(session, recipe, step, found.ref, ctx.vars, fillOpts);
       } catch (error) {
         if (error instanceof RunFailure) throw error;
+        if (error instanceof FillUnresolvedError) fail(`found no element: ${error.message}`, { ...found, heal: { kind: 'unresolved' }, candidate: null });
         fail(`could not run: ${error instanceof Error ? error.message : String(error)}`, found);
       }
       if (step.kind !== 'wait' && !session.isClosed()) {
@@ -336,21 +343,47 @@ async function locate(session: Session, recipe: Recipe, flow: string, step: Step
   };
 }
 
-/** Whether the element is a native `select`, which `fill` sets by option value or label. */
-async function isSelect(session: Session, ref: ElementRef): Promise<boolean> {
-  const node = await session.snapshot(ref).catch(() => null);
-  return node?.type === 'element' && node.tag === 'select';
+/**
+ * A fill's options: the files of a value made of one `path` variable alone,
+ * resolved against the host's working directory and checked readable before
+ * the step acts, and the timeout for a combobox option.
+ */
+async function fillOptions(recipe: Recipe, step: Step, ctx: FlowContext): Promise<FillOptions> {
+  const opts: FillOptions = { timeoutMs: ctx.timeoutMs };
+  const raw = step.value ?? '';
+  const whole = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw.trim());
+  const variable = whole ? recipe.vars.find((v) => v.name === whole[1] && v.type === 'path') : undefined;
+  if (!variable) return opts;
+  const value = fillText(raw, recipe.vars, ctx.vars);
+  const files: string[] = [];
+  for (const path of splitPaths(value)) {
+    const absolute = ctx.files ? ctx.files.resolve(path) : path;
+    if (ctx.files && !(await ctx.files.readable(absolute))) {
+      throw new RunFailure('invalid-input', `variable "${variable.name}": no readable file at ${path}`);
+    }
+    files.push(absolute);
+  }
+  return { ...opts, files };
 }
 
-async function act(session: Session, recipe: Recipe, step: Step, ref: ElementRef | null, vars: Readonly<Record<string, string>> | undefined): Promise<void> {
+/** The paths of a `path` variable's value, separated by `:`. */
+export function splitPaths(value: string): string[] {
+  return value.split(':').map((p) => p.trim()).filter((p) => p !== '');
+}
+
+async function act(
+  session: Session,
+  recipe: Recipe,
+  step: Step,
+  ref: ElementRef | null,
+  vars: Readonly<Record<string, string>> | undefined,
+  fillOpts?: FillOptions,
+): Promise<void> {
   switch (step.kind) {
     case 'click':
       return session.click(ref!);
-    case 'fill': {
-      const value = fillText(step.value ?? '', recipe.vars, vars);
-      if (await isSelect(session, ref!)) return session.selectOption(ref!, value);
-      return session.fill(ref!, value);
-    }
+    case 'fill':
+      return session.fill(ref!, fillText(step.value ?? '', recipe.vars, vars), fillOpts);
     case 'press':
       return session.press(step.value ?? 'Enter', ref ?? undefined);
     case 'wait':

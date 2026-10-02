@@ -333,6 +333,7 @@ export function ScoopRoot() {
               draft={draft}
               urlError={host.urlError}
               varError={host.varError}
+              pathChecks={host.pathChecks}
               descriptionError={host.descriptionError}
               openedUrl={host.openedUrl}
               collapsed={collapsed.recipe}

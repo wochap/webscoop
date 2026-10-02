@@ -8,7 +8,7 @@ import { enabledDetectors } from './guards/detectors';
 import { applyPromotions } from './healing/apply';
 import type { Promotion } from './healing/promote';
 import { targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
-import { TimeoutError, type BrowserPort, type ElementRef, type LifecyclePort, type NotifyPort, type OpenOptions, type Session } from './ports';
+import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type NotifyPort, type OpenOptions, type Session } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { paginationOf } from './recipe/sequence';
 import { tablesOf } from './recipe/tables';
@@ -65,6 +65,8 @@ export interface RunOptions {
   browser: BrowserPort;
   profileDir: string;
   vars?: Readonly<Record<string, string>>;
+  /** Host files for `path` variables. Default: paths used as given, unchecked. */
+  files?: FilePort;
   /** Navigation timeout in milliseconds. Default 30000. */
   timeoutMs?: number;
   emitter?: RunEmitter;
@@ -329,6 +331,7 @@ export class Runner {
         windows,
         strategy,
         ...(this.opts.vars ? { vars: this.opts.vars } : {}),
+        ...(this.opts.files ? { files: this.opts.files } : {}),
         timeoutMs: this.opts.timeoutMs ?? 30_000,
         limit: this.opts.pagination?.limit ?? pagination.limit,
         cap,

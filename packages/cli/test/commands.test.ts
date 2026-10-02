@@ -109,6 +109,47 @@ describe('webscoop run', () => {
     expect(io.browserCreated()).toBe(0);
   });
 
+  it('takes variable values from --var-file, --var-command, and config bindings, the command line first', async () => {
+    const dir = await home([recipe({ vars: [{ name: 'category', type: 'string' }] })]);
+    await writeFile(join(dir, 'cat.txt'), 'boots\n');
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ vars: { shop: { category: { file: 'missing.txt' } } } }));
+    const cases: [string[], string][] = [
+      [['--var-file', `category=${join(dir, 'cat.txt')}`], 'boots'],
+      [['--var-command', 'category=printf "  hats \\n"'], 'hats'],
+      [['--var', 'category=socks'], 'socks'],
+    ];
+    for (const [flags, value] of cases) {
+      const browser = new FakeBrowser({ [`https://shop.test/c/${value}`]: shopPage(1) });
+      const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser });
+      expect(await main(['run', 'shop', ...flags], io)).toBe(ExitCode.Ok);
+      expect(browser.visited).toEqual([`https://shop.test/c/${value}`]);
+    }
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ vars: { shop: { category: { command: 'echo sandals' } } } }));
+    const browser = new FakeBrowser({ 'https://shop.test/c/sandals': shopPage(1) });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop'], io)).toBe(ExitCode.Ok);
+    expect(browser.visited).toEqual(['https://shop.test/c/sandals']);
+  });
+
+  it('exits 1 naming the variable and source when a command fails, without its output and before the browser', async () => {
+    const dir = await home([recipe({ vars: [{ name: 'category', type: 'string' }] })]);
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ vars: { shop: { category: { command: 'echo hunter2; echo oops >&2; exit 1' } } } }));
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['run', 'shop'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain('variable "category": the config command source failed: exit status 1');
+    expect(io.err()).not.toContain('hunter2');
+    expect(io.err()).not.toContain('oops');
+    expect(io.browserCreated()).toBe(0);
+  });
+
+  it('exits 1 when one variable has two command line sources', async () => {
+    const dir = await home();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['run', 'shop', '--var', 'category=a', '--var-command', 'category=echo b'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain('variable "category" is given more than once');
+    expect(io.browserCreated()).toBe(0);
+  });
+
   it('exits 1 without a display before any browser code runs', async () => {
     const dir = await home();
     const io = testIo({ env: { WEBSCOOP_HOME: dir } });

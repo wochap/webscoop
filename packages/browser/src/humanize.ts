@@ -36,7 +36,7 @@ export interface HumanTarget extends Measurable {
   fill(value: string): Promise<void>;
   inputValue(): Promise<string>;
   press(key: string): Promise<void>;
-  selectOption(option: { value: string }): Promise<unknown>;
+  selectOption(options: { value: string }[]): Promise<unknown>;
 }
 
 export interface HoverOptions {
@@ -291,9 +291,9 @@ export class Humanizer {
   }
 
   /** Focus the `select` by a humanized click, then choose the option; native popups cannot be driven by the mouse. */
-  async selectOption(target: HumanTarget, value: string): Promise<void> {
+  async selectOption(target: HumanTarget, values: readonly string[]): Promise<void> {
     await this.click(target);
-    await target.selectOption({ value });
+    await target.selectOption(values.map((value) => ({ value })));
   }
 
   /** Wheel down to the bottom in uneven steps; at the step cap, jump like plain mode. */

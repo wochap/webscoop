@@ -19,6 +19,7 @@ const sampleState: RecorderState = {
   selectorError: null,
   urlError: null,
   varError: null,
+  pathChecks: {},
   descriptionError: null,
   openedUrl: '',
   repick: null,
@@ -50,6 +51,7 @@ const selection = {
   ancestors: [{ label: 'body', path: [1] }],
   containerPath: null,
   framePath: [2, 1],
+  fill: null,
   frame: { selectors: [{ strategy: 'id' as const, value: 'app', stability: 'stable' as const, count: 1 }], fingerprint: fp },
 };
 
@@ -145,6 +147,8 @@ describe('protocol', () => {
     { kind: 'draft.addVar', name: 'email' },
     { kind: 'draft.renameVar', from: 'tier', to: 'level' },
     { kind: 'draft.removeVar', name: 'level' },
+    { kind: 'draft.setVarKind', name: 'pass', secret: true, type: 'string' },
+    { kind: 'vars.checkPath', name: 'video' },
     { kind: 'draft.useCurrentUrl' },
     { kind: 'test.run' },
     { kind: 'test.clear' },

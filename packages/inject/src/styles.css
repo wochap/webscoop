@@ -285,7 +285,7 @@
 .ws-rendered-arrow { flex: none; }
 .ws-rendered-value { color: var(--ws-neutral-200); }
 .ws-var-table { display: flex; flex-direction: column; gap: 2px; }
-.ws-var-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
+.ws-var-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) 62px minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
 .ws-var-head { padding: 0 2px 3px; font-size: 10.5px; color: var(--ws-neutral-600); }
 .ws-var-cell {
   height: 24px;
@@ -309,6 +309,12 @@
 .ws-var-remove:hover { background: var(--ws-surface-2); color: var(--ws-text); }
 .ws-var-note { padding: 1px 2px 6px; font-size: 10.5px; }
 .ws-var-usage { color: var(--ws-neutral-500); }
+.ws-var-kind { height: 22px; min-width: 0; padding: 0 2px; border: 0; border-radius: var(--ws-r-sm); background: var(--ws-surface-2); color: var(--ws-text); font-size: 10.5px; }
+.ws-var-kind-secret { color: var(--ws-warn); }
+.ws-var-kind-external { display: inline-flex; align-items: center; padding: 0 4px; background: transparent; color: var(--ws-neutral-500); }
+.ws-var-readonly { opacity: 0.7; }
+.ws-var-kind-note { padding-bottom: 0; color: var(--ws-neutral-500); }
+.ws-var-ok { color: var(--ws-ok); }
 .ws-var-confirm { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px 6px; border-radius: var(--ws-r-sm); background: var(--ws-warn-tint); color: var(--ws-warn); font-size: 11px; }
 .ws-btn-quiet { height: 24px; padding: 0 8px; background: transparent; box-shadow: inset 0 0 0 1px var(--ws-neutral-800); color: var(--ws-neutral-300); font-size: 12px; font-weight: 500; }
 .ws-btn-quiet:hover { background: var(--ws-surface-2); }
@@ -709,6 +715,11 @@
 .ws-center { text-align: center; }
 .ws-actions { gap: var(--ws-s2); }
 .ws-also { gap: 4px; }
+.ws-fill-pick { gap: 6px; padding: 8px; border: 1px solid var(--ws-border, var(--ws-surface-2)); border-radius: var(--ws-r-sm); }
+.ws-fill-value { gap: 6px; align-items: center; }
+.ws-fill-input { flex: 1; min-width: 0; font: 400 12px/1.3 var(--ws-mono); }
+.ws-fill-var-name { width: 96px; font: 500 12px/1 var(--ws-mono); color: var(--ws-accent-300); }
+.ws-chip-var { font: 500 12px/1 var(--ws-mono); color: var(--ws-accent-300); }
 .ws-kind-pill { padding: 1px 7px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--ws-neutral-700); }
 .ws-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--ws-accent-text); cursor: pointer; font-size: 11.5px; font-weight: 500; }
 .ws-link:hover { color: var(--ws-accent-200); }

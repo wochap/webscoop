@@ -25,13 +25,17 @@ import { resolvePaths } from '../paths';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { releaseProfile } from './daemon';
-import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings, parseVars } from './run';
+import { Redactor } from '../redact';
+import { hostFiles, resolveVars } from '../vars';
+import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings } from './run';
 
 export interface RecordCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
   name?: string;
   var: string[];
+  varFile?: string[];
+  varCommand?: string[];
   profile?: string;
   timeout: number;
   lockTimeout: number;
@@ -150,7 +154,8 @@ function logEvents(io: CliIo, emitter: RecorderEmitter): void {
   emitter.on('recorder.error', (e) => log(io, `error: ${e.message}`));
 }
 
-export async function recordCommand(io: CliIo, template: string | undefined, opts: RecordCommandOptions): Promise<Code> {
+export async function recordCommand(outer: CliIo, template: string | undefined, opts: RecordCommandOptions): Promise<Code> {
+  let io = outer;
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths, (message) => log(io, message));
   const storage = new FsStorage(paths.recipesDir, io.cwd);
@@ -171,7 +176,10 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
   checkTemplate(template);
   if (opts.name !== undefined && !KEBAB.test(opts.name)) throw new CliError(`invalid recipe name "${opts.name}": recipe names must be kebab-case`);
 
-  const values = await resolveValues(io, template, parseVars(opts.var), recipe);
+  const resolvedVars = await resolveVars(recipe, opts, config, io.cwd);
+  const redactor = Redactor.of(resolvedVars.values, resolvedVars.secrets);
+  io = { ...io, stderr: redactor.wrap(io.stderr) };
+  const values = await resolveValues(io, template, resolvedVars.values, recipe);
   for (const warning of encodedValueWarnings(template, values)) log(io, warning);
   const url = fillTemplate(template, [], values);
   const name = opts.name ?? recipe?.name ?? proposeName(url);
@@ -199,7 +207,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     });
   });
 
-  const hooks = new HookRunner(config, { command: opts.edit ? 'edit' : 'record', profile, profileDir, recipe: name, vars: values }, io);
+  const hooks = new HookRunner(config, { command: opts.edit ? 'edit' : 'record', profile, profileDir, recipe: name, vars: values, secrets: resolvedVars.secrets }, io);
   let session: Session | undefined;
   try {
     const bundle = await io.recorderBundle(e2e ? 'e2e' : 'default');
@@ -211,7 +219,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
     if (!isInteractiveSession(session)) throw new CliError('this browser adapter cannot run a recording session');
 
     const draft = recipe
-      ? draftFromRecipe(recipe, values)
+      ? draftFromRecipe(recipe, { ...resolvedVars.values, ...values }, resolvedVars.origins)
       : emptyDraft({ name, url: template, vars: templateVariables(template).map((v) => ({ name: v, value: values[v]! })) });
     const emitter = new RecorderEmitter();
     logEvents(io, emitter);
@@ -232,6 +240,7 @@ export async function recordCommand(io: CliIo, template: string | undefined, opt
       timeoutMs: opts.timeout,
       pathFor: (n) => target ?? storage.pathFor(n),
       mode,
+      files: hostFiles(io.cwd),
     });
 
     if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} ${profileNote(resolved)}: ${url}`);

@@ -193,8 +193,8 @@ describe('FakeBrowser page actions', () => {
     await session.fill(input!, 'mouse');
     expect(await session.read(input!, { attr: 'value', mode: 'text' })).toBe('mouse');
     const [select] = await session.resolve(c('id', 'sort'));
-    await session.selectOption(select!, 'Price');
-    await expect(session.selectOption(select!, 'Rating')).rejects.toThrow(/no option/);
+    await session.fill(select!, 'Price');
+    await expect(session.fill(select!, 'Rating')).rejects.toThrow(/no option/);
     await session.press('Enter');
     const info = await session.settle({ timeoutMs: 1000, previousUrl: PAGE });
     expect(info.url).toBe('https://shop.test/search?q=mouse');

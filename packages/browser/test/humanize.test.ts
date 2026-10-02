@@ -83,7 +83,7 @@ function target(scene: Scene, box: Box | null = BOX, spots: ('center' | 'inset')
     fill: async (v) => void scene.calls.push(`fill:${v}`),
     inputValue: async () => 'old',
     press: async (k) => void scene.calls.push(`locator.press:${k}`),
-    selectOption: async (o) => void scene.calls.push(`select:${o.value}`),
+    selectOption: async (o) => void scene.calls.push(`select:${o.map((x) => x.value).join(',')}`),
   };
 }
 
@@ -213,7 +213,11 @@ describe('Humanizer scroll and dwell', () => {
 describe('PlaywrightSession with humanized input', () => {
   function session(humanize: boolean) {
     const calls: string[] = [];
+    let evaluated = 0;
     const locator = {
+      first: () => locator,
+      // The fill kind first, then the value read back.
+      evaluate: async () => (evaluated++ === 0 ? 'text' : 'a'),
       scrollIntoViewIfNeeded: async () => void calls.push('scrollIntoView'),
       click: async () => void calls.push('click'),
       fill: async (v: string) => void calls.push(`fill:${v}`),

@@ -1,4 +1,5 @@
-import { isOwn, OWN_TAGS, pickable } from './dom';
+import { classifyFillElement, currentFillValue } from '@webscoop/core/page';
+import { inputHint, isOwn, OWN_TAGS, pickable } from './dom';
 import { isMenuTarget, isTypingTarget } from './keyboard';
 
 /** The hover walk: the element under the pointer and how many steps the target is raised above it. */
@@ -217,7 +218,16 @@ export type ObservedAction =
   | { kind: 'click'; el: Element }
   | { kind: 'type'; el: Element; value: string }
   | { kind: 'select'; el: Element; value: string }
-  | { kind: 'press'; el: Element; value: string };
+  | { kind: 'press'; el: Element; value: string }
+  /**
+   * A checkbox, switch, or radio set to `true` or `false`; a combobox option
+   * chosen; OTP boxes typed; or files chosen (with a path variable, and
+   * `replacesClick` when a click on `el` opened the chooser).
+   */
+  | { kind: 'fill'; el: Element; value: string; variable?: { name: string; type: 'path' }; replacesClick?: boolean };
+
+/** How long after a click a file chooser's choice still counts as opened by that click. */
+const CHOOSER_WINDOW_MS = 120_000;
 
 export interface ObserverHooks {
   isActive(): boolean;
@@ -245,6 +255,17 @@ export function actionableAncestor(target: Element): Element | null {
   return target.closest(ACTIONABLE);
 }
 
+const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+/** The first of the one-character boxes `box` belongs to: in the nearest ancestor holding several. */
+function otpFirst(box: Element): Element {
+  for (let scope = box.parentElement, depth = 0; scope && depth < 4; scope = scope.parentElement, depth++) {
+    const boxes = scope.querySelectorAll('input[maxlength="1"]');
+    if (boxes.length > 1) return boxes[0]!;
+  }
+  return box;
+}
+
 function valueOf(el: Element): string {
   return 'value' in el && typeof (el as HTMLInputElement).value === 'string' ? (el as HTMLInputElement).value : (el.textContent ?? '');
 }
@@ -257,8 +278,13 @@ function valueOf(el: Element): string {
  * actions. Recorder-owned nodes are ignored.
  */
 export class BrowseObserver {
-  /** Typing not yet reported: the input and its latest value. */
-  private pending: { el: Element; value: string } | null = null;
+  /**
+   * Typing not yet reported: the input and its latest value. A combobox waits
+   * for its option, OTP boxes for the last box, so neither reports on blur.
+   */
+  private pending: { el: Element; value: string; wait?: 'combobox' | 'otp' } | null = null;
+  /** The last click reported, for a file chooser it opened. */
+  private lastClick: { el: Element; at: number } | null = null;
   /** Form an Enter press is submitting in this task; its synthetic click on the submit button is not a step. */
   private submitting: HTMLFormElement | null = null;
 
@@ -284,6 +310,7 @@ export class BrowseObserver {
     this.win.removeEventListener('focusout', this.onBlur, opts);
     this.win.removeEventListener('pagehide', this.flush, opts);
     this.pending = null;
+    this.lastClick = null;
   }
 
   /** Report pending typing now, for example when browse mode ends. */
@@ -304,26 +331,75 @@ export class BrowseObserver {
     if (!raw) return;
     const el = actionableAncestor(raw);
     if (!el) return;
+    // Choosing a combobox option is one fill of the combobox with the option's label.
+    if (el.getAttribute('role') === 'option' && this.pending?.wait === 'combobox') {
+      const combobox = this.pending.el;
+      this.pending = null;
+      this.hooks.onAction({ kind: 'fill', el: combobox, value: collapse(el.textContent ?? '') });
+      return;
+    }
+    // A label's click reaches its control as a click of its own.
+    const control = el.tagName.toLowerCase() === 'label' ? (el as HTMLLabelElement).control : null;
+    if (control && ['toggle', 'radio', 'file'].includes(classifyFillElement(control))) return;
+    const kind = classifyFillElement(el);
+    if (kind === 'toggle' || kind === 'radio') {
+      this.flush();
+      // A native box is already toggled while its click is dispatched; an ARIA one toggles in the page's handler after this one.
+      const checked = el instanceof HTMLInputElement ? el.checked : el.getAttribute('aria-checked') !== 'true';
+      this.hooks.onAction({ kind: 'fill', el, value: kind === 'radio' ? 'true' : String(checked) });
+      return;
+    }
+    // Opening a file input is not a step; choosing files is.
+    if (kind === 'file') return;
     // Focusing a text box or opening a select is not a step; typing and choosing are.
     if (isTextEntry(el) || el.tagName.toLowerCase() === 'select') return;
     if (e.detail === 0 && this.submitting && (el as HTMLButtonElement).form === this.submitting) return;
     if (this.pending && this.pending.el !== el) this.flush();
+    this.lastClick = { el, at: Date.now() };
     this.hooks.onAction({ kind: 'click', el });
   };
 
   private readonly onInput = (e: Event) => {
     const el = this.target(e);
     if (!el || !isTextEntry(el)) return;
+    const kind = classifyFillElement(el);
+    if (kind === 'otp') {
+      // One fill on the first box with the joined characters.
+      const first = otpFirst(el);
+      if (this.pending && this.pending.el !== first) this.flush();
+      this.pending = { el: first, value: currentFillValue(first, 'otp'), wait: 'otp' };
+      return;
+    }
     if (this.pending && this.pending.el !== el) this.flush();
-    this.pending = { el, value: valueOf(el) };
+    this.pending = { el, value: valueOf(el), ...(kind === 'combobox' ? { wait: 'combobox' as const } : {}) };
   };
 
   private readonly onChange = (e: Event) => {
     const el = this.target(e);
-    if (!el || el.tagName.toLowerCase() !== 'select') return;
+    if (!el) return;
+    if (classifyFillElement(el) === 'file') return this.filesChosen(el as HTMLInputElement);
+    if (el.tagName.toLowerCase() !== 'select') return;
     this.flush();
     this.hooks.onAction({ kind: 'select', el, value: (el as HTMLSelectElement).value });
   };
+
+  /**
+   * Files chosen: one fill with a path variable named from the input. A hidden
+   * input was opened by the click before it, which the fill targets and
+   * replaces, since replaying that click would open a dialog nobody answers.
+   */
+  private filesChosen(input: HTMLInputElement): void {
+    this.flush();
+    const variable = { name: inputHint(input) || 'file', type: 'path' as const };
+    const click = this.lastClick;
+    const hidden = input.hidden || input.getClientRects().length === 0;
+    if (hidden && click && click.el !== input && Date.now() - click.at < CHOOSER_WINDOW_MS) {
+      this.lastClick = null;
+      this.hooks.onAction({ kind: 'fill', el: click.el, value: '', variable, replacesClick: true });
+      return;
+    }
+    this.hooks.onAction({ kind: 'fill', el: input, value: '', variable });
+  }
 
   private readonly onKey = (e: KeyboardEvent) => {
     const el = this.target(e);
@@ -339,6 +415,6 @@ export class BrowseObserver {
 
   private readonly onBlur = (e: FocusEvent) => {
     const el = this.target(e);
-    if (el && this.pending?.el === el) this.flush();
+    if (el && this.pending?.el === el && !this.pending.wait) this.flush();
   };
 }

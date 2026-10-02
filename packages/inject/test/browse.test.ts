@@ -100,3 +100,55 @@ describe('browse observer', () => {
     expect(isTextEntry($('#accept'))).toBe(false);
   });
 });
+
+describe('browse observer on form inputs', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <label><input type="checkbox" id="terms"> Accept</label>
+      <span role="switch" id="news" aria-checked="false"></span>
+      <input type="radio" name="plan" id="pro">
+      <input id="city" role="combobox" aria-autocomplete="list">
+      <ul role="listbox"><li role="option" id="lima">Lima</li><li role="option">Cusco</li></ul>
+      <div class="otp">${Array.from({ length: 4 }, (_, i) => `<input maxlength="1" id="otp${i}">`).join('')}</div>
+      <input type="file" id="resume" name="resume">
+      <input type="file" id="hidden-file" name="video" hidden><button id="select-file">Select file</button>
+      <a id="elsewhere" href="#">x</a>`;
+  });
+
+  it('records a checkbox, switch, or radio as a fill with its new state, and a label click once', () => {
+    $('#terms').click();
+    $('#news').click();
+    $('#pro').click();
+    $('#terms').closest('label')!.click();
+    expect(summary()).toEqual(['fill:terms=true', 'fill:news=true', 'fill:pro=true', 'fill:terms=false']);
+  });
+
+  it('records a combobox option choice as one fill of the combobox, with no click on the option', () => {
+    const input = $('#city') as HTMLInputElement;
+    type(input, 'Li');
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    $('#lima').click();
+    expect(summary()).toEqual(['fill:city=Lima']);
+  });
+
+  it('records typing into OTP boxes as one fill on the first box', () => {
+    for (const [i, ch] of [...'4829'].entries()) {
+      const box = $(`#otp${i}`) as HTMLInputElement;
+      type(box, ch);
+      box.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    }
+    $('#elsewhere').click();
+    expect(summary()).toEqual(['type:otp0=4829', 'click:elsewhere']);
+  });
+
+  it('records chosen files as a fill with a path variable, replacing the click that opened a hidden input', () => {
+    $('#resume').dispatchEvent(new Event('change', { bubbles: true }));
+    $('#select-file').click();
+    $('#hidden-file').dispatchEvent(new Event('change', { bubbles: true }));
+    expect(actions.map((a) => [a.kind, a.el.id, 'variable' in a ? a.variable : undefined, 'replacesClick' in a ? a.replacesClick : undefined])).toEqual([
+      ['fill', 'resume', { name: 'resume', type: 'path' }, undefined],
+      ['click', 'select-file', undefined, undefined],
+      ['fill', 'select-file', { name: 'video', type: 'path' }, true],
+    ]);
+  });
+});

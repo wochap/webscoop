@@ -1,12 +1,12 @@
 import { convertValue, defaultAttr } from '../convert';
 import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
-import { MAIN_WINDOW, type ElementRef, type InteractiveSession, type PageInfo, type RecorderWindow, type SerializedElement, type StoragePort } from '../ports';
+import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type SerializedElement, type StoragePort } from '../ports';
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, Flow, SelectorCandidate } from '../recipe/schema';
 import { DESCRIPTION_MAX } from '../recipe/constants';
 import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
-import { runFlow, type StepReport } from '../flows/replay';
+import { runFlow, splitPaths, type StepReport } from '../flows/replay';
 import { RunWindows } from '../flows/windows';
 import {
   annotate,
@@ -122,6 +122,8 @@ export interface RecorderOptions {
   mode?: RecorderMode;
   /** Whether the user closing the window aborts a waiting guard. Default true; false for a popup that closes itself. */
   abortOnClose?: boolean;
+  /** Host files, to check the paths of path variables. Without it every path reads as missing. */
+  files?: FilePort;
 }
 
 /** A one-line toast for a step or flow replay. */
@@ -338,6 +340,7 @@ export class RecorderController {
       selectorError: null,
       urlError: null,
       varError: null,
+      pathChecks: {},
       descriptionError: null,
       openedUrl: '',
       repick: repickContext ? repickContext.index : null,
@@ -643,7 +646,7 @@ export class RecorderController {
       const reply = await this.route(msg);
       if (this.current.error) this.current = { ...this.current, error: null };
       this.syncFrame();
-      return reply && 'state' in reply ? { ...reply, state: this.current } : (reply ?? this.stateMessage());
+      return reply && 'state' in reply ? { ...reply, state: this.outgoing() } : (reply ?? this.stateMessage());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.current = { ...this.current, error: message, busy: null };
@@ -654,7 +657,30 @@ export class RecorderController {
 
   private stateMessage(): HostMessage {
     this.syncFrame();
-    return { kind: 'draft.state', state: this.current };
+    return { kind: 'draft.state', state: this.outgoing() };
+  }
+
+  /** The state as the page gets it: secret values stay on the host, the panel only learns that one is set. */
+  private outgoing(): RecorderState {
+    const draft = this.current.draft;
+    if (!draft.vars.some((v) => v.secret)) return this.current;
+    const vars = draft.vars.map((v) => (v.secret ? { ...v, value: '', ...(v.value !== '' ? { set: true as const } : {}) } : v));
+    return { ...this.current, draft: { ...draft, vars } };
+  }
+
+  /** Check on the host that each path of a path variable names an existing file. */
+  private async checkPath(name: string): Promise<void> {
+    const variable = this.draft.vars.find((v) => v.name === name);
+    if (!variable || variable.type !== 'path') {
+      const { [name]: _, ...rest } = this.current.pathChecks;
+      this.current = { ...this.current, pathChecks: rest };
+      return;
+    }
+    const files = this.opts.files;
+    const paths = await Promise.all(
+      splitPaths(variable.value).map(async (path) => ({ path, exists: files ? await files.readable(files.resolve(path)) : false })),
+    );
+    this.current = { ...this.current, pathChecks: { ...this.current.pathChecks, [name]: { value: variable.value, paths } } };
   }
 
   /** Send the current state to the owner window without waiting for a page request. */
@@ -1000,7 +1026,14 @@ export class RecorderController {
         return;
       case 'draft.setVar':
         this.applyVar({ type: 'setVar', name: msg.name, value: msg.value });
+        if (this.draft.vars.some((v) => v.name === msg.name && v.type === 'path')) await this.checkPath(msg.name);
         return;
+      case 'draft.setVarKind':
+        this.applyVar({ type: 'setVarKind', name: msg.name, ...(msg.secret !== undefined ? { secret: msg.secret } : {}), ...(msg.type !== undefined ? { varType: msg.type } : {}) });
+        await this.checkPath(msg.name);
+        return;
+      case 'vars.checkPath':
+        return void (await this.checkPath(msg.name));
       case 'draft.reopen': {
         const target = this.targetUrl();
         this.current = { ...this.current, openedUrl: target };
@@ -2576,13 +2609,34 @@ export class RecorderController {
     }
     if (target && target.selectors.length === 0) throw new Error('the element has no selector candidates');
     if (flow !== undefined && !this.draft.flows[flow]) throw new Error(`no flow at index ${flow}`);
+    const into0 = flow ?? this.draft.activeFlow;
+    const steps = into0 !== null && into0 !== undefined ? (this.draft.flows[into0]?.steps ?? []) : [];
+    const keyOf = (t: { selectors: ProtocolCandidate[] } | undefined) => (t?.selectors[0] ? `${t.selectors[0].strategy}=${t.selectors[0].value}` : null);
+    if (step.replacesClick && steps.at(-1)?.kind === 'click' && into0 !== null && into0 !== undefined) {
+      this.apply({ type: 'removeStep', flow: into0, index: steps.length - 1 });
+    }
+    let value = step.value;
+    if (step.kind === 'fill' && step.variable) {
+      const path = step.variable.type === 'path';
+      const secret = step.variable.secret === true && !path;
+      // A fill of the same target right before reuses its variable, so typing a password again does not add one.
+      const last = this.draft.flows[into0 ?? -1]?.steps.at(-1);
+      const reused = last?.kind === 'fill' && keyOf(last.target) !== null && keyOf(last.target) === keyOf(target) ? /^\{(\w+)\}$/.exec(last.value ?? '')?.[1] : undefined;
+      const existing = reused ? this.draft.vars.find((v) => v.name === reused && (v.type === 'path') === path && (v.secret === true) === secret && !v.origin) : undefined;
+      const name = existing?.name ?? uniqueVarName(this.draft, step.variable.name, path ? 'file' : secret ? 'password' : 'value');
+      const initial = path ? '' : (step.value ?? '');
+      if (existing) this.apply({ type: 'setVar', name, value: path ? existing.value : initial });
+      else this.apply({ type: 'declareVar', name, value: initial, ...(secret ? { secret: true } : {}), ...(path ? { path: true } : {}) });
+      value = `{${name}}`;
+      if (path) await this.checkPath(name);
+    }
     this.apply({
       type: 'addStep',
       ...(flow !== undefined ? { flow } : {}),
       step: {
         kind: step.kind,
         ...(target ? { target } : {}),
-        ...(step.value !== undefined ? { value: step.value } : {}),
+        ...(value !== undefined ? { value } : {}),
         ...(step.until ? { until: step.until } : {}),
         window: this.ownerIsPopup() ? 'popup' : 'same',
         ...(step.optional !== undefined ? { optional: step.optional } : {}),
@@ -2596,7 +2650,7 @@ export class RecorderController {
       index: (this.draft.flows[into]?.steps.length ?? 1) - 1,
       kind: step.kind,
       target: primary ? `${primary.strategy}=${primary.value}` : null,
-      ...(step.value !== undefined ? { value: step.value } : {}),
+      ...(value !== undefined ? { value } : {}),
     });
   }
 
@@ -2676,7 +2730,7 @@ export class RecorderController {
     const cache = new Map();
     try {
       for (const flow of flows) {
-        await runFlow(validated.recipe, flow, this.raw, { page: 1, windows, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache, onEvent });
+        await runFlow(validated.recipe, flow, this.raw, { page: 1, windows, vars: values, ...(this.opts.files ? { files: this.opts.files } : {}), timeoutMs: this.opts.timeoutMs ?? 30_000, cache, onEvent });
       }
     } finally {
       // Popups a replay opened stay for the user; only the listener goes.
@@ -2830,4 +2884,22 @@ export class RecorderController {
     this.emitter.emit('recorder.saved', { name: validated.recipe.name, ...(path ? { path } : {}) });
     return { kind: 'save.result', ok: true, ...(path ? { path } : {}), errors: [], state: this.current };
   }
+}
+
+/**
+ * A free variable name from a label, `name`, or `id`: lowercased, other
+ * characters as `_`, `fallback` when nothing is left, then `_2`, `_3`, ...
+ * while taken.
+ */
+export function uniqueVarName(draft: Pick<Draft, 'vars'>, hint: string, fallback: string): string {
+  let base = hint
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^[^a-z_]+|_+$/g, '')
+    .slice(0, 40);
+  if (!base) base = fallback;
+  if (!draft.vars.some((v) => v.name === base)) return base;
+  for (let n = 2; ; n++) if (!draft.vars.some((v) => v.name === `${base}_${n}`)) return `${base}_${n}`;
 }

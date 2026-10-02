@@ -68,7 +68,10 @@ export const DescriptionSchema = z.string().min(1, 'a description cannot be empt
 
 export const VarSchema = z.object({
   name: z.string().regex(IDENTIFIER, 'variable names must be identifiers'),
-  type: z.literal('string'),
+  /** `path`: one or more file paths separated by `:`. */
+  type: z.enum(['string', 'path']),
+  /** Never saved with a default, printed, logged, or passed to hooks. */
+  secret: z.boolean().optional(),
   default: z.string().optional(),
   description: DescriptionSchema.refine((value) => !/[\r\n]/.test(value), 'a variable description is one line').optional(),
 });

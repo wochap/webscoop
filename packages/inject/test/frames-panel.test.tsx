@@ -31,6 +31,7 @@ function selectedIn(state: RecorderState, frameRefusal: string | null = null): R
         ancestors: [{ label: 'body', path: [1] }],
         containerPath: null,
         framePath: [1, 2],
+        fill: null,
         frame,
       },
       scope: 'page',

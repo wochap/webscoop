@@ -11,7 +11,7 @@ import { Recheck, waitForClear, type WaitResult } from '../guards/wait';
 import { defaultLadder } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type Resolver } from '../healing/types';
-import { NoopNotify, type NotifyPort, type PageInfo, type Session } from '../ports';
+import { NoopNotify, type FilePort, type NotifyPort, type PageInfo, type Session } from '../ports';
 import { Dedup, evaluateStop, type PageSummary } from '../pagination/dedup';
 import type { PagerContext, PageStrategy, StopReason } from '../pagination/types';
 import type { Block, Flow, InnerBlock, Paginate, Recipe, RecipeTable, SelectorCandidate } from '../recipe/schema';
@@ -28,6 +28,7 @@ export interface SequenceHost {
   windows: RunWindows;
   strategy: PageStrategy;
   vars?: Readonly<Record<string, string>>;
+  files?: FilePort;
   timeoutMs: number;
   limit: number | 'all';
   cap: number;
@@ -222,6 +223,7 @@ export class SequenceRun {
         page,
         windows: host.windows,
         ...(host.vars ? { vars: host.vars } : {}),
+        ...(host.files ? { files: host.files } : {}),
         timeoutMs: host.timeoutMs,
         ladder: defaultLadder({ enabled: host.healing.enabled, extra: host.healing.resolvers }),
         promote: host.healing.enabled,

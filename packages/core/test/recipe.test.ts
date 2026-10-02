@@ -97,6 +97,32 @@ describe('identity and URL template', () => {
     expect(errors[0]!.message).toContain('category');
   });
 
+  it('accepts secret and path variables', () => {
+    const result = validateRecipe(
+      base({
+        vars: [
+          { name: 'category', type: 'string' },
+          { name: 'pass', type: 'string', secret: true },
+          { name: 'video', type: 'path', default: '~/clips/demo.mp4' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a secret with a default and names it', () => {
+    const errors = errorsOf(base({ vars: [{ name: 'category', type: 'string' }, { name: 'pass', type: 'string', secret: true, default: 'x' }] }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toContain('pass');
+  });
+
+  it('rejects a secret in the url template', () => {
+    const errors = errorsOf(base({ vars: [{ name: 'category', type: 'string', secret: true }] }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.url');
+    expect(errors[0]!.message).toContain('secret');
+  });
+
   it('rejects a name that is not kebab-case', () => {
     const errors = errorsOf(base({ name: 'My Shop' }));
     expect(errors[0]!.path).toBe('$.name');

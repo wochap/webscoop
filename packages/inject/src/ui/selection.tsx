@@ -16,6 +16,7 @@ import {
 } from "./candidates";
 import { useActions } from "./context";
 import { FieldOptionsForm, formPatch, nameProblem } from "./fields";
+import { FillPick } from "./fill-pick";
 import { NumberedSamples } from "./items";
 import { Icon } from "./icons";
 import { FrameCard } from "./frame";
@@ -547,6 +548,13 @@ function SelectionBody({
           onCancel={() => void actions.send({ kind: "draft.cancelEdit" })}
         />
       ) : (
+        <>
+        {selected!.selection.fill && !host.repick && (
+          <FillPick
+            fill={selected!.selection.fill}
+            flowName={host.draft.activeFlow !== null ? (host.draft.flows[host.draft.activeFlow]?.name ?? null) : null}
+          />
+        )}
         <PickActionGrid
           repicking={host.repick !== null}
           canAdd={nameError === null && !blocked && !frameRefusal && !host.popup}
@@ -578,6 +586,7 @@ function SelectionBody({
           }
           onDismiss={actions.startPicking}
         />
+        </>
       )}
     </>
   );

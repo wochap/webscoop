@@ -136,4 +136,18 @@ describe('loadConfig', () => {
     expect(await configError({ profiles: { default: '../x' } })).toContain('$.profiles.default');
     expect(await configError({ profiles: { rules: [{ host: 'a', profile: 'a/b' }] } })).toContain('$.profiles.rules.0.profile');
   });
+
+  it('accepts vars bindings and expands file paths against the config directory', async () => {
+    const home = await tempDir();
+    const vars = { 'sunat-menu': { pass: { command: 'pass show sunat/sol' }, ruc: { file: 'ruc.txt' }, user: { value: 'me' } } };
+    await writeFile(join(home, 'config.json'), JSON.stringify({ vars }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(config.vars!['sunat-menu']!.ruc!.file).toBe(join(home, 'ruc.txt'));
+    expect(config.vars!['sunat-menu']!.pass!.command).toBe('pass show sunat/sol');
+  });
+
+  it('rejects a vars binding without exactly one source, naming the recipe and variable', async () => {
+    expect(await configError({ vars: { 'sunat-menu': { pass: {} } } })).toContain('$.vars.sunat-menu.pass');
+    expect(await configError({ vars: { 'sunat-menu': { pass: { value: 'a', command: 'b' } } } })).toContain('$.vars.sunat-menu.pass');
+  });
 });

@@ -220,3 +220,53 @@ describe('descriptions', () => {
     expect(p.sent).toEqual([{ kind: 'draft.setDescription', target: { kind: 'var', name: 'category' }, text: 'product category' }]);
   });
 });
+
+describe('variable kinds', () => {
+  const draft = () =>
+    emptyDraft({
+      name: 'portal',
+      url: 'https://portal.test/reports?period={period}',
+      vars: [
+        { name: 'period', value: '2026-09' },
+        { name: 'password', value: '', secret: true, set: true, added: true },
+        { name: 'video', value: '~/clips/demo.mp4', type: 'path', added: true },
+        { name: 'api_token', value: '', secret: true, origin: 'config', added: true },
+        { name: 'region', value: 'EU-West', origin: 'cli', added: true },
+      ],
+    });
+
+  it('shows each variable as text, secret, path, or external, with notes', () => {
+    const state = { ...baseState(draft()), pathChecks: { video: { value: '~/clips/demo.mp4', paths: [{ path: '~/clips/demo.mp4', exists: true }] } } };
+    const p = renderPanel(state);
+    expect((p.q('var-kind-period') as HTMLSelectElement).value).toBe('text');
+    expect((p.q('var-kind-password') as HTMLSelectElement).value).toBe('secret');
+    expect((p.q('var-kind-video') as HTMLSelectElement).value).toBe('path');
+    expect(p.q('var-kind-api_token')!.textContent).toBe('external');
+    const secret = p.q('var-input-password') as HTMLInputElement;
+    expect(secret.type).toBe('password');
+    expect(secret.value).toBe('');
+    expect(secret.placeholder).toBe('••••••••');
+    expect(p.q('var-kind-note-password')!.textContent).toBe('secret · never saved');
+    expect(p.q('var-kind-note-video')!.textContent).toBe('default saved · file exists');
+    expect(p.q('var-kind-note-api_token')!.textContent).toBe('from config · read-only here');
+    expect(p.q('var-kind-note-region')!.textContent).toBe('from CLI · read-only here');
+    const external = p.q('var-input-region') as HTMLInputElement;
+    expect(external.readOnly).toBe(true);
+    expect((p.q('var-input-api_token') as HTMLInputElement).value).toBe('••••••••');
+  });
+
+  it('marks a variable secret, changes its type, and asks the host to check a path', () => {
+    const p = renderPanel(baseState(draft()));
+    fireEvent.change(p.q('var-kind-period')!, { target: { value: 'secret' } });
+    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: true, type: 'string' });
+    fireEvent.change(p.q('var-kind-period')!, { target: { value: 'path' } });
+    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: false, type: 'path' });
+    expect(p.sent).toContainEqual({ kind: 'vars.checkPath', name: 'video' });
+  });
+
+  it('shows the paths not found', () => {
+    const state = { ...baseState(draft()), pathChecks: { video: { value: '~/clips/demo.mp4', paths: [{ path: '~/clips/demo.mp4', exists: false }] } } };
+    const p = renderPanel(state);
+    expect(p.q('var-path-check-video')!.textContent).toContain('not found: ~/clips/demo.mp4');
+  });
+});

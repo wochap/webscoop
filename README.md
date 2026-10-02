@@ -143,12 +143,13 @@ directory.
 webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms] [--force]
 webscoop record --edit <recipe> [--repick field]
 webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--timeout ms] [--force]
-webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
+webscoop run <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]...
+                      [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
-webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
+webscoop test <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
                        [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
@@ -204,6 +205,57 @@ matching `--var name=value` at record and run time.
 ```sh
 webscoop record "https://shop.test/c/{category}" --name shop
 webscoop run shop --var category="running-shoes"
+```
+
+### Variables
+
+A recipe's variables fill `{name}` in the URL template and in `fill` step
+values. `run`, `test`, `record`, and `edit` take each value from the first
+source that has one:
+
+1. The command line: `--var name=value`, `--var-file name=PATH` (the file's
+   content, one trailing newline removed), or `--var-command name=CMD` (the
+   trimmed stdout of `CMD` run with `/bin/sh -c`). Two of them for one
+   variable is an error.
+2. The config file's `vars` block, per recipe and variable: exactly one of
+   `value`, `file` (relative to the config file's directory, `~/` is home), or
+   `command` (`/bin/sh -c` in the config file's directory, trimmed stdout).
+3. The recipe's `default`.
+
+```json
+{
+  "vars": {
+    "sunat-menu": {
+      "pass": { "command": "pass show sunat/sol" },
+      "ruc": { "file": "~/.config/sunat/ruc" },
+      "user": { "value": "ADA" }
+    }
+  }
+}
+```
+
+Sources are read before the browser opens, only for variables the recipe
+declares, in the command you typed (the daemon never runs them). A command
+that fails, cannot start, or runs longer than 30 seconds, or a file that
+cannot be read, exits 1 naming the variable and the source, without its
+output. A variable left without a value exits 1, as before.
+
+Variable kinds:
+
+- `secret: true` marks a variable whose value comes only from the command line
+  or the config. It cannot have a default or appear in the URL template. Its
+  value is replaced by `***` in stderr, the report, and error messages, left
+  out of the hook payload's `vars`, never sent to the language model, and
+  never written to the recipe, also by the recorder. Rows are page data and are
+  printed as the page shows them.
+- `type: "path"` holds one or more file paths separated by `:`, for file
+  inputs. Relative paths resolve against the directory you ran the command
+  in. Before a `fill` step uses it, every path must name a readable file, else
+  the run exits 1 naming the variable and the path. Its default is saved.
+
+```sh
+webscoop run sunat-menu --var-command pass='pass show sunat/sol'
+webscoop run upload --var clips=intro.mp4:outro.mp4
 ```
 
 ### Daemon
@@ -474,8 +526,8 @@ webscoop plus:
 Stdin gets one JSON object with `event`, `at` (ISO timestamp), the same values
 (`command`, `profile`, `profileDir`, `browserPid`, `recipe`, `runId`, `url`,
 `reason`), the recipe's variable values as `vars` (only here, never in the
-environment), and the event's details: `kind` (guard kind), `table` and
-`target` (re-pick target), and `page` for `attention.needed`; `outcome` for
+environment; secret variables left out), and the event's details: `kind`
+(guard kind), `table` and `target` (re-pick target), and `page` for `attention.needed`; `outcome` for
 `attention.resolved`; `rows`, `pages`, and `message` for `run.done` and
 `run.failed`. Values are never substituted into the command line.
 
@@ -567,10 +619,17 @@ fill a search term, open a tab, log in. A recipe records them as named
 `flows`, each an ordered list of steps, and its `sequence` says what runs
 when.
 
-- Steps: `click` a button, link, or tab; `fill` an input, textarea, or
-  editable element with text, or choose the option of a `select` by value or
-  visible label (the value may use `{variable}` placeholders, filled from
-  `--var` or the default); `press` a key (`Enter`, `Escape`, `Tab`, or one
+- Steps: `click` a button, link, or tab; `fill` an element by what it is
+  (the value may use `{variable}` placeholders, filled from the variables'
+  sources): a file input gets the files of a path list, and any other element
+  filled from one path variable alone is clicked and the file chooser it opens
+  within 5 seconds gets them; a checkbox, switch, or radio takes `true` or
+  `false` and is clicked only when its state differs; a `select` chooses the
+  option by value or visible label (one per line for a multiple select); a
+  combobox is typed into and the visible option with that name is clicked;
+  one-character OTP boxes get one key per character; anything else (text,
+  date, textarea, editable element) is cleared and typed into with the events
+  script frameworks listen to; `press` a key (`Enter`, `Escape`, `Tab`, or one
   character) on an element or on whatever has focus; `wait` a number of
   milliseconds or until an element shows up; `await-user` waits for you (see
   below).
@@ -749,6 +808,21 @@ panel.
    drawer (table and JSON) with per-field status, one tab per table.
 6. `Ctrl+S` saves to the recipes directory. Saving keeps the session open.
 
+A picked form element also offers **Add to flow as fill**, prefilled with what
+the element holds now (text, the chosen option, `true` or `false`, the
+combobox text, or the OTP digits); the value is stored as literal text unless
+you choose **make variable**. Browse mode records typing, option choices,
+checkbox, switch, and radio toggles, combobox choices (one fill with the
+option's label), OTP boxes (one fill on the first box), and chosen files the
+same way. A password input becomes a secret variable named from its label,
+`name`, or `id`: its value stays in the recorder for the session and is never
+saved. A file input, or a button that opened a file chooser, becomes an empty
+path variable; type the path in the variables list, which says whether each
+file exists. The variables list shows each variable as `text`, `secret`,
+`path`, or `external` (bound in the config or on the command line, read-only,
+saved without a value); a text variable can be marked secret or switched to a
+path.
+
 The table strip above the field list holds one tab per table with its row
 count. Picks, item detection, and new fields go to the active table; the
 others stay collapsed until clicked. **+ Table** adds a table (named `page`
@@ -802,9 +876,9 @@ table.
 Export supports sequences of the classic shape: called flows, then either
 extract blocks or one paginate block whose `do` holds flows followed by
 extracts. Flows before the extracts run once, flows inside `do` on every page.
-A recipe with a reactive flow, an `await-user` step, a `window: popup` step, or
-a sequence of another shape does not export: the command exits 1 naming the
-first one.
+A recipe with a secret or path variable, a reactive flow, an `await-user`
+step, a `window: popup` step, or a sequence of another shape does not export:
+the command exits 1 naming the first one.
 
 Run the TypeScript script with `npx tsx shop.ts` in a directory where the
 `playwright` package is installed (`npm install playwright`, then
@@ -1078,7 +1152,8 @@ A file with another version fails to load with a message naming the file.
 
 - `name`: kebab-case, unique among your recipes.
 - `url`: template with `{variable}` placeholders; every placeholder must be
-  declared in `vars` (`{ "name", "type": "string", "default"? }`). Values are
+  declared in `vars` (`{ "name", "type": "string" | "path", "secret"?,
+  "default"?, "description"? }`; see [Variables](#variables)). Values are
   URL-encoded when substituted.
 - `item`: optional repeating container, `selectors` plus optional `exclude`.
   Without it, every field has scope `page` and the recipe yields one row.
@@ -1247,6 +1322,17 @@ fills a details panel with the first product's description, so reading it
 needs a step inside the iframe.
 [`packages/cli/fixtures/playground-framed.json`](packages/cli/fixtures/playground-framed.json)
 reads both.
+
+`/forms` is one form with a labeled instance of every input kind a `fill`
+step sets: text, email, password, textarea, a select and a multiple select, a
+checkbox, a radio group, a `role="switch"` element, a date input, a controlled
+input whose value lives in script state (setting the element's value without
+events is lost), a `role="combobox"` input with a filtered option list, six
+one-character OTP boxes, a contenteditable element, an input in an open shadow
+root, a visible file input, a hidden file input behind a `Select file` button,
+and a dropzone that opens a hidden file input on click. Submit posts every
+value to `/forms/submit`, which shows them as JSON in `#echo`, files as their
+names and sizes.
 
 `/spa` is a single-page app whose URL never changes after load. Logged out it
 shows a `Log in` button (`#spa-login`) that opens `/spa/login` with

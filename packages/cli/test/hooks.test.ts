@@ -54,6 +54,23 @@ describe('HookRunner', () => {
     expect(new Date(payload.at).toString()).not.toBe('Invalid Date');
   });
 
+  it('leaves secret variables out of the payload and masks their values', async () => {
+    const dir = await tempDir();
+    const out = join(dir, 'payload');
+    let err = '';
+    const hookRunner = new HookRunner(
+      ConfigSchema.parse({ hooks: { 'run.failed': [`cat > ${out}`, 'echo leaked hunter2 >&2'] } }),
+      { command: 'run', profile: 'shop', profileDir: '/tmp/p', recipe: 'shop', vars: { user: 'ada', pass: 'hunter2' }, secrets: ['pass'] },
+      { stderr: { write: (s: string) => (err += s) }, env: { PATH: process.env.PATH } },
+    );
+    await hookRunner.fire('run.failed', { message: 'typed hunter2 into the form' });
+    const text = await readFile(out, 'utf8');
+    expect(text).not.toContain('hunter2');
+    expect(JSON.parse(text).vars).toEqual({ user: 'ada' });
+    expect(err).toContain('leaked ***');
+    expect(err).not.toContain('hunter2');
+  });
+
   it('runs hooks one at a time, in event order and configured order', async () => {
     const dir = await tempDir();
     const log = join(dir, 'log');

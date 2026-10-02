@@ -100,6 +100,8 @@ _webscoop() {
             $proxy_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
+            '*--var-file[set a variable from a file]:name=path:' \
+            '*--var-command[set a variable from a command output]:name=cmd:' \
             '--jsonl[print one JSON object per line]' \
             '--out[write the output to a file or directory]:path:_files' \
             '--table[print only this table]:table:' \
@@ -126,6 +128,8 @@ _webscoop() {
             $proxy_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
+            '*--var-file[set a variable from a file]:name=path:' \
+            '*--var-command[set a variable from a command output]:name=cmd:' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
             '--json[print the field table as a JSON array]' \
             '--no-llm[never ask the language model to locate a field]' \
@@ -146,6 +150,8 @@ _webscoop() {
             '(-h --help)'{-h,--help}'[show help]' \
             '--name[recipe name]:recipe:' \
             '*--var[set a URL template variable]:name=value:' \
+            '*--var-file[set a variable from a file]:name=path:' \
+            '*--var-command[set a variable from a command output]:name=cmd:' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
             '--edit[edit an existing recipe]:recipe:_webscoop_recipes' \
             '--repick[with --edit: pick a new location for one field]:field:' \
@@ -158,6 +164,8 @@ _webscoop() {
             '(-h --help)'{-h,--help}'[show help]' \
             '--repick[pick a new location for one field]:field:' \
             '*--var[set a URL template variable]:name=value:' \
+            '*--var-file[set a variable from a file]:name=path:' \
+            '*--var-command[set a variable from a command output]:name=cmd:' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
             '1:recipe:_webscoop_recipes' && ret=0
           ;;

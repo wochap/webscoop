@@ -42,6 +42,7 @@ import { interactiveRepick } from '../repick';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile, type ResolvedProfile } from '../profiles';
 import { FsStorage } from '../storage';
 import { HookRunner, type HookRunnerOptions } from '../hooks';
+import { hostFiles, resolveVars, type ResolvedVars, type VarSources } from '../vars';
 
 export interface RunCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -49,6 +50,10 @@ export interface RunCommandOptions {
   /** `--humanize` or `--no-humanize`. */
   humanize?: boolean;
   var: string[];
+  varFile?: string[];
+  varCommand?: string[];
+  /** Variable values the submitting command resolved; the daemon never reads variable sources itself. */
+  resolvedVars?: ResolvedVars;
   jsonl?: boolean;
   out?: string;
   /** `--table`: print only this table, in the single table shapes. */
@@ -127,16 +132,6 @@ export function healingFromFlags(opts: Pick<RunCommandOptions, 'heal' | 'save'>)
   return { enabled, writeBack: enabled && opts.save !== false };
 }
 
-
-export function parseVars(pairs: readonly string[]): Record<string, string> {
-  const vars: Record<string, string> = {};
-  for (const pair of pairs) {
-    const eq = pair.indexOf('=');
-    if (eq <= 0) throw new CliError(`invalid --var "${pair}", expected name=value`);
-    vars[pair.slice(0, eq)] = pair.slice(eq + 1);
-  }
-  return vars;
-}
 
 /**
  * One warning per URL template variable whose value looks URL-encoded already:
@@ -320,6 +315,8 @@ export interface Prepared {
   /** Where the recipe was loaded from, for write-backs. */
   recipePath: string;
   vars: Record<string, string>;
+  /** Names of the recipe's secret variables. */
+  secrets: string[];
   profile: ResolvedProfile;
   profileDir: string;
   browser: BrowserInfo;
@@ -332,7 +329,7 @@ export async function prepare(
   io: CliIo,
   command: 'run' | 'test',
   recipeRef: string,
-  opts: { var: string[]; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean },
+  opts: VarSources & { resolvedVars?: ResolvedVars; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean },
   hookOpts: Partial<HookRunnerOptions> = {},
 ): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
@@ -340,7 +337,8 @@ export async function prepare(
   const storage = new FsStorage(paths.recipesDir, io.cwd);
   const recipe = await storage.load(recipeRef);
   checkTable(recipe, opts.table);
-  const vars = parseVars(opts.var);
+  const resolved = opts.resolvedVars ?? (await resolveVars(recipe, opts, config, io.cwd));
+  const vars = resolved.values;
   try {
     firstPageUrl(recipe, vars);
     for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) fillText(step.value, recipe.vars, vars);
@@ -360,8 +358,8 @@ export async function prepare(
   const profile = resolveProfile({ flag: opts.profile, recipePin: recipe.browser?.profile, name: recipe.name, host: hostOf(recipe.url, vars, recipe.vars), config });
   checkProfileName(profile.profile);
   const { profileDir, browser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
-  const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars } }, { stderr: io.stderr, env: io.env, ...hookOpts });
-  return { config, storage, recipe, recipePath: storage.pathFor(recipeRef), vars, profile, profileDir, browser, settings, hooks };
+  const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars }, secrets: resolved.secrets }, { stderr: io.stderr, env: io.env, ...hookOpts });
+  return { config, storage, recipe, recipePath: storage.pathFor(recipeRef), vars, secrets: resolved.secrets, profile, profileDir, browser, settings, hooks };
 }
 
 /** Launch-level options of a job's browser: network identity, extra arguments, and the e2e DevTools port. */
@@ -459,7 +457,16 @@ export async function e2ePort(io: CliIo): Promise<number | undefined> {
 
 /** `webscoop run`: submit the job to the daemon and relay its output. */
 export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandOptions): Promise<Code> {
-  return submitJob(io, 'run', recipeRef, opts);
+  const options: TestCommandOptions | RunCommandOptions = { ...opts, resolvedVars: await clientVars(io, recipeRef, opts) };
+  return submitJob(io, 'run', recipeRef, options);
+}
+
+/** Variable values read in the submitting command, before the job reaches the daemon or a browser opens. */
+export async function clientVars(io: CliIo, recipeRef: string, opts: VarSources): Promise<ResolvedVars> {
+  const paths = resolvePaths(io.env, io.homedir);
+  const config = await loadConfig(paths);
+  const recipe = await new FsStorage(paths.recipesDir, io.cwd).load(recipeRef);
+  return resolveVars(recipe, opts, config, io.cwd);
 }
 
 /** A run job, inside the daemon. */
@@ -497,6 +504,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       browser: job.browser,
       profileDir,
       vars,
+      files: hostFiles(io.cwd),
       timeoutMs: opts.timeout,
       emitter,
       signal: controller.signal,
@@ -537,6 +545,9 @@ export interface TestCommandOptions {
   /** `--humanize` or `--no-humanize`. */
   humanize?: boolean;
   var: string[];
+  varFile?: string[];
+  varCommand?: string[];
+  resolvedVars?: ResolvedVars;
   profile?: string;
   timeout: number;
   /** `--queue-timeout`: longest wait for the job to start. */
@@ -625,7 +636,8 @@ export function formatTable(rows: readonly TestRow[]): string {
  * resolved on at least one row, 3 when one did not.
  */
 export async function testCommand(io: CliIo, recipeRef: string, opts: TestCommandOptions): Promise<Code> {
-  return submitJob(io, 'test', recipeRef, opts);
+  const options: TestCommandOptions | RunCommandOptions = { ...opts, resolvedVars: await clientVars(io, recipeRef, opts) };
+  return submitJob(io, 'test', recipeRef, options);
 }
 
 /** A test job, inside the daemon. */
@@ -648,6 +660,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       browser: job.browser,
       profileDir,
       vars,
+      files: hostFiles(io.cwd),
       timeoutMs: opts.timeout,
       emitter,
       signal: controller.signal,

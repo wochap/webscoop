@@ -99,12 +99,16 @@ export interface Session {
    * gets trusted pointer events. Resolves quietly when it cannot hover.
    */
   hover(ref: ElementRef): Promise<void>;
-  /** Clear an input, textarea, or editable element and type the value into it. */
-  fill(ref: ElementRef, value: string): Promise<void>;
+  /**
+   * Set the element as a `fill` step does, by its kind (see `classifyFillElement`):
+   * files for a file input, or for the chooser another element opens when
+   * `opts.files` is set; a checked state; a select's options; a combobox
+   * option; one-character boxes; or typed text. Throws `FillUnresolvedError`
+   * when no chooser or combobox option appears.
+   */
+  fill(ref: ElementRef, value: string, opts?: FillOptions): Promise<void>;
   /** Press a key (`Enter`, `Escape`, `Tab`, or one character) on the element, or on the focused element without one. */
   press(key: string, ref?: ElementRef): Promise<void>;
-  /** Choose the option of a `select` whose value or visible label equals the value. */
-  selectOption(ref: ElementRef, value: string): Promise<void>;
   /** Scroll the document to its bottom. */
   scrollToBottom(): Promise<void>;
   /**
@@ -290,4 +294,30 @@ export class NoopLlm implements LlmPort {
   estimateTokens(text: string): number {
     return estimateTokens(text);
   }
+}
+
+export interface FillOptions {
+  /** Absolute paths, set when the value comes only from a `path` variable: a non-file element then opens a file chooser. */
+  files?: readonly string[];
+  /** Longest wait for a combobox option to show. Default 30000. */
+  timeoutMs?: number;
+}
+
+/** Longest wait for the file chooser a clicked element opens. */
+export const FILE_CHOOSER_TIMEOUT_MS = 5000;
+
+/** A `fill` whose target opened no file chooser, or showed no matching combobox option: it counts as not resolving. */
+export class FillUnresolvedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FillUnresolvedError';
+  }
+}
+
+/** Files on the host, for `path` variables. */
+export interface FilePort {
+  /** The absolute form of a path, against the submitting command's working directory. */
+  resolve(path: string): string;
+  /** Whether the path names a readable file. */
+  readable(path: string): Promise<boolean>;
 }

@@ -52,7 +52,7 @@ describe('webscoop record', () => {
   it('documents its options and keys', async () => {
     const io = testIo({});
     expect(await main(['record', '--help'], io)).toBe(ExitCode.Ok);
-    for (const text of ['--name <recipe>', '--var <name=value>', '--profile <name>', '(default: resolved from recipe and', '--timeout <ms>', '--edit <recipe>', 'Ctrl+S saves']) {
+    for (const text of ['--name <recipe>', '--var <name=value>', '--profile <name>', '(default: resolved from recipe', '--var-file <name=path>', '--var-command <name=cmd>', '--timeout <ms>', '--edit <recipe>', 'Ctrl+S saves']) {
       expect(io.out()).toContain(text);
     }
   });

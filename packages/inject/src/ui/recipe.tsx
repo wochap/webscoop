@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
-import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type VarValue } from '@webscoop/core/page';
+import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type RecorderState, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Icon } from './icons';
 import { Toggle } from './items';
@@ -11,6 +11,25 @@ export function varUsage(draft: Pick<Draft, 'url' | 'flows'>, name: string): { u
   const steps = draft.flows.flatMap((f) => f.steps.flatMap((s, i) => (s.kind === 'fill' && s.value && templateVariables(s.value).includes(name) ? [`${f.name} step ${i + 1}`] : [])));
   const parts = [...(url ? ['used in URL'] : []), ...steps.map((n) => `used in ${n}`), ...(steps.length > 0 && !url ? ['not in URL'] : [])];
   return { url, steps, text: parts.length > 0 ? parts.join(' · ') : 'not used' };
+}
+
+/** How the variables list shows a variable: a display label, not a stored type. */
+export type ShownAs = 'text' | 'secret' | 'path' | 'external';
+
+export function shownAs(v: VarValue): ShownAs {
+  if (v.origin) return 'external';
+  if (v.secret) return 'secret';
+  return v.type === 'path' ? 'path' : 'text';
+}
+
+type PathCheck = RecorderState['pathChecks'][string];
+
+/** The file check of a path variable for its current value: "file exists", or the paths not found. */
+export function pathCheckText(variable: VarValue, check: PathCheck | undefined): string | null {
+  if (variable.type !== 'path' || variable.value === '' || !check || check.value !== variable.value) return null;
+  const missing = check.paths.filter((p) => !p.exists).map((p) => p.path);
+  if (missing.length === 0) return check.paths.length > 1 ? 'files exist' : 'file exists';
+  return `not found: ${missing.join(', ')}`;
 }
 
 const valuesOf = (vars: readonly VarValue[]) => Object.fromEntries(vars.map((v) => [v.name, v.value]));
@@ -180,14 +199,42 @@ export function DescriptionInput({ value, target, label, testId, error }: { valu
   );
 }
 
-/** One variable: name, value, remove, and where it is used. Removing a used variable asks first. */
-export function VarTableRow({ draft, variable, error, descriptionError = null }: { draft: Draft; variable: VarValue; error: string | null; descriptionError?: string | null }) {
+/**
+ * One variable: name, value, how it is shown (text, secret, path, or
+ * external), description, remove, and where it is used. Removing a used
+ * variable asks first. Secret values stay masked; external values are
+ * read-only.
+ */
+export function VarTableRow({
+  draft,
+  variable,
+  error,
+  descriptionError = null,
+  pathCheck,
+}: {
+  draft: Draft;
+  variable: VarValue;
+  error: string | null;
+  descriptionError?: string | null;
+  pathCheck?: PathCheck;
+}) {
   const actions = useActions();
   const [confirming, setConfirming] = useState(false);
   const usage = varUsage(draft, variable.name);
   const used = usage.url || usage.steps.length > 0;
   const name = variable.name;
   const where = [...(usage.url ? ['URL'] : []), ...usage.steps].join(', ');
+  const kind = shownAs(variable);
+  const checkText = pathCheckText(variable, pathCheck);
+  const stale = variable.type === 'path' && variable.value !== '' && pathCheck?.value !== variable.value;
+  useEffect(() => {
+    if (stale) void actions.send({ kind: 'vars.checkPath', name });
+  }, [stale, name, actions]);
+  const notes = [
+    ...(kind === 'secret' ? ['secret · never saved'] : []),
+    ...(kind === 'path' ? ['default saved'] : []),
+    ...(kind === 'external' ? [`from ${variable.origin === 'config' ? 'config' : 'CLI'} · read-only here`] : []),
+  ];
   return (
     <>
       <div className="ws-var-row" data-ws={`var-row-${name}`}>
@@ -198,13 +245,56 @@ export function VarTableRow({ draft, variable, error, descriptionError = null }:
           data-ws={`var-name-${name}`}
           onCommit={(to) => void actions.send({ kind: 'draft.renameVar', from: name, to: to.trim() })}
         />
-        <CommitInput
-          className="ws-var-cell"
-          value={variable.value}
-          aria-label={`Value of ${name}`}
-          data-ws={`var-input-${name}`}
-          onCommit={(value) => void actions.send({ kind: 'draft.setVar', name, value })}
-        />
+        {kind === 'external' ? (
+          <input
+            className="ws-var-cell ws-var-readonly"
+            value={variable.secret ? '••••••••' : variable.value}
+            readOnly
+            title={`Bound in the ${variable.origin === 'config' ? 'config file' : 'command line'}`}
+            aria-label={`Value of ${name}`}
+            data-ws={`var-input-${name}`}
+          />
+        ) : kind === 'secret' ? (
+          <CommitInput
+            className="ws-var-cell"
+            type="password"
+            value=""
+            placeholder={variable.set ? '••••••••' : 'secret'}
+            autoComplete="off"
+            aria-label={`Value of ${name}`}
+            data-ws={`var-input-${name}`}
+            onCommit={(value) => void actions.send({ kind: 'draft.setVar', name, value })}
+          />
+        ) : (
+          <CommitInput
+            className="ws-var-cell"
+            value={variable.value}
+            {...(kind === 'path' ? { placeholder: 'path/to/file' } : {})}
+            aria-label={`Value of ${name}`}
+            data-ws={`var-input-${name}`}
+            onCommit={(value) => void actions.send({ kind: 'draft.setVar', name, value })}
+          />
+        )}
+        {kind === 'external' ? (
+          <span className={`ws-var-kind ws-var-kind-${kind}`} data-ws={`var-kind-${name}`}>
+            external
+          </span>
+        ) : (
+          <select
+            className={`ws-var-kind ws-var-kind-${kind}`}
+            value={kind}
+            aria-label={`${name} shown as`}
+            data-ws={`var-kind-${name}`}
+            onChange={(e) => {
+              const to = e.target.value as ShownAs;
+              void actions.send({ kind: 'draft.setVarKind', name, secret: to === 'secret', type: to === 'path' ? 'path' : 'string' });
+            }}
+          >
+            <option value="text">text</option>
+            <option value="secret">secret</option>
+            <option value="path">path</option>
+          </select>
+        )}
         <CommitInput
           className={`ws-var-cell ws-var-description${descriptionError ? ' ws-invalid' : ''}`}
           value={variable.description ?? ''}
@@ -224,6 +314,17 @@ export function VarTableRow({ draft, variable, error, descriptionError = null }:
           <Icon name="x" size={12} />
         </button>
       </div>
+      {(notes.length > 0 || checkText) && (
+        <span className="ws-var-note ws-var-kind-note" data-ws={`var-kind-note-${name}`}>
+          {notes.join(' · ')}
+          {checkText && (
+            <span className={checkText.startsWith('not found') ? 'ws-error' : 'ws-var-ok'} data-ws={`var-path-check-${name}`}>
+              {notes.length > 0 ? ' · ' : ''}
+              {checkText}
+            </span>
+          )}
+        </span>
+      )}
       {error && <span className="ws-error ws-var-note">{error}</span>}
       {descriptionError && (
         <span className="ws-error ws-var-note" data-ws={`var-description-error-${name}`}>
@@ -232,7 +333,7 @@ export function VarTableRow({ draft, variable, error, descriptionError = null }:
       )}
       {confirming ? (
         <div className="ws-var-confirm" data-ws={`var-confirm-${name}`}>
-          <span className="ws-spacer">{`Used in ${where} — replace with its value?`}</span>
+          <span className="ws-spacer">{variable.secret ? `Used in ${where} — remove it from there?` : `Used in ${where} — replace with its value?`}</span>
           <button
             type="button"
             className="ws-btn ws-btn-sm ws-tone-danger"
@@ -352,6 +453,7 @@ export function RecipeBar({
   draft,
   urlError = null,
   varError = null,
+  pathChecks = {},
   descriptionError = null,
   openedUrl = '',
   collapsed = false,
@@ -360,6 +462,7 @@ export function RecipeBar({
   draft: Draft;
   urlError?: string | null;
   varError?: { name: string; message: string } | null;
+  pathChecks?: RecorderState['pathChecks'];
   descriptionError?: { key: string; message: string } | null;
   openedUrl?: string;
   collapsed?: boolean;
@@ -404,6 +507,7 @@ export function RecipeBar({
             <div className="ws-var-row ws-var-head">
               <span>var</span>
               <span>value</span>
+              <span>shown as</span>
               <span>description</span>
               <span />
             </div>
@@ -415,6 +519,7 @@ export function RecipeBar({
               variable={v}
               error={rowError?.name === v.name ? rowError.message : null}
               descriptionError={descriptionError?.key === `var:${v.name}` ? descriptionError.message : null}
+              {...(pathChecks[v.name] ? { pathCheck: pathChecks[v.name] } : {})}
             />
           ))}
           {addError && (

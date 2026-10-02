@@ -295,7 +295,14 @@ export function draftToRecipe(draft: Draft): RecipeInput {
     url: draft.url,
     vars: draft.vars
       .filter((v) => declared.includes(v.name))
-      .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}), ...(v.description ? { description: v.description } : {}) })),
+      .map((v) => ({
+        name: v.name,
+        type: v.type ?? ('string' as const),
+        ...(v.secret ? { secret: true } : {}),
+        // Secrets are never saved; external values stay where they are bound.
+        ...(v.secret ? {} : v.origin ? (v.savedDefault !== undefined ? { default: v.savedDefault } : {}) : v.value !== '' ? { default: v.value } : {}),
+        ...(v.description ? { description: v.description } : {}),
+      })),
     ...(none
       ? {}
       : shorthand
@@ -434,7 +441,11 @@ export function validateDraft(draft: Draft): Draft {
 }
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
-export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
+export function draftFromRecipe(
+  recipe: Recipe,
+  values: Readonly<Record<string, string>> = {},
+  origins: Readonly<Record<string, 'config' | 'cli'>> = {},
+): Draft {
   const flows: DraftFlow[] = recipe.flows.map((f) => ({
     name: f.name,
     ...(f.description ? { description: f.description } : {}),
@@ -459,6 +470,9 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
       name,
       value: values[name] ?? declared?.default ?? '',
       ...(declared?.description ? { description: declared.description } : {}),
+      ...(declared?.type === 'path' ? { type: 'path' as const } : {}),
+      ...(declared?.secret ? { secret: true as const } : {}),
+      ...(origins[name] ? { origin: origins[name], ...(declared?.default !== undefined ? { savedDefault: declared.default } : {}) } : {}),
     };
   });
   const tables: DraftTable[] = tablesOf(recipe).map((table) => ({
@@ -684,6 +698,10 @@ export type DraftAction =
   | { type: 'renameVar'; from: string; to: string }
   /** Remove a variable; each use becomes its value, encoded in the template and raw in steps. */
   | { type: 'removeVar'; name: string }
+  /** Add a variable with a value and kind, for a fill that creates it; the name must be free. */
+  | { type: 'declareVar'; name: string; value: string; secret?: boolean; path?: boolean }
+  /** Mark a variable secret or not, or switch it between text and path; an external variable is left alone. */
+  | { type: 'setVarKind'; name: string; secret?: boolean; varType?: 'string' | 'path' }
   | { type: 'markSaved' };
 
 /** The object with its `description` set to `text`, or removed when `text` is empty. */
@@ -1168,8 +1186,27 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       break;
     }
     case 'setVar':
+      if (draft.vars.some((v) => v.name === action.name && v.origin)) return draft;
       next = { ...draft, vars: draft.vars.map((v) => (v.name === action.name ? { ...v, value: action.value } : v)) };
       break;
+    case 'declareVar':
+      if (varNameError(draft, action.name)) return draft;
+      next = {
+        ...draft,
+        vars: [...draft.vars, { name: action.name, value: action.value, added: true, ...(action.secret ? { secret: true as const } : {}), ...(action.path ? { type: 'path' as const } : {}) }],
+      };
+      break;
+    case 'setVarKind': {
+      const variable = draft.vars.find((v) => v.name === action.name);
+      if (!variable || variable.origin) return draft;
+      const { secret: _s, type: _t, ...rest } = variable;
+      const secret = action.secret ?? variable.secret === true;
+      const path = action.varType !== undefined ? action.varType === 'path' : variable.type === 'path';
+      // A path is never secret: paths are saved as defaults.
+      const updated = { ...rest, ...(secret && !path ? { secret: true as const } : {}), ...(path ? { type: 'path' as const } : {}) };
+      next = { ...draft, vars: draft.vars.map((v) => (v === variable ? updated : v)) };
+      break;
+    }
     case 'setUrl':
       if (action.url === draft.url || templateProblem(action.url)) return draft;
       next = { ...draft, url: action.url };
@@ -1194,8 +1231,9 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       if (!variable) return draft;
       next = {
         ...draft,
-        url: inlineVariable(draft.url, variable.name, variable.value, true),
-        flows: rewriteSteps(draft.flows, (value) => inlineVariable(value, variable.name, variable.value, false)),
+        // A secret's value never lands in the recipe.
+        url: inlineVariable(draft.url, variable.name, variable.secret ? '' : variable.value, true),
+        flows: rewriteSteps(draft.flows, (value) => inlineVariable(value, variable.name, variable.secret ? '' : variable.value, false)),
         vars: draft.vars.filter((v) => v !== variable),
       };
       break;

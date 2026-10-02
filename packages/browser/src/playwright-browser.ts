@@ -1,4 +1,9 @@
 import {
+  classifyFillElement,
+  FILE_CHOOSER_TIMEOUT_MS,
+  FillUnresolvedError,
+  type FillKind,
+  type FillOptions,
   MAIN_WINDOW,
   PAGE_GLOBAL,
   TimeoutError,
@@ -333,11 +338,112 @@ export class PlaywrightSession implements InteractiveSession {
     await plainHover(locator, this.page);
   }
 
-  async fill(ref: ElementRef, value: string): Promise<void> {
-    const { locator } = ref as PwRef;
+  async fill(ref: ElementRef, value: string, opts: FillOptions = {}): Promise<void> {
+    const { locator: all } = ref as PwRef;
+    const locator = all.first();
     this.navigationsBefore = this.navigations;
+    const kind = (await locator.evaluate(classifyFillElement)) as FillKind;
+    if (kind === 'file') return locator.setInputFiles(opts.files ? [...opts.files] : value.split(':').filter(Boolean));
+    if (opts.files) return this.chooseFiles(ref, opts.files);
+    switch (kind) {
+      case 'toggle':
+      case 'radio':
+        return this.setChecked(ref, kind, value);
+      case 'select':
+        return this.selectOptions(locator, ref.description, value);
+      case 'combobox':
+        return this.fillCombobox(ref, value, opts.timeoutMs ?? 30_000);
+      case 'otp':
+        if ([...value].length > 1) return this.typeKeys(locator, value);
+        return this.fillText(locator, value);
+      default:
+        return this.fillText(locator, value);
+    }
+  }
+
+  /** Click the element and hand the files to the chooser it opens. */
+  private async chooseFiles(ref: ElementRef, files: readonly string[]): Promise<void> {
+    const chooser = this.page.waitForEvent('filechooser', { timeout: FILE_CHOOSER_TIMEOUT_MS }).catch(() => null);
+    await this.click(ref);
+    const opened = await chooser;
+    if (!opened) throw new FillUnresolvedError(`${ref.description} opened no file chooser within ${FILE_CHOOSER_TIMEOUT_MS / 1000} seconds`);
+    await opened.setFiles([...files]);
+  }
+
+  /** Click a checkbox, switch, or radio only when its checked state differs from `true` or `false`. */
+  private async setChecked(ref: ElementRef, kind: 'toggle' | 'radio', value: string): Promise<void> {
+    const wanted = value.trim().toLowerCase();
+    if (wanted !== 'true' && wanted !== 'false') throw new Error(`a checkbox, switch, or radio takes true or false, not ${JSON.stringify(value)}`);
+    if (kind === 'radio' && wanted === 'false') throw new Error('a radio cannot be set to false; fill the radio to choose instead');
+    const checked = await (ref as PwRef).locator
+      .first()
+      .evaluate((el) => (el instanceof HTMLInputElement ? el.checked : el.getAttribute('aria-checked') === 'true'));
+    if (checked !== (wanted === 'true')) await this.click(ref);
+  }
+
+  /** Choose the option whose value or visible label equals the value; for a multiple select, each line's option. */
+  private async selectOptions(locator: Locator, description: string, value: string): Promise<void> {
+    // Looked up in the page so a miss fails at once instead of waiting.
+    const found = await locator.evaluate((el, wanted) => {
+      const select = el as HTMLSelectElement;
+      const options = Array.from(select.options ?? []);
+      const want = select.multiple ? wanted.split('\n').filter((w) => w !== '') : [wanted];
+      const values: string[] = [];
+      for (const w of want) {
+        const hit = options.find((o) => o.value === w) ?? options.find((o) => o.label.trim() === w || o.text.trim() === w);
+        if (!hit) return { missing: w };
+        values.push(hit.value);
+      }
+      return { values };
+    }, value);
+    if ('missing' in found) throw new Error(`no option ${JSON.stringify(found.missing)} in ${description}`);
+    if (this.humanizer) return this.humanizer.selectOption(locator, found.values);
+    await locator.selectOption(found.values.map((v) => ({ value: v })));
+  }
+
+  /** Type into a combobox, then click the visible option whose accessible name is the value. */
+  private async fillCombobox(ref: ElementRef, value: string, timeoutMs: number): Promise<void> {
+    const locator = (ref as PwRef).locator.first();
+    const editable = await locator.evaluate((el) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el as HTMLElement).isContentEditable);
+    if (editable) await this.fillText(locator, value);
+    else {
+      await this.click(ref);
+      await this.page.keyboard.type(value);
+    }
+    const handle = await locator.elementHandle();
+    const frame = (await handle?.ownerFrame()) ?? this.page.mainFrame();
+    await handle?.dispose();
+    const option = frame.getByRole('option', { name: value, exact: true }).filter({ visible: true }).first();
+    try {
+      await option.waitFor({ state: 'visible', timeout: timeoutMs });
+    } catch {
+      throw new FillUnresolvedError(`${ref.description} showed no option ${JSON.stringify(value)} within ${timeoutMs} ms`);
+    }
+    if (this.humanizer) return this.humanizer.click(option);
+    await option.click();
+  }
+
+  /** Focus the first box and press each character, so the page moves focus from box to box. */
+  private async typeKeys(locator: Locator, value: string): Promise<void> {
     if (this.humanizer) return this.humanizer.type(locator, value);
+    await locator.click();
+    await locator.fill('');
+    await this.page.keyboard.type(value, { delay: 20 });
+  }
+
+  /**
+   * Clear and type. Plain `fill` sends the input events script frameworks
+   * listen to; when the value read back still differs, type key by key.
+   */
+  private async fillText(locator: Locator, value: string): Promise<void> {
+    // Date-like inputs take their value whole; typed keys go to locale-ordered segments.
+    const typed = await locator.evaluate((el) => !(el instanceof HTMLInputElement) || !['date', 'time', 'datetime-local', 'month', 'week'].includes(el.type));
+    if (this.humanizer && typed) return this.humanizer.type(locator, value);
     await locator.fill(value);
+    const back = await locator.evaluate((el) => (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : (el.textContent ?? '')));
+    if (back === value) return;
+    await locator.fill('');
+    await locator.pressSequentially(value, { delay: 10 });
   }
 
   async press(key: string, ref?: ElementRef): Promise<void> {
@@ -345,22 +451,6 @@ export class PlaywrightSession implements InteractiveSession {
     if (this.humanizer) return this.humanizer.press(key, ref ? (ref as PwRef).locator : undefined);
     if (ref) await (ref as PwRef).locator.press(key);
     else await this.page.keyboard.press(key);
-  }
-
-  async selectOption(ref: ElementRef, value: string): Promise<void> {
-    const { locator } = ref as PwRef;
-    this.navigationsBefore = this.navigations;
-    // An option matches by value first, then by visible label; looked up in the page so a miss fails at once instead of waiting.
-    const option = await locator.evaluateAll((els, wanted) => {
-      const el = els[0];
-      if (!el) return null;
-      const options = Array.from((el as HTMLSelectElement).options ?? []);
-      const hit = options.find((o) => o.value === wanted) ?? options.find((o) => o.label.trim() === wanted || o.text.trim() === wanted);
-      return hit ? hit.value : null;
-    }, value);
-    if (option === null) throw new Error(`no option ${JSON.stringify(value)} in ${ref.description}`);
-    if (this.humanizer) return this.humanizer.selectOption(locator, option);
-    await locator.selectOption({ value: option });
   }
 
   async scrollToBottom(): Promise<void> {

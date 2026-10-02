@@ -4,6 +4,7 @@ export * from './protocol';
 export * from './selection';
 export * from '../selectors';
 export { scoreFingerprint, scoreParts, SCORE_WEIGHTS, type ScoreParts } from '../healing/score';
+export { classifyFillElement, currentFillValue, FILL_KINDS, FILLABLE_KINDS, type FillKind } from '../fill-kind';
 export { collapseWhitespace, defaultAttr } from '../convert';
 export {
   describeUrlDiff,

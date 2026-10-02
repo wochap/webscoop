@@ -23,10 +23,10 @@ The design is implemented by three OpenSpec changes: `frame-support` (elements i
 | `C2 Typical` | `flows` | done |
 | `C3 Drag` | `flows` | done |
 | `C4 Errors` | `flows` | done |
-| `D1 Pick to fill` | `forms` | todo |
-| `D2 Password secret` | `forms` | todo |
-| `D3 File path` | `forms` | todo |
-| `D4 Variables` | `forms` | todo |
+| `D1 Pick to fill` | `forms` | done |
+| `D2 Password secret` | `forms` | done |
+| `D3 File path` | `forms` | done |
+| `D4 Variables` | `forms` | done |
 | `E Iframe` | `frame-support` | done |
 | `E2 Frame target` | `frame-support` | done |
 | `G Automation only` | `forms` | done |
@@ -60,10 +60,11 @@ Agreed differences between the frames and the panel.
 | `B2` list shows only the called group | The switcher lists every flow, grouped called and reactive | Reactive flows can be recorded into too |
 | Footer counts differ between `A` and `C4` | One format: tables · fields · flows · steps | One footer |
 | `D4` "from config: command" | "from config" or "from CLI" | The panel only knows where the value is bound |
+| `D1` "After adding" step preview and "make variable → name it" rows | "make variable" turns into a name input next to the value; the new step shows in the flow list | The flow list already shows the added step |
+| `D4` "shown as" as a label | A select (text, secret, path) on variables bound in the recipe; "external" as a label | Marking a variable secret and changing its type happen in the same column |
 | `A` note "'every page' is gone from steps" | Not shown | The panel describes what is, not what changed |
 | Phosphor glyphs from unpkg | Inline SVG subset, as in v3 | The panel runs inside third-party pages and loads nothing remote |
 | 376px frame width | 400px panel | The recorder spec fixes the panel width |
-| `B3` fill on checkbox, radio, combobox, OTP, and file inputs | `fill` types into text inputs, textareas, and editable elements, and chooses a native `select` option | The other kinds are the `forms` change |
 | `B4`, `H2` the await-user element is looked for in the step's window | The condition is checked in every window of the run; the banner shows in the step's window | A login popup closes itself once the user is done, while the element to watch is in the main window |
 | `B6` shortcut hints (`Shift R`, `F2`) in the flow menu | No hints | No such shortcuts exist in the panel |
 | `C2` "+ block" under the sequence | No add button | Blocks come from flows and tables; the default sequence adds them, and a custom one appends new tables and flows |

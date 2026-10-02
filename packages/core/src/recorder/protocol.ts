@@ -1,5 +1,6 @@
 // zod/mini keeps the injected page bundle small; the recipe schema itself stays on classic zod.
 import * as z from 'zod/mini';
+import { FILL_KINDS } from '../fill-kind';
 import type { SerializedElement } from '../ports';
 import type { FieldScope } from '../recipe/schema';
 import {
@@ -94,6 +95,16 @@ export function sameFrame(
 }
 
 /** What the page reports about a picked element. */
+export const FillPreviewSchema = z.object({
+  kind: z.enum(FILL_KINDS),
+  /** The element's current state as a fill value; empty for a file input. */
+  value: z.string(),
+  /** The input's label, `name`, or `id`, for naming a variable. */
+  hint: z.string(),
+  /** An `input[type=password]`: its fill makes a secret variable. */
+  password: z._default(z.boolean(), false),
+});
+
 export const SelectionSchema = z.object({
   path: PathSchema,
   tag: z.string(),
@@ -111,6 +122,8 @@ export const SelectionSchema = z.object({
   framePath: z._default(z.nullable(PathSchema), null),
   /** The `<iframe>` as a target, for an element inside one. */
   frame: z._default(z.nullable(FrameTargetSchema), null),
+  /** What a fill of the element sets, read from the live element when it was picked; null for an element a fill cannot set. */
+  fill: z._default(z.nullable(FillPreviewSchema), null),
 });
 
 /** The two proposal fields the user edits: the list parent and the item container. */
@@ -192,6 +205,16 @@ export const VarValueSchema = z.object({
   /** Added with "+ var": kept in the draft while nothing uses it, never saved unused. */
   added: z.optional(z.literal(true)),
   description: z.optional(z.string()),
+  /** A file path variable; its value is saved as the default. */
+  type: z.optional(z.literal('path')),
+  /** Masked in the panel, kept for the session only, never saved. The panel receives an empty value and `set`. */
+  secret: z.optional(z.literal(true)),
+  /** Sent to the panel for a secret with a value. */
+  set: z.optional(z.literal(true)),
+  /** Bound outside the recipe, in the config file or on the command line: read-only, and saved without a default. */
+  origin: z.optional(z.enum(['config', 'cli'])),
+  /** For an external variable: the recipe's own default, saved in place of the bound value. */
+  savedDefault: z.optional(z.string()),
 });
 
 export const DraftFieldSchema = z.object({
@@ -508,6 +531,8 @@ export const RecorderStateSchema = z.object({
   selectorError: z._default(z.nullable(z.string()), null),
   /** Why the last committed URL template was refused; the previous template stays. */
   urlError: z._default(z.nullable(z.string()), null),
+  /** Per path variable: the value checked and whether each of its paths names an existing file on the host. */
+  pathChecks: z._default(z.record(z.string(), z.object({ value: z.string(), paths: z.array(z.object({ path: z.string(), exists: z.boolean() })) })), {}),
   /** Why the last variable add or rename was refused; `name` is the row (the new name for an add). */
   varError: z._default(z.nullable(z.object({ name: z.string(), message: z.string() })), null),
   /** Why the last description edit was refused; `key` is `recipe`, `table:<index>`, or `var:<name>`. */
@@ -563,6 +588,14 @@ const NewStepSchema = z.object({
   value: z.optional(z.string()),
   until: z.optional(z.enum(STEP_UNTILS)),
   optional: z.optional(z.boolean()),
+  /**
+   * A fill whose value goes into a variable: named from `name` (made unique),
+   * holding `value`, and the step's value becomes `{name}`. A later fill of
+   * the same target right after reuses the variable.
+   */
+  variable: z.optional(z.object({ name: z.string(), secret: z.optional(z.boolean()), type: z.optional(z.enum(['string', 'path'])) })),
+  /** A file chooser fill: the click that opened the chooser, when it is the flow's last step, is dropped. */
+  replacesClick: z.optional(z.boolean()),
 });
 
 const FlowPatchSchema = z.object({
@@ -714,6 +747,10 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.renameVar', { from: z.string(), to: z.string() }),
   /** Remove a variable, writing its value in place of every use. */
   msg('draft.removeVar', { name: z.string() }),
+  /** Mark a text variable secret (or not), or change its type between text and path; external variables refuse. */
+  msg('draft.setVarKind', { name: z.string(), secret: z.optional(z.boolean()), type: z.optional(z.enum(['string', 'path'])) }),
+  /** Check on the host that every path of a path variable names an existing file; the answer lands in `pathChecks`. */
+  msg('vars.checkPath', { name: z.string() }),
   /** Set the template from the open page's URL, putting back variables found exactly once. */
   msg('draft.useCurrentUrl', {}),
   msg('test.run', {}),
@@ -752,6 +789,7 @@ export type Path = z.infer<typeof PathSchema>;
 export type Crumb = z.infer<typeof CrumbSchema>;
 export type FrameTarget = z.infer<typeof FrameTargetSchema>;
 export type Selection = z.input<typeof SelectionSchema>;
+export type FillPreview = z.infer<typeof FillPreviewSchema>;
 export type ParsedSelection = z.infer<typeof SelectionSchema>;
 export type LevelView = z.infer<typeof LevelSchema>;
 export type LevelViewInput = z.input<typeof LevelSchema>;

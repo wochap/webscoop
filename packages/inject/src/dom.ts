@@ -1,6 +1,9 @@
 import { computeAccessibleName, getRole } from 'dom-accessibility-api';
 import {
+  classifyFillElement,
   classifyToken,
+  currentFillValue,
+  type FillPreview,
   collapseWhitespace,
   similarity,
   SIMILARITY_THRESHOLD,
@@ -350,7 +353,23 @@ export function describeSelection(
   if (!node) throw new Error('the element is not part of the document');
   const container = containers.find((c) => c === el || c.contains(el)) ?? null;
   const selection = selectionOf(node, { containerPath: container ? pathOfElement(container) : null });
-  return { selection, snapshot: snapshotOf(tree.root) };
+  const fill = fillPreview(el);
+  return { selection: fill ? { ...selection, fill } : selection, snapshot: snapshotOf(tree.root) };
+}
+
+/** The label, `name`, `id`, or accessible label of a form element, for naming its variable. */
+export function inputHint(el: Element): string {
+  const labels = (el as HTMLInputElement).labels;
+  const label = labels && labels.length > 0 ? collapseWhitespace(labels[0]!.textContent ?? '') : '';
+  return label || el.getAttribute('name') || el.id || el.getAttribute('aria-label') || '';
+}
+
+/** What a fill of the element would set now; null for an element a fill cannot set. */
+export function fillPreview(el: Element): FillPreview | null {
+  const kind = classifyFillElement(el);
+  if (kind === 'none') return null;
+  const password = el.tagName.toLowerCase() === 'input' && (el as HTMLInputElement).type === 'password';
+  return { kind, value: currentFillValue(el, kind), hint: inputHint(el), password };
 }
 
 /** Short text for the hover tag and inspector. */

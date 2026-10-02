@@ -598,3 +598,43 @@ describe('framed page', () => {
     expect((await fetch(`${pg.url}/framed/inner?view=nope`)).status).toBe(400);
   });
 });
+
+describe('forms', () => {
+  it('serves one labeled instance of every input kind', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/forms`)).text();
+    const doc = new JSDOM(html).window.document;
+    for (const selector of [
+      'input#text',
+      'input#email[type=email]',
+      'input#password[type=password]',
+      'textarea#textarea',
+      'select#select',
+      'select#multiselect[multiple]',
+      'input#checkbox[type=checkbox]',
+      'input[type=radio][name=radio]',
+      '[role=switch]#switch',
+      'input#date[type=date]',
+      'input#controlled',
+      'input#combobox[role=combobox]',
+      '#notes[contenteditable]',
+      'shadow-field#shadow-host',
+      'input#file[type=file]',
+      'input#chooser[type=file][hidden]',
+      'input#dropzone-input[type=file][hidden]',
+      '#dropzone',
+    ]) {
+      expect(doc.querySelector(selector), selector).not.toBeNull();
+    }
+    expect(doc.querySelectorAll('input[maxlength="1"]')).toHaveLength(6);
+    expect(doc.getElementById('chooser-button')?.textContent).toBe('Select file');
+  });
+
+  it('echoes the posted values as JSON', async () => {
+    const pg = await start();
+    const payload = JSON.stringify({ combobox: 'Lima', otp: '482913', chooser: [{ name: 'a.txt', size: 12 }] });
+    const res = await fetch(`${pg.url}/forms/submit`, { method: 'POST', body: new URLSearchParams({ payload }) });
+    const echo = JSON.parse(new JSDOM(await res.text()).window.document.getElementById('echo')!.textContent!);
+    expect(echo).toEqual({ combobox: 'Lima', otp: '482913', chooser: [{ name: 'a.txt', size: 12 }] });
+  });
+});

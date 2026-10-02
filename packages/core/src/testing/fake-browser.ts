@@ -1,6 +1,8 @@
+import { classifyFillElement } from '../fill-kind';
 import type {
   BrowserPort,
   ElementRef,
+  FillOptions,
   Geometry,
   GotoOptions,
   InteractiveSession,
@@ -13,7 +15,7 @@ import type {
   Session,
   SettleOptions,
 } from '../ports';
-import { MAIN_WINDOW, PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
+import { FillUnresolvedError, MAIN_WINDOW, PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
 import type { SelectorCandidate } from '../recipe/schema';
 import { compileCss } from './css';
 import { accessibleName, indexTree, innerHtml, normalize, roleOf, textContent, type DomNode } from './dom';
@@ -87,7 +89,8 @@ export type FakeAction = (
 
 /** One action a fake session performed, for assertions. */
 export interface FakeActionRecord {
-  kind: 'fill' | 'select' | 'press';
+  /** `files`: paths a file input or chooser received, joined by `:`; `check`: a toggle or radio set to `true` or `false`. */
+  kind: 'fill' | 'select' | 'press' | 'files' | 'check';
   target: string | null;
   value: string;
 }
@@ -288,10 +291,64 @@ export class FakeSession implements Session {
     this.browser.pages.get(this.currentUrl)?.hover?.(node.el, this.currentUrl);
   }
 
-  /** Set the element's `value` attribute, then run the page's fill handler. */
-  async fill(ref: ElementRef, value: string): Promise<void> {
+  /**
+   * Set the element as a `fill` step does, by kind: files on a file input, or
+   * through the chooser an element with `data-file-chooser` opens; a checked
+   * state through a click; select options; a combobox option shown with role
+   * `option`; one character per one-character box; else the `value`. The
+   * page's fill (or select) handler runs after.
+   */
+  async fill(ref: ElementRef, value: string, opts: FillOptions = {}): Promise<void> {
     this.assertOpen();
     const node = (ref as FakeRef).node;
+    const kind = classifyFillElement(elementShim(node.el));
+    if (kind === 'file' || opts.files) {
+      if (kind !== 'file' && !('data-file-chooser' in node.el.attrs)) throw new FillUnresolvedError(`${ref.description} opened no file chooser within 5 seconds`);
+      const files = opts.files ? [...opts.files] : value.split(':').filter(Boolean);
+      this.browser.actions.push({ kind: 'files', target: ref.description, value: files.join(':') });
+      node.el.attrs.value = files.map((f) => f.slice(f.lastIndexOf('/') + 1)).join(', ');
+      this.react('fill', node, files.join(':'));
+      return;
+    }
+    switch (kind) {
+      case 'toggle':
+      case 'radio': {
+        const wanted = value.trim().toLowerCase();
+        if (wanted !== 'true' && wanted !== 'false') throw new Error(`a checkbox, switch, or radio takes true or false, not ${JSON.stringify(value)}`);
+        if (kind === 'radio' && wanted === 'false') throw new Error('a radio cannot be set to false; fill the radio to choose instead');
+        const attrs = node.el.attrs;
+        const checked = node.el.tag === 'input' ? 'checked' in attrs : attrs['aria-checked'] === 'true';
+        if (checked === (wanted === 'true')) return;
+        this.browser.actions.push({ kind: 'check', target: ref.description, value: wanted });
+        if (node.el.tag === 'input') {
+          if (wanted === 'true') attrs.checked = '';
+          else delete attrs.checked;
+        } else attrs['aria-checked'] = wanted;
+        return this.click(ref);
+      }
+      case 'select':
+        return this.selectOption(ref, value);
+      case 'combobox': {
+        node.el.attrs.value = value;
+        this.react('fill', node, value);
+        const option = this.tree ? findNode(this.tree.root, (n) => roleOf(n) === 'option' && normalize(accessibleName(n)) === value) : null;
+        if (!option) throw new FillUnresolvedError(`${ref.description} showed no option ${JSON.stringify(value)} within ${opts.timeoutMs ?? 30_000} ms`);
+        this.browser.actions.push({ kind: 'fill', target: ref.description, value });
+        return this.click(new FakeRef(option, `option ${value}`));
+      }
+      case 'otp': {
+        const chars = [...value];
+        if (chars.length > 1) {
+          const boxes = otpBoxes(node);
+          this.browser.actions.push({ kind: 'fill', target: ref.description, value });
+          boxes.forEach((box, i) => (box.el.attrs.value = chars[i] ?? ''));
+          this.focusedNode = boxes[Math.min(chars.length, boxes.length) - 1] ?? node;
+          this.react('fill', node, value);
+          return;
+        }
+        break;
+      }
+    }
     this.browser.actions.push({ kind: 'fill', target: ref.description, value });
     node.el.attrs.value = value;
     this.focusedNode = node;
@@ -305,8 +362,8 @@ export class FakeSession implements Session {
     this.react('press', node, key);
   }
 
-  /** Mark the matching option selected, then run the page's select handler. Fails when no option matches. */
-  async selectOption(ref: ElementRef, value: string): Promise<void> {
+  /** Mark the matching options selected, then run the page's select handler. Fails when no option matches. */
+  private async selectOption(ref: ElementRef, value: string): Promise<void> {
     this.assertOpen();
     const node = (ref as FakeRef).node;
     const options: DomNode[] = [];
@@ -317,10 +374,14 @@ export class FakeSession implements Session {
       }
     };
     collect(node);
-    const option = options.find((o) => (o.el.attrs.value ?? normalize(textContent(o.el))) === value || normalize(textContent(o.el)) === value);
-    if (!option) throw new Error(`no option ${JSON.stringify(value)} in ${ref.description}`);
+    const wanted = 'multiple' in node.el.attrs ? value.split('\n').filter((w) => w !== '') : [value];
+    const chosen = wanted.map((w) => {
+      const option = options.find((o) => (o.el.attrs.value ?? normalize(textContent(o.el))) === w || normalize(textContent(o.el)) === w);
+      if (!option) throw new Error(`no option ${JSON.stringify(w)} in ${ref.description}`);
+      return option;
+    });
     for (const o of options) delete o.el.attrs.selected;
-    option.el.attrs.selected = '';
+    for (const option of chosen) option.el.attrs.selected = '';
     this.browser.actions.push({ kind: 'select', target: ref.description, value });
     this.react('select', node, value);
   }
@@ -564,4 +625,37 @@ export class FakeBrowser implements BrowserPort {
     this.sessions.push(session);
     return session;
   }
+}
+
+/** Enough of a DOM element for `classifyFillElement`. */
+function elementShim(el: SerializedElement): Element {
+  return {
+    tagName: el.tag.toUpperCase(),
+    type: el.tag === 'input' ? (el.attrs.type ?? 'text') : undefined,
+    getAttribute: (name: string) => el.attrs[name] ?? null,
+    hasAttribute: (name: string) => name in el.attrs,
+  } as unknown as Element;
+}
+
+function findNode(root: DomNode, match: (n: DomNode) => boolean): DomNode | null {
+  if (match(root)) return root;
+  for (const child of root.children) {
+    const hit = findNode(child, match);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The one-character boxes from `first` on, in the nearest ancestor holding several. */
+function otpBoxes(first: DomNode): DomNode[] {
+  for (let scope = first.parent, depth = 0; scope && depth < 4; scope = scope.parent, depth++) {
+    const boxes: DomNode[] = [];
+    const visit = (n: DomNode) => {
+      if (n.el.tag === 'input' && n.el.attrs.maxlength === '1') boxes.push(n);
+      n.children.forEach(visit);
+    };
+    visit(scope);
+    if (boxes.length > 1) return boxes.slice(Math.max(0, boxes.indexOf(first)));
+  }
+  return [first];
 }
