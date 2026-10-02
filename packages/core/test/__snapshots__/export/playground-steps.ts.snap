@@ -35,13 +35,14 @@ interface Var {
 }
 type Action =
   | { kind: 'click' }
-  | { kind: 'type'; text: string }
-  | { kind: 'select'; value: string }
+  | { kind: 'fill'; text: string }
   | { kind: 'press'; key: string }
   | { kind: 'wait-for' }
   | { kind: 'sleep'; ms: number };
 interface Step {
   index: number;
+  flow: string;
+  step: number;
   kind: string;
   name: string;
   when: 'first-page' | 'every-page';
@@ -541,7 +542,7 @@ async function keptContainers(page: Page, found: Found, exclude: readonly Select
 }
 
 // ---------------------------------------------------------------------------
-// Steps (core steps/replay.ts)
+// Steps (core flows/replay.ts)
 // ---------------------------------------------------------------------------
 
 /** Selectors every-page steps settled on, by step index. */
@@ -575,10 +576,12 @@ async function act(session: Session, step: Step, target: Locator | null, values:
   switch (action.kind) {
     case 'click':
       return session.click(target!);
-    case 'type':
-      return session.fill(target!, fillText(action.text, values));
-    case 'select':
-      return session.select(target!, action.value);
+    case 'fill': {
+      // A native select is set by option value or label, like the runner's fill.
+      const text = fillText(action.text, values);
+      const tag = await target!.evaluate((el) => el.tagName);
+      return tag === 'SELECT' ? session.select(target!, text) : session.fill(target!, text);
+    }
     case 'press':
       return session.press(action.key, target);
     case 'wait-for':
@@ -594,9 +597,9 @@ async function act(session: Session, step: Step, target: Locator | null, values:
 async function replaySteps(session: Session, page: number, values: Record<string, string>, cache: StepCache): Promise<void> {
   for (const step of STEPS) {
     if (step.when !== 'every-page' && page !== 1) continue;
-    const label = 'step ' + step.index + (step.name === 'step:' + step.index ? '' : ' "' + step.name + '"') + ' (' + step.kind + ') on page ' + page;
+    const label = 'flow "' + step.flow + '" step ' + step.step + (step.name === step.flow + ':' + step.step ? '' : ' "' + step.name + '"') + ' (' + step.kind + ') on page ' + page;
     const fail = (why: string): void => {
-      if (!step.optional) throw new Failure('required step ' + step.index + ' (' + step.kind + ') ' + why + ' [' + step.name + ']', EXIT_UNRESOLVED);
+      if (!step.optional) throw new Failure('required step ' + step.step + ' (' + step.kind + ') of flow "' + step.flow + '" ' + why + ' [' + step.name + ']', EXIT_UNRESOLVED);
       log(label + ': skipped (' + why + ')');
     };
     if (step.action.kind === 'sleep') {
@@ -1246,6 +1249,8 @@ const VARS: Var[] = [
 const STEPS: Step[] = [
   {
     "index": 0,
+    "flow": "setup",
+    "step": 0,
     "kind": "click",
     "name": "accept cookies",
     "when": "first-page",
@@ -1259,8 +1264,10 @@ const STEPS: Step[] = [
   },
   {
     "index": 1,
+    "flow": "setup",
+    "step": 1,
     "kind": "wait",
-    "name": "step:1",
+    "name": "setup:1",
     "when": "first-page",
     "optional": false,
     "target": [{ "strategy": "testid", "value": "product-card" }],
@@ -1268,8 +1275,10 @@ const STEPS: Step[] = [
   },
   {
     "index": 2,
+    "flow": "setup",
+    "step": 2,
     "kind": "wait",
-    "name": "step:2",
+    "name": "setup:2",
     "when": "first-page",
     "optional": true,
     "target": null,

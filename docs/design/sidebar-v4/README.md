@@ -11,30 +11,30 @@ The design is implemented by three OpenSpec changes: `frame-support` (elements i
 | Frame | Change | Status |
 |---|---|---|
 | `Turn 3 flows sequence` (canvas) | — | container of the frames below; intro and badge colors |
-| `A Full panel` | `flows` | todo |
-| `B1 Flows collapsed` | `flows` | todo |
-| `B2 Switcher` | `flows` | todo |
-| `B3 Step rows` | `flows` (kinds, window badge), `frame-support` (frame badge) | todo |
-| `B4 Await user` | `flows` | todo |
-| `B5 Trigger editor` | `flows` | todo |
-| `B6 Flow menu` | `flows` | todo |
-| `B7 Step edit` | `flows` (window, optional), `frame-support` (frame) | todo |
-| `C1 Default` | `flows` | todo |
-| `C2 Typical` | `flows` | todo |
-| `C3 Drag` | `flows` | todo |
-| `C4 Errors` | `flows` | todo |
+| `A Full panel` | `flows` | done |
+| `B1 Flows collapsed` | `flows` | done |
+| `B2 Switcher` | `flows` | done |
+| `B3 Step rows` | `flows` (kinds, window badge), `frame-support` (frame badge) | done |
+| `B4 Await user` | `flows` | done |
+| `B5 Trigger editor` | `flows` | done |
+| `B6 Flow menu` | `flows` | done |
+| `B7 Step edit` | `flows` (window, optional), `frame-support` (frame) | done |
+| `C1 Default` | `flows` | done |
+| `C2 Typical` | `flows` | done |
+| `C3 Drag` | `flows` | done |
+| `C4 Errors` | `flows` | done |
 | `D1 Pick to fill` | `forms` | todo |
 | `D2 Password secret` | `forms` | todo |
 | `D3 File path` | `forms` | todo |
 | `D4 Variables` | `forms` | todo |
 | `E Iframe` | `frame-support` | done |
 | `E2 Frame target` | `frame-support` | done |
-| `G Automation only` | `forms` | todo |
-| `F1 Multi window` | `flows` | todo |
-| `F2 Popup expanded` | `flows` | todo |
-| `F3 Popup inactive` | `flows` | todo |
-| `H1 Banner full` | `flows` | todo |
-| `H2 Banner popup` | `flows` | todo |
+| `G Automation only` | `forms` | done |
+| `F1 Multi window` | `flows` | done |
+| `F2 Popup expanded` | `flows` | done |
+| `F3 Popup inactive` | `flows` | done |
+| `H1 Banner full` | `flows` | done |
+| `H2 Banner popup` | `flows` | done |
 
 ### Earlier rounds
 
@@ -63,3 +63,10 @@ Agreed differences between the frames and the panel.
 | `A` note "'every page' is gone from steps" | Not shown | The panel describes what is, not what changed |
 | Phosphor glyphs from unpkg | Inline SVG subset, as in v3 | The panel runs inside third-party pages and loads nothing remote |
 | 376px frame width | 400px panel | The recorder spec fixes the panel width |
+| `B3` fill on checkbox, radio, combobox, OTP, and file inputs | `fill` types into text inputs, textareas, and editable elements, and chooses a native `select` option | The other kinds are the `forms` change |
+| `B4`, `H2` the await-user element is looked for in the step's window | The condition is checked in every window of the run; the banner shows in the step's window | A login popup closes itself once the user is done, while the element to watch is in the main window |
+| `B6` shortcut hints (`Shift R`, `F2`) in the flow menu | No hints | No such shortcuts exist in the panel |
+| `C2` "+ block" under the sequence | No add button | Blocks come from flows and tables; the default sequence adds them, and a custom one appends new tables and flows |
+| `C4` "Remove 4.2" and "Remove" on each error | Errors listed on their blocks and under the sequence | Moving a block or Reset to default fixes them |
+| `F1` rail with a "Panel" label | 30px rail with "Panel active in another window" written vertically | Same meaning in the rail's width |
+| `G` "Add a table" creates a table | "Add a table" shows the tab bar and the first table, which picks fill | A recipe with flows keeps its one empty table unsaved until it has fields |

@@ -56,8 +56,10 @@ export interface WaitOptions {
   settleMs?: number;
   signal?: AbortSignal;
   recheck?: Recheck;
-  /** Called after each evaluation that still matched, with the budget left. */
-  onTick?: (remainingMs: number) => void;
+  /** Called after each evaluation that still matched, with the budget left; awaited before the next poll. */
+  onTick?: (remainingMs: number) => void | Promise<void>;
+  /** How each poll gets the page to check. Default: settle the session, capped by `settleMs`. */
+  settle?: () => Promise<PageInfo>;
   /** Clock in milliseconds, injectable for tests. */
   now?: () => number;
 }
@@ -65,13 +67,13 @@ export interface WaitOptions {
 export type WaitResult = { cleared: true; waitedMs: number; info: PageInfo } | { cleared: false; waitedMs: number };
 
 /**
- * Poll until `check` no longer matches on a settled page, or the shared
- * budget runs out. Each poll settles the page (capped), then re-evaluates;
- * time spent is drawn from the budget. Rejects with `GuardWaitAborted` when
- * the signal aborts.
+ * Poll until `check` returns null (the guard no longer matches, or the user is
+ * no longer needed) on a settled page, or the shared budget runs out. Each
+ * poll settles the page (capped), then re-evaluates; time spent is drawn from
+ * the budget. Rejects with `GuardWaitAborted` when the signal aborts.
  */
 export async function waitForClear(
-  check: (info: PageInfo) => Promise<GuardMatch | null>,
+  check: (info: PageInfo) => Promise<GuardMatch | unknown | null>,
   session: Session,
   opts: WaitOptions,
 ): Promise<WaitResult> {
@@ -94,7 +96,7 @@ export async function waitForClear(
     charge();
     let info: PageInfo | null = null;
     try {
-      const settled = await session.settle({ timeoutMs: opts.settleMs ?? GUARD_SETTLE_MS });
+      const settled = opts.settle ? await opts.settle() : await session.settle({ timeoutMs: opts.settleMs ?? GUARD_SETTLE_MS });
       if ((await check(settled)) === null) info = settled;
     } catch {
       if (signal?.aborted) throw new GuardWaitAborted();
@@ -102,6 +104,6 @@ export async function waitForClear(
     }
     charge();
     if (info) return { cleared: true, waitedMs: now() - started, info };
-    opts.onTick?.(budget.remainingMs);
+    await opts.onTick?.(budget.remainingMs);
   }
 }

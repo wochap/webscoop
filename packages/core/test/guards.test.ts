@@ -412,7 +412,7 @@ describe('runner guards', () => {
     const pageOf = (n: number) => catalog(cards(2, (i) => ({ title: `P${n}-${i}` })));
     const t = setupRun(
       { [paged(1)]: pageOf(1), [paged(2)]: pageOf(2), [paged(3)]: { dom: challenge(), status: 403 }, [paged(4)]: pageOf(4) },
-      { recipe: recipe({ pagination: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 4 } }) },
+      { recipe: recipe({ sequence: [{ paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 4, do: [{ extract: 'items' }] } }] }) },
     );
     t.emitter.on('guard.raised', () => {
       // Pages 1 and 2 were emitted before the pause.
@@ -432,7 +432,7 @@ describe('runner guards', () => {
     const paged = (n: number) => `${PAGE}?page=${n}`;
     const t = setupRun(
       { [paged(1)]: catalog(cards(2)), [paged(2)]: { dom: challenge(), status: 403 } },
-      { recipe: recipe({ pagination: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 } }), guards: { enabled: true, timeoutMs: 10, pollMs: 2 } },
+      { recipe: recipe({ sequence: [{ paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3, do: [{ extract: 'items' }] } }] }), guards: { enabled: true, timeoutMs: 10, pollMs: 2 } },
     );
     const result = await t.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'paused' });

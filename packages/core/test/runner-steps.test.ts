@@ -13,7 +13,7 @@ import {
   type SerializedElement,
 } from '../src';
 import { FakeBrowser, h, iframe, type FakePage } from '../src/testing';
-import { catalog, cards, css, PAGE, recipe } from './helpers';
+import { catalog, cards, css, PAGE, recipe, recipe as recipe_ } from './helpers';
 
 const LOGIN = 'https://shop.test/login';
 const RESULTS = 'https://shop.test/search?q=mouse';
@@ -27,8 +27,10 @@ const gated = (id = 'accept', cls = 'consent'): FakePage => ({
   on: { click: (el) => (el?.attrs.id === id ? catalog(cards(3)) : undefined) },
 });
 
-function withSteps(steps: RecipeInput['steps'], extra: Partial<RecipeInput> = {}): Recipe {
-  return loadRecipe(recipe({ url: PAGE, vars: [], steps, ...extra }));
+type StepInput = NonNullable<RecipeInput['flows']>[number]['steps'][number];
+
+function withSteps(steps: StepInput[], extra: Partial<RecipeInput> = {}): Recipe {
+  return loadRecipe(recipeInput(steps, extra));
 }
 
 function setup(pages: Record<string, FakePage>, recipe: Recipe, extra: Partial<RunOptions> = {}) {
@@ -40,7 +42,7 @@ function setup(pages: Record<string, FakePage>, recipe: Recipe, extra: Partial<R
 }
 
 describe('runner steps', () => {
-  it('replays a first-page step between navigating and extracting', async () => {
+  it('runs a called flow between navigating and extracting', async () => {
     const t = setup({ [PAGE]: gated() }, withSteps([{ kind: 'click', target: { selectors: [css('#accept')] } }]));
     const result = await t.runner.run();
     expect(result.ok).toBe(true);
@@ -50,7 +52,9 @@ describe('runner steps', () => {
       'browser.started',
       'run.start',
       'page.loaded',
+      'flow.started',
       'step.replayed',
+      'flow.done',
       'field.resolved',
       'row.emitted',
       'page.done',
@@ -58,12 +62,15 @@ describe('runner steps', () => {
       'run.done',
       'browser.closed',
     ]);
-    expect(t.log.of('step.replayed')[0]).toMatchObject({ page: 1, step: { index: 0, kind: 'click', outcome: 'ok' } });
-    expect(result.report.steps).toEqual([expect.objectContaining({ index: 0, page: 1, outcome: 'ok' })]);
+    expect(t.log.of('step.replayed')[0]).toMatchObject({ page: 1, step: { flow: 'setup', index: 0, kind: 'click', outcome: 'ok' } });
+    expect(t.log.of('flow.started')).toEqual([{ flow: 'setup', kind: 'called', page: 1 }]);
+    expect(t.log.of('flow.done')).toEqual([{ flow: 'setup', kind: 'called', page: 1, outcome: 'ok' }]);
+    expect(result.report.steps).toEqual([expect.objectContaining({ flow: 'setup', index: 0, page: 1, outcome: 'ok' })]);
+    expect(result.report.flows).toEqual([{ name: 'setup', kind: 'called', page: 1, outcome: 'ok', steps: result.report.steps }]);
   });
 
-  it('replays no step with steps disabled, so the gate hides every field', async () => {
-    const t = setup({ [PAGE]: gated() }, withSteps([{ kind: 'click', target: { selectors: [css('#accept')] } }]), { steps: { enabled: false } });
+  it('runs no flow with flows disabled, so the gate hides every field', async () => {
+    const t = setup({ [PAGE]: gated() }, withSteps([{ kind: 'click', target: { selectors: [css('#accept')] } }]), { flows: { enabled: false } });
     const result = await t.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'missing-required' });
     expect(t.runner.states).not.toContain('stepping');
@@ -74,8 +81,9 @@ describe('runner steps', () => {
   it('fails with missing-required naming a required step whose target is gone', async () => {
     const t = setup({ [PAGE]: { dom: catalog(cards(2)) } }, withSteps([{ kind: 'click', target: { selectors: [css('#accept')] } }]));
     const result = await t.runner.run();
-    expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['step:0'] });
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['setup:0'] });
     expect(result.report.steps[0]).toMatchObject({ outcome: 'failed' });
+    expect(result.report.flows[0]).toMatchObject({ name: 'setup', outcome: 'failed' });
   });
 
   it('skips an optional step, reports it, and extracts', async () => {
@@ -88,7 +96,7 @@ describe('runner steps', () => {
 
   it('fails with invalid-input before opening the browser when a step variable has no value', async () => {
     const recipe = loadRecipe(
-      recipeInput([{ kind: 'type', target: { selectors: [css('input')] }, value: '{q}' }], { vars: [{ name: 'q', type: 'string' }] }),
+      recipeInput([{ kind: 'fill', target: { selectors: [css('input')] }, value: '{q}' }], { vars: [{ name: 'q', type: 'string' }] }),
     );
     const t = setup({ [PAGE]: { dom: catalog(cards(2)) } }, recipe);
     const result = await t.runner.run();
@@ -102,7 +110,7 @@ describe('runner steps', () => {
     const recipe = loadRecipe(
       recipeInput(
         [
-          { kind: 'type', target: { selectors: [css('input[name="q"]')] }, value: '{q}' },
+          { kind: 'fill', target: { selectors: [css('input[name="q"]')] }, value: '{q}' },
           { kind: 'press', value: 'Enter' },
         ],
         { vars: [{ name: 'q', type: 'string' }] },
@@ -134,30 +142,32 @@ describe('runner steps', () => {
     expect(result.report.pages[0]!.url).toBe(RESULTS);
   });
 
-  it('runs an every-page step once per page and a first-page step once', async () => {
+  it('runs a flow inside the paginate block once per page and a flow before it once', async () => {
     const page = (n: number) => `${PAGE}?page=${n}`;
     const tabbed = (n: number): FakePage => ({
       dom: h('html', {}, h('body', {}, h('button', { id: 'accept' }, 'A'), h('button', { id: 'tab' }, 'Products'))),
       on: { click: (el) => (el?.attrs.id === 'tab' ? catalog(cards(2, (i) => ({ title: `P${n}-${i}` }))) : undefined) },
     });
     const recipe = loadRecipe(
-      recipeInput(
-        [
-          { kind: 'click', target: { selectors: [css('#accept')] }, optional: true },
-          { kind: 'click', target: { selectors: [css('#tab')] }, when: 'every-page' },
+      recipe_({
+        url: `${PAGE}?page=1`,
+        vars: [],
+        flows: [
+          { name: 'setup', steps: [{ kind: 'click', target: { selectors: [css('#accept')] }, optional: true }] },
+          { name: 'products-tab', steps: [{ kind: 'click', target: { selectors: [css('#tab')] } }] },
         ],
-        { url: `${PAGE}?page=1`, pagination: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 } },
-      ),
+        sequence: [{ flow: 'setup' }, { paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3, do: [{ flow: 'products-tab' }, { extract: 'items' }] } }],
+      }),
     );
     const t = setup({ [page(1)]: tabbed(1), [page(2)]: tabbed(2), [page(3)]: tabbed(3) }, recipe);
     const result = await t.runner.run();
     expect(result.ok).toBe(true);
     expect(result.rows).toHaveLength(6);
-    expect(t.log.of('step.replayed').map((e) => [e.page, e.step.index])).toEqual([
-      [1, 0],
-      [1, 1],
-      [2, 1],
-      [3, 1],
+    expect(t.log.of('step.replayed').map((e) => [e.page, e.step.flow])).toEqual([
+      [1, 'setup'],
+      [1, 'products-tab'],
+      [2, 'products-tab'],
+      [3, 'products-tab'],
     ]);
   });
 
@@ -174,15 +184,15 @@ describe('runner steps', () => {
     expect(result.ok).toBe(true);
     expect(result.report.steps.map((s) => s.outcome)).toEqual(['healed', 'ok']);
     expect(result.report.healed).toBe(1);
-    expect(t.log.of('field.healed')[0]).toMatchObject({ target: 'step:0' });
+    expect(t.log.of('field.healed')[0]).toMatchObject({ target: 'setup:0' });
     expect(saved).toHaveLength(1);
-    expect(saved[0]!.steps[0]!.target!.selectors[0]).not.toEqual(css('#accept'));
-    expect(saved[0]!.steps[1]).toEqual(recipe.steps[1]);
+    expect(saved[0]!.flows[0]!.steps[0]!.target!.selectors[0]).not.toEqual(css('#accept'));
+    expect(saved[0]!.flows[0]!.steps[1]).toEqual(recipe.flows[0]!.steps[1]);
   });
 });
 
-function recipeInput(steps: RecipeInput['steps'], extra: Partial<RecipeInput> = {}): RecipeInput {
-  return recipe({ url: PAGE, vars: [], steps, ...extra });
+function recipeInput(steps: StepInput[], extra: Partial<RecipeInput> = {}): RecipeInput {
+  return recipe({ url: PAGE, vars: [], flows: [{ name: 'setup', steps }], sequence: [{ flow: 'setup' }, { extract: 'items' }], ...extra });
 }
 
 describe('runner steps inside an iframe', () => {
@@ -205,7 +215,7 @@ describe('runner steps inside an iframe', () => {
   it('fails a required step with missing-required when the iframe is missing, and skips an optional one', async () => {
     const page = { dom: catalog(cards(2)) };
     const required = await setup({ [PAGE]: page }, withSteps([{ kind: 'click', target }])).runner.run();
-    expect(required).toMatchObject({ ok: false, reason: 'missing-required', fields: ['step:0'] });
+    expect(required).toMatchObject({ ok: false, reason: 'missing-required', fields: ['setup:0'] });
     expect(required.report.steps[0]).toMatchObject({ outcome: 'failed', frame: { outcome: { kind: 'unresolved' } } });
     const optional = await setup({ [PAGE]: page }, withSteps([{ kind: 'click', target, optional: true }])).runner.run();
     expect(optional.ok).toBe(true);

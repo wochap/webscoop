@@ -10,13 +10,18 @@ const KIND_LABEL: Record<GuardContextView['kind'], string> = {
   login: 'Login required',
   captcha: 'Bot check',
   'zero-fields': 'Nothing found',
+  'await-user': 'Your turn',
 };
 
 const KIND_HINT: Record<GuardContextView['kind'], string> = {
   login: 'Log in in this window; the run resumes by itself.',
   captcha: 'Solve the check in this window; the run resumes by itself.',
   'zero-fields': 'Get past the interstitial in this window; the run resumes by itself.',
+  'await-user': 'Do this in the browser; the run continues by itself once it is done.',
 };
+
+/** The banner's headline: the step's label for an await-user step, else the guard kind. */
+const headline = (context: GuardContextView) => (context.kind === 'await-user' ? (context.label ?? KIND_LABEL['await-user']) : KIND_LABEL[context.kind]);
 
 /** `m:ss`, never negative. */
 export function formatCountdown(ms: number): string {
@@ -56,11 +61,11 @@ export function GuardBanner({
   const banner = (
     <div id="ws-guard" data-ws="guard-banner" data-kind={context.kind} role="alert">
       <span className="ws-badge ws-tone-warn" data-ws="guard-kind">
-        {KIND_LABEL[context.kind]}
+        {context.kind === 'await-user' ? 'await-user' : KIND_LABEL[context.kind]}
       </span>
       <span className="ws-col ws-spacer ws-guard-text">
         <span className="ws-title ws-ellipsis" data-ws="guard-reason">
-          Page {context.page}: {context.reason}
+          {context.kind === 'await-user' ? headline(context) : `Page ${context.page}: ${context.reason}`}
         </span>
         <span className="ws-meta ws-ellipsis">{KIND_HINT[context.kind]}</span>
       </span>
@@ -80,8 +85,8 @@ export function GuardBanner({
 export function GuardPanel({ context }: { context: GuardContextView }) {
   return (
     <section className="ws-card ws-col" data-ws="guard-panel">
-      <span className="ws-caps">Run paused</span>
-      <span className="ws-title">{KIND_LABEL[context.kind]}</span>
+      <span className="ws-caps">{context.kind === 'await-user' ? 'Waiting for you' : 'Run paused'}</span>
+      <span className="ws-title">{headline(context)}</span>
       <span className="ws-meta">{KIND_HINT[context.kind]}</span>
       <span className="ws-mono-sm ws-ellipsis" title={context.url}>
         {context.url}

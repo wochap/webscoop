@@ -1,12 +1,13 @@
 import { convertValue, defaultAttr } from '../convert';
 import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
-import type { ElementRef, InteractiveSession, PageInfo, SerializedElement, StoragePort } from '../ports';
+import { MAIN_WINDOW, type ElementRef, type InteractiveSession, type PageInfo, type RecorderWindow, type SerializedElement, type StoragePort } from '../ports';
 import { scoreFingerprint } from '../healing/score';
-import type { FieldScope, FieldType, Fingerprint, SelectorCandidate } from '../recipe/schema';
+import type { FieldScope, FieldType, Fingerprint, Flow, SelectorCandidate } from '../recipe/schema';
 import { DESCRIPTION_MAX } from '../recipe/constants';
 import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
-import { replaySteps } from '../steps/replay';
+import { runFlow, type StepReport } from '../flows/replay';
+import { RunWindows } from '../flows/windows';
 import {
   annotate,
   compoundOf,
@@ -33,8 +34,11 @@ import {
 import { fillTemplate, retemplateUrl, templateProblem } from '../template';
 import {
   bare,
-  DEFAULT_PAGINATION,
+  defaultFlowName,
   detectPagination,
+  draftSequence,
+  flowNameError,
+  newPagination,
   draftErrors,
   draftToRecipe,
   defaultTableName,
@@ -48,6 +52,7 @@ import { RecorderEmitter } from './events';
 import {
   currentTable,
   descriptionKey,
+  flowsBefore,
   frameLabel,
   HOST_BINDING,
   sameFrame,
@@ -115,6 +120,19 @@ export interface RecorderOptions {
   now?: () => Date;
   /** Default `full`. */
   mode?: RecorderMode;
+  /** Whether the user closing the window aborts a waiting guard. Default true; false for a popup that closes itself. */
+  abortOnClose?: boolean;
+}
+
+/** A one-line toast for a step or flow replay. */
+function describeReplay(flow: string, index: number | null, reports: readonly StepReport[]): string {
+  if (index !== null) {
+    const report = reports[0];
+    const ok = report?.outcome === 'ok' || report?.outcome === 'healed';
+    return ok ? `replayed step ${index + 1} (${report!.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
+  }
+  const skipped = reports.filter((r) => r.outcome === 'skipped');
+  return skipped.length === 0 ? `replayed flow ${flow} (${reports.length} step${reports.length === 1 ? '' : 's'})` : `replayed flow ${flow}; skipped step${skipped.length === 1 ? '' : 's'} ${skipped.map((r) => r.index + 1).join(', ')}`;
 }
 
 /** Rows sent to the panel after a test run; the count is always the full count. */
@@ -257,25 +275,31 @@ export class RecorderController {
   private frameMemo: { key: string; root: Promise<ElementRef | null> } | null = null;
   /** Set by `detach`: pages that load afterwards are told to remove the recorder. */
   private detached = false;
+  /** Every window of the session: the main window and the popups opened from it, by id. */
+  private readonly windows = new Map<string, { session: InteractiveSession; opener: string }>();
+  /** The window that owns the panel: picks, browse recording, and lookups happen there. */
+  private owner = MAIN_WINDOW;
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
-    const raw = opts.session;
+    this.windows.set(MAIN_WINDOW, { session: opts.session, opener: MAIN_WINDOW });
     const resolve: InteractiveSession['resolve'] = async (candidate, within) => {
-      if (within) return raw.resolve(candidate, within);
+      if (within) return this.raw.resolve(candidate, within);
       const base = await this.frameBase();
-      return base === null ? [] : raw.resolve(candidate, base);
+      return base === null ? [] : this.raw.resolve(candidate, base);
     };
     const snapshot: InteractiveSession['snapshot'] = async (within) => {
-      if (within) return raw.snapshot(within);
+      if (within) return this.raw.snapshot(within);
       const base = await this.frameBase();
       if (base === null) throw new Error(`${frameLabel(this.scopeFrame()!)} is not on the page`);
-      return raw.snapshot(base);
+      return this.raw.snapshot(base);
     };
-    this.view = new Proxy(raw, {
-      get(target, prop) {
+    // Lookups follow the owner window, which changes when a popup takes the panel.
+    this.view = new Proxy(opts.session, {
+      get: (_target, prop) => {
         if (prop === 'resolve') return resolve;
         if (prop === 'snapshot') return snapshot;
+        const target = this.raw;
         const value = Reflect.get(target, prop, target) as unknown;
         return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
       },
@@ -318,6 +342,9 @@ export class RecorderController {
       openedUrl: '',
       repick: repickContext ? repickContext.index : null,
       repickStep: null,
+      pickTrigger: null,
+      panelMode: 'owner',
+      popup: false,
       repickContext,
       guardContext: null,
       notice: null,
@@ -327,7 +354,7 @@ export class RecorderController {
       saved: null,
       busy: null,
       error: null,
-      panel: { collapsed: { recipe: false, steps: false, pagination: true } },
+      panel: { collapsed: { recipe: false, flows: false, sequence: true } },
     };
     this.closedPromise = new Promise((resolve) => (this.closedResolve = resolve));
     this.repickPromise = new Promise((resolve) => (this.repickResolve = resolve));
@@ -361,9 +388,76 @@ export class RecorderController {
     return this.view;
   }
 
-  /** The session itself, for work that finds frames on its own: test runs, step replays, navigation. */
+  /** The owner window's session itself, for work that finds frames on its own: test runs, step replays, navigation. */
   private get raw(): InteractiveSession {
-    return this.opts.session;
+    return this.windows.get(this.owner)?.session ?? this.opts.session;
+  }
+
+  /** Whether the panel's owner is a popup, where recorded steps act and fields cannot be added. */
+  private ownerIsPopup(): boolean {
+    return this.owner !== MAIN_WINDOW;
+  }
+
+  /** Make a window the owner: it gets the full panel, the others the rail or the strip. */
+  private async setOwner(id: string): Promise<void> {
+    if (id === this.owner || !this.windows.has(id)) return;
+    this.owner = id;
+    // Paths of a selection or a list setup belong to the previous window's document.
+    if (this.current.selected || this.current.proposal || this.current.editing) this.clearSelection();
+    const url = await this.raw.url().catch(() => this.current.url);
+    this.current = { ...this.current, url, panelMode: 'owner', popup: this.ownerIsPopup(), levelPick: null };
+    this.emitter.emit('recorder.owner', { window: id });
+    await this.broadcast();
+  }
+
+  /** Tell every window how to show the panel: the owner gets the state, the others their mode. */
+  private async broadcast(): Promise<void> {
+    for (const [id, win] of this.windows) {
+      if (id === this.owner) continue;
+      try {
+        await win.session.dispatch(this.modeMessage(id));
+      } catch {
+        // The window is navigating or closing; it asks again once ready.
+      }
+    }
+    await this.push();
+  }
+
+  private modeMessage(id: string): HostMessage {
+    return { kind: 'panel.mode', mode: id === MAIN_WINDOW ? 'rail' : 'strip', popup: id !== MAIN_WINDOW };
+  }
+
+  /** A popup of the session: it takes the panel when it opens and hands it back to its opener when it closes. */
+  private addWindow(win: RecorderWindow): void {
+    this.windows.set(win.id, { session: win.session, opener: win.opener });
+    // A popup starts on about:blank, whose window Chromium keeps for the first page it loads, so the
+    // context's script may never boot there: load the bundle now and once the first page commits.
+    const bundle = this.opts.bundle;
+    void win.session.inject(bundle).catch(() => {});
+    const offFirst = win.session.onNavigated(() => {
+      offFirst();
+      void win.session.inject(bundle).catch(() => {});
+    });
+    this.unsubscribe.push(
+      offFirst,
+      win.session.onNavigated((url) => {
+        if (this.owner !== win.id) return;
+        this.current = { ...this.current, url };
+        this.emitter.emit('recorder.navigated', { url });
+      }),
+      win.session.onClosed(() => {
+        const entry = this.windows.get(win.id);
+        this.windows.delete(win.id);
+        if (this.owner !== win.id) return;
+        const opener = entry && this.windows.has(entry.opener) ? entry.opener : MAIN_WINDOW;
+        void this.handleInternal(async () => {
+          // The closed window is gone: hand the panel back without asking it.
+          this.owner = '';
+          await this.setOwner(opener);
+        });
+      }),
+    );
+    void this.handleInternal(() => this.setOwner(win.id));
   }
 
   /** The frame host lookups run in: the override, else the selection's (null in the top document), else the active table's. */
@@ -462,16 +556,19 @@ export class RecorderController {
    * navigating. The page announces itself with `session.ready` and gets the state.
    */
   async attach(): Promise<void> {
-    await this.session.expose(HOST_BINDING, (msg) => this.handle(msg));
-    await this.session.inject(this.opts.bundle);
+    const main = this.opts.session;
+    await main.expose(HOST_BINDING, (msg, windowId) => this.handle(msg, windowId));
+    await main.inject(this.opts.bundle);
     this.unsubscribe.push(
-      this.session.onNavigated((url) => {
+      main.onWindow((win) => this.addWindow(win)),
+      main.onNavigated((url) => {
+        if (this.owner !== MAIN_WINDOW) return;
         this.current = { ...this.current, url };
         this.emitter.emit('recorder.navigated', { url });
       }),
-      this.session.onClosed(() => {
+      main.onClosed(() => {
         this.repickResolve({ kind: 'abort' });
-        if (this.current.guardContext) this.fireGuard('abort');
+        if (this.current.guardContext && this.opts.abortOnClose !== false) this.fireGuard('abort');
         this.closedResolve('closed');
       }),
     );
@@ -517,18 +614,32 @@ export class RecorderController {
     for (const off of this.unsubscribe.splice(0)) off();
   }
 
-  /** Entry point for the page binding. Messages are handled one at a time, in order. */
-  handle(raw: unknown): Promise<HostMessage> {
-    const run = this.queue.then(() => this.process(raw));
+  /** Entry point for the page binding, with the window that called. Messages are handled one at a time, in order. */
+  handle(raw: unknown, windowId: string = MAIN_WINDOW): Promise<HostMessage> {
+    const run = this.queue.then(() => this.process(raw, windowId));
     this.queue = run.catch(() => {});
     return run;
   }
 
-  private async process(raw: unknown): Promise<HostMessage> {
+  /**
+   * A message from a window that does not own the panel: a real pointer or key
+   * press makes it the owner; anything else is answered with its panel mode.
+   */
+  private async fromOther(msg: ParsedPageMessage, windowId: string): Promise<HostMessage> {
+    if (this.detached) return { kind: 'session.detach' };
+    if (msg.kind === 'window.activity' && this.windows.has(windowId)) {
+      await this.setOwner(windowId);
+      return this.stateMessage();
+    }
+    return this.modeMessage(windowId);
+  }
+
+  private async process(raw: unknown, windowId: string = MAIN_WINDOW): Promise<HostMessage> {
     // Frame documents may have been replaced since the last message.
     this.frameMemo = null;
     try {
       const msg = parsePageMessage(raw);
+      if (windowId !== this.owner) return await this.fromOther(msg, windowId);
       const reply = await this.route(msg);
       if (this.current.error) this.current = { ...this.current, error: null };
       this.syncFrame();
@@ -546,10 +657,10 @@ export class RecorderController {
     return { kind: 'draft.state', state: this.current };
   }
 
-  /** Send the current state to the page without waiting for a page request. */
+  /** Send the current state to the owner window without waiting for a page request. */
   async push(): Promise<void> {
     try {
-      await this.session.dispatch(this.stateMessage());
+      await this.raw.dispatch(this.stateMessage());
     } catch {
       // The page is navigating; it asks for the state again once it is ready.
     }
@@ -716,37 +827,93 @@ export class RecorderController {
         this.apply({ type: 'moveField', from: msg.from, to: msg.to });
         return;
       case 'draft.repickTarget':
-        this.current =
-          msg.target === 'field' ? { ...this.current, repick: msg.index, repickStep: null } : { ...this.current, repickStep: msg.index, repick: null };
+        if (msg.target === 'field') this.current = { ...this.current, repick: msg.index, repickStep: null };
+        else this.current = { ...this.current, repickStep: msg.index === null ? null : { flow: this.flowIndex(msg.flow), index: msg.index }, repick: null };
         return;
       case 'draft.addStep':
         if (msg.selection === undefined) this.notEditing();
-        return void (await this.addStep(msg.step, msg.selection));
-      case 'draft.updateStep':
-        if (!this.draft.steps[msg.index]) throw new Error(`no step at index ${msg.index}`);
-        this.apply({ type: 'updateStep', index: msg.index, patch: msg.patch });
+        return void (await this.addStep(msg.step, msg.selection, msg.flow));
+      case 'draft.updateStep': {
+        const flow = this.flowIndex(msg.flow);
+        this.stepOf(flow, msg.index);
+        this.apply({ type: 'updateStep', flow, index: msg.index, patch: msg.patch });
         return;
-      case 'draft.removeStep':
-        if (!this.draft.steps[msg.index]) throw new Error(`no step at index ${msg.index}`);
-        this.apply({ type: 'removeStep', index: msg.index });
+      }
+      case 'draft.removeStep': {
+        const flow = this.flowIndex(msg.flow);
+        this.stepOf(flow, msg.index);
+        this.apply({ type: 'removeStep', flow, index: msg.index });
         return;
+      }
       case 'draft.moveStep':
-        this.apply({ type: 'moveStep', from: msg.from, to: msg.to });
+        this.apply({ type: 'moveStep', flow: this.flowIndex(msg.flow), from: msg.from, to: msg.to });
         return;
       case 'draft.replayStep':
-        return this.replayStep(msg.index);
+        return this.replay(this.flowIndex(msg.flow), msg.index);
+      case 'draft.addFlow': {
+        const typed = msg.name?.trim();
+        const name = typed || defaultFlowName(this.draft);
+        const error = flowNameError(this.draft, name);
+        if (error) throw new Error(error);
+        this.apply({ type: 'addFlow', name });
+        return;
+      }
+      case 'draft.updateFlow': {
+        const flow = this.draft.flows[msg.index];
+        if (!flow) throw new Error(`no flow at index ${msg.index}`);
+        if (msg.patch.name !== undefined) {
+          const error = flowNameError(this.draft, msg.patch.name.trim(), msg.index);
+          if (error) throw new Error(error);
+        }
+        this.apply({ type: 'updateFlow', index: msg.index, patch: { ...msg.patch, ...(msg.patch.name !== undefined ? { name: msg.patch.name.trim() } : {}) } });
+        return;
+      }
+      case 'draft.removeFlow':
+        if (!this.draft.flows[msg.index]) throw new Error(`no flow at index ${msg.index}`);
+        this.apply({ type: 'removeFlow', index: msg.index });
+        return;
+      case 'draft.duplicateFlow':
+        if (!this.draft.flows[msg.index]) throw new Error(`no flow at index ${msg.index}`);
+        this.apply({ type: 'duplicateFlow', index: msg.index });
+        return;
+      case 'draft.selectFlow':
+        if (!this.draft.flows[msg.index]) throw new Error(`no flow at index ${msg.index}`);
+        this.apply({ type: 'selectFlow', index: msg.index });
+        return;
+      case 'draft.replayFlow':
+        return this.replay(msg.index, null);
+      case 'draft.replayFlowsBefore':
+        return this.replayFlowsBefore(msg.table);
+      case 'draft.pickTrigger':
+        if (msg.index !== null && !this.draft.flows[msg.index]) throw new Error(`no flow at index ${msg.index}`);
+        this.current = { ...this.current, pickTrigger: msg.index };
+        return;
+      case 'draft.setTrigger':
+        return void (await this.setTrigger(msg.index, msg.selection));
       case 'draft.markPagination':
         this.notEditing();
         await this.markPagination();
-        // The collapsed Pagination section opens on what was just set.
-        if (this.draft.pagination) this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, pagination: false } } };
+        // The collapsed Sequence section opens on the paginate block just set.
+        if (this.draft.pagination) this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, sequence: false } } };
         return;
-      case 'draft.updatePagination':
+      case 'paginate.update':
+        if (!this.draft.pagination) throw new Error('mark a pagination target first');
         this.apply({ type: 'updatePagination', patch: msg.patch });
         this.emitter.emit('recorder.paginationSet', { kind: this.draft.pagination!.kind });
         return;
       case 'draft.clearPagination':
         this.apply({ type: 'setPagination', pagination: null });
+        return;
+      case 'sequence.move':
+        this.apply({ type: 'moveBlock', from: msg.from, to: msg.to });
+        return;
+      case 'sequence.customize':
+        this.apply({ type: 'customizeSequence' });
+        return;
+      case 'sequence.reset':
+        this.apply({ type: 'resetSequence' });
+        return;
+      case 'window.activity':
         return;
       case 'draft.addTable': {
         this.notEditingItem();
@@ -1029,13 +1196,30 @@ export class RecorderController {
   /** Refresh every table's item and field counts, and the step counts, on the current page. */
   async recount(): Promise<void> {
     for (let t = 0; t < this.draft.tables.length; t++) await this.inFrame(this.draft.tables[t]!.frame ?? null, () => this.recountTable(t));
-    const stepCounts: (number | null)[] = [];
-    for (const step of this.draft.steps) {
-      const target = step.target;
-      stepCounts.push(target ? await this.inFrame(target.frame ?? null, () => this.countPage(target.selectors[0]!)) : null);
+    const stepCounts: (number | null)[][] = [];
+    for (const flow of this.draft.flows) {
+      const counts: (number | null)[] = [];
+      for (const step of flow.steps) {
+        const target = step.target;
+        counts.push(target ? await this.inFrame(target.frame ?? null, () => this.countPage(target.selectors[0]!)) : null);
+      }
+      stepCounts.push(counts);
     }
     this.apply({ type: 'setStepCounts', counts: stepCounts });
     await this.refreshOtherLists();
+  }
+
+  /** A flow index from a message: the given one, else the active flow; throws when there is none. */
+  private flowIndex(index: number | undefined): number {
+    const flow = index ?? this.draft.activeFlow;
+    if (flow === null || !this.draft.flows[flow]) throw new Error(index === undefined ? 'no flow is active' : `no flow at index ${index}`);
+    return flow;
+  }
+
+  private stepOf(flow: number, index: number) {
+    const step = this.draft.flows[flow]?.steps[index];
+    if (!step) throw new Error(`no step at index ${index} of flow ${this.draft.flows[flow]?.name ?? flow}`);
+    return step;
   }
 
   /** While the active table is a list, the paths of every other list table's containers, for muted outlines on the page. */
@@ -1176,12 +1360,19 @@ export class RecorderController {
     // An edited field takes the new selection when updated; no step, re-pick, or item inference.
     if (editing) return;
 
+    const pickTrigger = this.current.pickTrigger;
+    if (pickTrigger !== null && this.draft.flows[pickTrigger]) {
+      await this.setTrigger(pickTrigger, selection);
+      return;
+    }
+
     const repickStep = this.current.repickStep;
-    if (repickStep !== null && this.draft.steps[repickStep]) {
+    if (repickStep !== null && this.draft.flows[repickStep.flow]?.steps[repickStep.index]) {
       const selectors = orderForSave(rank(await this.withCounts(generate(node), 'page', [])), 0);
       this.apply({
         type: 'replaceStepTarget',
-        index: repickStep,
+        flow: repickStep.flow,
+        index: repickStep.index,
         selectors,
         fingerprint: selection.fingerprint,
         ...(selection.frame ? { frame: selection.frame } : {}),
@@ -2364,11 +2555,12 @@ export class RecorderController {
   }
 
   /**
-   * Add a step. With a selection (browse mode) its candidates are the target;
-   * without one (`undefined`) the picked element is; `null` means no target,
-   * such as a key press on whatever has focus.
+   * Add a step to a flow (the active one by default). With a selection (browse
+   * mode) its candidates are the target; without one (`undefined`) the picked
+   * element is; `null` means no target, such as a key press on whatever has
+   * focus. A step recorded in a popup acts in the popup.
    */
-  private async addStep(step: NewStep, selection: ParsedSelection | null | undefined): Promise<void> {
+  private async addStep(step: NewStep, selection: ParsedSelection | null | undefined, flow?: number): Promise<void> {
     let target: { selectors: ProtocolCandidate[]; fingerprint: ParsedSelection['fingerprint']; frame?: FrameTarget } | undefined;
     if (selection) {
       const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
@@ -2383,51 +2575,113 @@ export class RecorderController {
       target = { selectors, fingerprint: selected.selection.fingerprint, ...(frame ? { frame } : {}) };
     }
     if (target && target.selectors.length === 0) throw new Error('the element has no selector candidates');
+    if (flow !== undefined && !this.draft.flows[flow]) throw new Error(`no flow at index ${flow}`);
     this.apply({
       type: 'addStep',
+      ...(flow !== undefined ? { flow } : {}),
       step: {
         kind: step.kind,
         ...(target ? { target } : {}),
         ...(step.value !== undefined ? { value: step.value } : {}),
-        ...(step.when ? { when: step.when } : {}),
+        ...(step.until ? { until: step.until } : {}),
+        window: this.ownerIsPopup() ? 'popup' : 'same',
         ...(step.optional !== undefined ? { optional: step.optional } : {}),
         count: target?.selectors[0]?.count ?? null,
       },
     });
+    const into = flow ?? this.draft.activeFlow ?? this.draft.flows.length - 1;
     const primary = target?.selectors[0];
     this.emitter.emit('recorder.stepAdded', {
-      index: this.draft.steps.length - 1,
+      flow: this.draft.flows[into]?.name ?? '',
+      index: (this.draft.flows[into]?.steps.length ?? 1) - 1,
       kind: step.kind,
       target: primary ? `${primary.strategy}=${primary.value}` : null,
       ...(step.value !== undefined ? { value: step.value } : {}),
     });
   }
 
-  /** Run one step on the live page, the way a run would, and report how it went. */
-  private async replayStep(index: number): Promise<HostMessage> {
-    const step = this.draft.steps[index];
-    if (!step) throw new Error(`no step at index ${index}`);
+  /** Make a flow reactive with the selected element as its trigger. */
+  private async setTrigger(index: number, selection: ParsedSelection): Promise<void> {
+    if (!this.draft.flows[index]) throw new Error(`no flow at index ${index}`);
+    const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
+    const selectors = orderForSave(rank(dedupe(selection.candidates)), 0);
+    if (selectors.length === 0) throw new Error('the element has no selector candidates');
+    this.apply({ type: 'setTrigger', index, trigger: { selectors, fingerprint: selection.fingerprint, ...(frame ? { frame } : {}) } });
+    this.current = { ...this.current, pickTrigger: null };
+  }
+
+  /**
+   * Replay one step (`index`), or a whole flow (null), on the live page, the way
+   * a run would, and report how it went.
+   */
+  private async replay(flowIndex: number, index: number | null): Promise<HostMessage> {
+    const draftFlow = this.draft.flows[flowIndex];
+    if (!draftFlow) throw new Error(`no flow at index ${flowIndex}`);
+    if (index !== null) this.stepOf(flowIndex, index);
     const validated = validateRecipe(draftToRecipe(this.draft));
     let ok = false;
     let message: string;
     if (!validated.ok) {
       message = validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n');
     } else {
-      const recipe = { ...validated.recipe, steps: [validated.recipe.steps[index]!] };
-      const values = Object.fromEntries(this.draft.vars.filter((v) => v.value !== '').map((v) => [v.name, v.value]));
+      const flow = validated.recipe.flows[flowIndex]!;
+      const only = index === null ? flow : { ...flow, steps: [flow.steps[index]!] };
+      const reports: StepReport[] = [];
       try {
-        const result = await replaySteps(this.raw, recipe, { page: 1, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache: new Map() });
-        const report = result.steps[0];
-        ok = report?.outcome === 'ok' || report?.outcome === 'healed';
-        message = ok ? `replayed step ${index + 1} (${step.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
+        await this.runFlows([only], (report) => reports.push(index === null ? report : { ...report, index }));
+        ok = reports.every((r) => r.outcome === 'ok' || r.outcome === 'healed');
+        message = describeReplay(flow.name, index, reports);
       } catch (error) {
-        message = `step ${index + 1} failed: ${error instanceof Error ? error.message : String(error)}`;
+        message = `${index === null ? `flow ${flow.name}` : `step ${index + 1}`} failed: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
     // A step can reveal content without a navigation, such as a consent click: count again.
     if (ok) await this.recount();
-    this.emitter.emit('recorder.stepReplayed', { index, kind: step.kind, ok, message });
+    this.emitter.emit('recorder.stepReplayed', { flow: draftFlow.name, index: index ?? -1, kind: index === null ? 'flow' : draftFlow.steps[index]!.kind, ok, message });
     return { kind: 'step.replayResult', index, ok, message, state: this.current };
+  }
+
+  /** Replay, in order, the called flows the sequence runs before a table's extract block; the zero-match warning offers it. */
+  private async replayFlowsBefore(table: number): Promise<HostMessage> {
+    const name = this.draft.tables[table]?.name;
+    if (name === undefined) throw new Error(`no table at index ${table}`);
+    const names = flowsBefore(draftSequence(this.draft), name);
+    const validated = validateRecipe(draftToRecipe(this.draft));
+    let ok = false;
+    let message: string;
+    if (!validated.ok) {
+      message = validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n');
+    } else if (names.length === 0) {
+      message = `no flow runs before ${name}`;
+    } else {
+      const reports: StepReport[] = [];
+      try {
+        await this.runFlows(names.map((n) => validated.recipe.flows.find((f) => f.name === n)!), (report) => reports.push(report));
+        ok = reports.every((r) => r.outcome === 'ok' || r.outcome === 'healed');
+        message = ok ? `replayed ${names.join(', ')}` : `replayed ${names.join(', ')} with skipped steps`;
+      } catch (error) {
+        message = `replaying ${names.join(', ')} failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    await this.recount();
+    return { kind: 'step.replayResult', index: null, ok, message, state: this.current };
+  }
+
+  /** Run flows on the live page with the runner's flow executor, in the owner window. */
+  private async runFlows(flows: Flow[], onEvent: (report: StepReport) => void): Promise<void> {
+    const validated = validateRecipe(draftToRecipe(this.draft));
+    if (!validated.ok) throw new Error('the draft does not validate');
+    const values = Object.fromEntries(this.draft.vars.filter((v) => v.value !== '').map((v) => [v.name, v.value]));
+    const windows = new RunWindows(this.raw);
+    const cache = new Map();
+    try {
+      for (const flow of flows) {
+        await runFlow(validated.recipe, flow, this.raw, { page: 1, windows, vars: values, timeoutMs: this.opts.timeoutMs ?? 30_000, cache, onEvent });
+      }
+    } finally {
+      // Popups a replay opened stay for the user; only the listener goes.
+      windows.release();
+    }
   }
 
   private markPagination(): void {
@@ -2438,12 +2692,13 @@ export class RecorderController {
       { tag: selection.tag, attrs: selection.attrs, ...(selection.role ? { role: selection.role } : {}) },
       this.current.url,
     );
-    const previous = this.draft.pagination ?? DEFAULT_PAGINATION;
+    const previous = this.draft.pagination ?? newPagination(detected.kind);
     const { param: _param, ...rest } = previous;
     this.apply({
       type: 'setPagination',
       pagination: {
         ...rest,
+        ...(previous.table ? {} : { table: this.table().name }),
         kind: detected.kind,
         ...(detected.param ? { param: detected.param } : {}),
         target: {
@@ -2467,7 +2722,7 @@ export class RecorderController {
     const selected = this.current.selected;
     const owned = [
       ...this.draft.tables.map((t) => t.frame),
-      ...this.draft.steps.map((s) => s.target?.frame),
+      ...this.draft.flows.flatMap((f) => [f.trigger?.frame, ...f.steps.map((s) => s.target?.frame)]),
       this.draft.pagination?.target?.frame,
       selected?.selection.frame,
     ];

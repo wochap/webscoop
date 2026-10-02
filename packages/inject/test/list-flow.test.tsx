@@ -152,7 +152,8 @@ describe('banners for picks outside the list', () => {
 describe('old mixed tables', () => {
   it('marks a page field of a list and moves it to a page table', () => {
     const recipe = loadRecipe({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      sequence: [{ extract: 'products' }],
       name: 'mixed',
       url: MIXED,
       tables: [

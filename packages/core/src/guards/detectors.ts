@@ -140,8 +140,8 @@ export const captchaDetector: GuardDetector = {
 /** Whether, in every table, the item container and every required field resolved nothing. */
 export function nothingResolved(recipe: Recipe, extraction: PageExtraction): boolean {
   let checked = false;
-  for (const [index, table] of tablesOf(recipe).entries()) {
-    const found = extraction.tables[index];
+  for (const table of tablesOf(recipe)) {
+    const found = extraction.tables.find((t) => t.name === table.name);
     if (!found) continue;
     const required = found.fields.filter((f) => !f.optional);
     // A table with nothing required cannot tell an empty page from a full one.

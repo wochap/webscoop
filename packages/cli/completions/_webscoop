@@ -117,7 +117,7 @@ _webscoop() {
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
             '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
-            "--skip-steps[replay none of the recipe's steps]" \
+            "--skip-flows[run none of the recipe's flows]" \
             '1:recipe:_webscoop_recipes' && ret=0
           ;;
         # command: test
@@ -136,7 +136,7 @@ _webscoop() {
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
             '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
-            "--skip-steps[replay none of the recipe's steps]" \
+            "--skip-flows[run none of the recipe's flows]" \
             '1:recipe:_webscoop_recipes' && ret=0
           ;;
         # command: record

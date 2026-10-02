@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "playground-tables",
   "url": "http://127.0.0.1:{port}/catalog?mixed=1&tier={tier}",
   "vars": [
@@ -45,9 +45,7 @@
     },
     {
       "name": "questions",
-      "item": {
-        "selectors": [{ "strategy": "css", "value": "article.mixed-questions", "stability": "medium" }]
-      },
+      "item": { "selectors": [{ "strategy": "css", "value": "article.mixed-questions", "stability": "medium" }] },
       "fields": [
         {
           "name": "title",
@@ -61,5 +59,6 @@
         }
       ]
     }
-  ]
+  ],
+  "sequence": [{ "extract": "page" }, { "extract": "products" }, { "extract": "questions" }]
 }

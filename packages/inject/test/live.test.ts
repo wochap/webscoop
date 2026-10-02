@@ -244,14 +244,14 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     await page.click('#consent-accept');
     await expect.poll(() => page.locator('article').count()).toBe(24);
     await controller.idle();
-    await expect.poll(() => controller.draft.steps.length).toBe(1);
-    const [step] = controller.draft.steps;
+    await expect.poll(() => controller.draft.flows[0]?.steps.length ?? 0).toBe(1);
+    const [step] = controller.draft.flows[0]!.steps;
     expect(step!.kind).toBe('click');
     expect(step!.target!.fingerprint!.textSample).toBe('Accept all');
     // Panel clicks are not steps.
-    await hook(page, (h) => h.click('[data-ws="steps-stop"]'));
-    expect(await hook(page, (h) => h.state().ui.picking)).toBe(false);
-    expect(controller.draft.steps).toHaveLength(1);
+    await hook(page, (h) => h.click('[data-ws="flow-add-steps"]'));
+    expect(await hook(page, (h) => h.state().mode)).not.toBe('browsing');
+    expect(controller.draft.flows[0]!.steps).toHaveLength(1);
   });
 
   it('records typing and Enter as two steps and keeps the panel on the results page', async () => {
@@ -263,10 +263,10 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     await page.waitForURL(/q=mouse/);
     await page.waitForFunction(() => (window as unknown as { __webscoopTest?: { state(): { host: unknown } } }).__webscoopTest?.state().host != null);
     await controller.idle();
-    expect(controller.draft.steps.map((s) => [s.kind, s.value])).toEqual([
-      ['type', 'mouse'],
+    expect(controller.draft.flows[0]!.steps.map((s) => [s.kind, s.value])).toEqual([
+      ['fill', 'mouse'],
       ['press', 'Enter'],
     ]);
-    expect(await hook(page, (h) => h.query('[data-ws="section-steps"]'))).not.toBeNull();
+    expect(await hook(page, (h) => h.query('[data-ws="section-flows"]'))).not.toBeNull();
   });
 });

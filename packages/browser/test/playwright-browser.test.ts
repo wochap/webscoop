@@ -7,7 +7,7 @@ import { annotate, descendantsOf, refForNode, TimeoutError, xpathFor, type Selec
 import { FakeBrowser } from '@webscoop/core/testing';
 import { dataset, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PlaywrightBrowser } from '../src';
+import { PlaywrightBrowser, SharedBrowser } from '../src';
 import { loadDriver, PlaywrightSession, type Driver } from '../src/playwright-browser';
 
 const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
@@ -494,5 +494,64 @@ describe.skipIf(!hasDisplay).each([false, true])('PlaywrightSession iframes (int
     await session.click(button!);
     const [body] = await session.resolve(c('css', 'body'), root);
     expect(await session.read(body!, { attr: 'data-clicked', mode: 'text' })).toBe('yes');
+  });
+});
+
+describe.skipIf(!hasDisplay)('PlaywrightSession popups (integration)', () => {
+  let server: Server;
+  let base: string;
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.setHeader('content-type', 'text/html');
+      if (req.url === '/popup') res.end('<title>popup</title><input id="user"><button id="again" onclick="window.open(\'/inner\', \'inner\', \'width=400,height=400\')">again</button>');
+      else if (req.url === '/inner') res.end('<title>inner</title><p id="deep">deep</p>');
+      else res.end('<title>main</title><button id="open" onclick="window.open(\'/popup\', \'login\', \'width=500,height=600\')">open</button>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const openPopups = async (session: Session) => {
+    const popups: Session[] = [];
+    session.onPopup((popup) => popups.push(popup));
+    await session.goto(`${base}/`, { timeoutMs: 10_000 });
+    await session.click((await session.resolve(c('id', 'open')))[0]!);
+    await expect.poll(() => popups.length).toBe(1);
+    const popup = popups[0]!;
+    await popup.settle({ timeoutMs: 10_000 });
+    expect(await popup.url()).toBe(`${base}/popup`);
+    await popup.fill((await popup.resolve(c('id', 'user')))[0]!, 'u');
+    await popup.click((await popup.resolve(c('id', 'again')))[0]!);
+    await expect.poll(() => popups.length).toBe(2);
+    await popups[1]!.settle({ timeoutMs: 10_000 });
+    expect(await popups[1]!.resolve(c('id', 'deep'))).toHaveLength(1);
+    await popup.close();
+    expect(popup.isClosed()).toBe(true);
+    expect(session.isClosed()).toBe(false);
+  };
+
+  it('reports popups and popups of popups of a standalone session', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const session = await new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }).open(profileDir);
+    try {
+      await openPopups(session);
+    } finally {
+      await session.close();
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports popups of a shared browser tab', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const shared = await SharedBrowser.launch({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }, profileDir);
+    try {
+      const session = await shared.newSession();
+      await openPopups(session);
+      await session.close();
+    } finally {
+      await shared.close();
+      await rm(profileDir, { recursive: true, force: true });
+    }
   });
 });

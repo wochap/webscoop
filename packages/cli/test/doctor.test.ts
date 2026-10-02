@@ -78,7 +78,7 @@ describe('doctor LLM probe', () => {
 
 describe('doctor profile resolution', () => {
   const recipe = (name: string, url: string, vars: unknown[] = []) =>
-    JSON.stringify({ schemaVersion: 1, name, url, vars, fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] });
+    JSON.stringify({ schemaVersion: 2, sequence: [{ extract: 'items' }], name, url, vars, fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] });
 
   it('lists the default, the rules, and each recipe with its profile and source', async () => {
     const dir = await tempDir();

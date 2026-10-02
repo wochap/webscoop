@@ -12,7 +12,7 @@ const PAGE = 'https://shop.test/c/shoes';
 
 function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'shoes' }],
@@ -362,6 +362,7 @@ describe('webscoop recipes', () => {
       description: 'Bing web search results for a query\nOne row per organic result',
       url: 'https://bing.com/search?q={query}',
       vars: [{ name: 'query', type: 'string', description: 'search terms' }],
+      sequence: [{ extract: 'results' }],
       tables: [
         {
           name: 'results',

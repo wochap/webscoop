@@ -14,7 +14,7 @@ const sel = (strategy: 'css' | 'testid', value: string) => ({ strategy, value, s
 /** Price has a dead first selector; the second still works, so the run heals it. */
 function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'shoes' }],

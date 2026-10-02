@@ -26,8 +26,10 @@ import {
   xpathFor,
   type AnnotatedNode,
   type HealTarget,
+  type Recipe,
   type Resolver,
   type SerializedElement,
+  paginateOf,
   tablesOf,
 } from '../src';
 import { dataset } from '@webscoop/playground';
@@ -329,25 +331,38 @@ describe('applyPromotions', () => {
 
 describe('step targets', () => {
   const accept = [css('.consent-accept')];
-  const stepTarget = (optional: boolean): HealTarget => ({ kind: 'step', index: 1, step: 'click', optional, selectors: accept });
-
-  it('applies a step promotion at steps[index].target and leaves other steps alone', () => {
-    const before = loadRecipe({
+  const stepTarget = (optional: boolean): HealTarget => ({ kind: 'step', flow: 'consent', index: 1, step: 'click', optional, selectors: accept });
+  const withFlows = (): Recipe =>
+    loadRecipe({
       ...saveRecipeInput(fingerprintedRecipe()),
-      steps: [
-        { kind: 'wait', value: '100' },
-        { kind: 'click', target: { selectors: accept }, optional: true },
+      flows: [
+        { name: 'setup', steps: [{ kind: 'wait', value: '100' }, { kind: 'click', target: { selectors: accept } }] },
+        { name: 'consent', steps: [{ kind: 'wait', value: '100' }, { kind: 'click', target: { selectors: accept, frame: { selectors: [css('iframe')] } }, optional: true }] },
       ],
+      sequence: [{ flow: 'setup' }, { flow: 'consent' }, { extract: 'items' }],
     });
+
+  it('applies a step promotion to the step of its flow and leaves the other steps alone', () => {
+    const before = withFlows();
     const selectors = [testid('accept-all')];
     const after = applyPromotions(before, [{ target: stepTarget(true), outcome: { kind: 'fuzzy', score: 0.8 }, oldPrimary: accept[0]!, newPrimary: selectors[0]!, selectors }]);
-    expect(after.steps[1]).toEqual({ ...before.steps[1], target: { selectors } });
-    expect(after.steps[0]).toEqual(before.steps[0]);
+    expect(after.flows[1]!.steps[1]).toEqual({ ...before.flows[1]!.steps[1], target: { ...before.flows[1]!.steps[1]!.target, selectors } });
+    expect(after.flows[1]!.steps[0]).toEqual(before.flows[1]!.steps[0]);
+    expect(after.flows[0]).toEqual(before.flows[0]);
     expect(after.fields).toEqual(before.fields);
   });
 
-  it('names a step by label or index and requires it only when not optional', () => {
-    expect(targetName(stepTarget(false))).toBe('step:1');
+  it("applies a step frame promotion to that step's frame", () => {
+    const before = withFlows();
+    const selectors = [css('iframe#consent')];
+    const target: HealTarget = { kind: 'frame', of: 'step', flow: 'consent', index: 1, selectors: [css('iframe')] };
+    const after = applyPromotions(before, [{ target, outcome: { kind: 'fuzzy', score: 0.8 }, oldPrimary: css('iframe'), newPrimary: selectors[0]!, selectors }]);
+    expect(after.flows[1]!.steps[1]!.target!.frame).toEqual({ selectors });
+    expect(after.flows[0]).toEqual(before.flows[0]);
+  });
+
+  it('names a step by label or flow and index and requires it only when not optional', () => {
+    expect(targetName(stepTarget(false))).toBe('consent:1');
     expect(targetName({ ...stepTarget(false), label: 'consent' } as HealTarget)).toBe('consent');
     expect(isRequired(stepTarget(false))).toBe(true);
     expect(isRequired(stepTarget(true))).toBe(false);
@@ -357,13 +372,27 @@ describe('step targets', () => {
     const root = annotate(
       h('body', {}, h('button', {}, 'Accept'), h('p', {}, 'Text'), h('input', { name: 'q' }), h('select', {}), h('div', { role: 'tab' }, 'Products')) as SerializedElement,
     );
-    const tags = (step: 'click' | 'type' | 'select') =>
+    const tags = (step: 'click' | 'fill') =>
       descendantsOf(root)
         .filter((n) => plausible(n, { ...stepTarget(false), step } as HealTarget))
         .map((n) => n.tag);
     expect(tags('click')).toEqual(['button', 'input', 'select', 'div']);
-    expect(tags('type')).toEqual(['input']);
-    expect(tags('select')).toEqual(['select']);
+    expect(tags('fill')).toEqual(['input', 'select']);
+  });
+});
+
+describe('pagination target', () => {
+  it("applies a pagination promotion to the paginate block's target", () => {
+    const next = [css('a.next')];
+    const before = loadRecipe({
+      ...saveRecipeInput(fingerprintedRecipe()),
+      sequence: [{ paginate: { kind: 'next', target: { selectors: next }, limit: 'all', do: [{ extract: 'items' }] } }],
+    });
+    const selectors = [testid('pager-next')];
+    const after = applyPromotions(before, [{ target: { kind: 'pagination', selectors: next }, outcome: { kind: 'fuzzy', score: 0.8 }, oldPrimary: next[0]!, newPrimary: selectors[0]!, selectors }]);
+    expect(paginateOf(after)!.target).toEqual({ selectors });
+    expect(paginateOf(after)!.do).toEqual([{ extract: 'items' }]);
+    expect(paginateOf(before)!.target).toEqual({ selectors: next });
   });
 });
 

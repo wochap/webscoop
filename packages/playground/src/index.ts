@@ -39,3 +39,4 @@ export {
   type PlaygroundOptions,
   type RequestRecord,
 } from './server';
+export { SPA_COOKIE, SPA_PAGE_SIZE, spaLoggedIn, spaLoginPage, spaPage, spaSession } from './spa';

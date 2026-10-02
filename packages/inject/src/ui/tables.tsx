@@ -53,8 +53,22 @@ export function primaryTable(tables: readonly DraftTable[]): number {
   return tables.findIndex((t) => t.item !== null);
 }
 
-/** Whether the draft paginates, so the primary table drives it. */
-export const paginates = (draft: Draft): boolean => Boolean(draft.pagination && draft.pagination.kind !== 'none');
+/** Whether the draft paginates, so its driving table drives it. */
+export const paginates = (draft: Draft): boolean => Boolean(draft.pagination);
+
+/** Index of the table that drives the paginate block: its `table`, else the first item table extracted in its `do`; -1 without pagination. */
+export function drivingTableIndex(draft: Pick<Draft, 'tables' | 'pagination' | 'sequence'>): number {
+  if (!draft.pagination) return -1;
+  if (draft.pagination.table) return draft.tables.findIndex((t) => t.name === draft.pagination!.table);
+  const block = draft.sequence.blocks.find((b) => 'paginate' in b);
+  const inner = block && 'paginate' in block ? block.paginate.do : [];
+  for (const b of inner) {
+    if (!('extract' in b)) continue;
+    const index = draft.tables.findIndex((t) => t.name === b.extract && t.item !== null);
+    if (index >= 0) return index;
+  }
+  return -1;
+}
 
 /** Where a tab dropped before tab `before` (or at the end, `before` = length) lands, as a `moveTable` target index. */
 export function dropIndex(from: number, before: number): number {
@@ -123,19 +137,9 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   const [drop, setDrop] = useState<number | null>(null);
   const [hidden, setHidden] = useState<number[]>([]);
   const [renameError, setRenameError] = useState<string | null>(null);
-  const primary = primaryTable(draft.tables);
-  const primaryName = primary === -1 ? null : draft.tables[primary]!.name;
+  const primary = drivingTableIndex(draft);
   const badge = paginates(draft);
   const order = draft.tables.map((t) => t.name).join('\u0000');
-  const last = useRef({ order, primaryName });
-
-  // A reorder (same tables, another order) that changes the primary table is announced; no undo.
-  useEffect(() => {
-    const prev = last.current;
-    last.current = { order, primaryName };
-    const reordered = prev.order !== order && prev.order.split('\u0000').sort().join() === order.split('\u0000').sort().join();
-    if (reordered && badge && primaryName && prev.primaryName !== primaryName) actions.toast('neutral', `${primaryName} now drives pagination`);
-  }, [order, primaryName, badge, actions]);
 
   // Keep keyboard focus on the moved tab.
   useLayoutEffect(() => {
@@ -330,7 +334,7 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
   const open = ui.menu === 'table';
   const at = draft.activeTable;
   const table = draft.tables[at]!;
-  const primary = primaryTable(draft.tables);
+  const primary = drivingTableIndex(draft);
   const close = () => actions.setUi({ menu: null });
   const item = (label: string, ws: string, onClick: () => void, disabled = false, title?: string, danger = false, icon?: IconName, hint?: ReactNode) => (
     <button
@@ -351,7 +355,7 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
     </button>
   );
   const mode = tableMode(table);
-  const pagingTitle = !table.item ? 'Only a table with an item container can drive pagination' : primary === at ? 'This table already drives pagination' : 'Move this table in front of the other lists';
+  const pagingTitle = !table.item ? 'Only a table with an item container can drive pagination' : primary === at ? 'This table already drives pagination' : !draft.pagination ? 'Mark a pagination target first' : 'Make this table drive the paginate block';
   return (
     <span className="ws-menu-anchor">
       <button
@@ -380,8 +384,8 @@ export function TableMenu({ draft, locked }: { draft: Draft; locked: boolean }) 
           {item(
             'Use for pagination',
             'table-menu-pagination',
-            () => void actions.send({ kind: 'draft.moveTable', from: at, to: primary }),
-            !table.item || primary === at || primary === -1,
+            () => void actions.send({ kind: 'paginate.update', patch: { table: table.name } }),
+            !table.item || primary === at || !draft.pagination,
             pagingTitle,
             false,
             'arrow-right',
@@ -419,6 +423,11 @@ export function TableHeader({ draft, locked }: { draft: Draft; locked: boolean }
           <ModeIcon table={table} />
           {modeLabel(table)}
         </span>
+        {drivingTableIndex(draft) === draft.activeTable && (
+          <span className="ws-badge ws-tone-accent" title="This table drives the paginate block" data-ws="table-pages-badge">
+            pages
+          </span>
+        )}
         <span className="ws-spacer" />
         <TableMenu draft={draft} locked={locked} />
       </div>

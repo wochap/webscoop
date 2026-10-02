@@ -1,4 +1,5 @@
 import {
+  MAIN_WINDOW,
   PAGE_GLOBAL,
   TimeoutError,
   type BrowserPort,
@@ -10,9 +11,11 @@ import {
   PAGE_TEXT_LIMIT,
   type PageInfo,
   type ReadOptions,
+  type RecorderWindow,
   type SelectorCandidate,
   type SettleOptions,
   type SerializedNode,
+  type Session,
 } from '@webscoop/core';
 import { HOVER_INSET, HOVER_TIMEOUT_MS, Humanizer, type HoverOptions } from './humanize';
 import { chromium, errors, type BrowserContext, type Frame, type FrameLocator, type Locator, type Page } from 'playwright';
@@ -183,7 +186,12 @@ function serializeInPage(target: Element[] | null): string {
 
 export class PlaywrightSession implements InteractiveSession {
   /** Current handler per exposed name; a binding can be registered only once per context. */
-  private readonly bindings = new Map<string, (msg: unknown) => Promise<unknown>>();
+  private readonly bindings = new Map<string, (msg: unknown, windowId: string) => Promise<unknown>>();
+  /** Window ids of the popups the bindings were called from or that were reported, by page. */
+  private readonly windowIds = new WeakMap<Page, string>();
+  private windowCount = 0;
+  /** Scripts injected so far, for popups of a tab, whose injection is page level. */
+  private readonly injected: string[] = [];
 
   /** Main frame navigations so far, so `settle` can tell whether a click navigated. */
   private navigations = 0;
@@ -413,6 +421,31 @@ export class PlaywrightSession implements InteractiveSession {
     else await this.context.close();
   }
 
+  isClosed(): boolean {
+    return this.page.isClosed();
+  }
+
+  /** The session over a popup of this page: same context and humanizer settings; closing it closes only the popup. */
+  private popupSession(popup: Page): PlaywrightSession {
+    return new PlaywrightSession(this.context, popup, this.driver, this.humanizer ? new Humanizer(popup) : undefined, { close: () => popup.close().catch(() => {}) });
+  }
+
+  onPopup(cb: (popup: Session) => void): () => void {
+    const offs: (() => void)[] = [];
+    const watch = (page: Page) => {
+      const listener = (popup: Page) => {
+        watch(popup);
+        cb(this.popupSession(popup));
+      };
+      page.on('popup', listener);
+      offs.push(() => page.off('popup', listener));
+    };
+    watch(this.page);
+    return () => {
+      for (const off of offs.splice(0)) off();
+    };
+  }
+
   /**
    * Evaluate in the page's main world, where the recorder bundle lives.
    * Patchright evaluates in an isolated world unless told otherwise.
@@ -422,7 +455,48 @@ export class PlaywrightSession implements InteractiveSession {
     return this.driver === 'patchright' ? evaluate(fn, arg, false) : evaluate(fn, arg);
   }
 
+  /** The window id of a page: `MAIN_WINDOW` for this session's page, a fresh id for a popup seen first. */
+  private windowIdOf(page: Page): string {
+    if (page === this.page) return MAIN_WINDOW;
+    let id = this.windowIds.get(page);
+    if (!id) {
+      id = `popup-${++this.windowCount}`;
+      this.windowIds.set(page, id);
+    }
+    return id;
+  }
+
+  onWindow(cb: (win: RecorderWindow) => void): () => void {
+    const offs: (() => void)[] = [];
+    const watch = (page: Page) => {
+      const listener = (popup: Page) => {
+        watch(popup);
+        const session = this.popupSession(popup);
+        // A tab injects and exposes per page, so its popups need the recorder too.
+        if (this.tab) void this.carryOver(popup, session);
+        cb({ id: this.windowIdOf(popup), opener: this.windowIdOf(page), session });
+      };
+      page.on('popup', listener);
+      offs.push(() => page.off('popup', listener));
+    };
+    watch(this.page);
+    return () => {
+      for (const off of offs.splice(0)) off();
+    };
+  }
+
+  /** Give a tab's popup the scripts and bindings of the tab. */
+  private async carryOver(popup: Page, session: PlaywrightSession): Promise<void> {
+    try {
+      for (const [name] of this.bindings) await popup.exposeBinding(name, (source, msg: unknown) => this.bindings.get(name)!(msg, this.windowIdOf(source.page)));
+      for (const source of this.injected) await session.inject(source);
+    } catch {
+      // The popup closed meanwhile.
+    }
+  }
+
   async inject(source: string): Promise<void> {
+    this.injected.push(source);
     await (this.tab ? this.page : this.context).addInitScript({ content: source });
     try {
       await this.mainWorldEvaluate(source);
@@ -431,11 +505,11 @@ export class PlaywrightSession implements InteractiveSession {
     }
   }
 
-  async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
+  async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {
     const known = this.bindings.has(name);
     this.bindings.set(name, fn);
     if (known) return;
-    await (this.tab ? this.page : this.context).exposeBinding(name, (_source, msg: unknown) => this.bindings.get(name)!(msg));
+    await (this.tab ? this.page : this.context).exposeBinding(name, (source, msg: unknown) => this.bindings.get(name)!(msg, this.windowIdOf(source.page)));
     if (this.driver === 'patchright' && this.bindings.size === 1) {
       // Patchright adds bindings to a document's main world only once the host evaluates there.
       this.page.on('domcontentloaded', () => void this.mainWorldEvaluate('0').catch(() => {}));

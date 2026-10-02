@@ -506,7 +506,7 @@ def kept_containers(page, found, exclude):
 
 
 # ---------------------------------------------------------------------------
-# Steps (core steps/replay.ts)
+# Steps (core flows/replay.ts)
 # ---------------------------------------------------------------------------
 
 
@@ -540,10 +540,12 @@ def act(session, step, target, values):
     kind = action["kind"]
     if kind == "click":
         return session.click(target)
-    if kind == "type":
-        return session.fill(target, fill_text(action["text"], values))
-    if kind == "select":
-        return session.select(target, action["value"])
+    if kind == "fill":
+        # A native select is set by option value or label, like the runner's fill.
+        text = fill_text(action["text"], values)
+        if target.evaluate("el => el.tagName") == "SELECT":
+            return session.select(target, text)
+        return session.fill(target, text)
     if kind == "press":
         return session.press(action["key"], target)
     return session.page.url
@@ -557,12 +559,12 @@ def replay_steps(session, page_number, values, cache):
     for step in STEPS:
         if step["when"] != "every-page" and page_number != 1:
             continue
-        named = "" if step["name"] == "step:" + str(step["index"]) else ' "' + step["name"] + '"'
-        label = "step " + str(step["index"]) + named + " (" + step["kind"] + ") on page " + str(page_number)
+        named = "" if step["name"] == step["flow"] + ":" + str(step["step"]) else ' "' + step["name"] + '"'
+        label = 'flow "' + step["flow"] + '" step ' + str(step["step"]) + named + " (" + step["kind"] + ") on page " + str(page_number)
 
         def fail(why):
             if not step["optional"]:
-                raise Failure("required step " + str(step["index"]) + " (" + step["kind"] + ") " + why + " [" + step["name"] + "]", EXIT_UNRESOLVED)
+                raise Failure("required step " + str(step["step"]) + " (" + step["kind"] + ') of flow "' + step["flow"] + '" ' + why + " [" + step["name"] + "]", EXIT_UNRESOLVED)
             log(label + ": skipped (" + why + ")")
 
         action = step["action"]

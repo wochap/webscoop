@@ -11,6 +11,7 @@ import {
   convertValue,
   Dedup,
   EXCLUDED_BEHAVIORS,
+  ExportUnsupportedError,
   header,
   loadRecipe,
   parseDate,
@@ -210,6 +211,8 @@ describe('buildPlan', () => {
     expect(plan.steps).toEqual([
       {
         index: 0,
+        flow: 'setup',
+        step: 0,
         kind: 'click',
         name: 'accept cookies',
         when: 'first-page',
@@ -221,27 +224,57 @@ describe('buildPlan', () => {
         ],
         action: { kind: 'click' },
       },
-      { index: 1, kind: 'wait', name: 'step:1', when: 'first-page', optional: false, target: [{ strategy: 'testid', value: 'product-card' }], action: { kind: 'wait-for' } },
-      { index: 2, kind: 'wait', name: 'step:2', when: 'first-page', optional: true, target: null, action: { kind: 'sleep', ms: 100 } },
+      { index: 1, flow: 'setup', step: 1, kind: 'wait', name: 'setup:1', when: 'first-page', optional: false, target: [{ strategy: 'testid', value: 'product-card' }], action: { kind: 'wait-for' } },
+      { index: 2, flow: 'setup', step: 2, kind: 'wait', name: 'setup:2', when: 'first-page', optional: true, target: null, action: { kind: 'sleep', ms: 100 } },
     ]);
   });
 
-  it('defaults press to Enter, keeps type values raw, and requires their variables', () => {
+  it('defaults press to Enter, keeps fill values raw, and requires their variables', () => {
     const target = { selectors: [{ strategy: 'css' as const, value: 'input', stability: 'medium' as const }] };
     // Parsed without the cross-field checks, which ask a press step for its key.
     const recipe = RecipeSchema.parse({
       ...JSON.parse(readFileSync(join(FIXTURES, 'playground-catalog.json'), 'utf8')),
       url: 'https://shop.test/search',
       vars: [{ name: 'q', type: 'string' }],
-      steps: [
-        { kind: 'type', target, value: '{q} shoes' },
-        { kind: 'press', target },
-        { kind: 'select', target, value: 'price' },
-      ],
+      flows: [{ name: 'search', steps: [{ kind: 'fill', target, value: '{q} shoes' }, { kind: 'press', target }, { kind: 'fill', target, value: 'price' }] }],
+      sequence: [{ flow: 'search' }, { extract: 'items' }],
     });
     const plan = buildPlan(recipe);
     expect(plan.vars).toEqual([{ name: 'q', default: null, required: true }]);
-    expect(plan.steps.map((s) => s.action)).toEqual([{ kind: 'type', text: '{q} shoes' }, { kind: 'press', key: 'Enter' }, { kind: 'select', value: 'price' }]);
+    expect(plan.steps.map((s) => s.action)).toEqual([{ kind: 'fill', text: '{q} shoes' }, { kind: 'press', key: 'Enter' }, { kind: 'fill', text: 'price' }]);
+  });
+
+  it('runs flows before the paginate block on the first page and flows inside it on every page, tables in sequence order', () => {
+    const base = JSON.parse(readFileSync(join(FIXTURES, 'playground-tables.json'), 'utf8'));
+    const click = { kind: 'click', target: { selectors: [{ strategy: 'css', value: 'button', stability: 'medium' }] } };
+    const names = base.tables.map((t: { name: string }) => t.name) as string[];
+    const plan = buildPlan(
+      loadRecipe({
+        ...base,
+        flows: [
+          { name: 'consent', steps: [click] },
+          { name: 'tab', steps: [click] },
+        ],
+        sequence: [{ flow: 'consent' }, { paginate: { kind: 'scroll', do: [{ flow: 'tab' }, ...[...names].reverse().map((extract) => ({ extract }))] } }],
+      }),
+    );
+    expect(plan.steps.map((s) => [s.flow, s.when, s.name])).toEqual([
+      ['consent', 'first-page', 'consent:0'],
+      ['tab', 'every-page', 'tab:0'],
+    ]);
+    expect(plan.tables.map((t) => t.name)).toEqual([...names].reverse());
+    expect(plan.pagination.kind).toBe('scroll');
+  });
+
+  it('rejects reactive flows, await-user and popup steps, and sequences of another shape, naming the offender', () => {
+    const base = JSON.parse(readFileSync(join(FIXTURES, 'playground-catalog.json'), 'utf8'));
+    const target = { selectors: [{ strategy: 'css', value: 'button', stability: 'medium' }] };
+    const plan = (extra: Record<string, unknown>) => () => buildPlan(loadRecipe({ ...base, ...extra }));
+    expect(plan({ flows: [{ name: 'login-wall', trigger: { appears: target }, steps: [{ kind: 'click', target }] }] })).toThrow(/reactive flow "login-wall"/);
+    expect(plan({ flows: [{ name: 'login', steps: [{ kind: 'await-user', target, until: 'disappears' }] }], sequence: [{ flow: 'login' }, { extract: 'items' }] })).toThrow(/"login:0" of flow "login" is an await-user step/);
+    expect(plan({ flows: [{ name: 'login', steps: [{ kind: 'click', target, window: 'popup' }] }], sequence: [{ flow: 'login' }, { extract: 'items' }] })).toThrow(/acts in a popup/);
+    expect(plan({ flows: [{ name: 'tab', steps: [{ kind: 'click', target }] }], sequence: [{ extract: 'items' }, { flow: 'tab' }] })).toThrow(ExportUnsupportedError);
+    expect(plan({ flows: [{ name: 'tab', steps: [{ kind: 'click', target }] }], sequence: [{ extract: 'items' }, { flow: 'tab' }] })).toThrow(/block 1 breaks that shape/);
   });
 
   it('keeps next and more targets and marks variables without a default', () => {
@@ -251,7 +284,7 @@ describe('buildPlan', () => {
         ...base,
         url: 'https://shop.test/{section}/list',
         vars: [{ name: 'section', type: 'string' }],
-        pagination: { ...base.pagination, kind: 'next', limit: 3 },
+        sequence: [{ paginate: { ...base.sequence[0].paginate, kind: 'next', limit: 3 } }],
       }),
     );
     expect(plan.vars).toEqual([{ name: 'section', default: null, required: true }]);
@@ -345,9 +378,10 @@ const DEDUP_PAGES: Row[][] = [
 /** What core says for the cases: kept rows per page, with and without a key field. */
 function coreDedup(key: string | null): Row[][] {
   const recipe = loadRecipe({
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'shop',
     url: PAGE_URL,
+    sequence: [{ extract: 'items' }],
     fields: DEDUP_FIELDS.map((name) => ({ name, type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: name, stability: 'medium' }], ...(name === key ? { key: true } : {}) })),
   });
   const dedup = new Dedup(tablesOf(recipe)[0]!);
@@ -542,11 +576,13 @@ function plainTables(): Recipe {
 function pagedTables(): Recipe {
   const { item, fields, ...paged } = fixture('playground-paged');
   const heading = fixture('playground-tables').tables![0]!;
+  const block = paged.sequence[0] as Extract<Recipe['sequence'][number], { paginate: unknown }>;
   return loadRecipe({
     ...paged,
     name: 'paged-tables',
     url: `${paged.url}&lastPageRepeats=1`,
     tables: [heading, { name: 'products', item, fields }],
+    sequence: [{ paginate: { ...block.paginate, do: [{ extract: heading.name }, { extract: 'products' }] } }],
   });
 }
 

@@ -119,7 +119,7 @@ describe('config browser block', () => {
 
 function shopRecipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: PAGE,
     fields: [{ name: 'title', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }],

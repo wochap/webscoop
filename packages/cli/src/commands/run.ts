@@ -24,7 +24,7 @@ import {
   Runner,
   type RunReport,
   type SelectorCandidate,
-  type StepOptions,
+  type FlowOptions,
   type StepReport,
   tablesOf,
   templateVariables,
@@ -77,8 +77,8 @@ export interface RunCommandOptions {
   guards?: boolean;
   /** True with `--notify`, false with `--no-notify`, unset with neither. */
   notify?: boolean;
-  /** `--skip-steps`: replay none of the recipe's steps. */
-  skipSteps?: boolean;
+  /** `--skip-flows`: run no flow, called or reactive. */
+  skipFlows?: boolean;
   /** `--quiet`: print only errors and prompts to act on stderr. */
   quiet?: boolean;
 }
@@ -86,9 +86,9 @@ export interface RunCommandOptions {
 /** How long `browser.started` waits for the browser's process id. */
 export const BROWSER_PID_DEADLINE_MS = 5000;
 
-/** Step options for the runner from `--skip-steps`. */
-export function stepsFromFlags(opts: { skipSteps?: boolean }): StepOptions {
-  return { enabled: opts.skipSteps !== true };
+/** Flow options for the runner from `--skip-flows`. */
+export function flowsFromFlags(opts: { skipFlows?: boolean }): FlowOptions {
+  return { enabled: opts.skipFlows !== true };
 }
 
 /**
@@ -181,7 +181,9 @@ export function summary(report: RunReport): string {
   const dropped = report.droppedCount > 0 ? `, ${report.droppedCount} row${report.droppedCount === 1 ? '' : 's'} dropped for missing fields` : '';
   const skippedSteps = report.steps.filter((s) => s.outcome === 'skipped').length;
   const skipped = skippedSteps > 0 ? `, ${skippedSteps} step${skippedSteps === 1 ? '' : 's'} skipped` : '';
-  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped} in ${seconds}s (${report.recipe})`;
+  const firings = report.flows.filter((f) => f.kind === 'reactive').length;
+  const reactive = firings > 0 ? `, reactive flows fired ${firings} time${firings === 1 ? '' : 's'}` : '';
+  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped}${reactive} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -202,9 +204,9 @@ export function describeOutcome(outcome: HealOutcome, selector: SelectorCandidat
   }
 }
 
-/** One stderr line for a replayed or skipped step: index, kind, page, outcome, and how its target resolved. */
+/** One stderr line for a replayed or skipped step: flow, index, kind, page, outcome, and how its target resolved. */
 export function formatStep(step: StepReport): string {
-  const name = `step ${step.index}${step.label ? ` "${step.label}"` : ''} (${step.kind}) on page ${step.page}`;
+  const name = `${step.flow} step ${step.index}${step.label ? ` "${step.label}"` : ''} (${step.kind}) on page ${step.page}`;
   const how = step.heal ? `, ${describeOutcome(step.heal, step.candidate)}` : '';
   const notes = step.notes && step.notes.length > 0 ? ` (${step.notes.join('; ')})` : '';
   return `${name}: ${step.outcome}${step.outcome === 'skipped' ? '' : how}${notes}`;
@@ -341,7 +343,7 @@ export async function prepare(
   const vars = parseVars(opts.var);
   try {
     firstPageUrl(recipe, vars);
-    for (const step of recipe.steps) if (step.kind === 'type' && step.value) fillText(step.value, recipe.vars, vars);
+    for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) fillText(step.value, recipe.vars, vars);
   } catch (error) {
     if (error instanceof MissingVariableError) {
       throw new CliError(`${error.message}; pass --var ${error.names[0]}=<value>`);
@@ -415,6 +417,10 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
   emitter.on('guard.cleared', (e) => info(`guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
   emitter.on('guard.timeout', (e) => info(`guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
+  emitter.on('flow.started', (e) => info(`flow ${e.flow} (${e.kind}) on page ${e.page}${e.window !== undefined ? ` in ${e.window}` : ''}`));
+  emitter.on('flow.done', (e) => {
+    if (e.outcome !== 'ok') info(`flow ${e.flow} (${e.kind}) on page ${e.page}: ${e.outcome}`);
+  });
   emitter.on('step.replayed', (e) => info(formatStep(e.step)));
   emitter.on('step.skipped', (e) => info(formatStep(e.step)));
   emitter.on('field.healed', (e) =>
@@ -497,14 +503,15 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       healing,
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner, prepared.config.notify),
-      steps: stepsFromFlags(opts),
+      flows: flowsFromFlags(opts),
       saveRecipe: (promoted) => (job.saveRecipe ? job.saveRecipe(prepared.recipePath, () => save(promoted)) : save(promoted)),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
       ...(repick ? { repick } : {}),
       ...(job.attention ? { attention: job.attention } : {}),
     });
     const result = await runner.run();
-    await sink.finish(result.ok || result.reason === 'paused');
+    // Rows already emitted stay valid when a wait timed out or the page state was lost on a later page.
+    await sink.finish(result.ok || result.reason === 'paused' || result.reason === 'pagination-lost');
 
     for (const warning of result.report.warnings) infoLog(io, opts.quiet)(`warning: ${warning}`);
     if (opts.report) io.stderr.write(`${JSON.stringify(result.report, null, 2)}\n`);
@@ -547,8 +554,8 @@ export interface TestCommandOptions {
   guards?: boolean;
   /** True with `--notify`, false with `--no-notify`, unset with neither. */
   notify?: boolean;
-  /** `--skip-steps`: replay none of the recipe's steps. */
-  skipSteps?: boolean;
+  /** `--skip-flows`: run no flow, called or reactive. */
+  skipFlows?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -646,7 +653,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       guards: guardsFromFlags(io, opts, 0, banner, config.notify),
-      steps: stepsFromFlags(opts),
+      flows: flowsFromFlags(opts),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
       ...(job.attention ? { attention: job.attention } : {}),
     });

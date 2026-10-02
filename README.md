@@ -147,10 +147,10 @@ webscoop run <recipe> [--var name=value]... [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
                       [--no-heal] [--no-save] [--no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
-                      [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-steps]
+                      [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
 webscoop test <recipe> [--var name=value]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
-                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-steps]
+                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
 webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
@@ -190,7 +190,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
 - `--guard-timeout`, `--no-guards`, and `--notify` / `--no-notify` control guards; see below.
-- `--skip-steps` replays none of the recipe's steps; see below.
+- `--skip-flows` runs none of the recipe's flows; see below.
 
 ```sh
 webscoop run shop --var category="running shoes" | jq length
@@ -255,29 +255,34 @@ for that profile meanwhile wait in the queue until the exclusive command ends.
 
 ### Pagination
 
-A recipe's `pagination` block says how to reach the next page. The runner
-extracts a page, emits its rows, then advances:
+The sequence's `paginate` block says how to reach the next page. The runner
+runs the block's `do` blocks for a page (flows and extractions), emits the
+page's rows, then advances:
 
-- `url`: the page number is a URL template variable (`pagination.param`: its
-  name, `start`, and `step`). The runner fills it in itself, or sets it as a
-  query parameter when the URL template has no such variable; `--var n=3`
-  starts at page 3 instead of `start`.
-- `next`: the runner clicks the next link or button (`pagination.target`) and
-  waits for the new page.
+- `url`: the page number is a URL template variable (`param`: its name,
+  `start`, and `step`). The runner fills it in itself, or sets it as a query
+  parameter when the URL template has no such variable; `--var n=3` starts at
+  page 3 instead of `start`.
+- `next`: the runner clicks the next link or button (`target`) and waits for
+  the new page.
 - `more`: the runner clicks a load-more button and extracts only the items
   that appeared.
 - `scroll`: the runner scrolls to the bottom and extracts the items that
   loaded; it stops when nothing loads within `--timeout`.
-- `none`: one page, as before.
 
-`pagination.limit` is `1`, a number of pages, or `all`. `--pages 1|N|all`
-replaces it for one run, and `all` stops at `--max-pages` (default 500) with a
-warning. The run also stops when the next or load-more target is gone or
-disabled (`disabled`, `aria-disabled="true"`, or a link without `href`), when
-a page has no items, and when a page repeats the previous page's URL and first
-item (a loop). Stop rules in the recipe add `no-new-items` (a page adds nothing
-new) and `first-item-repeats` (a page starts with the previous page's first
-item; that page is dropped). `pagination.delayMs`, or `--delay`, waits between
+A recipe without a paginate block extracts one page. The block's `table`
+names its driving table, which supplies the item counts for `more` and
+`scroll` and the page summary the stop rules see; without it, the first table
+with an item block extracted in `do` drives.
+
+`limit` is `1`, a number of pages, or `all`. `--pages 1|N|all` replaces it for
+one run, and `all` stops at `--max-pages` (default 500) with a warning. The
+run also stops when the next or load-more target is gone or disabled
+(`disabled`, `aria-disabled="true"`, or a link without `href`), when the
+driving table has no items on a page, and when a page repeats the previous
+page's URL and first item (a loop). Stop rules add `no-new-items` (a page adds
+nothing new) and `first-item-repeats` (a page starts with the previous page's
+first item; that page is dropped). `delayMs`, or `--delay`, waits between
 pages.
 
 Rows are deduplicated across pages by the field marked `key`, or by all field
@@ -286,7 +291,7 @@ values when no field is the key; the first page is never deduplicated.
 at 0 on each page after dedup. With `--jsonl`, each page's rows are printed
 before the next page loads, so a run that fails on page 7 has already printed
 pages 1 to 6. The field selectors and the pagination target are resolved (and
-healed) on the first page, then reused on later pages; a required field
+healed) the first time, then reused on later pages; a required field
 missing from every item of a later page exits 3 naming the page. The summary
 line counts pages and dropped duplicates, for example `24 rows from 3 pages,
 2 duplicates dropped in 4.10s (shop)`.
@@ -555,48 +560,95 @@ right page. A Hyprland key binding for `webscoop browser show` brings a hidden
 run's browser back at any time, and one for `webscoop attention continue`
 answers the waiting run without leaving the keyboard. `webscoop doctor` lists the configured hooks.
 
-### Steps
+### Flows and the sequence
 
 Some pages need a few actions before the data shows: accept a cookie banner,
-type a search term, open a tab, choose a sort order. A recipe records them as
-`steps`, and every run replays them.
+fill a search term, open a tab, log in. A recipe records them as named
+`flows`, each an ordered list of steps, and its `sequence` says what runs
+when.
 
-- `click` a button, link, or tab; `type` text into an input (the value may use
-  `{variable}` placeholders, filled from `--var` or the default); `select` an
-  option of a `select` by value or visible label; `press` a key (`Enter`,
-  `Escape`, `Tab`, or one character) on an element or on whatever has focus;
-  `wait` a number of milliseconds or until an element shows up.
-- `first-page` steps (the default) run once, after the first page loads and its
-  guards clear. `every-page` steps run after every page navigation, including
-  the first, for content a page hides again on each load. Steps run in order,
-  and the page settles after each one before extraction.
+- Steps: `click` a button, link, or tab; `fill` an input, textarea, or
+  editable element with text, or choose the option of a `select` by value or
+  visible label (the value may use `{variable}` placeholders, filled from
+  `--var` or the default); `press` a key (`Enter`, `Escape`, `Tab`, or one
+  character) on an element or on whatever has focus; `wait` a number of
+  milliseconds or until an element shows up; `await-user` waits for you (see
+  below).
+- The sequence is the run program: `{ "flow": name }` runs a called flow,
+  `{ "extract": table }` extracts a table on the main window's current page and
+  emits its rows, and one `{ "paginate": { ..., "do": [...] } }` block repeats
+  its `do` blocks on every page. So a recipe can extract a summary, click a tab
+  of a single-page app whose URL never changes, and extract another table, or
+  open a tab on every page before extracting it. A recipe whose sequence has no
+  extract block only runs flows and succeeds with no rows.
+- A reactive flow has a `trigger` (`{ "appears": target }`) instead of a place
+  in the sequence. It fires whenever its target shows up, in any window of the
+  run: after a page settles, before each step, before each extraction, and
+  every second while the run waits for you. It does not fire again while its
+  own steps run, at most `maxRetries` times (default 2) between two
+  successful extractions (more fails the run with `flow-loop`, exit 1), and
+  with `recover: true` the runner restores the page state afterwards. Use it
+  for a cookie banner that comes and goes, or a login wall when a session
+  expires mid-run.
+- `await-user` pauses the run until its target appears or disappears (`until`),
+  like a guard: it waits for the browser's attention, brings the window to the
+  front, fires `attention.needed` with reason `await-user`, notifies, and
+  shows the banner with the step's `label`. Continue checks at once, Abort
+  ends the run. It draws on the guard timeout (or its own `timeoutMs`); when
+  the time runs out the run fails with `paused` and exit 2, keeping the rows
+  already emitted.
+- `window: popup` makes a step act in the newest popup an earlier step of the
+  same flow opened (a login window from `window.open`), waiting for it up to
+  the navigation timeout. Extraction always reads the main window.
+- Recovery restores the state the sequence built: after a guard clears or a
+  reactive flow with `recover`, the runner reloads the URL where the current
+  batch began (the start of the sequence, or the current page of `url`
+  pagination) and replays the called flows that ran before the current point.
+  On page 2 or later of `next` or `more` pagination that state cannot be
+  rebuilt: the run fails with `pagination-lost` (exit 1), keeping the rows
+  already emitted.
 - Step targets go through the same healing ladder as fields (stored selectors,
-  fingerprint, model) and are written back when they heal. `every-page` steps
-  reuse what worked on the first page until it stops matching.
+  fingerprint, model) and are written back to their flow when they heal. A
+  step reuses what worked on its first run until it stops matching.
 - When a step's element is gone, an `optional` step is skipped and reported; a
-  required one fails the run with exit 3 naming the step. A step that
-  navigates (a search submitted with Enter) is followed: guards are checked on
-  the new page, and extraction happens on the page the steps end on.
+  required one fails the run with exit 3 naming the flow and the step. A step
+  that navigates the main window (a search submitted with Enter) is followed:
+  guards are checked on the new page, and the next block runs there.
 
-Stderr prints one line per replayed or skipped step (`step 0 (click) on page
-1: ok, candidate 0: role=button|Accept all`), the summary line counts skipped
-steps, and `--report` lists every step with its page and outcome (`ok`,
-`healed`, `skipped`, `failed`). `test` replays steps like a run, so its result
-matches what a run will do. `--skip-steps` turns them off, to see what the
-page looks like without them.
+Stderr prints one line per flow run (`flow setup (called) on page 1`) and per
+replayed or skipped step (`setup step 0 (click) on page 1: ok, candidate 0:
+role=button|Accept all`); the summary line counts skipped steps and reactive
+firings, and `--report` lists every flow run with its steps and outcomes
+(`ok`, `healed`, `skipped`, `failed`). `test` runs flows like a run, so its
+result matches what a run will do. `--skip-flows` runs no flow, called or
+reactive, to see what the page looks like without them.
 
-In the recorder, press `b` (or **Record steps**) to browse the page normally
-while the panel records what you do: a click on a button, link, or tab becomes
-a `click` step, typing into an input becomes one `type` step with the final
-value, a `select` change becomes a `select` step, and Enter in an input becomes
-a `press` step. Clicks in the panel are never recorded; `b` or `Esc` stops. A
-picked element can also be added with **Record as step**, which does not
-perform the action. In the steps list, edit the value (click a `{variable}`
-chip to insert it), switch `every page` and `optional`, reorder by drag or
-`Alt`+`Up` / `Alt`+`Down`, delete, and replay one step on the live page with
-▶. A step whose element no longer matches shows the zero-match warning with
-**Re-pick**. The panel's **Test run** does not replay steps: you already
-performed them on the live page.
+In the recorder, press `b` (or **Browse**) to use the page normally while the
+panel records what you do into the active flow: a click becomes a `click`
+step, typing into an input becomes one `fill` step with the final value, a
+`select` change becomes a `fill` step, and Enter in an input becomes a `press`
+step. The first recorded step creates a flow. Clicks in the panel are never
+recorded; `b` or `Esc` stops. A picked element can also be added with **Add to
+flow**, which does not perform the action, or **Add as await-user**. The Flows
+section lists called and reactive flows; `Alt`+`F` opens the switcher to
+choose the flow recording goes into. A flow's `…` menu replays, renames,
+makes it reactive (pick the trigger element) or called, duplicates, deletes,
+and for a reactive flow sets max retries and recover. Open a step with its
+pencil to edit its value (insert a `{variable}` chip, or **make variable**),
+window, and `optional`, or an await-user step's label, `until`, and timeout.
+The Sequence section shows the blocks numbered, the paginate block with its
+settings, and errors on the offending blocks (Save and Test run stay disabled
+until they are fixed); it follows the draft until you move a block (drag, or
+`Alt`+`Up` / `Alt`+`Down`), and **Reset to default** goes back. The panel's
+**Test run** does not replay flows: you already performed them on the live
+page.
+
+The recorder runs in every window of the session: a popup the page opens
+takes the panel, its steps get `window: popup`, and closing it hands the panel
+back to its opener. A real click or key press in another window moves the
+panel there. The window without it shows a rail (main window) or a strip
+(popup); in a window narrower than 640 pixels the panel is a bar at the top
+whose sheet holds the flows and Pick and Browse.
 
 ### Checking a recipe
 
@@ -605,8 +657,8 @@ webscoop test shop            # table on stdout, exit 0 or 3
 webscoop test shop --json     # the same as a JSON array
 ```
 
-`test` runs the recipe's first page with healing on and write-back off, replays
-its steps (unless `--skip-steps`), prints
+`test` runs the recipe's first page with healing on and write-back off, runs
+its flows (unless `--skip-flows`), prints
 one line per target (`item` and every field) with its status, how many rows it
 resolved in, and the selector or rung that found it, and prints no rows. It
 exits 0 when every required field resolved on at least one row, 3 when one did
@@ -690,8 +742,9 @@ panel.
    first item field.
 4. Pick more elements and **Add as field**; name, type, optional, and dedup
    key are editable in the field list. Mark a link or button as the
-   **Pagination target** to record pagination; the panel sets its kind, page
-   limit, stop rules, and the delay between pages.
+   **Pagination target** to record pagination: the sequence gets a paginate
+   block around the active table's extract, and its settings (kind, limit,
+   stop rules, driving table) are edited in the Sequence section.
 5. **Test run** extracts the current page with the draft and shows a results
    drawer (table and JSON) with per-field status, one tab per table.
 6. `Ctrl+S` saves to the recipes directory. Saving keeps the session open.
@@ -715,12 +768,13 @@ recipe under `--edit`, no display, browser failure).
 | Key | In the panel |
 | --- | ------------ |
 | `p` | start picking |
-| `b` | record steps while you use the page (browse mode), or stop |
+| `b` | record steps into the active flow while you use the page (browse mode), or stop |
+| `Alt`+`F` | choose the flow recording goes into; `1` to `9` pick one |
 | `Esc` | cancel picking, close a menu, stop browse mode |
 | `Alt`+click | pick through overlays while picking |
 | `Enter` | confirm the proposed item container |
 | `Left` / `Right` | walk the selection up and back down its ancestors |
-| `Alt`+`Up` / `Alt`+`Down` | move the focused field or step |
+| `Alt`+`Up` / `Alt`+`Down` | move the focused field, step, or sequence block |
 | `Ctrl+S` | save |
 | `s` | skip the field (re-pick mode) |
 | `Esc` | stop picking, then abort (re-pick mode) |
@@ -738,11 +792,19 @@ webscoop export shop --headless                       # the script runs without 
 `export` writes a standalone Playwright script that runs the recipe without
 webscoop, for another project, a CI job, or a language you already use. It
 reads the recipe only: no browser, no display, no profile lock. The script
-navigates, replays the steps, extracts rows with the same value conversion,
+navigates, replays the flows, extracts rows with the same value conversion,
 walks the pagination with the same limit, stop rules, and dedup, and prints
 rows like `webscoop run` does on a healthy site. Recipes with several tables
-export too: the script extracts every table on each page, dedups each item
-table on its own, and drives pagination from the primary table.
+export too: the script extracts every table on each page, in sequence order,
+dedups each item table on its own, and drives pagination from the driving
+table.
+
+Export supports sequences of the classic shape: called flows, then either
+extract blocks or one paginate block whose `do` holds flows followed by
+extracts. Flows before the extracts run once, flows inside `do` on every page.
+A recipe with a reactive flow, an `await-user` step, a `window: popup` step, or
+a sequence of another shape does not export: the command exits 1 naming the
+first one.
 
 Run the TypeScript script with `npx tsx shop.ts` in a directory where the
 `playwright` package is installed (`npm install playwright`, then
@@ -764,8 +826,8 @@ Use `--profile` for sites that need a login: run once headed, log in by hand
 in the window, and later runs reuse the cookies. Exit codes are 0, 1, and 3
 with the meanings below; logs go to stderr.
 
-Recipes with a `frame` on a table, step, or pagination target do not export:
-the command exits 1 and names the first table or step that uses one.
+Recipes with a `frame` on a table, step, or pagination target do not export
+either: the command exits 1 and names the first table or step that uses one.
 
 The script tries each target's stored selector candidates in order and nothing
 more. It does not include fingerprint healing, model healing, guards,
@@ -1009,9 +1071,10 @@ tiers 3 and 4.
 
 ## Recipe format
 
-A recipe is one JSON document with `schemaVersion: 1`. The reference example,
+A recipe is one JSON document with `schemaVersion: 2`. The reference example,
 used by the end-to-end tests, is
 [`packages/cli/fixtures/playground-catalog.json`](packages/cli/fixtures/playground-catalog.json).
+A file with another version fails to load with a message naming the file.
 
 - `name`: kebab-case, unique among your recipes.
 - `url`: template with `{variable}` placeholders; every placeholder must be
@@ -1040,22 +1103,33 @@ used by the end-to-end tests, is
   fingerprints skip that rung.
 - `healing`: `fuzzyThreshold` (0 to 1, default 0.7) and `llm` (default true;
   false keeps the model rung off for this recipe).
-- `pagination`: `kind` (`none`, `url`, `next`, `more`, `scroll`), `target`
-  (selectors and fingerprint of the next or load-more control), `param` (the
-  page variable for `url`), `limit` (`1`, N, or `all`), `stopRules`
-  (`no-new-items`, `first-item-repeats`, `target-missing`), and `delayMs`.
-  Filled with defaults (`none`, one page) when absent.
 - `guards`: `[{ "kind": "login" | "captcha" | "zero-fields", "enabled" }]`,
   all enabled by default; `enabled: false` turns one guard off for this
   recipe (see Guards).
-- `steps`: ordered actions replayed before extraction (see Steps), default
-  `[]`. Each has `kind` (`click`, `type`, `select`, `press`, `wait`), `target`
-  (`selectors` and optional `fingerprint`, required for `click`, `type`, and
-  `select`), `value` (required for `type`, `select`, and `press`; for `wait`
-  a number of milliseconds when there is no target; `{variable}` placeholders
-  in a `type` value must be declared in `vars`), `when` (`first-page` or
-  `every-page`, default `first-page`), `optional` (default false), and an
-  optional `label` used in logs.
+- `tables`: several outputs, each with a kebab-case `name`, optional
+  `description`, `frame`, and `item`, and its `fields`; the top level `item` and
+  `fields` are the shorthand for one table named `items`. A recipe may have no
+  tables at all when it only runs flows.
+- `flows`: named flows (see Flows and the sequence), default `[]`. Each has a
+  kebab-case `name`, an optional `description`, `steps`, and for a reactive
+  flow a `trigger` (`{ "appears": target }`) with optional `maxRetries`
+  (default 2) and `recover` (default false). Each step has `kind` (`click`,
+  `fill`, `press`, `wait`, `await-user`), `target` (`selectors`, optional
+  `fingerprint` and `frame`; required for `click`, `fill`, and `await-user`),
+  `value` (required for `fill` and `press`; for `wait` a number of
+  milliseconds when there is no target; `{variable}` placeholders in a `fill`
+  value must be declared in `vars`), `until` (`appears` or `disappears`,
+  required for `await-user`), `timeoutMs` (await-user only), `window` (`same`
+  or `popup`, default `same`), `optional` (default false), and an optional
+  `label` used in logs and the banner.
+- `sequence`: the ordered blocks that run, required: `{ "flow": name }` (a
+  called flow), `{ "extract": table }`, and at most one `{ "paginate": ... }`
+  with `kind` (`url`, `next`, `more`, `scroll`), `target` (required for `next`
+  and `more`), `param` (the page variable for `url`), `limit` (`1`, N, or
+  `all`, default 1), `stopRules` (`no-new-items`, `first-item-repeats`,
+  `target-missing`), `delayMs`, an optional driving `table`, and `do` (flow and
+  extract blocks). Every table is extracted exactly once and every called flow
+  is used; a reactive flow is never placed in the sequence.
 - `frame`: for content inside a same-origin `<iframe>`, the iframe as a target
   (`selectors` and optional `fingerprint`), resolved in the top document. On a
   table (or the top level of a shorthand recipe) the item block, list parent,
@@ -1071,10 +1145,20 @@ used by the end-to-end tests, is
   reads the playground's `/framed` page.
 
 ```json
-"steps": [
-  { "kind": "click", "target": { "selectors": [{ "strategy": "role", "value": "button|Accept all", "stability": "stable" }] }, "optional": true },
-  { "kind": "type", "target": { "selectors": [{ "strategy": "css", "value": "input[name=\"q\"]", "stability": "medium" }] }, "value": "{q}" },
-  { "kind": "press", "value": "Enter" }
+"flows": [
+  { "name": "search", "steps": [
+    { "kind": "click", "target": { "selectors": [{ "strategy": "role", "value": "button|Accept all", "stability": "stable" }] }, "optional": true },
+    { "kind": "fill", "target": { "selectors": [{ "strategy": "css", "value": "input[name=\"q\"]", "stability": "medium" }] }, "value": "{q}" },
+    { "kind": "press", "value": "Enter" }
+  ] },
+  { "name": "login-wall", "trigger": { "appears": { "selectors": [{ "strategy": "role", "value": "button|Log in", "stability": "stable" }] } }, "recover": true, "steps": [
+    { "kind": "click", "target": { "selectors": [{ "strategy": "role", "value": "button|Log in", "stability": "stable" }] } },
+    { "kind": "await-user", "window": "popup", "until": "disappears", "label": "Log in to the portal", "target": { "selectors": [{ "strategy": "role", "value": "button|Log in", "stability": "stable" }] } }
+  ] }
+],
+"sequence": [
+  { "flow": "search" },
+  { "paginate": { "kind": "next", "target": { "selectors": [{ "strategy": "role", "value": "link|Next", "stability": "stable" }] }, "limit": "all", "do": [{ "extract": "items" }] } }
 ]
 ```
 
@@ -1133,8 +1217,8 @@ until `ws_human` is set. `wallAfterPage=N` raises the wall only on pages after
 N (the `page` parameter, or the `ws_page` cookie of the `next` kind), so
 `wall=captcha&wallAfterPage=2&paginate=url` walls page 3 only.
 
-Gates for steps keep the products out of the DOM until an action, so a recipe
-without the step finds nothing (exit 3). `gate=cookie` shows a consent modal
+Gates for flows keep the products out of the DOM until an action, so a recipe
+without the flow finds nothing (exit 3). `gate=cookie` shows a consent modal
 with a backdrop and an `Accept all` button (`#consent-accept`); the list waits
 in a `template` until the click, which stores `ws_consent` in `localStorage`,
 so later loads show no modal. `gate=search` shows a `GET` search form with an
@@ -1163,6 +1247,17 @@ fills a details panel with the first product's description, so reading it
 needs a step inside the iframe.
 [`packages/cli/fixtures/playground-framed.json`](packages/cli/fixtures/playground-framed.json)
 reads both.
+
+`/spa` is a single-page app whose URL never changes after load. Logged out it
+shows a `Log in` button (`#spa-login`) that opens `/spa/login` with
+`window.open`, a 500 by 600 popup with user and password inputs and a
+`Sign in` button; any non-empty pair sets the `ws_spa` cookie and closes the
+popup, and `/spa` notices within a second (it polls `/spa/session`) and shows
+its menu: `Catalog` (the dataset's cards, 8 per page, with a client-side
+`Next` button disabled on the last page) and `Report` (a heading and a total).
+`/spa?ttl=N` ends the session N seconds after login, and the page shows the
+`Log in` button again without changing the URL. A reload while logged in
+shows the menu with no section open.
 
 ## Layout
 

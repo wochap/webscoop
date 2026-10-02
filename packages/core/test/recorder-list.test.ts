@@ -285,7 +285,7 @@ function newDraft(): Draft {
     const t = await harness(dom, emptyDraft({ name: 'paged', url, vars: [] }), url);
     await t.pick(byClass(t.page, 'next'));
     await t.send({ kind: 'draft.markPagination' });
-    await t.send({ kind: 'draft.updatePagination', patch: { limit: 3 } });
+    await t.send({ kind: 'paginate.update', patch: { limit: 3 } });
     expect(t.controller.draft.pagination).toMatchObject({
       kind: 'url',
       param: { name: 'page', start: 1, step: 1 },

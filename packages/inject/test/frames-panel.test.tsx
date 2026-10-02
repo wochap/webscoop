@@ -15,7 +15,7 @@ const frame: FrameTarget = {
   fingerprint: fp('iframe'),
 };
 const field = { name: 'title', type: 'text' as const, scope: 'page' as const, selectors: [{ strategy: 'css' as const, value: 'h1', stability: 'medium' as const, count: 1 }], optional: false, key: false, count: 1, sample: 'x' };
-const step: DraftStep = { kind: 'click', target: { selectors: [{ strategy: 'id', value: 'go', stability: 'stable', count: 1 }], frame }, when: 'first-page', optional: false, count: 1 };
+const step: DraftStep = { kind: 'click', target: { selectors: [{ strategy: 'id', value: 'go', stability: 'stable', count: 1 }], frame }, window: 'same', optional: false, count: 1 };
 
 function selectedIn(state: RecorderState, frameRefusal: string | null = null): RecorderState {
   return {
@@ -68,8 +68,18 @@ describe('frames in the panel', () => {
     expect(p.q('pick-add-hint')!.textContent).toBe('The items table reads from the page, not from an iframe.');
   });
 
+  it('disables Add field in a popup, where fields cannot extract, and keeps Add to flow and Add as await-user', () => {
+    const p = renderPanel({ ...selectedIn(baseState()), popup: true });
+    expect((p.q('pick-add-field') as HTMLButtonElement).disabled).toBe(true);
+    expect(p.q('pick-add-hint')!.textContent).toBe('Fields extract from the main window');
+    fireEvent.click(p.q('pick-as-step')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addStep', step: { kind: 'click' } });
+    fireEvent.click(p.q('pick-as-await')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addStep', step: { kind: 'await-user', until: 'disappears' } });
+  });
+
   it('marks fields of a framed table and framed steps with a frame badge that opens the editor', () => {
-    const p = renderPanel(baseState({ ...withTable(newDraft(), { fields: [field], frame }), steps: [step] }));
+    const p = renderPanel(baseState({ ...withTable(newDraft(), { fields: [field], frame }), flows: [{ name: 'setup', steps: [step] }], activeFlow: 0 }));
     const badges = p.qa('frame-badge');
     expect(badges).toHaveLength(2);
     expect(badges.every((b) => b.textContent === 'iframe#app')).toBe(true);

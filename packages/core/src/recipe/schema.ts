@@ -4,16 +4,34 @@ import {
   FIELD_SCOPES,
   FIELD_TYPES,
   GUARD_KINDS,
+  DEFAULT_MAX_RETRIES,
+  PAGINATE_KINDS,
   PAGINATION_KINDS,
   SCHEMA_VERSION,
   STABILITIES,
   STEP_KINDS,
-  STEP_WHENS,
+  STEP_UNTILS,
+  STEP_WINDOWS,
   STOP_RULES,
   STRATEGIES,
 } from './constants';
 
-export { DESCRIPTION_MAX, FIELD_SCOPES, FIELD_TYPES, GUARD_KINDS, PAGINATION_KINDS, SCHEMA_VERSION, STABILITIES, STEP_KINDS, STEP_WHENS, STOP_RULES, STRATEGIES };
+export {
+  DEFAULT_MAX_RETRIES,
+  DESCRIPTION_MAX,
+  FIELD_SCOPES,
+  FIELD_TYPES,
+  GUARD_KINDS,
+  PAGINATE_KINDS,
+  PAGINATION_KINDS,
+  SCHEMA_VERSION,
+  STABILITIES,
+  STEP_KINDS,
+  STEP_UNTILS,
+  STEP_WINDOWS,
+  STOP_RULES,
+  STRATEGIES,
+};
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -93,16 +111,18 @@ export const TargetSchema = z.object({
   frame: FrameSchema.optional(),
 });
 
+/** Page variable of `url` pagination. */
+export const PageParamSchema = z.object({
+  name: z.string().regex(IDENTIFIER),
+  start: z.number().int(),
+  step: z.number().int(),
+});
+
+/** Pagination settings, as the runner and the strategies see them; `none` stands for a recipe without a paginate block. */
 export const PaginationSchema = z.object({
   kind: oneOf('pagination kind', PAGINATION_KINDS).default('none'),
   target: TargetSchema.optional(),
-  param: z
-    .object({
-      name: z.string().regex(IDENTIFIER),
-      start: z.number().int(),
-      step: z.number().int(),
-    })
-    .optional(),
+  param: PageParamSchema.optional(),
   limit: z.union([z.number().int().positive(), z.literal('all')]).default(1),
   stopRules: z.array(oneOf('stop rule', STOP_RULES)).default([]),
   delayMs: z.number().int().nonnegative().default(0),
@@ -118,14 +138,52 @@ export const HealingSchema = z.object({
   llm: z.boolean().default(true),
 });
 
-/** A recorded action replayed before extraction. Which kinds need a target or value is checked across fields. */
+/** A recorded action a flow replays. Which kinds need a target or value is checked across fields. */
 export const StepSchema = z.object({
   kind: oneOf('step kind', STEP_KINDS),
   target: TargetSchema.optional(),
   value: z.string().optional(),
-  when: oneOf('step when', STEP_WHENS).default('first-page'),
+  /** For `await-user`: whether the step waits for its target to appear or to disappear. */
+  until: oneOf('step until', STEP_UNTILS).optional(),
+  /** For `await-user`: a private wait budget instead of the run's guard timeout. */
+  timeoutMs: z.number().int().positive().optional(),
+  window: oneOf('step window', STEP_WINDOWS).default('same'),
   optional: z.boolean().default(false),
   label: z.string().min(1).optional(),
+});
+
+/** A named, ordered list of steps; with a trigger it is reactive and fires whenever its target appears. */
+export const FlowSchema = z.object({
+  name: z.string().regex(KEBAB, 'flow names must be kebab-case'),
+  description: DescriptionSchema.optional(),
+  trigger: z.object({ appears: TargetSchema }).optional(),
+  maxRetries: z.number().int().positive().optional(),
+  recover: z.boolean().optional(),
+  steps: z.array(StepSchema).min(1, 'a flow needs at least one step'),
+});
+
+export const FlowBlockSchema = z.object({ flow: z.string().min(1) }).strict();
+export const ExtractBlockSchema = z.object({ extract: z.string().min(1) }).strict();
+/** A block repeated on every page of a paginate block. */
+export const InnerBlockSchema = z.union([FlowBlockSchema, ExtractBlockSchema], { error: 'a block inside do is { "flow": name } or { "extract": table }' });
+
+export const PaginateSchema = z.object({
+  kind: oneOf('paginate kind', PAGINATE_KINDS),
+  target: TargetSchema.optional(),
+  param: PageParamSchema.optional(),
+  limit: z.union([z.number().int().positive(), z.literal('all')]).default(1),
+  stopRules: z.array(oneOf('stop rule', STOP_RULES)).default([]),
+  delayMs: z.number().int().nonnegative().default(0),
+  /** The driving table; default: the first table with an item block extracted in `do`. */
+  table: z.string().optional(),
+  do: z.array(InnerBlockSchema).min(1, 'a paginate block needs at least one block in do'),
+});
+
+export const PaginateBlockSchema = z.object({ paginate: PaginateSchema }).strict();
+
+/** One block of the sequence. */
+export const BlockSchema = z.union([FlowBlockSchema, ExtractBlockSchema, PaginateBlockSchema], {
+  error: 'a block is { "flow": name }, { "extract": table }, or { "paginate": settings }',
 });
 
 /** One flat output: one row per item container, or one row per page without an item block. */
@@ -212,9 +270,9 @@ const RecipeObjectSchema = z.object({
   item: ItemSchema.optional(),
   frame: FrameSchema.optional(),
   fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field').optional(),
-  tables: z.array(TableSchema).min(1, 'a recipe needs at least one table').optional(),
-  steps: z.array(StepSchema).default([]),
-  pagination: PaginationSchema.default(() => PaginationSchema.parse({})),
+  tables: z.array(TableSchema).optional(),
+  flows: z.array(FlowSchema).default([]),
+  sequence: z.array(BlockSchema).min(1, 'a sequence needs at least one block'),
   guards: z.array(GuardSchema).default(defaultGuards),
   healing: HealingSchema.default(() => HealingSchema.parse({})),
   browser: RecipeBrowserSchema.optional(),
@@ -253,7 +311,14 @@ export type Target = z.infer<typeof TargetSchema>;
 export type Frame = z.infer<typeof FrameSchema>;
 export type Step = z.infer<typeof StepSchema>;
 export type StepKind = Step['kind'];
-export type StepWhen = Step['when'];
+export type StepWindow = Step['window'];
+export type Flow = z.infer<typeof FlowSchema>;
+export type FlowBlock = z.infer<typeof FlowBlockSchema>;
+export type ExtractBlock = z.infer<typeof ExtractBlockSchema>;
+export type InnerBlock = FlowBlock | ExtractBlock;
+export type Paginate = z.output<typeof PaginateSchema>;
+export type PaginateBlock = z.output<typeof PaginateBlockSchema>;
+export type Block = FlowBlock | ExtractBlock | PaginateBlock;
 export type Pagination = z.infer<typeof PaginationSchema>;
 export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;

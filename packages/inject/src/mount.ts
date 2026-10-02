@@ -1,4 +1,11 @@
 import { OVERLAY_CSS, PANEL_WIDTH } from './overlay';
+
+/** Width of the rail a main window shows while another window owns the panel. */
+export const RAIL_WIDTH = 30;
+/** Height of the strip a popup shows while another window owns the panel. */
+export const STRIP_HEIGHT = 22;
+/** Height of the compact bar of a narrow owner window. */
+export const BAR_HEIGHT = 34;
 import css from './styles.css';
 
 export { PANEL_WIDTH };
@@ -16,6 +23,8 @@ export interface Mounted {
   shadows: ShadowRoot[];
   /** Reserve room for the results drawer at the bottom of the page, or release it. */
   setDrawerSpace(open: boolean): void;
+  /** Give the page the room the panel does not use: the full panel, the rail, the strip, the compact bar, or nothing. */
+  setLayout(layout: 'panel' | 'rail' | 'strip' | 'bar' | 'none'): void;
   /** Take the hosts out of the page and give the page its margin back. */
   unmount(): void;
 }
@@ -102,13 +111,23 @@ export function mount(doc: Document = document): Mounted {
   const drawer = host(doc, 'webscoop-drawer', css, '');
   const hosts = [overlay.host, panel.host, drawer.host];
   root.append(...hosts);
-  root.style.setProperty('margin-right', `${PANEL_WIDTH}px`, 'important');
+  /** The page margins each layout takes: right for the panel and the rail, top for the strip and the bar. */
+  const MARGINS = { panel: [`${PANEL_WIDTH}px`, ''], rail: [`${RAIL_WIDTH}px`, ''], strip: ['', `${STRIP_HEIGHT}px`], bar: ['', `${BAR_HEIGHT}px`], none: ['', ''] } as const;
+  let margins: readonly [string, string] = MARGINS.panel;
+  const applyMargins = () => {
+    for (const [prop, value] of [['margin-right', margins[0]], ['margin-top', margins[1]]] as const) {
+      if (value === '') {
+        if (root.style.getPropertyValue(prop) !== '') root.style.removeProperty(prop);
+      } else if (root.style.getPropertyValue(prop) !== value) {
+        root.style.setProperty(prop, value, 'important');
+      }
+    }
+  };
+  applyMargins();
 
   const observer = new MutationObserver(() => {
     for (const h of hosts) if (h.parentNode !== root) root.appendChild(h);
-    if (root.style.getPropertyValue('margin-right') !== `${PANEL_WIDTH}px`) {
-      root.style.setProperty('margin-right', `${PANEL_WIDTH}px`, 'important');
-    }
+    applyMargins();
   });
   observer.observe(root, { childList: true, attributes: true, attributeFilter: ['style'] });
 
@@ -120,6 +139,11 @@ export function mount(doc: Document = document): Mounted {
     overlay: overlay.el,
     drawer: drawer.el,
     shadows: [panel.shadow, overlay.shadow, drawer.shadow],
+    setLayout(layout) {
+      margins = MARGINS[layout];
+      panel.el.dataset.layout = layout;
+      applyMargins();
+    },
     setDrawerSpace(open) {
       if (open) root.style.setProperty('padding-bottom', '40vh', 'important');
       else root.style.removeProperty('padding-bottom');
@@ -128,6 +152,7 @@ export function mount(doc: Document = document): Mounted {
       observer.disconnect();
       for (const h of hosts) h.remove();
       root.style.removeProperty('margin-right');
+      root.style.removeProperty('margin-top');
       root.style.removeProperty('padding-bottom');
       if (root.getAttribute('style') === '') root.removeAttribute('style');
     },

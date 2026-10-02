@@ -71,3 +71,23 @@ describe('guard banner', () => {
     expect(p.store.get().ui.picking).toBe(false);
   });
 });
+
+describe('await-user banner', () => {
+  it("shows the step's label and the await-user badge, with Continue and Abort", () => {
+    vi.useFakeTimers({ now: NOW });
+    const p = renderPanel(guardState({ kind: 'await-user', label: 'Log in to SOL', reason: 'waiting for you: Log in to SOL' }));
+    expect(p.q('guard-banner')!.dataset.kind).toBe('await-user');
+    expect(p.q('guard-kind')!.textContent).toBe('await-user');
+    expect(p.q('guard-reason')!.textContent).toBe('Log in to SOL');
+    expect(p.q('guard-panel')!.textContent).toContain('Waiting for you');
+    fireEvent.click(p.q('guard-continue')!);
+    expect(p.sent).toEqual([{ kind: 'guard.continue' }]);
+  });
+
+  it('shows only the banner, across the top, in a narrow window', () => {
+    vi.useFakeTimers({ now: NOW });
+    const p = renderPanel(guardState({ kind: 'await-user', label: 'Log in to SOL' }), { narrow: true });
+    expect(p.q('guard-banner')).not.toBeNull();
+    expect(p.q('guard-panel')).toBeNull();
+  });
+});

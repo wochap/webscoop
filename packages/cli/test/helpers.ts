@@ -193,7 +193,7 @@ export async function shopHome(config?: unknown, extra: Partial<RecipeInput> = {
   const dir = await tempDir();
   await mkdir(join(dir, 'recipes'), { recursive: true });
   const recipe: RecipeInput = {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: SHOP_PAGE,
     item: { selectors: [{ strategy: 'css', value: '.card', stability: 'medium' }] },

@@ -70,10 +70,10 @@ describe('recorder inside an iframe', () => {
     await t.pickInFrame(link);
     await t.send({ kind: 'draft.addStep', step: { kind: 'click' } });
     await t.send({ kind: 'draft.addField', patch: { name: 'link' } });
-    expect(t.controller.draft.steps[0]!.target!.frame!.selectors[0]).toMatchObject({ strategy: 'id', value: 'app' });
+    expect(t.controller.draft.flows[0]!.steps[0]!.target!.frame!.selectors[0]).toMatchObject({ strategy: 'id', value: 'app' });
     await t.send({ kind: 'frame.edit', key: { strategy: 'id', value: 'app', stability: 'stable' }, by: 'selector', selector: 'iframe.app-frame' });
     expect(t.controller.state.error).toBeNull();
-    expect(t.controller.draft.steps[0]!.target!.frame!.selectors[0]).toMatchObject({ strategy: 'css', value: 'iframe.app-frame', count: 1 });
+    expect(t.controller.draft.flows[0]!.steps[0]!.target!.frame!.selectors[0]).toMatchObject({ strategy: 'css', value: 'iframe.app-frame', count: 1 });
     expect(t.controller.draft.tables[0]!.frame!.selectors[0]).toMatchObject({ strategy: 'css', value: 'iframe.app-frame' });
     await t.send({ kind: 'frame.edit', key: { strategy: 'css', value: 'iframe.app-frame', stability: 'medium' }, by: 'selector', selector: '#menu' });
     expect(t.controller.state.error).toMatch(/not match a same-origin iframe/);

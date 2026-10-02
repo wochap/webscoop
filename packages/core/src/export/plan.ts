@@ -1,8 +1,9 @@
 import { defaultAttr } from '../convert';
 import { DEFAULT_PAGE_CAP } from '../pagination/types';
-import type { FieldScope, FieldType, PaginationKind, Recipe, SelectorCandidate, StepKind, StepWhen } from '../recipe/schema';
+import type { Block, FieldScope, FieldType, InnerBlock, PaginationKind, Recipe, SelectorCandidate, StepKind } from '../recipe/schema';
+import { drivingTable, paginateOf, paginationOf, walkBlocks } from '../recipe/sequence';
 import { primaryTableIndex, tablesOf } from '../recipe/tables';
-import { WAIT_POLL_MS } from '../steps/replay';
+import { WAIT_POLL_MS } from '../flows/replay';
 import { templateVariables } from '../template';
 
 /** A selector as the exported script uses it: strategy and value, without the recorder's stability rating. */
@@ -15,27 +16,34 @@ export interface PlanVar {
   name: string;
   /** Recipe default, or null when a value must be given. */
   default: string | null;
-  /** Whether the run cannot start without a value: used in the URL template or in a `type` step. */
+  /** Whether the run cannot start without a value: used in the URL template or in a `fill` step. */
   required: boolean;
 }
 
 /** What a step does once its target (if any) is found. Defaults are already resolved. */
 export type PlanAction =
   | { kind: 'click' }
-  | { kind: 'type'; text: string }
-  | { kind: 'select'; value: string }
+  /** Type into a text input, or choose the option of a native select by value or label. */
+  | { kind: 'fill'; text: string }
   | { kind: 'press'; key: string }
   /** A `wait` with a target: poll for it. */
   | { kind: 'wait-for' }
   /** A `wait` without a target: sleep. */
   | { kind: 'sleep'; ms: number };
 
+/** When a plan step runs: flows before the extracts run on the first page, flows inside the paginate block on every page. */
+export type PlanWhen = 'first-page' | 'every-page';
+
 export interface PlanStep {
+  /** Position among every step of the plan. */
   index: number;
+  /** The flow the step belongs to, and its index there. */
+  flow: string;
+  step: number;
   kind: StepKind;
-  /** The label, else `step:N`, as the runner names it. */
+  /** The label, else `flow:N`, as the runner names it. */
   name: string;
-  when: StepWhen;
+  when: PlanWhen;
   optional: boolean;
   target: PlanSelector[] | null;
   action: PlanAction;
@@ -106,9 +114,9 @@ export interface ExportPlan {
   url: string;
   vars: PlanVar[];
   steps: PlanStep[];
-  /** Every table, in recipe order; the shorthand form is one table named `items`. */
+  /** Every table, in sequence order; the shorthand form is one table named `items`. */
   tables: PlanTable[];
-  /** Index of the primary table (the first with an item block), which drives item counts and the stop rules; -1 when none has one. */
+  /** Index of the driving table (the paginate block's, else the first with an item block), which drives item counts and the stop rules; -1 when none has one. */
   primary: number;
   pagination: PlanPagination;
   timings: PlanTimings;
@@ -123,6 +131,13 @@ export const EXPORT_TIMINGS: PlanTimings = {
   waitPollMs: WAIT_POLL_MS,
   growthPollMs: 200,
 };
+
+/** Index of the driving table among the plan's tables, else of the first item table; -1 when none has an item block. */
+function primary(recipe: Recipe, tables: ReturnType<typeof tablesOf>): number {
+  const block = paginateOf(recipe);
+  const driving = block ? drivingTable(block, tables) : null;
+  return driving !== null ? tables.findIndex((t) => t.name === driving) : primaryTableIndex(tables);
+}
 
 const selectors = (candidates: readonly SelectorCandidate[]): PlanSelector[] => candidates.map(({ strategy, value }) => ({ strategy, value }));
 
@@ -143,48 +158,105 @@ export class ExportUnsupportedError extends Error {
 function firstFrame(recipe: Recipe): string | null {
   const table = tablesOf(recipe).find((t) => t.frame);
   if (table) return `table "${table.name}"`;
-  const index = recipe.steps.findIndex((s) => s.target?.frame);
-  if (index >= 0) return `step "${recipe.steps[index]!.label ?? `step:${index}`}"`;
-  return recipe.pagination.target?.frame ? 'the pagination target' : null;
+  for (const flow of recipe.flows) {
+    const index = flow.steps.findIndex((s) => s.target?.frame);
+    if (index >= 0) return `step "${flow.steps[index]!.label ?? `${flow.name}:${index}`}" of flow "${flow.name}"`;
+  }
+  return paginateOf(recipe)?.target?.frame ? 'the pagination target' : null;
 }
 
-/** Turn a validated recipe into the plan both renderers share. Throws `ExportUnsupportedError` for a recipe with iframe targets. */
+/** Flow names before the extracts and inside the paginate block, for a sequence of the classic shape; throws naming the first block that breaks it. */
+function classicShape(sequence: readonly Block[]): { before: string[]; every: string[] } {
+  const before: string[] = [];
+  let index = 0;
+  for (; index < sequence.length; index++) {
+    const block = sequence[index]!;
+    if (!('flow' in block)) break;
+    before.push(block.flow);
+  }
+  const rest = sequence.slice(index);
+  const notClassic = (at: string) =>
+    new ExportUnsupportedError(`export supports a sequence of flows followed by extracts or by one paginate block; ${at} breaks that shape`);
+  const extractsOnly = (blocks: readonly (Block | InnerBlock)[], offset: number, where: string) => {
+    blocks.forEach((b, i) => {
+      if (!('extract' in b)) throw notClassic(`block ${offset + i}${where}`);
+    });
+  };
+  const first = rest[0];
+  if (first && 'paginate' in first) {
+    if (rest.length > 1) throw notClassic(`block ${index + 1}`);
+    const inner = first.paginate.do;
+    const every: string[] = [];
+    let i = 0;
+    for (; i < inner.length && 'flow' in inner[i]!; i++) every.push((inner[i] as { flow: string }).flow);
+    extractsOnly(inner.slice(i), i, ` of the paginate block's do`);
+    return { before, every };
+  }
+  extractsOnly(rest, index, '');
+  return { before, every: [] };
+}
+
+/** The first flow feature export cannot replay: a reactive flow, an `await-user` step, or a popup step. */
+function unsupportedFlow(recipe: Recipe): string | null {
+  for (const flow of recipe.flows) {
+    if (flow.trigger) return `reactive flow "${flow.name}" is not supported by export`;
+    for (const [index, step] of flow.steps.entries()) {
+      const name = `step "${step.label ?? `${flow.name}:${index}`}" of flow "${flow.name}"`;
+      if (step.kind === 'await-user') return `${name} is an await-user step, which export does not support`;
+      if (step.window === 'popup') return `${name} acts in a popup, which export does not support`;
+    }
+  }
+  return null;
+}
+
+/** Turn a validated recipe into the plan both renderers share. Throws `ExportUnsupportedError` for a recipe export cannot run. */
 export function buildPlan(recipe: Recipe): ExportPlan {
+  const unsupported = unsupportedFlow(recipe);
+  if (unsupported) throw new ExportUnsupportedError(unsupported);
   const framed = firstFrame(recipe);
   if (framed) throw new ExportUnsupportedError(`iframe targets are not supported by export: ${framed} uses frame`);
-  const { pagination } = recipe;
-  const recipeTables = tablesOf(recipe);
+  const shape = classicShape(recipe.sequence);
+  const pagination = paginationOf(recipe);
+  const order = walkBlocks(recipe.sequence).flatMap((b) => ('extract' in b ? [b.extract] : []));
+  const recipeTables = tablesOf(recipe)
+    .slice()
+    .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
   const pageParam = pagination.kind === 'url' ? (pagination.param ?? null) : null;
 
   // Variables the run needs before the browser opens; the page variable has its own start value.
   const needed = new Set(templateVariables(recipe.url));
-  for (const step of recipe.steps) if (step.kind === 'type' && step.value) for (const name of templateVariables(step.value)) needed.add(name);
+  for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) for (const name of templateVariables(step.value)) needed.add(name);
   if (pageParam) needed.delete(pageParam.name);
   const vars: PlanVar[] = recipe.vars.map((v) => ({ name: v.name, default: v.default ?? null, required: needed.has(v.name) }));
   for (const name of needed) if (!recipe.vars.some((v) => v.name === name)) vars.push({ name, default: null, required: true });
 
-  const steps: PlanStep[] = recipe.steps.map((step, index) => {
-    const target = step.target ? selectors(step.target.selectors) : null;
-    let action: PlanAction;
-    switch (step.kind) {
-      case 'click':
-        action = { kind: 'click' };
-        break;
-      case 'type':
-        action = { kind: 'type', text: step.value ?? '' };
-        break;
-      case 'select':
-        action = { kind: 'select', value: step.value ?? '' };
-        break;
-      case 'press':
-        action = { kind: 'press', key: step.value ?? 'Enter' };
-        break;
-      case 'wait':
-        action = target ? { kind: 'wait-for' } : { kind: 'sleep', ms: Number(step.value ?? 0) };
-        break;
+  const steps: PlanStep[] = [];
+  const addFlow = (name: string, when: PlanWhen) => {
+    const flow = recipe.flows.find((f) => f.name === name)!;
+    for (const [index, step] of flow.steps.entries()) {
+      const target = step.target ? selectors(step.target.selectors) : null;
+      let action: PlanAction;
+      switch (step.kind) {
+        case 'click':
+          action = { kind: 'click' };
+          break;
+        case 'fill':
+          action = { kind: 'fill', text: step.value ?? '' };
+          break;
+        case 'press':
+          action = { kind: 'press', key: step.value ?? 'Enter' };
+          break;
+        case 'wait':
+          action = target ? { kind: 'wait-for' } : { kind: 'sleep', ms: Number(step.value ?? 0) };
+          break;
+        case 'await-user':
+          throw new ExportUnsupportedError(`step ${index} of flow "${flow.name}" is an await-user step, which export does not support`);
+      }
+      steps.push({ index: steps.length, flow: flow.name, step: index, kind: step.kind, name: step.label ?? `${flow.name}:${index}`, when, optional: step.optional, target, action });
     }
-    return { index, kind: step.kind, name: step.label ?? `step:${index}`, when: step.when, optional: step.optional, target, action };
-  });
+  };
+  for (const name of shape.before) addFlow(name, 'first-page');
+  for (const name of shape.every) addFlow(name, 'every-page');
 
   const tables: PlanTable[] = recipeTables.map((table) => ({
     name: table.name,
@@ -218,7 +290,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     vars,
     steps,
     tables,
-    primary: primaryTableIndex(recipeTables),
+    primary: primary(recipe, recipeTables),
     pagination: {
       kind: pagination.kind,
       param: pageParam ? { name: pageParam.name, start: pageParam.start, step: pageParam.step } : null,

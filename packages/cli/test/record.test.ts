@@ -165,7 +165,7 @@ describe('webscoop record', () => {
     const { mkdir, writeFile } = await import('node:fs/promises');
     await mkdir(join(dir, 'recipes'), { recursive: true });
     await writeFile(join(dir, 'recipes', 'playground-catalog.json'), saveRecipe(reference));
-    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":1,"name":"broken"}');
+    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":2,"name":"broken"}');
     const browser = new FakeBrowser({ [PAGE]: tier0() });
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     const run = main(['record', '--edit', 'playground-catalog'], io);
@@ -188,7 +188,7 @@ describe('webscoop record', () => {
     const { mkdir, writeFile } = await import('node:fs/promises');
     await mkdir(join(dir, 'recipes'), { recursive: true });
     await writeFile(join(dir, 'recipes', 'playground-catalog.json'), saveRecipe(reference));
-    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":1,"name":"broken"}');
+    await writeFile(join(dir, 'recipes', 'broken.json'), '{"schemaVersion":2,"name":"broken"}');
     const browser = new FakeBrowser({ [PAGE]: tier0() });
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     const run = main(['edit', 'playground-catalog'], io);
@@ -332,7 +332,7 @@ describe('profile pin on save', () => {
   });
 
   it('pins only when the used profile differs from the unpinned resolution', () => {
-    const base = loadRecipe(JSON.stringify({ schemaVersion: 1, name: 'shop', url: 'https://{site}/x', vars: [{ name: 'site', type: 'string' }], fields: [{ name: 'a', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }));
+    const base = loadRecipe(JSON.stringify({ schemaVersion: 2, sequence: [{ extract: 'items' }], name: 'shop', url: 'https://{site}/x', vars: [{ name: 'site', type: 'string' }], fields: [{ name: 'a', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }));
     const config = ConfigSchema.parse({ profiles: { rules: [{ host: 'acme\\.com$', profile: 'acme' }] } });
     expect(pinProfile(base, 'acme', { site: 'acme.com' }, config).browser).toBeUndefined();
     expect(pinProfile(base, 'acme', {}, config).browser).toEqual({ profile: 'acme' });

@@ -11,6 +11,20 @@ export type Shortcut =
   | 'moveDown'
   | 'moveStepUp'
   | 'moveStepDown'
+  | 'moveBlockUp'
+  | 'moveBlockDown'
+  | 'switcher'
+  | 'closeSwitcher'
+  | 'chooseFlow1'
+  | 'chooseFlow2'
+  | 'chooseFlow3'
+  | 'chooseFlow4'
+  | 'chooseFlow5'
+  | 'chooseFlow6'
+  | 'chooseFlow7'
+  | 'chooseFlow8'
+  | 'chooseFlow9'
+  | 'closeSheet'
   | 'browse'
   | 'stopBrowse'
   | 'save'
@@ -44,8 +58,14 @@ export interface ShortcutContext {
   canSetupList?: boolean;
   hasSelection: boolean;
   focusedField: number | null;
-  /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
-  focusedStep?: number | null;
+  /** Whether a step row has keyboard focus, for Alt+Up and Alt+Down. */
+  focusedStep?: unknown;
+  /** Whether a sequence block has keyboard focus, for Alt+Up and Alt+Down. */
+  focusedBlock?: unknown;
+  /** The flow switcher is open: digits choose a flow, Esc closes it. */
+  switcher?: boolean;
+  /** The compact bar's sheet is open: Esc closes it. */
+  sheet?: boolean;
   /** Browse mode is on: page interaction is recorded as steps. */
   browsing?: boolean;
   /** The focused re-pick mode is active. */
@@ -86,8 +106,9 @@ export function isMenuTarget(target: EventTarget | null): boolean {
  * mode, aborts a re-pick, cancels a field edit, or clears the selection, the
  * first that applies; Enter accepts the list setup while its item matches
  * something, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
- * reorder the focused field or step, Alt+Left and Alt+Right move the
- * focused table tab, F2 renames it, Ctrl+S saves.
+ * reorder the focused field, step, or sequence block, Alt+Left and Alt+Right
+ * move the focused table tab, F2 renames it, Alt+F opens the flow switcher
+ * (digits 1 to 9 choose a flow there), Ctrl+S saves.
  * While re-picking, `s` skips the field and Esc (when not picking) aborts.
  * While picking, only Esc and Ctrl+S act here; the picker handles the hover
  * walk keys (Up and Down, `[` and `]`) itself. Nothing fires while typing.
@@ -96,7 +117,9 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (ctx.typing) return null;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && !e.altKey && e.key.toLowerCase() === 's') return 'save';
+  if (ctx.switcher && !mod && !e.altKey && /^[1-9]$/.test(e.key)) return `chooseFlow${e.key}` as Shortcut;
   if (e.key === 'Escape') {
+    if (ctx.switcher) return 'closeSwitcher';
     if (ctx.menuOpen) return 'closeMenu';
     if (ctx.renaming) return 'cancelRename';
     if (ctx.picking) return 'cancel';
@@ -105,8 +128,10 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     if (ctx.repicking) return 'abort';
     if (ctx.editing) return 'cancelEdit';
     if (ctx.hasSelection) return 'clearSelection';
+    if (ctx.sheet) return 'closeSheet';
     return null;
   }
+  if (e.altKey && !mod && (e.key === 'f' || e.key === 'F')) return ctx.picking ? null : 'switcher';
   if (ctx.picking || mod) return null;
   if (ctx.repicking && !e.altKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) return 'skip';
   const tab = ctx.focusedTab ?? null;
@@ -119,6 +144,7 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return null;
     const up = e.key === 'ArrowUp';
     if (ctx.focusedStep !== undefined && ctx.focusedStep !== null) return up ? 'moveStepUp' : 'moveStepDown';
+    if (ctx.focusedBlock !== undefined && ctx.focusedBlock !== null) return up ? 'moveBlockUp' : 'moveBlockDown';
     if (ctx.focusedField === null) return null;
     return up ? 'moveUp' : 'moveDown';
   }

@@ -142,7 +142,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
     .option('--notify', 'send a desktop notification when a guard pauses the run, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
-    .option('--skip-steps', "replay none of the recipe's steps (clicks, typing) before extracting, for debugging")
+    .option('--skip-flows', "run none of the recipe's flows, called or reactive; only extract and paginate, for debugging")
     .addHelpText(
       'after',
       `
@@ -164,10 +164,13 @@ shows a banner over the page with a countdown, Continue, and Abort
 [Y/n/a] prompt on the terminal, or with webscoop attention continue|abort.
 Nobody within --guard-timeout: exit 2.
 
-Steps: actions recorded in the recipe (accept a cookie banner, type a search,
-open a tab) are replayed after the first page loads, and after every page for
-steps marked every-page. A step whose element is gone is skipped when it is
-optional and fails the run with exit 3 when it is not.
+Flows: named lists of steps recorded in the recipe (accept a cookie banner,
+fill a search, open a tab). The recipe's sequence says where each called flow
+runs: before an extract, or inside the paginate block on every page. A
+reactive flow runs whenever its trigger element appears, in any window. A step
+whose element is gone is skipped when it is optional and fails the run with
+exit 3 when it is not. An await-user step waits for you in the browser like a
+guard.
 
 Pagination: the recipe says how to reach the next page (a page number in the
 URL, a next link, a load-more button, or infinite scroll) and how many pages
@@ -205,7 +208,7 @@ working selector first (unless --no-save).`,
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
     .option('--notify', 'send a desktop notification when a guard is raised, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
-    .option('--skip-steps', "replay none of the recipe's steps, which test replays like a run by default")
+    .option('--skip-flows', "run none of the recipe's flows, which test runs like a run by default")
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 

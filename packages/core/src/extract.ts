@@ -8,6 +8,7 @@ import type { Viewport } from './healing/score';
 import { isHealed, targetName, type HealContext, type HealOutcome, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import type { ElementRef, Session } from './ports';
 import type { Fingerprint, Frame, Recipe, RecipeField, RecipeTable, SelectorCandidate } from './recipe/schema';
+import { paginateOf } from './recipe/sequence';
 import { primaryTableIndex, tablesOf } from './recipe/tables';
 import type { AnnotatedNode } from './selectors/annotated';
 import { normalize, textContent } from './selectors/aria';
@@ -207,15 +208,14 @@ export async function listParent(session: Session, within: readonly SelectorCand
 }
 
 /**
- * How many primary table containers the page holds now, with the selectors an
- * earlier page resolved. A recipe without an item table counts one per page.
+ * How many containers of a table the page holds now, with the selectors an
+ * earlier page resolved. A table without an item block, or no table, counts
+ * one per page.
  */
-export async function countItems(session: Session, recipe: Recipe, resolved: readonly (ResolvedSelectors | null)[]): Promise<number> {
-  const tables = tablesOf(recipe);
-  const primary = primaryTableIndex(tables);
-  if (primary < 0) return 1;
-  const item = tables[primary]!.item!;
-  const selectors = resolved[primary];
+export async function countItems(session: Session, table: RecipeTable | null, resolved: ResolvedSelectors | null | undefined): Promise<number> {
+  if (!table?.item) return 1;
+  const item = table.item;
+  const selectors = resolved;
   if (!selectors?.item) return 0;
   let base: ElementRef | undefined;
   if (selectors.frame) {
@@ -362,9 +362,9 @@ export async function resolveFramedTarget(
   return { ...result, ...(framed ? { frame: framed } : {}) };
 }
 
-/** Resolve `pagination.target` through the healing ladder, like a page scoped field, inside its frame when it has one. */
+/** Resolve the paginate block's target through the healing ladder, like a page scoped field, inside its frame when it has one. */
 export async function resolvePaginationTarget(session: Session, recipe: Recipe, opts: FramedTargetOptions): Promise<FramedTargetResult> {
-  const stored = recipe.pagination.target;
+  const stored = paginateOf(recipe)?.target;
   if (!stored) return { ref: null, selectors: [], outcome: UNRESOLVED, promotion: null, notes: [] };
   const target: HealTarget = { kind: 'pagination', selectors: stored.selectors, ...(stored.fingerprint ? { fingerprint: stored.fingerprint } : {}) };
   const frame: (HealTarget & { kind: 'frame' }) | null = stored.frame

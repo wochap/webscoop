@@ -49,7 +49,23 @@ export interface RuntimeOptions {
   onDetach?: () => void;
   /** Report typing the browse observer holds back, before browse mode ends. */
   flushBrowse?: () => void;
+  /** Lay the page out for how the panel shows: full panel, rail, strip, compact bar, or nothing. */
+  setLayout?: (layout: PanelLayout) => void;
 }
+
+/** How the panel takes room from the page. */
+export type PanelLayout = 'panel' | 'rail' | 'strip' | 'bar' | 'none';
+
+/** The page layout for the panel's state: another window's owner gives the rail or the strip; a narrow owner the bar, or nothing while a guard waits. */
+export function layoutFor({ host, ui }: { host: RecorderState | null; ui: UiState }): PanelLayout {
+  if (ui.panelMode === 'rail') return 'rail';
+  if (ui.panelMode === 'strip') return 'strip';
+  if (ui.narrow) return host?.guardContext ? 'none' : 'bar';
+  return 'panel';
+}
+
+/** Below this window width the owner shows the compact bar. */
+const NARROW_WIDTH = 640;
 
 const TOAST_MS = { ok: 4000, neutral: 4000, danger: 9000 } as const;
 
@@ -66,9 +82,36 @@ export class Runtime implements Actions {
   /** The hover target and walk depth the panel's hovering card shows. */
   private hovered: { el: Element | null; depth: number } = { el: null, depth: 0 };
 
+  private layout: PanelLayout | null = null;
+  private readonly offLayout: () => void;
+
   constructor(private readonly opts: RuntimeOptions) {
     this.store = opts.store ?? new Store();
     opts.win.addEventListener('keydown', this.onWindowKey, { capture: true });
+    opts.win.addEventListener('keydown', this.onActivity, { capture: true });
+    opts.win.addEventListener('pointerdown', this.onActivity, { capture: true });
+    opts.win.addEventListener('resize', this.onResize);
+    this.onResize();
+    this.offLayout = this.store.subscribe(() => this.syncLayout());
+    this.syncLayout();
+  }
+
+  /** A real pointer or key press while another window owns the panel: this window takes it. Focus events are not used. */
+  private onActivity = (e: Event): void => {
+    if (!e.isTrusted || this.store.get().ui.panelMode === 'owner') return;
+    void this.send({ kind: 'window.activity' });
+  };
+
+  private onResize = (): void => {
+    const narrow = this.win.innerWidth > 0 && this.win.innerWidth < NARROW_WIDTH;
+    if (narrow !== this.store.get().ui.narrow) this.store.setUi({ narrow, ...(narrow ? {} : { sheet: false }) });
+  };
+
+  private syncLayout(): void {
+    const next = layoutFor(this.store.get());
+    if (next === this.layout) return;
+    this.layout = next;
+    this.opts.setLayout?.(next);
   }
 
   private get win(): Window {
@@ -168,6 +211,14 @@ export class Runtime implements Actions {
     switch (msg.kind) {
       case 'draft.state':
         return this.setHost(msg.state);
+      case 'panel.mode':
+        // Another window owns the panel: picking and browse recording stop here.
+        if (msg.mode !== 'owner') {
+          if (this.picking) this.cancelPicking();
+          if (this.browsing) this.stopBrowsing();
+        }
+        this.store.setUi({ panelMode: msg.mode, popup: msg.popup });
+        return;
       case 'test.results':
         this.setHost(msg.state);
         this.setUi({ drawerOpen: true });
@@ -195,12 +246,18 @@ export class Runtime implements Actions {
   /** Stop listening to the page. */
   dispose(): void {
     this.opts.win.removeEventListener('keydown', this.onWindowKey, { capture: true });
+    this.opts.win.removeEventListener('keydown', this.onActivity, { capture: true });
+    this.opts.win.removeEventListener('pointerdown', this.onActivity, { capture: true });
+    this.opts.win.removeEventListener('resize', this.onResize);
+    this.offLayout();
     this.store.setUi({ picking: false, browsing: false });
   }
 
   private setHost(next: RecorderState): void {
     const prev = this.store.get().host;
     this.store.setHost(next);
+    // The draft goes only to the window that owns the panel.
+    if (this.store.get().ui.panelMode !== next.panelMode || this.store.get().ui.popup !== next.popup) this.store.setUi({ panelMode: next.panelMode, popup: next.popup });
     if (next.error && next.error !== prev?.error) this.toast('danger', next.error);
     if (next.saved && next.saved.at !== prev?.saved?.at) {
       this.toast('ok', `Saved ${next.saved.name}${next.saved.path ? ` to ${next.saved.path}` : ''}`);
@@ -209,6 +266,7 @@ export class Runtime implements Actions {
     if (next.levelPick && !prev?.levelPick && !this.store.get().ui.picking) this.startPicking();
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
     if (next.repickStep !== null && (prev?.repickStep ?? null) === null && !this.store.get().ui.picking) this.startPicking();
+    if (next.pickTrigger !== null && (prev?.pickTrigger ?? null) === null && !this.store.get().ui.picking) this.startPicking();
     // The focused re-pick mode opens ready to pick.
     if (next.repickContext && !next.repickContext.picked && !prev?.repickContext && !this.store.get().ui.picking) this.startPicking();
     // The host asks for a typed selector's or an edited field's element: select it like a pick.
@@ -305,9 +363,11 @@ export class Runtime implements Actions {
     const doc = action.el.ownerDocument;
     const { selection } = describeSelection(action.el, [], doc);
     const candidates = selection.candidates.map((c) => ({ ...c, count: resolveLocal(c, undefined, doc).length }));
+    // Typing and choosing an option are both a fill.
+    const kind = action.kind === 'type' || action.kind === 'select' ? 'fill' : action.kind;
     void this.send({
       kind: 'draft.addStep',
-      step: { kind: action.kind, ...('value' in action ? { value: action.value } : {}) },
+      step: { kind, ...('value' in action ? { value: action.value } : {}) },
       selection: { ...selection, candidates, ...this.frameOf(action.el) },
     });
   }

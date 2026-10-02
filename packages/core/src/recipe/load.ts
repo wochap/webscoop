@@ -18,13 +18,14 @@ export class RecipeError extends Error {
   }
 }
 
-/**
- * Bring an older document up to the current schema version. Version 1 is the
- * only version so far, so this is the identity.
- */
-export function migrate(document: Record<string, unknown>): Record<string, unknown> {
-  return document;
-}
+/** How to rewrite a version 1 recipe by hand; there is no automatic migration. */
+export const VERSION_1_GUIDANCE = [
+  'schemaVersion 1 is no longer supported; rewrite the recipe as schemaVersion 2:',
+  '  - move steps into called flows under flows, placed in sequence before the extract or paginate block for first-page steps and inside the paginate block\'s do for every-page steps',
+  '  - turn type and select steps into fill steps',
+  '  - move pagination into a { "paginate": { ...settings, "do": [...] } } block of sequence',
+  '  - list every table in sequence as { "extract": name }',
+].join('\n');
 
 /** Parse and validate a recipe from JSON text or an already parsed value. */
 export function loadRecipe(json: string | unknown, source = '<recipe>'): Recipe {
@@ -40,11 +41,12 @@ export function loadRecipe(json: string | unknown, source = '<recipe>'): Recipe 
     throw new RecipeError(source, 'a recipe must be a JSON object');
   }
   const version = (document as Record<string, unknown>).schemaVersion;
+  if (version === 1) throw new RecipeError(source, VERSION_1_GUIDANCE);
   if (version !== SCHEMA_VERSION) {
     const found = version === undefined ? 'missing' : JSON.stringify(version);
     throw new RecipeError(source, `unsupported schemaVersion ${found}, expected ${SCHEMA_VERSION}`);
   }
-  const result = validateRecipe(migrate(document as Record<string, unknown>));
+  const result = validateRecipe(document);
   if (!result.ok) {
     const count = result.errors.length;
     throw new RecipeError(source, `invalid recipe (${count} error${count === 1 ? '' : 's'})`, result.errors);
@@ -58,11 +60,11 @@ function savedField(field: RecipeField): Partial<RecipeField> {
   return { ...rest, ...(fallback ? { fallback } : {}), ...(hover ? { hover } : {}) };
 }
 
-/** Serialize a recipe as stable, human editable JSON. An empty `steps` list and false `fallback` and `hover` flags are left out, so recipes keep their shape. */
+/** Serialize a recipe as stable, human editable JSON. An empty `flows` list and false `fallback` and `hover` flags are left out, so recipes keep their shape. */
 export function saveRecipe(recipe: Recipe): string {
-  const { steps, ...rest } = recipe;
+  const { flows, ...rest } = recipe;
   const out = {
-    ...(steps.length > 0 ? recipe : rest),
+    ...(flows.length > 0 ? recipe : rest),
     ...(recipe.fields ? { fields: recipe.fields.map(savedField) } : {}),
     ...(recipe.tables ? { tables: recipe.tables.map((t) => ({ ...t, fields: t.fields.map(savedField) })) } : {}),
   };

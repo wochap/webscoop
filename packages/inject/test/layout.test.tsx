@@ -34,14 +34,18 @@ describe('sections', () => {
     expect(plain.container.querySelector('[data-ws="section-toggle"]')).toBeNull();
   });
 
-  it('lays the panel out as header, Recipe, Steps, Pagination, tabs, table header, Rows, Pick, Fields, footer', () => {
+  it('lays the panel out as header, Recipe, Flows, Sequence, tabs, table header, Rows, Pick, Fields, footer', () => {
     const css = (value: string) => ({ strategy: 'css' as const, value, stability: 'medium' as const });
     const field = (name: string, scope: DraftField['scope']): DraftField => ({ name, type: 'text', scope, selectors: [css(`.${name}`)], optional: false, key: false, count: 10, sample: name });
-    const step = { kind: 'click' as const, target: { selectors: [css('button')] }, optional: false, when: 'first-page' as const, count: 1 };
+    const step = { kind: 'click' as const, target: { selectors: [css('button')] }, optional: false, window: 'same' as const, count: 1 };
     const draft = validateDraft({
       ...newDraft(),
-      steps: [step, step],
-      pagination: { kind: 'next', limit: 3, stopRules: [], delayMs: 0 },
+      flows: [
+        { name: 'setup', steps: [step, step] },
+        { name: 'tab', steps: [step] },
+      ],
+      activeFlow: 0,
+      pagination: { kind: 'next', target: { selectors: [css('a.next')] }, limit: 3, stopRules: [], delayMs: 0, table: 'results' },
       tables: [
         { name: 'results', item: { selectors: [css('.card')], exclude: [], count: 10, total: 10 }, fields: [field('title', 'item')] },
         { name: 'page', item: null, fields: [field('heading', 'page')] },
@@ -50,7 +54,7 @@ describe('sections', () => {
       form: 'tables',
     });
     const p = renderPanel(baseState(draft));
-    const order = ['panel-mode', 'section-recipe', 'section-steps', 'section-pagination', 'tabs', 'table-header', 'section-rows', 'section-pick', 'section-fields', 'footer-save'];
+    const order = ['panel-mode', 'section-recipe', 'section-flows', 'section-sequence', 'tabs', 'table-header', 'section-rows', 'section-pick', 'section-fields', 'footer-save'];
     const nodes = order.map((ws) => p.q(ws)!);
     for (const [i, node] of nodes.entries()) expect(node, order[i]).not.toBeNull();
     for (let i = 1; i < nodes.length; i++) expect(nodes[i - 1]!.compareDocumentPosition(nodes[i]!) & Node.DOCUMENT_POSITION_FOLLOWING, `${order[i - 1]} before ${order[i]}`).toBeTruthy();
@@ -58,9 +62,11 @@ describe('sections', () => {
     // Header and footer sit outside the scrolling body.
     expect(p.q('panel-body')!.contains(p.q('panel-mode'))).toBe(false);
     expect(p.q('panel-body')!.contains(p.q('footer-save'))).toBe(false);
-    expect(p.q('section-pagination')!.dataset.collapsed).toBe('true');
+    expect(p.q('section-sequence')!.dataset.collapsed).toBe('true');
     expect(p.q('section-recipe')!.dataset.collapsed).toBeUndefined();
-    expect(p.q('section-steps')!.dataset.collapsed).toBeUndefined();
+    expect(p.q('section-flows')!.dataset.collapsed).toBeUndefined();
+    expect(p.q('table-pages-badge')).not.toBeNull();
+    expect(p.q('footer-count')!.textContent).toBe('2 tables · 2 fields · 2 flows · 3 steps');
   });
 });
 
@@ -94,7 +100,7 @@ describe('shell', () => {
 
   it('shows unsaved changes, then the saved name, in the footer', () => {
     const dirty = renderPanel(baseState({ ...newDraft(), dirty: true }));
-    expect(dirty.q('footer-status')!.textContent).toBe('Unsaved changes');
+    expect(dirty.q('footer-status')!.textContent).toBe('Unsaved');
     cleanup();
     const saved = renderPanel({ ...baseState(), saved: { name: 'shop-catalog', at: '2026-09-27T00:00:00Z' } });
     expect(saved.q('footer-status')!.textContent).toBe('Saved shop-catalog');

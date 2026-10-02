@@ -138,7 +138,7 @@ test('tabs reorder by drag, a new primary table is announced, and section collap
   await panel.addField('title');
   expect((await r.state()).host!.draft.tables[1]!.item!.count).toBe(6);
 
-  // Pagination on: the first list drives it.
+  // Pagination on: the active table, questions, drives it.
   await r.page.evaluate(() => {
     const link = document.createElement('a');
     link.id = 'next-page';
@@ -150,23 +150,29 @@ test('tabs reorder by drag, a new primary table is announced, and section collap
   await r.clickPanel(ws('pick-pagination'));
   await r.until((s) => s.host?.draft.pagination);
   const badge = (table: string) => r.count(`${ws('tab')}[data-table="${table}"] ${ws('tab-drives-pagination')}`);
-  expect(await badge('products')).toBe(1);
-  expect(await badge('questions')).toBe(0);
+  expect(await badge('questions')).toBe(1);
+  expect(await badge('products')).toBe(0);
 
-  // Drag questions before products: the order is saved, and the new primary table is announced.
+  // Drag questions before products: the order is saved, and questions still drives pagination.
   await panel.reorderTabs(1, 0);
   await r.until((s) => s.host?.draft.tables.map((t) => t.name).join() === 'questions,products');
   expect(await panel.tabNames()).toEqual(['questions', 'products']);
   expect(await badge('questions')).toBe(1);
-  expect(await badge('products')).toBe(0);
-  await expect.poll(async () => (await r.query(ws('panel-toast')))?.text ?? '').toContain('questions now drives pagination');
 
-  // Collapse Steps, then navigate: the panel comes back with Steps still collapsed.
-  await r.clickPanel(`${ws('section-steps')} ${ws('section-toggle')}`);
-  await r.until((s) => s.host?.panel.collapsed.steps === true);
+  // Use for pagination on products moves the driving table.
+  await panel.selectTab('products');
+  await r.clickPanel(ws('table-menu'));
+  await r.clickPanel(ws('table-menu-pagination'));
+  await r.until((s) => s.host?.draft.pagination?.table === 'products');
+  expect(await badge('products')).toBe(1);
+  expect(await badge('questions')).toBe(0);
+
+  // Collapse Flows, then navigate: the panel comes back with Flows still collapsed.
+  await r.clickPanel(`${ws('section-flows')} ${ws('section-toggle')}`);
+  await r.until((s) => s.host?.panel.collapsed.flows === true);
   await r.page.goto(`http://127.0.0.1:${port}/catalog?tier=1&mixed=1`);
   await r.until((s) => s.host?.url.includes('tier=1'));
-  await expect.poll(async () => (await r.query(ws('section-steps')))?.attrs['data-collapsed'] ?? null).toBe('true');
+  await expect.poll(async () => (await r.query(ws('section-flows')))?.attrs['data-collapsed'] ?? null).toBe('true');
 
   const path = await panel.save();
   expect((await r.closeWindow()).code).toBe(0);

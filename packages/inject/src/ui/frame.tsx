@@ -9,12 +9,12 @@ import { Kbd } from './shell';
 /** A frame target's key: its primary candidate as `strategy=value`. */
 export const frameKey = (frame: FrameTarget): string => `${frame.selectors[0]?.strategy}=${frame.selectors[0]?.value}`;
 
-/** Every frame target of the state: the selection's, then the tables', the steps', and the pagination target's. */
+/** Every frame target of the state: the selection's, then the tables', the flows' triggers and steps', and the pagination target's. */
 function framesOf(host: RecorderState): FrameTarget[] {
   return [
     host.selected?.selection.frame,
     ...host.draft.tables.map((t) => t.frame),
-    ...host.draft.steps.map((s) => s.target?.frame),
+    ...host.draft.flows.flatMap((f) => [f.trigger?.frame, ...f.steps.map((s) => s.target?.frame)]),
     host.draft.pagination?.target?.frame,
   ].filter((f): f is FrameTarget => !!f);
 }

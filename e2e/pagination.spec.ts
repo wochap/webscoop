@@ -9,12 +9,17 @@ type Kind = 'url' | 'next' | 'more' | 'scroll';
 
 const role = (value: string) => ({ strategy: 'role' as const, value, stability: 'stable' as const });
 
+type Paginate = Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'];
+
+/** The recipe's paginate block settings, to change in place. */
+const block = (r: RecipeInput): Paginate => (r.sequence.find((b) => 'paginate' in b) as { paginate: Paginate }).paginate;
+
 /** The paged reference recipe for one pagination kind, with extra catalog query switches. */
 async function paged(scoop: Scoop, name: string, kind: Kind, change: (r: RecipeInput) => void = () => {}): Promise<string> {
   const recipe = referenceRecipe(scoop.playground.port, PAGED_RECIPE);
   recipe.name = name;
   recipe.vars = recipe.vars!.map((v) => (v.name === 'mode' ? { ...v, default: kind } : v));
-  const pagination = recipe.pagination!;
+  const pagination = block(recipe);
   pagination.kind = kind;
   if (kind === 'more') pagination.target = { selectors: [role('button|Load more')] };
   if (kind === 'scroll') delete pagination.target;
@@ -79,7 +84,7 @@ test('--var page=3 --pages 2 extracts pages 3 and 4, then stops on no new items'
 test('a repeating last page stops on first-item-repeats at page 3', async ({ scoop }) => {
   const name = await paged(scoop, 'paged-repeats', 'url', (r) => {
     r.url += '&lastPageRepeats=1';
-    r.pagination!.stopRules = ['first-item-repeats'];
+    block(r).stopRules = ['first-item-repeats'];
   });
   const result = await scoop.run(['run', name]);
   expect(result.code, result.stderr).toBe(0);
@@ -91,7 +96,7 @@ test('a repeating last page stops on first-item-repeats at page 3', async ({ sco
 test('a repeating last page without stop rules stops on the loop guard', async ({ scoop }) => {
   const name = await paged(scoop, 'paged-loop', 'next', (r) => {
     r.url += '&lastPageRepeats=1';
-    r.pagination!.stopRules = [];
+    block(r).stopRules = [];
   });
   const result = await scoop.run(['run', name]);
   expect(result.code, result.stderr).toBe(0);
@@ -115,7 +120,7 @@ test('nextRel=0 on tier 1 heals the next link by fingerprint and writes it back'
   const name = await paged(scoop, 'paged-heal', 'next', (r) => {
     r.url += '&nextRel=0';
     r.vars = r.vars!.map((v) => (v.name === 'tier' ? { ...v, default: '1' } : v));
-    r.pagination!.target!.selectors = [
+    block(r).target!.selectors = [
       { strategy: 'css', value: 'a[rel="next"]', stability: 'medium' },
       { strategy: 'css', value: 'a.pager-next', stability: 'medium' },
     ];
@@ -125,7 +130,7 @@ test('nextRel=0 on tier 1 heals the next link by fingerprint and writes it back'
   expect(JSON.parse(result.stdout)).toHaveLength(24);
   expect(result.stderr).toMatch(/healed pagination: fuzzy/);
   const saved = JSON.parse(await readFile(`${scoop.home}/recipes/${name}.json`, 'utf8')) as RecipeInput;
-  const primary = saved.pagination!.target!.selectors[0]!;
+  const primary = block(saved).target!.selectors[0]!;
   expect(primary.value).not.toBe('a[rel="next"]');
   expect(primary.value).not.toBe('a.pager-next');
 });
@@ -161,7 +166,7 @@ test.describe('a recipe with tables', () => {
     recipe.name = name;
     recipe.url = `${recipe.url}&paginate=url&page={page}${query}`;
     recipe.vars = [...recipe.vars!, { name: 'page', type: 'string', default: '1' }];
-    recipe.pagination = { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 2 };
+    recipe.sequence = [{ paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 2, do: recipe.sequence as { extract: string }[] } }];
     return scoop.writeRecipe(recipe);
   }
 

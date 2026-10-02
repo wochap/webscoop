@@ -27,14 +27,16 @@ import { newTableName, tableNameProblem } from "./tables";
 
 type Suggestion = NonNullable<SelectedView["suggestion"]>;
 
-/** The step "record as step" makes from a picked element: typing for text boxes, a click for anything else. */
+/** The step "Add to flow" makes from a picked element: a fill with its current value for form fields, a click for anything else. */
 export function recordAsStep(
   tag: string,
   attrs: Record<string, string>,
-): { kind: "click" } | { kind: "type"; value: string } {
+): { kind: "click" } | { kind: "fill"; value: string } {
   const type = (attrs.type ?? "").toLowerCase();
-  const typed =
+  const filled =
     tag === "textarea" ||
+    tag === "select" ||
+    attrs.contenteditable === "true" ||
     (tag === "input" &&
       [
         "",
@@ -46,7 +48,7 @@ export function recordAsStep(
         "password",
         "number",
       ].includes(type));
-  return typed ? { kind: "type", value: "" } : { kind: "click" };
+  return filled ? { kind: "fill", value: attrs.value ?? "" } : { kind: "click" };
 }
 
 /**
@@ -547,8 +549,8 @@ function SelectionBody({
       ) : (
         <PickActionGrid
           repicking={host.repick !== null}
-          canAdd={nameError === null && !blocked && !frameRefusal}
-          hint={hint}
+          canAdd={nameError === null && !blocked && !frameRefusal && !host.popup}
+          hint={host.popup ? "Fields extract from the main window" : hint}
           onAddField={() =>
             void actions.send({
               kind: "draft.addField",
@@ -564,6 +566,13 @@ function SelectionBody({
               ),
             })
           }
+          onAwaitUser={() =>
+            void actions.send({
+              kind: "draft.addStep",
+              step: { kind: "await-user", until: "disappears" },
+            })
+          }
+          flowName={host.draft.activeFlow !== null ? (host.draft.flows[host.draft.activeFlow]?.name ?? null) : null}
           onPagination={() =>
             void actions.send({ kind: "draft.markPagination" })
           }

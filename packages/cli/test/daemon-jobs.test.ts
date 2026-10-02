@@ -1,4 +1,6 @@
+import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
@@ -237,6 +239,52 @@ describe('attention in the daemon', () => {
     expect(await runB).toBe(ExitCode.Error);
     const unknown = client(dir, daemon);
     expect(await main(['attention', 'continue', 'nope'], unknown)).toBe(ExitCode.Error);
+  });
+});
+
+describe('await-user in the daemon', () => {
+  const loginButton = { selectors: [{ strategy: 'css' as const, value: '#login', stability: 'medium' as const }] };
+  /** The shop shows a "Log in" button until the test logs the user in. */
+  const loginPage = () => h('html', {}, h('body', {}, h('button', { id: 'login' }, 'Log in')));
+  const awaitRecipe = {
+    flows: [{ name: 'login', steps: [{ kind: 'await-user' as const, target: loginButton, until: 'disappears' as const, label: 'Log in to SOL' }] }],
+    sequence: [{ flow: 'login' }, { extract: 'items' }],
+  };
+  const logInAll = (browser: FakeBrowser) => {
+    browser.setPage(SHOP_PAGE, shopCards(1));
+    for (const session of browser.sessions) session.replaceDom(shopCards(1));
+  };
+
+  it('prompts Solved? for an await-user step, fires the hooks with the window URL and the label, and checks at once on Enter', async () => {
+    const out = join(tmpdir(), `webscoop-await-${process.pid}-${Date.now()}`);
+    const dir = await shopHome({ notify: false, hooks: { 'attention.needed': `cat > ${out}` } }, awaitRecipe);
+    const tty = fakeTty();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: loginPage() });
+    const io = client(dir, sharedDaemon(), { browser, tty });
+    const run = main(['run', 'shop', '--guard-timeout', '600000'], io);
+    await until(() => tty.output().includes('Solved? [Y/n/a]'));
+    logInAll(browser);
+    const answered = Date.now();
+    tty.type('');
+    expect(await run).toBe(ExitCode.Ok);
+    expect(Date.now() - answered).toBeLessThan(900);
+    expect(JSON.parse(io.out())).toHaveLength(1);
+    await until(() => existsSync(out) && statSync(out).size > 0);
+    expect(JSON.parse(await readFile(out, 'utf8'))).toMatchObject({ event: 'attention.needed', reason: 'await-user', url: SHOP_PAGE, label: 'Log in to SOL' });
+  });
+
+  it('lets a second run waiting on the same login continue without asking once the first user logged in', async () => {
+    const dir = await shopHome({ notify: false, daemon: { concurrency: 2 } }, awaitRecipe);
+    const daemon = sharedDaemon();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: loginPage() });
+    const a = client(dir, daemon, { browser });
+    const b = client(dir, daemon, { browser });
+    const runA = main(['run', 'shop', '--guard-timeout', '600000'], a);
+    const runB = main(['run', 'shop', '--guard-timeout', '600000'], b);
+    await until(() => browser.sessions.length === 2 && (a.err() + b.err()).includes('waiting for run'));
+    logInAll(browser);
+    expect(await runA).toBe(ExitCode.Ok);
+    expect(await runB).toBe(ExitCode.Ok);
   });
 });
 

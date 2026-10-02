@@ -7,12 +7,13 @@ import type {
   OpenOptions,
   PageInfo,
   ReadOptions,
+  RecorderWindow,
   SerializedElement,
   SerializedNode,
   Session,
   SettleOptions,
 } from '../ports';
-import { PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
+import { MAIN_WINDOW, PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
 import type { SelectorCandidate } from '../recipe/schema';
 import { compileCss } from './css';
 import { accessibleName, indexTree, innerHtml, normalize, roleOf, textContent, type DomNode } from './dom';
@@ -72,8 +73,17 @@ export interface FakePage {
   later?: { afterMs: number; dom: SerializedElement };
 }
 
-/** A fake page's reaction to an action: the element acted on (null for a key press without one) and the value typed, chosen, or pressed. */
-export type FakeAction = (el: SerializedElement | null, value: string, url: string) => SerializedElement | { redirect: string } | void;
+/**
+ * A fake page's reaction to an action: the element acted on (null for a key
+ * press without one) and the value typed, chosen, or pressed. `popup` opens
+ * that URL in a new window, as `window.open` would; `close` closes the window
+ * the action ran in, as `window.close` would.
+ */
+export type FakeAction = (
+  el: SerializedElement | null,
+  value: string,
+  url: string,
+) => SerializedElement | { redirect: string } | { popup: string } | { close: true } | void;
 
 /** One action a fake session performed, for assertions. */
 export interface FakeActionRecord {
@@ -108,8 +118,46 @@ export class FakeSession implements Session {
   private loadedAt = 0;
   /** Last element filled or clicked, where a key press without a target goes. */
   private focusedNode: DomNode | null = null;
+  private readonly popupListeners = new Set<(popup: Session) => void>();
+  protected readonly windowListeners = new Set<(win: RecorderWindow) => void>();
+  /** Popups this window opened, oldest first. */
+  readonly popups: FakeInteractiveSession[] = [];
+  /** `MAIN_WINDOW` for a window the browser opened, `popup-N` for a popup. */
+  readonly windowId: string;
 
-  constructor(protected readonly browser: FakeBrowser) {}
+  constructor(
+    protected readonly browser: FakeBrowser,
+    /** The window that opened this one, for a popup. */
+    readonly opener: FakeSession | null = null,
+  ) {
+    this.windowId = opener ? `popup-${browser.popups.length + 1}` : MAIN_WINDOW;
+  }
+
+  /** The window at the top of the opener chain. */
+  protected top(): FakeSession {
+    return this.opener ? this.opener.top() : this;
+  }
+
+  onPopup(cb: (popup: Session) => void): () => void {
+    this.popupListeners.add(cb);
+    return () => this.popupListeners.delete(cb);
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  /** Tell this window's listeners and its opener's about a popup, so the run's main window hears of popups of popups. */
+  protected announce(popup: FakeInteractiveSession, opener: string = this.windowId): void {
+    for (const cb of this.popupListeners) cb(popup);
+    for (const cb of this.windowListeners) cb({ id: popup.windowId, opener, session: popup });
+    this.opener?.announce(popup, opener);
+  }
+
+  /** Replace the current page's DOM in place, as a page's script would. */
+  replaceDom(dom: SerializedElement): void {
+    this.load(this.currentUrl, dom);
+  }
 
   private load(url: string, dom: SerializedElement): void {
     const { root } = indexTree(dom);
@@ -165,8 +213,42 @@ export class FakeSession implements Session {
     const result = handler(node ? node.el : null, value, this.currentUrl);
     if (!result) return false;
     if ('redirect' in result) this.pendingUrl = new URL(result.redirect, this.currentUrl).href;
+    else if ('popup' in result) this.openPopup(new URL(result.popup, this.currentUrl).href);
+    else if ('close' in result) void this.userClose();
     else this.load(this.currentUrl, result);
     return true;
+  }
+
+  /** Open a URL in a new window, as `window.open` would. */
+  openPopup(url: string): FakeInteractiveSession {
+    const popup = new FakeInteractiveSession(this.browser, this);
+    this.browser.openSessions++;
+    this.browser.popups.push(popup);
+    this.browser.sessionsByWindow.set(popup.windowId, popup);
+    this.popups.push(popup);
+    const { url: final, page } = this.follow(url);
+    this.browser.visited.push(url);
+    popup.enterPage(final, page);
+    this.announce(popup);
+    return popup;
+  }
+
+  /** Load a page into a fresh window. */
+  protected enterPage(url: string, page: FakePage): void {
+    this.enter(url, page);
+  }
+
+  private readonly closedListeners = new Set<() => void>();
+
+  onClosed(cb: () => void): () => void {
+    this.closedListeners.add(cb);
+    return () => this.closedListeners.delete(cb);
+  }
+
+  /** Play the user, or the page itself, closing the window. */
+  async userClose(): Promise<void> {
+    await this.close();
+    for (const cb of this.closedListeners) cb();
   }
 
   async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
@@ -395,9 +477,8 @@ export class FakeSession implements Session {
 export class FakeInteractiveSession extends FakeSession implements InteractiveSession {
   readonly injected: string[] = [];
   readonly dispatched: unknown[] = [];
-  readonly exposed = new Map<string, (msg: unknown) => Promise<unknown>>();
+  readonly exposed = new Map<string, (msg: unknown, windowId: string) => Promise<unknown>>();
   private readonly navigated = new Set<(url: string) => void>();
-  private readonly closedListeners = new Set<() => void>();
 
   override async goto(url: string, opts: GotoOptions): Promise<PageInfo> {
     const info = await super.goto(url, opts);
@@ -409,8 +490,13 @@ export class FakeInteractiveSession extends FakeSession implements InteractiveSe
     this.injected.push(source);
   }
 
-  async expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void> {
+  async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {
     this.exposed.set(name, fn);
+  }
+
+  onWindow(cb: (win: RecorderWindow) => void): () => void {
+    this.windowListeners.add(cb);
+    return () => this.windowListeners.delete(cb);
   }
 
   async dispatch(msg: unknown): Promise<void> {
@@ -423,27 +509,16 @@ export class FakeInteractiveSession extends FakeSession implements InteractiveSe
     return () => this.navigated.delete(cb);
   }
 
-  onClosed(cb: () => void): () => void {
-    this.closedListeners.add(cb);
-    return () => this.closedListeners.delete(cb);
-  }
-
   async geometry(ref: ElementRef): Promise<Geometry> {
     const el = (ref as FakeRef).node.el as SerializedElement & { bbox?: Geometry };
     return el.bbox ? { ...el.bbox } : { x: 0, y: 0, w: 0, h: 0 };
   }
 
-  /** Play the page calling `window[name](msg)`. */
+  /** Play the page calling `window[name](msg)`; in a popup the binding is the main window's, as with a context-level binding. */
   async callHost(msg: unknown, name = '__webscoopHost'): Promise<unknown> {
-    const fn = this.exposed.get(name);
+    const fn = (this.top() as FakeInteractiveSession).exposed.get(name);
     if (!fn) throw new Error(`no binding named ${name}`);
-    return fn(msg);
-  }
-
-  /** Play the user closing the browser window. */
-  async userClose(): Promise<void> {
-    await this.close();
-    for (const cb of this.closedListeners) cb();
+    return fn(msg, this.windowId);
   }
 
   /** Messages dispatched so far with the given kind. */
@@ -464,6 +539,9 @@ export class FakeBrowser implements BrowserPort {
   readonly actions: FakeActionRecord[] = [];
   readonly openedProfiles: string[] = [];
   openSessions = 0;
+  /** Every popup opened by any window, oldest first. */
+  readonly popups: FakeInteractiveSession[] = [];
+  readonly sessionsByWindow = new Map<string, FakeInteractiveSession>();
 
   constructor(pages: Record<string, FakePage | SerializedElement> = {}) {
     for (const [url, page] of Object.entries(pages)) this.setPage(url, page);

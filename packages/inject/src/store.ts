@@ -1,4 +1,4 @@
-import type { Crumb, PageMessage, Path, RecorderState } from '@webscoop/core/page';
+import type { BlockPath, Crumb, PageMessage, PanelMode, Path, RecorderState } from '@webscoop/core/page';
 
 export type Mode = 'idle' | 'picking' | 'browsing' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
 
@@ -16,8 +16,28 @@ export interface UiState {
   trail: Crumb[];
   /** Field row that has keyboard focus, for Alt+Up and Alt+Down. */
   focusedField: number | null;
-  /** Step row that has keyboard focus, for Alt+Up and Alt+Down. */
-  focusedStep: number | null;
+  /** Step row that has keyboard focus, for Alt+Up and Alt+Down: its flow and index. */
+  focusedStep: StepRef | null;
+  /** Step open in its edit state. */
+  editingStep: StepRef | null;
+  /** Sequence block that has keyboard focus, for Alt+Up and Alt+Down. */
+  focusedBlock: BlockPath | null;
+  /** The Alt+F flow switcher is open. */
+  switcher: boolean;
+  /** Flows expanded besides the active one, by name. */
+  openFlows: string[];
+  /** The paginate block's settings are expanded. */
+  paginateOpen: boolean;
+  /** How this window shows the panel, as the host last said. */
+  panelMode: PanelMode;
+  /** This window is a popup of the session. */
+  popup: boolean;
+  /** The window is narrower than 640 pixels: the owner shows the compact bar. */
+  narrow: boolean;
+  /** The compact bar's sheet is open. */
+  sheet: boolean;
+  /** A recipe without tables shows the tab bar anyway, after "Add a table". */
+  showTables: boolean;
   /** Table tab that has keyboard focus, for Alt+Left, Alt+Right, and F2. */
   focusedTab: number | null;
   /** Table tab being renamed inline. */
@@ -35,6 +55,12 @@ export interface UiState {
   toasts: Toast[];
 }
 
+/** A step by its flow index and its index in that flow. */
+export interface StepRef {
+  flow: number;
+  index: number;
+}
+
 export interface HoverInfo {
   depth: number;
   similar: number;
@@ -48,6 +74,16 @@ export const initialUi: UiState = {
   trail: [],
   focusedField: null,
   focusedStep: null,
+  editingStep: null,
+  focusedBlock: null,
+  switcher: false,
+  openFlows: [],
+  paginateOpen: false,
+  panelMode: 'owner',
+  popup: false,
+  narrow: false,
+  sheet: false,
+  showTables: false,
   focusedTab: null,
   renamingTab: null,
   menu: null,
@@ -102,7 +138,7 @@ export function modeOf({ host, ui }: Snapshot): Mode {
   if (host?.proposal) return host.proposal.origin === 'edit' ? 'editing' : 'items';
   if (host?.editing) return 'editing';
   if (host?.selected) return 'selected';
-  if (ui.focusedField !== null || ui.focusedStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
+  if (ui.focusedField !== null || ui.editingStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
   return 'idle';
 }
 

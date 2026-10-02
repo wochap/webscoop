@@ -6,13 +6,17 @@ import {
   descendantsOf,
   fingerprint,
   loadRecipe,
-  replaySteps,
+  runFlow,
   RunFailure,
+  RunWindows,
+  type FlowContext,
   type Promotion,
   type Recipe,
   type RecipeInput,
   type Resolver,
   type SerializedElement,
+  type Session,
+  type Step,
   type StepReport,
 } from '../src';
 import { FakeBrowser, h, type FakePage } from '../src/testing';
@@ -25,8 +29,15 @@ function gated(): SerializedElement {
   return h('html', {}, h('body', {}, h('div', { id: 'modal' }, h('button', { id: 'accept', class: 'consent' }, 'Accept all'))));
 }
 
-function withSteps(steps: RecipeInput['steps'], extra: Partial<RecipeInput> = {}): Recipe {
-  return loadRecipe(recipe({ url: PAGE, vars: [{ name: 'q', type: 'string' }], steps, ...extra }));
+type StepInput = Omit<Step, 'window' | 'optional'> & Partial<Pick<Step, 'window' | 'optional'>>;
+
+function withSteps(steps: StepInput[], extra: Partial<RecipeInput> = {}): Recipe {
+  return loadRecipe(recipe({ url: PAGE, vars: [{ name: 'q', type: 'string' }], flows: [{ name: 'setup', steps }], sequence: [{ flow: 'setup' }, { extract: 'items' }], ...extra }));
+}
+
+/** Run the recipe's first flow on a session, as the runner would. */
+function replaySteps(session: Session, recipe: Recipe, ctx: Omit<FlowContext, 'windows'> & { windows?: RunWindows }) {
+  return runFlow(recipe, recipe.flows[0]!, session, { windows: new RunWindows(session), ...ctx });
 }
 
 async function open(pages: Record<string, FakePage>, url = PAGE) {
@@ -38,7 +49,7 @@ async function open(pages: Record<string, FakePage>, url = PAGE) {
 
 const consentPage = (): FakePage => ({ dom: gated(), on: { click: (el) => (el?.attrs.id === 'accept' ? catalog(cards(3)) : undefined) } });
 
-describe('replaySteps', () => {
+describe('runFlow', () => {
   it('clicks a consent button and settles on the revealed page', async () => {
     const { browser, session } = await open({ [PAGE]: consentPage() });
     const events: StepReport[] = [];
@@ -51,7 +62,7 @@ describe('replaySteps', () => {
     expect(result.info?.url).toBe(PAGE);
     expect(browser.clicks).toEqual(['css=#accept >> nth=0']);
     expect(await session.resolve(css('article'))).toHaveLength(3);
-    expect(result.steps).toEqual([{ index: 0, kind: 'click', page: 1, outcome: 'ok', heal: { kind: 'candidate', index: 0 }, candidate: css('#accept') }]);
+    expect(result.steps).toEqual([{ flow: 'setup', index: 0, kind: 'click', page: 1, outcome: 'ok', heal: { kind: 'candidate', index: 0 }, candidate: css('#accept') }]);
     expect(events).toEqual(result.steps);
   });
 
@@ -64,7 +75,7 @@ describe('replaySteps', () => {
     });
     const navigated: string[] = [];
     const recipe = withSteps([
-      { kind: 'type', target: { selectors: [css('input[name="q"]')] }, value: '{q}' },
+      { kind: 'fill', target: { selectors: [css('input[name="q"]')] }, value: '{q}' },
       { kind: 'press', target: { selectors: [css('input[name="q"]')] }, value: 'Enter' },
     ]);
     const result = await replaySteps(session, recipe, {
@@ -80,10 +91,10 @@ describe('replaySteps', () => {
     expect(result.steps.map((s) => s.outcome)).toEqual(['ok', 'ok']);
   });
 
-  it('chooses an option and presses a key on the focused element', async () => {
+  it('fills a native select by option label and presses a key on the focused element', async () => {
     const dom = h('html', {}, h('body', {}, h('select', { id: 'sort' }, h('option', { value: 'name' }, 'Name'), h('option', { value: 'price' }, 'Price'))));
     const { browser, session } = await open({ [PAGE]: { dom } });
-    await replaySteps(session, withSteps([{ kind: 'select', target: { selectors: [css('#sort')] }, value: 'Price' }, { kind: 'press', value: 'Escape' }]), {
+    await replaySteps(session, withSteps([{ kind: 'fill', target: { selectors: [css('#sort')] }, value: 'Price' }, { kind: 'press', value: 'Escape' }]), {
       page: 1,
       timeoutMs: 1000,
       cache: new Map(),
@@ -117,14 +128,15 @@ describe('replaySteps', () => {
     expect(skipped.steps[0]).toMatchObject({ outcome: 'skipped', heal: { kind: 'unresolved' }, candidate: null, notes: ['found no element'] });
 
     const events: StepReport[] = [];
-    const failing = replaySteps(session, withSteps([{ kind: 'type', target: accept, value: 'x' }]), {
+    const failing = replaySteps(session, withSteps([{ kind: 'fill', target: accept, value: 'x' }]), {
       page: 1,
       timeoutMs: 1000,
       cache: new Map(),
       onEvent: (r) => events.push(r),
     });
     await expect(failing).rejects.toBeInstanceOf(RunFailure);
-    await expect(failing).rejects.toMatchObject({ reason: 'missing-required', fields: ['step:0'] });
+    await expect(failing).rejects.toMatchObject({ reason: 'missing-required', fields: ['setup:0'] });
+    await expect(failing).rejects.toThrow(/flow "setup"/);
     expect(events[0]!.outcome).toBe('failed');
   });
 
@@ -135,30 +147,24 @@ describe('replaySteps', () => {
     ).rejects.toMatchObject({ reason: 'missing-required', fields: ['list'] });
   });
 
-  it('runs first-page steps on page 1 only and every-page steps on every page', async () => {
-    const { browser, session } = await open({ [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'accept' }, 'A'), h('button', { id: 'tab' }, 'T'))) } });
-    const recipe = withSteps([
-      { kind: 'click', target: accept },
-      { kind: 'click', target: { selectors: [css('#tab')] }, when: 'every-page' },
-    ]);
-    const cache = new Map();
-    const one = await replaySteps(session, recipe, { page: 1, timeoutMs: 1000, cache });
-    const two = await replaySteps(session, recipe, { page: 2, timeoutMs: 1000, cache });
-    expect(one.steps.map((s) => s.index)).toEqual([0, 1]);
-    expect(two.steps.map((s) => [s.index, s.page])).toEqual([[1, 2]]);
-    expect(browser.clicks).toHaveLength(3);
-  });
-
-  it('reuses the selectors an every-page step settled on without running the ladder again', async () => {
+  it('reuses the selectors a step settled on in later runs without running the ladder again', async () => {
     const { session } = await open({ [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'tab' }, 'T'))) } });
     let ladderRuns = 0;
     const counting: Resolver = { name: 'counting', resolve: (t, c) => (ladderRuns++, candidatesResolver.resolve(t, c)) };
-    const recipe = withSteps([{ kind: 'click', target: { selectors: [css('#tab')] }, when: 'every-page' }]);
+    const recipe = withSteps([{ kind: 'click', target: { selectors: [css('#tab')] } }]);
     const cache = new Map();
     await replaySteps(session, recipe, { page: 1, timeoutMs: 1000, cache, ladder: [counting] });
-    await replaySteps(session, recipe, { page: 2, timeoutMs: 1000, cache, ladder: [counting] });
+    const two = await replaySteps(session, recipe, { page: 2, timeoutMs: 1000, cache, ladder: [counting] });
     expect(ladderRuns).toBe(1);
-    expect(cache.get(0)).toEqual({ selectors: [css('#tab')] });
+    expect(cache.get('setup:0')).toEqual({ selectors: [css('#tab')] });
+    expect(two.steps.map((s) => [s.index, s.page])).toEqual([[0, 2]]);
+  });
+
+  it('runs a checkpoint before each step', async () => {
+    const { session } = await open({ [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'accept' }, 'A'))) } });
+    let checkpoints = 0;
+    await replaySteps(session, withSteps([{ kind: 'click', target: accept }, { kind: 'wait', value: '1' }]), { page: 1, timeoutMs: 1000, cache: new Map(), checkpoint: async () => void checkpoints++ });
+    expect(checkpoints).toBe(2);
   });
 
   it('heals a renamed consent button by fingerprint and promotes it', async () => {
@@ -179,7 +185,66 @@ describe('replaySteps', () => {
     expect(result.steps[0]).toMatchObject({ outcome: 'healed', heal: { kind: 'fuzzy' } });
     expect(browser.clicks).toHaveLength(1);
     expect(promotions).toHaveLength(1);
-    expect(promotions[0]!.target).toMatchObject({ kind: 'step', index: 0 });
+    expect(promotions[0]!.target).toMatchObject({ kind: 'step', flow: 'setup', index: 0 });
     expect(promotions[0]!.newPrimary).not.toEqual(css('#accept'));
+  });
+});
+
+describe('runFlow windows', () => {
+  const LOGIN = 'https://shop.test/login';
+  const loginButton = { selectors: [css('#login')] };
+  const user = { selectors: [css('#user')] };
+
+  /** A page whose "Log in" button opens a login popup with a user input. */
+  function withPopup(): Record<string, FakePage> {
+    return {
+      [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'login' }, 'Log in'))), on: { click: (el) => (el?.attrs.id === 'login' ? { popup: '/login' } : undefined) } },
+      [LOGIN]: { dom: h('html', {}, h('body', {}, h('input', { id: 'user' }))) },
+    };
+  }
+
+  it('fills the input of the popup an earlier step opened', async () => {
+    const { browser, session } = await open(withPopup());
+    const result = await replaySteps(session, withSteps([{ kind: 'click', target: loginButton }, { kind: 'fill', target: user, value: 'u', window: 'popup' }]), { page: 1, timeoutMs: 1000, cache: new Map() });
+    expect(result.steps.map((s) => s.outcome)).toEqual(['ok', 'ok']);
+    expect(browser.popups).toHaveLength(1);
+    expect(browser.actions).toEqual([{ kind: 'fill', target: 'css=#user >> nth=0', value: 'u' }]);
+    expect(await browser.popups[0]!.url()).toBe(LOGIN);
+  });
+
+  it('fails a required popup step with missing-required when no popup opens in time', async () => {
+    const { session } = await open({ [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'login' }, 'Log in'))) } });
+    const run = replaySteps(session, withSteps([{ kind: 'click', target: loginButton }, { kind: 'fill', target: user, value: 'u', window: 'popup', label: 'user' }]), { page: 1, timeoutMs: 30, cache: new Map() });
+    await expect(run).rejects.toMatchObject({ reason: 'missing-required', fields: ['user'] });
+    await expect(run).rejects.toThrow(/found no popup within 30 ms/);
+  });
+
+  it('does not use a popup opened before the flow started', async () => {
+    const { browser, session } = await open(withPopup());
+    const windows = new RunWindows(session);
+    await session.click((await session.resolve(css('#login')))[0]!);
+    expect(browser.popups).toHaveLength(1);
+    const run = replaySteps(session, withSteps([{ kind: 'fill', target: user, value: 'u', window: 'popup', optional: true }]), { page: 1, timeoutMs: 20, cache: new Map(), windows });
+    expect((await run).steps[0]).toMatchObject({ outcome: 'skipped' });
+  });
+});
+
+describe('runFlow await-user after its popup closed', () => {
+  it('checks the condition with the flow window when the popup it names already closed itself', async () => {
+    const LOGIN = 'https://shop.test/login';
+    const browser = new FakeBrowser({
+      [PAGE]: { dom: h('html', {}, h('body', {}, h('button', { id: 'login' }, 'Log in'))), on: { click: () => ({ popup: '/login' }) } },
+      [LOGIN]: { dom: h('html', {}, h('body', {}, h('input', { id: 'user' }))) },
+    });
+    const session = await browser.open('/p');
+    await session.goto(PAGE, { timeoutMs: 1000 });
+    const recipe = withSteps([
+      { kind: 'click', target: { selectors: [css('#login')] } },
+      { kind: 'await-user', target: { selectors: [css('#login')] }, until: 'disappears', window: 'popup' },
+    ]);
+    // The user logs in at once: the popup closes and the button goes away before the step starts.
+    session.onPopup((popup) => void (popup as typeof session).userClose().then(() => session.replaceDom(h('html', {}, h('body', {}, h('p', {}, 'in'))))));
+    const result = await replaySteps(session, recipe, { page: 1, timeoutMs: 200, cache: new Map(), pollMs: 5 });
+    expect(result.steps.map((s) => s.outcome)).toEqual(['ok', 'ok']);
   });
 });

@@ -1,4 +1,4 @@
-import { RunEmitter, Runner, templateVariables, type HealOutcome, type Recipe } from '@webscoop/core';
+import { RunEmitter, Runner, templateVariables, withPaginate, type HealOutcome, type Recipe } from '@webscoop/core';
 import { browserSettings, resolveHumanize, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
@@ -138,7 +138,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
       const vars: Record<string, string> = { port: String(playground.port) };
       if (variables.includes('tier')) vars.tier = String(tier);
       if (variables.includes('seed')) vars.seed = String(opts.seed);
-      const firstPage: Recipe = { ...recipe, pagination: { ...recipe.pagination, limit: 1 } };
+      const firstPage: Recipe = withPaginate(recipe, (block) => ({ ...block, limit: 1 }));
       log(io, `tier ${tier}: running ${recipe.name}`);
       const started = performance.now();
       const emitter = new RunEmitter();

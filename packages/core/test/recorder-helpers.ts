@@ -62,8 +62,8 @@ export interface Harness {
   send(msg: unknown): Promise<unknown>;
 }
 
-export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG, extra: Omit<FakePage, 'dom'> = {}): Promise<Harness> {
-  const browser = new FakeBrowser({ [url]: { dom, ...extra } });
+export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG, extra: Omit<FakePage, 'dom'> = {}, pages: Record<string, FakePage> = {}): Promise<Harness> {
+  const browser = new FakeBrowser({ ...pages, [url]: { dom, ...extra } });
   const session = await browser.open('/profile');
   const storage = new MemoryStorage();
   const emitter = new RecorderEmitter();

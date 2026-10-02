@@ -6,10 +6,11 @@ import {
   FIELD_SCOPES,
   FIELD_TYPES,
   GUARD_KINDS,
-  PAGINATION_KINDS,
+  PAGINATE_KINDS,
   STABILITIES,
   STEP_KINDS,
-  STEP_WHENS,
+  STEP_UNTILS,
+  STEP_WINDOWS,
   STOP_RULES,
   STRATEGIES,
 } from '../recipe/constants';
@@ -241,26 +242,58 @@ const LimitSchema = z.union([z.int().check(z.positive()), z.literal('all')]);
 const ParamSchema = z.object({ name: z.string(), start: z.int(), step: z.int() });
 const StopRulesSchema = z.array(z.enum(STOP_RULES));
 
+/** The paginate block's settings; its `do` blocks live in the sequence. */
 export const DraftPaginationSchema = z.object({
-  kind: z.enum(PAGINATION_KINDS),
+  kind: z.enum(PAGINATE_KINDS),
   target: z.optional(TargetSchema),
   param: z.optional(ParamSchema),
   limit: LimitSchema,
   stopRules: StopRulesSchema,
   delayMs: z.int().check(z.nonnegative()),
+  /** The driving table's name; absent means the first item table extracted in `do`. */
+  table: z.optional(z.string()),
 });
 
 export const DraftStepSchema = z.object({
   kind: z.enum(STEP_KINDS),
   target: z.optional(TargetSchema),
   value: z.optional(z.string()),
-  when: z.enum(STEP_WHENS),
+  until: z.optional(z.enum(STEP_UNTILS)),
+  timeoutMs: z.optional(z.int().check(z.positive())),
+  window: z._default(z.enum(STEP_WINDOWS), 'same'),
   optional: z.boolean(),
   label: z.optional(z.string()),
   /** Matches of the target's primary selector on the current page, null until counted or without a target. */
   count: z.nullable(count()),
   error: z.optional(z.string()),
 });
+
+export const DraftFlowSchema = z.object({
+  name: z.string(),
+  description: z.optional(z.string()),
+  /** Present for a reactive flow: the element whose appearance fires it. */
+  trigger: z.optional(TargetSchema),
+  maxRetries: z.optional(z.int().check(z.positive())),
+  recover: z.optional(z.boolean()),
+  steps: z.array(DraftStepSchema),
+  error: z.optional(z.string()),
+});
+
+export const DraftInnerBlockSchema = z.union([z.object({ flow: z.string() }), z.object({ extract: z.string() })]);
+/** A block of the draft's sequence; the paginate block's settings are the draft's `pagination`. */
+export const DraftBlockSchema = z.union([z.object({ flow: z.string() }), z.object({ extract: z.string() }), z.object({ paginate: z.object({ do: z.array(DraftInnerBlockSchema) }) })]);
+
+/** Where a block sits: `[i]` at the top level, `[i, j]` inside the paginate block at `i`. */
+export const BlockPathSchema = z.array(index()).check(z.minLength(1), z.maxLength(2));
+
+export const DraftSequenceSchema = z.object({
+  /** Whether the user edited the sequence; while false it follows the draft. */
+  custom: z.boolean(),
+  blocks: z.array(DraftBlockSchema),
+});
+
+/** A sequence validation error on a block, or on the sequence as a whole (a table never extracted). */
+export const SequenceErrorSchema = z.object({ path: z.nullable(BlockPathSchema), message: z.string() });
 
 export const ErrorEntrySchema = z.object({
   path: z.string(),
@@ -307,8 +340,14 @@ export const DraftSchema = z.object({
   activeTable: index(),
   /** The form the draft was created or loaded in; see `draftToRecipe` for when it is kept. */
   form: z.enum(DRAFT_FORMS),
-  steps: z._default(z.array(DraftStepSchema), []),
+  flows: z._default(z.array(DraftFlowSchema), []),
+  /** Index in `flows` of the flow browse recording and "Add to flow" go into; null without flows. */
+  activeFlow: z._default(z.nullable(index()), null),
+  /** Settings of the paginate block, when one was marked. */
   pagination: z.nullable(DraftPaginationSchema),
+  sequence: z._default(DraftSequenceSchema, { custom: false, blocks: [] }),
+  /** Sequence validation errors; while any exist, Save and Test run are disabled. */
+  sequenceErrors: z._default(z.array(SequenceErrorSchema), []),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
   /** The recipe's browser block, kept as loaded; the panel edits only `humanize`, and `profile` round-trips untouched. */
@@ -326,7 +365,7 @@ export const DraftSchema = z.object({
 });
 
 /** Panel sections that collapse. */
-export const PANEL_SECTIONS = ['recipe', 'steps', 'pagination'] as const;
+export const PANEL_SECTIONS = ['recipe', 'flows', 'sequence'] as const;
 export type PanelSection = (typeof PANEL_SECTIONS)[number];
 
 export const SelectedSchema = z.object({
@@ -417,9 +456,10 @@ export const RepickContextSchema = z.object({
   picked: z.nullable(z.object({ score: z.nullable(z.number()), sample: z.nullable(z.string()), selector: SelectorSchema })),
 });
 
-/** What the guard banner shows while an interactive run waits for a human. */
+/** What the guard banner shows while an interactive run waits for a human: a guard, or an `await-user` step with its label. */
 export const GuardContextSchema = z.object({
-  kind: z.enum(GUARD_KINDS),
+  kind: z.enum([...GUARD_KINDS, 'await-user'] as const),
+  label: z.optional(z.string()),
   reason: z.string(),
   page: z.int().check(z.positive()),
   url: z.string(),
@@ -450,8 +490,14 @@ export const RecorderStateSchema = z.object({
   levelPick: z._default(z.nullable(LevelPickSchema), null),
   /** Field index waiting for a re-pick. */
   repick: z.nullable(index()),
-  /** Step index waiting for a re-pick. */
-  repickStep: z._default(z.nullable(index()), null),
+  /** Step waiting for a re-pick: its flow and index. */
+  repickStep: z._default(z.nullable(z.object({ flow: index(), index: index() })), null),
+  /** Flow whose trigger waits for a pick in the trigger editor. */
+  pickTrigger: z._default(z.nullable(index()), null),
+  /** How this window shows the panel: the full panel, the rail of a main window, or the strip of a popup. */
+  panelMode: z._default(z.enum(['owner', 'rail', 'strip']), 'owner'),
+  /** Whether this window is a popup of the session. */
+  popup: z._default(z.boolean(), false),
   /** Set in the focused re-pick mode. */
   repickContext: z._default(z.nullable(RepickContextSchema), null),
   /** Set while a saved field is open in the selection panel. */
@@ -485,7 +531,7 @@ export const RecorderStateSchema = z.object({
    */
   frame: z._default(z.nullable(z.object({ path: z.nullable(PathSchema), selectors: z.array(CandidateSchema) })), null),
   /** Panel state kept for the session, across navigations; never saved in the recipe. */
-  panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, steps: false, pagination: true } }),
+  panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, flows: false, sequence: true } }),
 });
 
 const FieldPatchSchema = z.object({
@@ -504,7 +550,9 @@ const FieldPatchSchema = z.object({
 const StepPatchSchema = z.object({
   kind: z.optional(z.enum(STEP_KINDS)),
   value: z.optional(z.nullable(z.string())),
-  when: z.optional(z.enum(STEP_WHENS)),
+  until: z.optional(z.nullable(z.enum(STEP_UNTILS))),
+  timeoutMs: z.optional(z.nullable(z.int().check(z.positive()))),
+  window: z.optional(z.enum(STEP_WINDOWS)),
   optional: z.optional(z.boolean()),
   label: z.optional(z.nullable(z.string())),
 });
@@ -513,16 +561,26 @@ const StepPatchSchema = z.object({
 const NewStepSchema = z.object({
   kind: z.enum(STEP_KINDS),
   value: z.optional(z.string()),
-  when: z.optional(z.enum(STEP_WHENS)),
+  until: z.optional(z.enum(STEP_UNTILS)),
   optional: z.optional(z.boolean()),
 });
 
+const FlowPatchSchema = z.object({
+  name: z.optional(z.string()),
+  /** Null makes the flow called again; a reactive flow gets its trigger through `draft.setTrigger`. */
+  trigger: z.optional(z.null()),
+  maxRetries: z.optional(z.nullable(z.int().check(z.positive()))),
+  recover: z.optional(z.nullable(z.boolean())),
+});
+
 export const PaginationPatchSchema = z.object({
-  kind: z.optional(z.enum(PAGINATION_KINDS)),
+  kind: z.optional(z.enum(PAGINATE_KINDS)),
   param: z.optional(ParamSchema),
   limit: z.optional(LimitSchema),
   stopRules: z.optional(StopRulesSchema),
   delayMs: z.optional(z.int().check(z.nonnegative())),
+  /** The driving table's name; null goes back to the default. */
+  table: z.optional(z.nullable(z.string())),
 });
 
 const msg = <K extends string, S extends z.core.$ZodLooseShape>(kind: K, shape: S) => z.object({ kind: z.literal(kind), ...shape });
@@ -590,15 +648,39 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.updateEditedField', { patch: FieldPatchSchema }),
   msg('draft.cancelEdit', {}),
   msg('draft.moveField', { from: index(), to: index() }),
-  msg('draft.repickTarget', { target: z.enum(['field', 'step']), index: z.nullable(index()) }),
-  msg('draft.addStep', { step: NewStepSchema, selection: z.optional(z.nullable(SelectionSchema)) }),
-  msg('draft.updateStep', { index: index(), patch: StepPatchSchema }),
-  msg('draft.removeStep', { index: index() }),
-  msg('draft.moveStep', { from: index(), to: index() }),
-  msg('draft.replayStep', { index: index() }),
+  /** Re-pick a field's selectors, or a step's target (`flow` names its flow, the active one when absent). */
+  msg('draft.repickTarget', { target: z.enum(['field', 'step']), index: z.nullable(index()), flow: z.optional(index()) }),
+  /** Add a step to a flow (the active one when absent); without any flow the first step creates one. */
+  msg('draft.addStep', { step: NewStepSchema, selection: z.optional(z.nullable(SelectionSchema)), flow: z.optional(index()) }),
+  msg('draft.updateStep', { flow: z.optional(index()), index: index(), patch: StepPatchSchema }),
+  msg('draft.removeStep', { flow: z.optional(index()), index: index() }),
+  msg('draft.moveStep', { flow: z.optional(index()), from: index(), to: index() }),
+  msg('draft.replayStep', { flow: z.optional(index()), index: index() }),
+  /** Add a called flow and make it active; without a name the host picks one. */
+  msg('draft.addFlow', { name: z.optional(z.string()) }),
+  msg('draft.updateFlow', { index: index(), patch: FlowPatchSchema }),
+  msg('draft.removeFlow', { index: index() }),
+  msg('draft.duplicateFlow', { index: index() }),
+  msg('draft.selectFlow', { index: index() }),
+  /** Replay a flow's steps on the live page, in order. */
+  msg('draft.replayFlow', { index: index() }),
+  /** Open the trigger editor for a flow: the next pick becomes its trigger; null closes the editor. */
+  msg('draft.pickTrigger', { index: z.nullable(index()) }),
+  /** Make a flow reactive with the selected element as its trigger. */
+  msg('draft.setTrigger', { index: index(), selection: SelectionSchema }),
+  /** Replay, in order, the called flows the sequence runs before a table's extract block. */
+  msg('draft.replayFlowsBefore', { table: index() }),
   msg('draft.markPagination', {}),
-  msg('draft.updatePagination', { patch: PaginationPatchSchema }),
+  msg('paginate.update', { patch: PaginationPatchSchema }),
   msg('draft.clearPagination', {}),
+  /** Move a block; a block moved into the paginate block runs on every page. The sequence becomes custom. */
+  msg('sequence.move', { from: BlockPathSchema, to: BlockPathSchema }),
+  /** Keep the sequence as it is shown, without following the draft any more. */
+  msg('sequence.customize', {}),
+  /** Go back to the default sequence. */
+  msg('sequence.reset', {}),
+  /** A real pointer or key press in this window: it becomes the panel's owner. */
+  msg('window.activity', {}),
   /** Add a table and make it active; without a name the host picks one. */
   msg('draft.addTable', { name: z.optional(z.string()) }),
   /** Rename the active table. */
@@ -655,8 +737,10 @@ export const HostMessageSchema = z.discriminatedUnion('kind', [
     state: RecorderStateSchema,
   }),
   msg('session.error', { message: z.string() }),
-  /** How replaying one step on the live page went, for a toast. */
-  msg('step.replayResult', { index: index(), ok: z.boolean(), message: z.string(), state: RecorderStateSchema }),
+  /** How replaying one step or a flow on the live page went, for a toast. */
+  msg('step.replayResult', { index: z.nullable(index()), ok: z.boolean(), message: z.string(), state: RecorderStateSchema }),
+  /** How this window shows the panel; draft state goes only to the owner. */
+  msg('panel.mode', { mode: z.enum(['owner', 'rail', 'strip']), popup: z.boolean() }),
   /** Remove the recorder from the page; the host keeps the session. */
   msg('session.detach', {}),
 ]);
@@ -685,6 +769,14 @@ export type DraftTable = z.infer<typeof DraftTableSchema>;
 export type DraftForm = (typeof DRAFT_FORMS)[number];
 export type DraftPagination = z.infer<typeof DraftPaginationSchema>;
 export type DraftStep = z.infer<typeof DraftStepSchema>;
+export type DraftFlow = z.infer<typeof DraftFlowSchema>;
+export type DraftBlock = z.infer<typeof DraftBlockSchema>;
+export type DraftInnerBlock = z.infer<typeof DraftInnerBlockSchema>;
+export type DraftSequence = z.infer<typeof DraftSequenceSchema>;
+export type BlockPath = z.infer<typeof BlockPathSchema>;
+export type SequenceError = z.infer<typeof SequenceErrorSchema>;
+export type FlowPatch = z.infer<typeof FlowPatchSchema>;
+export type PanelMode = 'owner' | 'rail' | 'strip';
 export type StepPatch = z.infer<typeof StepPatchSchema>;
 export type NewStep = z.infer<typeof NewStepSchema>;
 export type Draft = z.infer<typeof DraftSchema>;
@@ -704,6 +796,23 @@ export type HostMessage = z.infer<typeof HostMessageSchema>;
 export type Message = PageMessage | HostMessage;
 export type PageMessageKind = ParsedPageMessage['kind'];
 export type HostMessageKind = HostMessage['kind'];
+
+/** The called flows a sequence runs before a table's extract block, in order. */
+export function flowsBefore(blocks: readonly DraftBlock[], table: string): string[] {
+  const names: string[] = [];
+  for (const block of blocks) {
+    if ('flow' in block) names.push(block.flow);
+    else if ('extract' in block) {
+      if (block.extract === table) return names;
+    } else {
+      for (const inner of block.paginate.do) {
+        if ('flow' in inner) names.push(inner.flow);
+        else if (inner.extract === table) return names;
+      }
+    }
+  }
+  return names;
+}
 
 /** The table that receives picks and field edits. */
 export function currentTable(draft: Pick<Draft, 'tables' | 'activeTable'>): DraftTable {

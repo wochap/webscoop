@@ -4,7 +4,7 @@ import { loadRecipe, saveRecipe, type RecipeInput, type RunReport, type StepRepo
 import { FakeBrowser, h, type FakePage } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
-import { formatStep, stepsFromFlags, summary } from '../src/commands/run';
+import { flowsFromFlags, formatStep, summary } from '../src/commands/run';
 import { tempDir, testIo } from './helpers';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
@@ -13,15 +13,21 @@ const sel = (strategy: 'css' | 'testid', value: string) => ({ strategy, value, s
 
 function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'shop',
     url: PAGE,
     item: { selectors: [sel('testid', 'card')] },
     fields: [{ name: 'title', type: 'text', scope: 'item', selectors: [sel('css', 'h2')] }],
-    steps: [
-      { kind: 'click', target: { selectors: [sel('css', '#accept')] } },
-      { kind: 'click', target: { selectors: [sel('css', '#newsletter-close')] }, optional: true },
+    flows: [
+      {
+        name: 'setup',
+        steps: [
+          { kind: 'click', target: { selectors: [sel('css', '#accept')] } },
+          { kind: 'click', target: { selectors: [sel('css', '#newsletter-close')] }, optional: true },
+        ],
+      },
     ],
+    sequence: [{ flow: 'setup' }, { extract: 'items' }],
     ...overrides,
   };
 }
@@ -41,6 +47,7 @@ async function home(recipes: RecipeInput[] = [recipe()]) {
 }
 
 const report = (extra: Partial<StepReport> = {}): StepReport => ({
+  flow: 'setup',
   index: 0,
   kind: 'click',
   page: 1,
@@ -50,55 +57,58 @@ const report = (extra: Partial<StepReport> = {}): StepReport => ({
   ...extra,
 });
 
-describe('step flags and logs', () => {
-  it('maps --skip-steps to disabled steps', () => {
-    expect(stepsFromFlags({})).toEqual({ enabled: true });
-    expect(stepsFromFlags({ skipSteps: true })).toEqual({ enabled: false });
+describe('flow flags and logs', () => {
+  it('maps --skip-flows to disabled flows', () => {
+    expect(flowsFromFlags({})).toEqual({ enabled: true });
+    expect(flowsFromFlags({ skipFlows: true })).toEqual({ enabled: false });
   });
 
   it('formats one line per replayed or skipped step', () => {
-    expect(formatStep(report())).toBe('step 0 (click) on page 1: ok, candidate 0: css=#accept');
+    expect(formatStep(report())).toBe('setup step 0 (click) on page 1: ok, candidate 0: css=#accept');
     expect(formatStep(report({ index: 2, label: 'consent', page: 3, outcome: 'healed', heal: { kind: 'fuzzy', score: 0.83 } }))).toBe(
-      'step 2 "consent" (click) on page 3: healed, fuzzy 0.83: css=#accept',
+      'setup step 2 "consent" (click) on page 3: healed, fuzzy 0.83: css=#accept',
     );
     expect(formatStep(report({ outcome: 'skipped', heal: { kind: 'unresolved' }, candidate: null, notes: ['found no element'] }))).toBe(
-      'step 0 (click) on page 1: skipped (found no element)',
+      'setup step 0 (click) on page 1: skipped (found no element)',
     );
-    expect(formatStep(report({ kind: 'wait', heal: null, candidate: null }))).toBe('step 0 (wait) on page 1: ok');
+    expect(formatStep(report({ kind: 'wait', heal: null, candidate: null }))).toBe('setup step 0 (wait) on page 1: ok');
   });
 
-  it('mentions skipped steps in the summary', () => {
-    const base = { recipe: 'shop', durationMs: 1000, pageCount: 1, rowCount: 3, tables: [], healed: 0, guards: [], duplicateCount: 0 } as unknown as RunReport;
+  it('mentions skipped steps and reactive firings in the summary', () => {
+    const base = { recipe: 'shop', durationMs: 1000, pageCount: 1, rowCount: 3, tables: [], healed: 0, guards: [], duplicateCount: 0, flows: [] } as unknown as RunReport;
     expect(summary({ ...base, steps: [report()] })).toBe('3 rows from 1 page in 1.00s (shop)');
     expect(summary({ ...base, steps: [report(), report({ index: 1, outcome: 'skipped' })] })).toBe('3 rows from 1 page, 1 step skipped in 1.00s (shop)');
+    const fired = { name: 'cookie-banner', kind: 'reactive' as const, page: 1, outcome: 'ok' as const, steps: [] };
+    expect(summary({ ...base, steps: [], flows: [fired, fired] })).toBe('3 rows from 1 page, reactive flows fired 2 times in 1.00s (shop)');
   });
 });
 
-describe('webscoop run and test with steps', () => {
-  it('replays the steps, logs each one, and extracts behind the banner', async () => {
+describe('webscoop run and test with flows', () => {
+  it('runs the flow, logs it and each step, and extracts behind the banner', async () => {
     const dir = await home();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: gated() }) });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
     expect(JSON.parse(t.out())).toHaveLength(3);
-    expect(t.err()).toContain('step 0 (click) on page 1: ok, candidate 0: css=#accept');
-    expect(t.err()).toContain('step 1 (click) on page 1: skipped (found no element)');
+    expect(t.err()).toContain('flow setup (called) on page 1');
+    expect(t.err()).toContain('setup step 0 (click) on page 1: ok, candidate 0: css=#accept');
+    expect(t.err()).toContain('setup step 1 (click) on page 1: skipped (found no element)');
     expect(t.err()).toContain('3 rows from 1 page, 1 step skipped in');
   });
 
-  it('replays no step with --skip-steps, so the fields behind the banner are missing (exit 3)', async () => {
+  it('runs no flow with --skip-flows, so the fields behind the banner are missing (exit 3)', async () => {
     const dir = await home();
     const browser = new FakeBrowser({ [PAGE]: gated() });
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
-    expect(await main(['run', 'shop', '--skip-steps', '--no-guards'], t)).toBe(ExitCode.Unresolved);
+    expect(await main(['run', 'shop', '--skip-flows', '--no-guards'], t)).toBe(ExitCode.Unresolved);
     expect(browser.clicks).toEqual([]);
-    expect(t.err()).not.toContain('step 0');
+    expect(t.err()).not.toContain('flow setup');
   });
 
-  it('replays steps in test by default and exits 0', async () => {
+  it('runs flows in test by default and exits 0', async () => {
     const dir = await home();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: gated() }) });
     expect(await main(['test', 'shop'], t)).toBe(ExitCode.Ok);
-    expect(t.err()).toContain('step 0 (click) on page 1: ok');
+    expect(t.err()).toContain('setup step 0 (click) on page 1: ok');
     expect(t.err()).toContain('1 step skipped');
   });
 
@@ -106,22 +116,39 @@ describe('webscoop run and test with steps', () => {
     const dir = await home();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shop(2) }) });
     expect(await main(['run', 'shop', '--no-guards'], t)).toBe(ExitCode.Unresolved);
-    expect(t.err()).toContain('run failed (missing-required): required step 0 (click) found no element');
+    expect(t.err()).toContain('run failed (missing-required): required step 0 (click) of flow "setup" found no element');
   });
 
   it('asks for a step variable before opening the browser', async () => {
-    const dir = await home([recipe({ vars: [{ name: 'q', type: 'string' }], steps: [{ kind: 'type', target: { selectors: [sel('css', 'input')] }, value: '{q}' }] })]);
+    const dir = await home([recipe({ vars: [{ name: 'q', type: 'string' }], flows: [{ name: 'setup', steps: [{ kind: 'fill', target: { selectors: [sel('css', 'input')] }, value: '{q}' }] }] })]);
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shop(2) }) });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Error);
     expect(t.err()).toContain('pass --var q=<value>');
     expect(t.browserCreated()).toBe(0);
   });
 
-  it('lists --skip-steps in run and test help', async () => {
+  it('lists --skip-flows in run and test help', async () => {
     for (const command of ['run', 'test']) {
       const t = testIo({});
       await main([command, '--help'], t);
-      expect(t.out()).toContain('--skip-steps');
+      expect(t.out()).toContain('--skip-flows');
+      expect(t.out()).not.toContain('--skip-steps');
     }
+  });
+
+  it('fails with exit 1 on a flow loop and on lost pagination, keeping the rows of pagination-lost', async () => {
+    const loginButton = { selectors: [sel('css', '#login')] };
+    const looping = recipe({
+      flows: [
+        { name: 'setup', steps: [{ kind: 'wait', value: '1' }, { kind: 'wait', value: '1' }] },
+        { name: 'login-wall', trigger: { appears: loginButton }, steps: [{ kind: 'click', target: loginButton }] },
+      ],
+    });
+    const dir = await home([looping]);
+    const stuck = h('html', {}, h('body', {}, h('button', { id: 'login' }, 'Log in'), h('div', { 'data-testid': 'card' }, h('h2', {}, 'x'))));
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: { dom: stuck } }) });
+    expect(await main(['run', 'shop', '--no-guards'], t)).toBe(ExitCode.Error);
+    expect(t.err()).toContain('run failed (flow-loop)');
+    expect(t.err()).toContain('flow login-wall (reactive) on page 1');
   });
 });

@@ -67,9 +67,8 @@ const CLICK_ROLES = new Set(['button', 'link', 'tab', 'menuitem', 'checkbox', 'r
 /** Whether a step of the given kind can act on the element: form controls for typing and choosing, anything clickable otherwise. */
 function actionable(node: AnnotatedNode, step: StepKind): boolean {
   const input = node.tag === 'input' || node.tag === 'textarea' || node.attrs.contenteditable === 'true';
-  if (step === 'type') return input;
-  if (step === 'select') return node.tag === 'select';
-  if (step === 'wait') return true;
+  if (step === 'fill') return input || node.tag === 'select';
+  if (step === 'wait' || step === 'await-user') return true;
   return input || node.tag === 'a' || node.tag === 'button' || node.tag === 'select' || node.tag === 'label' || (!!node.role && CLICK_ROLES.has(node.role));
 }
 
@@ -172,10 +171,10 @@ const SYSTEM_PROMPT = [
 
 const STEP_TARGETS: Record<StepKind, string> = {
   click: 'button, link, or tab the user clicks',
-  type: 'text input the user types into',
-  select: 'drop-down list the user chooses from',
+  fill: 'text input or drop-down list the user fills in',
   press: 'element the user presses a key in',
   wait: 'element the page shows once it is ready',
+  'await-user': 'element that appears or disappears once the user is done',
 };
 
 function describeTarget(target: HealTarget): string[] {

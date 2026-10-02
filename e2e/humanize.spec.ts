@@ -15,13 +15,19 @@ interface LoggedEvent {
 function eventsRecipe(port: number): RecipeInput {
   const css = (value: string) => ({ selectors: [{ strategy: 'css' as const, value, stability: 'medium' as const }] });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'input-events',
     url: `http://127.0.0.1:${port}/input-events`,
-    steps: [
-      { kind: 'type', target: css('#q'), value: 'shoes', when: 'first-page', optional: false },
-      { kind: 'click', target: css('#go'), when: 'first-page', optional: false },
+    flows: [
+      {
+        name: 'search',
+        steps: [
+          { kind: 'fill', target: css('#q'), value: 'shoes' },
+          { kind: 'click', target: css('#go') },
+        ],
+      },
     ],
+    sequence: [{ flow: 'search' }, { extract: 'items' }],
     fields: [
       { name: 'result', type: 'text', scope: 'page', ...css('#result') },
       { name: 'events', type: 'text', scope: 'page', ...css('#events') },

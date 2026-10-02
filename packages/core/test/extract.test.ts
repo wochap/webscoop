@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countItems, extractPage, loadRecipe, resolveFirst } from '../src';
+import { countItems, extractPage, loadRecipe, resolveFirst, tablesOf } from '../src';
 import { FakeBrowser } from '../src/testing';
 import { catalog, cards, css, frameId, framedCatalog, mixedPage, PAGE, recipe, tablesRecipe, testid } from './helpers';
 
@@ -267,9 +267,10 @@ describe('tables', () => {
     const s = await session(mixedPage(cards(7), ['a', 'b', 'c']));
     const recipe = loadRecipe(tablesRecipe());
     const first = await extractPage(s, recipe, { pageUrl: PAGE, page: 1 });
-    expect(await countItems(s, recipe, first.resolved)).toBe(7);
+    expect(await countItems(s, tablesOf(recipe)[1]!, first.resolved[1])).toBe(7);
     const pageOnly = loadRecipe(tablesRecipe({ tables: [tablesRecipe().tables![0]!] }));
-    expect(await countItems(s, pageOnly, [{ item: null, fields: [[testid('category')]] }])).toBe(1);
+    expect(await countItems(s, tablesOf(pageOnly)[0]!, { item: null, fields: [[testid('category')]] })).toBe(1);
+    expect(await countItems(s, null, null)).toBe(1);
   });
 });
 
@@ -353,7 +354,7 @@ describe('framed tables', () => {
     expect(out.rows[0]).toMatchObject({ title: 'Product 1', category: 'Electronics' });
     expect(out.frame).toMatchObject({ candidateIndex: 1, candidate: frameId('app') });
     expect(out.resolved?.frame).toEqual([frameId('app')]);
-    expect(await countItems(s, r, page.resolved)).toBe(8);
+    expect(await countItems(s, tablesOf(r)[0]!, page.resolved[0])).toBe(8);
   });
 
   it('yields no rows and counts the required fields missing when the frame is missing', async () => {

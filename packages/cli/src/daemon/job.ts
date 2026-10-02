@@ -255,7 +255,9 @@ export class DaemonJob implements Job {
   }
 
   private watch(emitter: RunEmitter): void {
-    emitter.on('attention.needed', (e) => this.send({ type: 'attention', runId: this.runId, reason: e.reason, ...(e.kind ? { kind: e.kind } : {}), page: e.page, url: e.url }));
+    emitter.on('attention.needed', (e) =>
+      this.send({ type: 'attention', runId: this.runId, reason: e.reason, ...(e.kind ? { kind: e.kind } : {}), ...(e.label ? { label: e.label } : {}), page: e.page, url: e.url }),
+    );
     emitter.on('attention.resolved', () => this.send({ type: 'attention-resolved', runId: this.runId }));
   }
 }

@@ -1,64 +1,26 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "playground-paged",
   "url": "http://127.0.0.1:{port}/catalog?paginate={mode}&tier={tier}&page={page}",
   "vars": [
-    {
-      "name": "port",
-      "type": "string",
-      "default": "4777"
-    },
-    {
-      "name": "tier",
-      "type": "string",
-      "default": "0"
-    },
-    {
-      "name": "mode",
-      "type": "string",
-      "default": "url"
-    },
-    {
-      "name": "page",
-      "type": "string",
-      "default": "1"
-    }
+    { "name": "port", "type": "string", "default": "4777" },
+    { "name": "tier", "type": "string", "default": "0" },
+    { "name": "mode", "type": "string", "default": "url" },
+    { "name": "page", "type": "string", "default": "1" }
   ],
   "item": {
     "selectors": [
-      {
-        "strategy": "testid",
-        "value": "product-card",
-        "stability": "stable"
-      },
-      {
-        "strategy": "css",
-        "value": "article.product-card",
-        "stability": "medium"
-      }
+      { "strategy": "testid", "value": "product-card", "stability": "stable" },
+      { "strategy": "css", "value": "article.product-card", "stability": "medium" }
     ],
     "exclude": [],
     "fingerprint": {
       "tag": "article",
       "role": "article",
       "textSample": "Wireless Mouse $24.99 4.5 View details",
-      "attrs": {
-        "data-testid": "product-card",
-        "id": "product-p01"
-      },
-      "ancestors": [
-        "listitem",
-        "list",
-        "main",
-        "body",
-        "html"
-      ],
-      "bbox": {
-        "x": 32,
-        "y": 99,
-        "w": 282,
-        "h": 371
-      }
+      "attrs": { "data-testid": "product-card", "id": "product-p01" },
+      "ancestors": ["listitem", "list", "main", "body", "html"],
+      "bbox": { "x": 32, "y": 99, "w": 282, "h": 371 }
     }
   },
   "fields": [
@@ -67,21 +29,9 @@
       "type": "text",
       "scope": "item",
       "selectors": [
-        {
-          "strategy": "role",
-          "value": "heading",
-          "stability": "stable"
-        },
-        {
-          "strategy": "css",
-          "value": "h2.product-title",
-          "stability": "medium"
-        },
-        {
-          "strategy": "xpath",
-          "value": ".//h2",
-          "stability": "fragile"
-        }
+        { "strategy": "role", "value": "heading", "stability": "stable" },
+        { "strategy": "css", "value": "h2.product-title", "stability": "medium" },
+        { "strategy": "xpath", "value": ".//h2", "stability": "fragile" }
       ],
       "optional": false,
       "fingerprint": {
@@ -90,20 +40,8 @@
         "name": "Wireless Mouse",
         "textSample": "Wireless Mouse",
         "attrs": {},
-        "ancestors": [
-          "article",
-          "listitem",
-          "list",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 49,
-          "y": 300,
-          "w": 248,
-          "h": 35
-        }
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 300, "w": 248, "h": 35 }
       }
     },
     {
@@ -111,39 +49,17 @@
       "type": "number",
       "scope": "item",
       "selectors": [
-        {
-          "strategy": "testid",
-          "value": "price",
-          "stability": "stable"
-        },
-        {
-          "strategy": "css",
-          "value": ".product-price",
-          "stability": "medium"
-        }
+        { "strategy": "testid", "value": "price", "stability": "stable" },
+        { "strategy": "css", "value": ".product-price", "stability": "medium" }
       ],
       "optional": false,
       "fingerprint": {
         "tag": "p",
         "role": "paragraph",
         "textSample": "$24.99",
-        "attrs": {
-          "data-testid": "price"
-        },
-        "ancestors": [
-          "article",
-          "listitem",
-          "list",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 49,
-          "y": 355,
-          "w": 248,
-          "h": 22
-        }
+        "attrs": { "data-testid": "price" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 355, "w": 248, "h": 22 }
       }
     },
     {
@@ -151,16 +67,8 @@
       "type": "url",
       "scope": "item",
       "selectors": [
-        {
-          "strategy": "css",
-          "value": "a.product-link",
-          "stability": "medium"
-        },
-        {
-          "strategy": "role",
-          "value": "link|View details",
-          "stability": "stable"
-        }
+        { "strategy": "css", "value": "a.product-link", "stability": "medium" },
+        { "strategy": "role", "value": "link|View details", "stability": "stable" }
       ],
       "attr": "href",
       "optional": false,
@@ -170,36 +78,16 @@
         "role": "link",
         "name": "View details",
         "textSample": "View details",
-        "attrs": {
-          "href": "/p/p##"
-        },
-        "ancestors": [
-          "article",
-          "listitem",
-          "list",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 49,
-          "y": 431,
-          "w": 79,
-          "h": 22
-        }
+        "attrs": { "href": "/p/p##" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 431, "w": 79, "h": 22 }
       }
     },
     {
       "name": "image",
       "type": "image",
       "scope": "item",
-      "selectors": [
-        {
-          "strategy": "css",
-          "value": "img.product-image",
-          "stability": "medium"
-        }
-      ],
+      "selectors": [{ "strategy": "css", "value": "img.product-image", "stability": "medium" }],
       "attr": "src",
       "optional": false,
       "fingerprint": {
@@ -207,23 +95,9 @@
         "role": "img",
         "name": "Wireless Mouse",
         "textSample": "",
-        "attrs": {
-          "alt": "Wireless Mouse"
-        },
-        "ancestors": [
-          "article",
-          "listitem",
-          "list",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 49,
-          "y": 116,
-          "w": 248,
-          "h": 158
-        }
+        "attrs": { "alt": "Wireless Mouse" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 116, "w": 248, "h": 158 }
       }
     },
     {
@@ -231,16 +105,8 @@
       "type": "number",
       "scope": "item",
       "selectors": [
-        {
-          "strategy": "testid",
-          "value": "rating",
-          "stability": "stable"
-        },
-        {
-          "strategy": "css",
-          "value": ".product-rating",
-          "stability": "medium"
-        }
+        { "strategy": "testid", "value": "rating", "stability": "stable" },
+        { "strategy": "css", "value": ".product-rating", "stability": "medium" }
       ],
       "optional": false,
       "fingerprint": {
@@ -248,24 +114,9 @@
         "role": "paragraph",
         "name": "Rated 4.5 out of 5",
         "textSample": "4.5",
-        "attrs": {
-          "aria-label": "Rated 4.5 out of 5",
-          "data-testid": "rating"
-        },
-        "ancestors": [
-          "article",
-          "listitem",
-          "list",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 49,
-          "y": 393,
-          "w": 248,
-          "h": 22
-        }
+        "attrs": { "aria-label": "Rated 4.5 out of 5", "data-testid": "rating" },
+        "ancestors": ["article", "listitem", "list", "main", "body", "html"],
+        "bbox": { "x": 49, "y": 393, "w": 248, "h": 22 }
       }
     },
     {
@@ -273,16 +124,8 @@
       "type": "text",
       "scope": "page",
       "selectors": [
-        {
-          "strategy": "testid",
-          "value": "category",
-          "stability": "stable"
-        },
-        {
-          "strategy": "css",
-          "value": "h1.category-heading",
-          "stability": "medium"
-        }
+        { "strategy": "testid", "value": "category", "stability": "stable" },
+        { "strategy": "css", "value": "h1.category-heading", "stability": "medium" }
       ],
       "optional": false,
       "fingerprint": {
@@ -290,89 +133,43 @@
         "role": "heading",
         "name": "Electronics",
         "textSample": "Electronics",
-        "attrs": {
-          "data-testid": "category",
-          "id": "category"
-        },
-        "ancestors": [
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 32,
-          "y": 32,
-          "w": 879,
-          "h": 46
-        }
+        "attrs": { "data-testid": "category", "id": "category" },
+        "ancestors": ["main", "body", "html"],
+        "bbox": { "x": 32, "y": 32, "w": 879, "h": 46 }
       }
     }
   ],
-  "pagination": {
-    "kind": "url",
-    "target": {
-      "selectors": [
-        {
-          "strategy": "role",
-          "value": "link|Next",
-          "stability": "stable"
+  "sequence": [
+    {
+      "paginate": {
+        "kind": "url",
+        "target": {
+          "selectors": [
+            { "strategy": "role", "value": "link|Next", "stability": "stable" },
+            { "strategy": "css", "value": "a.pager-next", "stability": "medium" }
+          ],
+          "fingerprint": {
+            "tag": "a",
+            "role": "link",
+            "name": "Next",
+            "textSample": "Next",
+            "attrs": { "href": "/catalog?paginate=next&go=next" },
+            "ancestors": ["navigation", "main", "body", "html"],
+            "bbox": { "x": 32, "y": 1240, "w": 36, "h": 22 }
+          }
         },
-        {
-          "strategy": "css",
-          "value": "a.pager-next",
-          "stability": "medium"
-        }
-      ],
-      "fingerprint": {
-        "tag": "a",
-        "role": "link",
-        "name": "Next",
-        "textSample": "Next",
-        "attrs": {
-          "href": "/catalog?paginate=next&go=next"
-        },
-        "ancestors": [
-          "navigation",
-          "main",
-          "body",
-          "html"
-        ],
-        "bbox": {
-          "x": 32,
-          "y": 1240,
-          "w": 36,
-          "h": 22
-        }
+        "param": { "name": "page", "start": 1, "step": 1 },
+        "limit": "all",
+        "stopRules": ["no-new-items", "target-missing"],
+        "delayMs": 0,
+        "do": [{ "extract": "items" }]
       }
-    },
-    "param": {
-      "name": "page",
-      "start": 1,
-      "step": 1
-    },
-    "limit": "all",
-    "stopRules": [
-      "no-new-items",
-      "target-missing"
-    ],
-    "delayMs": 0
-  },
+    }
+  ],
   "guards": [
-    {
-      "kind": "login",
-      "enabled": true
-    },
-    {
-      "kind": "captcha",
-      "enabled": true
-    },
-    {
-      "kind": "zero-fields",
-      "enabled": true
-    }
+    { "kind": "login", "enabled": true },
+    { "kind": "captcha", "enabled": true },
+    { "kind": "zero-fields", "enabled": true }
   ],
-  "healing": {
-    "fuzzyThreshold": 0.7,
-    "llm": true
-  }
+  "healing": { "fuzzyThreshold": 0.7, "llm": true }
 }

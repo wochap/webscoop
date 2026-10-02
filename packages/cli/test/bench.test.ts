@@ -33,7 +33,7 @@ describe('bench', () => {
     await mkdir(join(dir, 'recipes'), { recursive: true });
     await writeFile(
       join(dir, 'recipes', 'shop.json'),
-      JSON.stringify({ schemaVersion: 1, name: 'shop', url: 'https://shop.test/', fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }),
+      JSON.stringify({ schemaVersion: 2, sequence: [{ extract: 'items' }], name: 'shop', url: 'https://shop.test/', fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }),
     );
     const io = testIo({ env: { WAYLAND_DISPLAY: 'wayland-1', WEBSCOOP_HOME: dir } });
     expect(await main(['bench', 'shop'], io)).toBe(ExitCode.Error);
@@ -48,7 +48,7 @@ describe('bench', () => {
     await mkdir(join(dir, 'recipes'), { recursive: true });
     await writeFile(
       join(dir, 'recipes', 'shop.json'),
-      JSON.stringify({ schemaVersion: 1, name: 'shop', url: 'http://127.0.0.1:{port}/catalog', vars: [{ name: 'port', type: 'string' }], fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }),
+      JSON.stringify({ schemaVersion: 2, sequence: [{ extract: 'items' }], name: 'shop', url: 'http://127.0.0.1:{port}/catalog', vars: [{ name: 'port', type: 'string' }], fields: [{ name: 't', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }] }),
     );
     await writeFile(join(dir, 'config.json'), JSON.stringify({ profiles: { rules: [{ host: '^127\\.0\\.0\\.1$', profile: 'local' }] } }));
     const { FakeBrowser } = await import('@webscoop/core/testing');

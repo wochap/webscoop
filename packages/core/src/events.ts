@@ -1,14 +1,33 @@
 import type { HealOutcome } from './healing/types';
 import type { StopReason } from './pagination/types';
-import type { StepReport } from './steps/replay';
+import type { StepReport } from './flows/replay';
 import type { Fingerprint, FieldType, GuardKind, PaginationKind, SelectorCandidate } from './recipe/schema';
 
 export type FieldStatus = 'ok' | 'healed' | 'partial' | 'missing';
 
 export type Row = Record<string, unknown> & { _page: number; _index: number };
 
-/** `paused`: a guard was not cleared within the run's guard timeout. */
-export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'paused' | 'error';
+/**
+ * `paused`: a guard or an `await-user` step was not cleared within its timeout.
+ * `flow-loop`: a reactive flow fired more than its `maxRetries` between two extractions.
+ * `pagination-lost`: the page state could not be rebuilt on a later page of click pagination.
+ */
+export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'paused' | 'flow-loop' | 'pagination-lost' | 'error';
+
+export type FlowKind = 'called' | 'reactive';
+export type FlowOutcome = 'ok' | 'failed';
+
+/** One run of a flow: called from the sequence, or fired by its trigger. */
+export interface FlowRunReport {
+  name: string;
+  kind: FlowKind;
+  /** Page number the flow ran on. */
+  page: number;
+  outcome: FlowOutcome;
+  /** For a reactive flow, the URL of the window its trigger matched in. */
+  window?: string;
+  steps: StepReport[];
+}
 
 /** One guard occurrence: a page that asked for a human. */
 export interface GuardEntry {
@@ -118,8 +137,10 @@ export interface RunReport {
   savedTo: string | null;
   /** Every guard raised during the run, in order. */
   guards: GuardEntry[];
-  /** Every step replay, in the order it ran; `every-page` steps appear once per page. */
+  /** Every step replay, in the order it ran; a step appears once per run of its flow. */
   steps: StepReport[];
+  /** Every flow run, in the order it started, each with its steps. */
+  flows: FlowRunReport[];
 }
 
 export interface PageReport {
@@ -145,9 +166,9 @@ export interface RepickInfo {
 }
 
 /** Why a run needs the user in the browser. */
-export type AttentionReason = 'guard' | 'repick';
+export type AttentionReason = 'guard' | 'repick' | 'await-user';
 
-/** How an attention need ended: the guard cleared or timed out, the re-pick was answered, or the run ended first. */
+/** How an attention need ended: the guard cleared or timed out (or the `await-user` condition held), the re-pick was answered, or the run ended first. */
 export type AttentionOutcome = 'cleared' | 'timeout' | 'picked' | 'skip' | 'abort' | 'ended';
 
 export interface RunEvents {
@@ -158,7 +179,7 @@ export interface RunEvents {
   'guard.raised': { kind: GuardKind; page: number; url: string; reason: string };
   'guard.cleared': { kind: GuardKind; page: number; url: string; waitedMs: number };
   'guard.timeout': { kind: GuardKind; page: number; url: string; waitedMs: number };
-  /** A step ran; `step.outcome` is `ok` or `healed`. */
+  /** A step ran; `step.outcome` is `ok` or `healed`; `step.flow` names its flow. */
   'step.replayed': { page: number; step: StepReport };
   /** An optional step found no target (or could not run) and was left out. */
   'step.skipped': { page: number; step: StepReport };
@@ -183,8 +204,11 @@ export interface RunEvents {
   /** Emitted once, when the page loop ends; `page` is the last page extracted. */
   'pagination.stopped': { page: number; reason: StopReason };
   'recipe.saved': { path: string };
-  /** Right after `guard.raised` or `repick.requested`. */
-  'attention.needed': { reason: AttentionReason; page: number; url: string; kind?: GuardKind; table?: string; target?: string };
+  /** A flow started: called from the sequence or fired by its trigger; `window` is the trigger's window URL for a reactive flow. */
+  'flow.started': { flow: string; kind: FlowKind; page: number; window?: string };
+  'flow.done': { flow: string; kind: FlowKind; page: number; outcome: FlowOutcome };
+  /** Right after `guard.raised` or `repick.requested`, or when an `await-user` step waits; `url` is the URL of the window that needs the user. */
+  'attention.needed': { reason: AttentionReason; page: number; url: string; kind?: GuardKind; table?: string; target?: string; label?: string; flow?: string };
   /** Exactly once for every `attention.needed`, before `run.done` or `run.failed`. */
   'attention.resolved': { reason: AttentionReason; outcome: AttentionOutcome };
   'run.done': { report: RunReport };
@@ -202,6 +226,8 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'guard.raised',
   'guard.cleared',
   'guard.timeout',
+  'flow.started',
+  'flow.done',
   'step.replayed',
   'step.skipped',
   'field.resolved',

@@ -112,7 +112,7 @@ describe('HookRunner', () => {
 
 function recipe(): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'shoes' }],

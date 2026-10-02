@@ -69,7 +69,7 @@ test('type a selector, clear with Esc, edit a primary, cancel an edit, save, and
   expect(JSON.parse(run.stdout)).toEqual(dataset.map((p, index) => ({ _page: 1, _index: index, title: p.title, heading: p.title, price: p.price })));
 });
 
-test('gate=cookie: after a reload behind the gate, a zero match field offers to replay the steps and counts 24 again', async ({ scoop }) => {
+test('gate=cookie: after a reload behind the gate, a zero match field offers to replay the flows before it and counts 24 again', async ({ scoop }) => {
   const recipe = structuredClone(scoop.recipe);
   recipe.name = 'cookie-replay';
   recipe.url = `${recipe.url}&gate=cookie`;
@@ -78,7 +78,7 @@ test('gate=cookie: after a reload behind the gate, a zero match field offers to 
   await r.until((s) => s.host?.draft.tables[0]!.fields.every((f) => f.count !== null));
   await r.browse();
   await r.click('#consent-accept');
-  await r.until((s) => s.host?.draft.steps.length === 1);
+  await r.until((s) => s.host?.draft.flows[0]?.steps.length === 1);
   await r.key('b');
   await r.until((s) => !s.ui.browsing);
   await expect.poll(() => r.page.locator('article').count()).toBe(24);
@@ -86,20 +86,21 @@ test('gate=cookie: after a reload behind the gate, a zero match field offers to 
   // Forget the consent so the reload shows the gate again.
   await r.page.evaluate(() => localStorage.clear());
   await r.page.reload();
-  await r.until((s) => s.host?.draft.steps.length === 1 && s.host.draft.tables[0]!.fields[0]!.count === 0);
+  await r.until((s) => s.host?.draft.flows[0]?.steps.length === 1 && s.host.draft.tables[0]!.fields[0]!.count === 0);
   expect(await r.page.locator('article').count()).toBe(0);
-  expect(await r.count(ws('field-replay-steps'))).toBeGreaterThan(0);
-  expect((await r.query(ws('field-zero')))!.text).toContain('may appear only after the recorded steps');
-  await r.clickPanel(ws('field-replay-steps'));
+  expect(await r.count(ws('field-replay-flows'))).toBeGreaterThan(0);
+  expect((await r.query(ws('field-zero')))!.text).toContain('may appear only after the flows that run before this table');
+  await r.clickPanel(ws('field-replay-flows'));
   await r.until((s) => s.host?.draft.tables[0]!.fields[0]!.count === 24);
   await expect.poll(() => r.page.locator('article').count()).toBe(24);
-  expect(await r.count(ws('field-replay-steps'))).toBe(0);
+  expect(await r.count(ws('field-replay-flows'))).toBe(0);
   expect((await r.closeWindow()).code).toBe(0);
 });
 
 test('results with a questions block among the containers: it is highlighted, and the test run drops its row with fallback off and keeps it with fallback on', async ({ scoop }) => {
   await scoop.writeRecipe({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    sequence: [{ extract: 'items' }],
     name: 'serp-fallback',
     url: `http://127.0.0.1:${scoop.playground.port}/results`,
     item: {

@@ -70,7 +70,7 @@ describe('webscoop export', () => {
 
   it('exits 1 with the validation errors for an invalid recipe', async () => {
     const dir = await home();
-    await writeFile(join(dir, 'recipes', 'broken.json'), JSON.stringify({ schemaVersion: 1, name: 'broken', url: 'https://x.test/{q}', fields: [] }));
+    await writeFile(join(dir, 'recipes', 'broken.json'), JSON.stringify({ schemaVersion: 2, sequence: [{ extract: 'items' }], name: 'broken', url: 'https://x.test/{q}', fields: [] }));
     const io = testIo({ env: { WEBSCOOP_HOME: dir } });
     expect(await main(['export', 'broken'], io)).toBe(ExitCode.Error);
     expect(io.err()).toMatch(/a recipe needs at least one field/);

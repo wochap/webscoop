@@ -227,7 +227,7 @@ describe('editing a saved field', () => {
 describe('editing a one entry tables recipe', () => {
   const recipe = () => {
     const { item, fields, ...rest } = referenceRecipe();
-    return { ...rest, tables: [{ name: 'products', ...(item ? { item } : {}), fields: fields! }] };
+    return { ...rest, tables: [{ name: 'products', ...(item ? { item } : {}), fields: fields! }], sequence: [{ extract: 'products' }] };
   };
 
   it('loads like the shorthand and saves back in the tables form', () => {
@@ -237,8 +237,9 @@ describe('editing a one entry tables recipe', () => {
     expect(draft.form).toBe('tables');
     expect(shorthand.form).toBe('shorthand');
     expect(draft.tables.map((t) => t.name)).toEqual(['products']);
-    const { form: _form, tables: t1, ...rest } = draft;
-    const { form: _form2, tables: t2, ...restShorthand } = shorthand;
+    const { form: _form, tables: t1, sequence: _s1, ...rest } = draft;
+    const { form: _form2, tables: t2, sequence: _s2, ...restShorthand } = shorthand;
+    expect(draft.sequence).toEqual({ custom: false, blocks: [{ extract: 'products' }] });
     expect(rest).toEqual(restShorthand);
     expect(t1[0]!.fields).toEqual(t2[0]!.fields);
     const validated = validateRecipe(draftToRecipe(draft));

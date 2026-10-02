@@ -21,7 +21,7 @@ describe('draft reducer', () => {
   });
 
   it('keeps browser.profile through load, the protocol schema, save, and the humanize toggle', () => {
-    const loaded = validateRecipe({ schemaVersion: 1, name: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }], browser: { profile: 'personal' } });
+    const loaded = validateRecipe({ schemaVersion: 2, name: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }] }], sequence: [{ extract: 'items' }], browser: { profile: 'personal' } });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
     const draft = DraftSchema.parse(draftFromRecipe(loaded.recipe));
@@ -130,12 +130,13 @@ describe('draft descriptions', () => {
 
   it('round-trips recipe, table, and variable descriptions', () => {
     const loaded = validateRecipe({
-      schemaVersion: 1,
+      schemaVersion: 2,
       name: 'bing-search',
       description: 'Bing web search results\nfor a query',
       url: 'https://bing.com/search?q={query}',
       vars: [{ name: 'query', type: 'string', description: 'search terms' }],
       tables: [{ name: 'results', description: 'one row per result', fields: [{ name: 'title', type: 'text', selectors }] }],
+      sequence: [{ extract: 'results' }],
     });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
@@ -147,7 +148,7 @@ describe('draft descriptions', () => {
   });
 
   it('loads a shorthand recipe with no table description and saves it as shorthand', () => {
-    const loaded = validateRecipe({ schemaVersion: 1, name: 'shop', description: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors }] });
+    const loaded = validateRecipe({ schemaVersion: 2, name: 'shop', description: 'shop', url: 'https://acme.com/', fields: [{ name: 'title', type: 'text', scope: 'page', selectors }], sequence: [{ extract: 'items' }] });
     if (!loaded.ok) throw new Error('invalid');
     const draft = draftFromRecipe(loaded.recipe);
     expect(draft.tables[0]!.description).toBeUndefined();

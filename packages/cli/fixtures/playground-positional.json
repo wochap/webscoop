@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "playground-positional",
   "url": "http://127.0.0.1:{port}/catalog?tier={tier}",
   "vars": [
@@ -7,9 +7,7 @@
     { "name": "tier", "type": "string", "default": "0" }
   ],
   "item": {
-    "selectors": [
-      { "strategy": "xpath", "value": "//ul/li/article", "stability": "fragile" }
-    ],
+    "selectors": [{ "strategy": "xpath", "value": "//ul/li/article", "stability": "fragile" }],
     "exclude": [],
     "fingerprint": {
       "tag": "article",
@@ -25,9 +23,7 @@
       "name": "title",
       "type": "text",
       "scope": "item",
-      "selectors": [
-        { "strategy": "xpath", "value": "./h2[1]", "stability": "fragile" }
-      ],
+      "selectors": [{ "strategy": "xpath", "value": "./h2[1]", "stability": "fragile" }],
       "optional": false,
       "fingerprint": {
         "tag": "h2",
@@ -43,9 +39,7 @@
       "name": "price",
       "type": "number",
       "scope": "item",
-      "selectors": [
-        { "strategy": "xpath", "value": "./p[1]", "stability": "fragile" }
-      ],
+      "selectors": [{ "strategy": "xpath", "value": "./p[1]", "stability": "fragile" }],
       "optional": false,
       "fingerprint": {
         "tag": "p",
@@ -60,9 +54,7 @@
       "name": "url",
       "type": "url",
       "scope": "item",
-      "selectors": [
-        { "strategy": "xpath", "value": "./a[1]", "stability": "fragile" }
-      ],
+      "selectors": [{ "strategy": "xpath", "value": "./a[1]", "stability": "fragile" }],
       "attr": "href",
       "optional": false,
       "key": true,
@@ -77,7 +69,7 @@
       }
     }
   ],
-  "pagination": { "kind": "none", "limit": 1, "stopRules": [], "delayMs": 0 },
+  "sequence": [{ "extract": "items" }],
   "guards": [
     { "kind": "login", "enabled": true },
     { "kind": "captcha", "enabled": true },

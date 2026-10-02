@@ -17,15 +17,17 @@ const TITLE = { name: 'title', type: 'text' as const, selectors: [css('h2')] };
 
 /** Tables `page` (the heading) and `products` (the cards). */
 function results(tables?: RecipeInput['tables']): RecipeInput {
+  const list = tables ?? [
+    { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [css('h1')] }] },
+    { name: 'products', item: { selectors: [css('div.card')] }, fields: [TITLE, { name: 'link', type: 'url', selectors: [css('a')], key: true }] },
+  ];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'results',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'shoes' }],
-    tables: tables ?? [
-      { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [css('h1')] }] },
-      { name: 'products', item: { selectors: [css('div.card')] }, fields: [TITLE, { name: 'link', type: 'url', selectors: [css('a')], key: true }] },
-    ],
+    tables: list,
+    sequence: list.map((t) => ({ extract: t.name })),
   };
 }
 
@@ -200,7 +202,7 @@ describe('webscoop run with tables', () => {
 
 describe('summary with tables', () => {
   const report = (tables: RunReport['tables'], rowCount: number) =>
-    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [] }) as unknown as RunReport;
+    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [], flows: [] }) as unknown as RunReport;
   const table = (name: string, rowCount: number) => ({ name, rowCount, duplicateCount: 0, droppedCount: 0, item: null, fields: [] });
 
   it('lists the count of every table in place of the total', () => {

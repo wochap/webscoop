@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent } from '@testing-library/react';
+import { cleanup, fireEvent } from '@testing-library/react';
 import { emptyDraft, validateDraft, type Draft, type DraftField, type DraftTable, type RecorderState } from '@webscoop/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acceptList, byClass, harness, openList, type Harness } from '../../core/test/recorder-helpers';
@@ -157,14 +157,14 @@ describe('table tab bar', () => {
   });
 
   it('offers Rename, Move, Use for pagination, and Remove in the table menu', () => {
-    const p = renderPanel(baseState(threeLists(1)));
+    const p = renderPanel(baseState({ ...threeLists(1), pagination: { kind: 'next', limit: 3, stopRules: [], delayMs: 0, table: 'results' } }));
     fireEvent.click(p.q('table-menu')!);
     const item = (ws: string) => p.q(ws) as HTMLButtonElement;
     expect(p.qa('table-menu-list')[0]!.textContent).toBe('Mode locked — list. Clear table to change.Renamedbl-click tabMove leftAlt ←Move rightAlt →Use for paginationClear tablefields + listRemove table');
     expect(item('table-menu-move-left').disabled).toBe(false);
     expect(item('table-menu-pagination').disabled).toBe(false);
     fireEvent.click(item('table-menu-pagination'));
-    expect(p.sent).toEqual([{ kind: 'draft.moveTable', from: 1, to: 0 }]);
+    expect(p.sent).toEqual([{ kind: 'paginate.update', patch: { table: 'ads' } }]);
     expect(p.q('table-menu-list')).toBeNull();
     fireEvent.click(p.q('table-menu')!);
     fireEvent.click(item('table-menu-move-right'));
@@ -197,7 +197,7 @@ describe('table tab bar', () => {
     fireEvent.click(page.q('table-menu')!);
     expect((page.q('table-menu-pagination') as HTMLButtonElement).disabled).toBe(true);
     cleanup();
-    const primary = renderPanel(baseState(threeLists(0)));
+    const primary = renderPanel(baseState({ ...threeLists(0), pagination: { kind: 'next', limit: 3, stopRules: [], delayMs: 0, table: 'results' } }));
     fireEvent.click(primary.q('table-menu')!);
     expect((primary.q('table-menu-pagination') as HTMLButtonElement).disabled).toBe(true);
     expect((primary.q('table-menu-move-left') as HTMLButtonElement).disabled).toBe(true);
@@ -209,24 +209,11 @@ describe('table tab bar', () => {
     expect(single.q('table-menu-list')).toBeNull();
   });
 
-  it('marks the primary table as driving pagination only when pagination is on', () => {
-    const on = renderPanel(baseState({ ...threeLists(), pagination: { kind: 'next', limit: 3, stopRules: [], delayMs: 0 } }));
-    expect(on.qa('tab').map((t) => Boolean(t.querySelector('[data-ws="tab-drives-pagination"]')))).toEqual([true, false, false]);
-    cleanup();
-    const none = renderPanel(baseState({ ...threeLists(), pagination: { kind: 'none', limit: 1, stopRules: [], delayMs: 0 } }));
-    expect(none.q('tab-drives-pagination')).toBeNull();
+  it('marks the driving table only when pagination is on', () => {
+    const on = renderPanel(baseState({ ...threeLists(), pagination: { kind: 'next', limit: 3, stopRules: [], delayMs: 0, table: 'ads' } }));
+    expect(on.qa('tab').map((t) => Boolean(t.querySelector('[data-ws="tab-drives-pagination"]')))).toEqual([false, true, false]);
     cleanup();
     expect(renderPanel(baseState(threeLists())).q('tab-drives-pagination')).toBeNull();
-  });
-
-  it('says which table now drives pagination after a reorder changes it, without undo', () => {
-    const draft = { ...threeLists(), pagination: { kind: 'next' as const, limit: 3, stopRules: [], delayMs: 0 } };
-    const p = renderPanel(baseState(draft));
-    const [results, ads, summary] = draft.tables;
-    act(() => p.store.setHost(baseState({ ...draft, tables: [ads!, results!, summary!] })));
-    expect(p.toasts).toEqual(['ads now drives pagination']);
-    act(() => p.store.setHost(baseState({ ...draft, tables: [ads!, summary!, results!] })));
-    expect(p.toasts).toHaveLength(1);
   });
 
   it('lists the tabs the strip clips in a "N more" menu that activates the one chosen', () => {

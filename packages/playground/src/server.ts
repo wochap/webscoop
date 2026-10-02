@@ -16,6 +16,7 @@ import {
   type PaginateKind,
   type Pager,
 } from './render';
+import { SPA_COOKIE, spaLoggedIn, spaLoginPage, spaPage, spaSession } from './spa';
 import {
   challengePage,
   HUMAN_COOKIE,
@@ -400,6 +401,25 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       return send(res, 200, challengePage(), 'text/html; charset=utf-8');
     }
     if (url.pathname === '/challenge/turnstile') return send(res, 200, turnstileFrame(), 'text/html; charset=utf-8');
+    if (url.pathname === '/spa/login') {
+      const ttl = intParam(url.searchParams.get('ttl'), 'ttl', 1) ?? null;
+      if (method === 'POST') {
+        const form = new URLSearchParams(await readBody(req));
+        if (!form.get('user')?.trim() || !form.get('password')) throw new HttpError(400, 'user and password are required');
+        res.writeHead(204, { 'set-cookie': `${SPA_COOKIE}=${spaSession(ttl)}; Path=/; SameSite=Lax`, 'cache-control': 'no-store' });
+        return void res.end();
+      }
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      return send(res, 200, spaLoginPage(ttl), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/spa/session') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return void res.end(JSON.stringify({ loggedIn: spaLoggedIn(cookies(req).get(SPA_COOKIE)) }));
+    }
+    if (url.pathname === '/spa') {
+      const ttl = intParam(url.searchParams.get('ttl'), 'ttl', 1) ?? null;
+      return send(res, 200, spaPage(products, { loggedIn: spaLoggedIn(cookies(req).get(SPA_COOKIE)), ttl, seed: control.seed }), 'text/html; charset=utf-8');
+    }
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
     if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');

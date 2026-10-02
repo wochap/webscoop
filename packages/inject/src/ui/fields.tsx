@@ -1,5 +1,5 @@
 import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { defaultAttr, FIELD_TYPES, type DraftField, type DraftItem, type FieldOptions, type FieldPatch, type FrameTarget } from '@webscoop/core/page';
+import { currentTable, defaultAttr, FIELD_TYPES, flowsBefore, type DraftField, type DraftItem, type FieldOptions, type FieldPatch, type FrameTarget } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
 import { Dropdown, type DropdownOption } from './dropdown';
@@ -45,17 +45,17 @@ export function ZeroMatchWarning({
   onRepick: () => void;
   onOptional: () => void;
   optional: boolean;
-  /** Replay the draft's steps in order; given when the draft has steps. */
+  /** Replay, in order, the flows the sequence runs before the table; given when there are any. */
   onReplay?: () => void;
 }) {
   return (
     <div className="ws-warning" role="alert" data-ws="field-zero">
       <span className="ws-spacer">
-        Matches nothing on this page.{onReplay && ' It may appear only after the recorded steps.'}
+        Matches nothing on this page.{onReplay && ' It may appear only after the flows that run before this table.'}
       </span>
       {onReplay && (
-        <button type="button" className="ws-btn ws-btn-sm" onClick={onReplay} data-ws="field-replay-steps" title="Run the recorded steps on this page, in order">
-          Replay steps
+        <button type="button" className="ws-btn ws-btn-sm" onClick={onReplay} data-ws="field-replay-flows" title="Run the flows before this table on this page, in order">
+          Replay flows
         </button>
       )}
       <button type="button" className="ws-btn ws-btn-sm" onClick={onRepick} data-ws="field-repick">
@@ -189,15 +189,13 @@ export function FieldRow({
   dragProps: Omit<HTMLAttributes<HTMLDivElement>, 'className'>;
 }) {
   const actions = useActions();
-  const steps = useSnapshot().host?.draft.steps.length ?? 0;
+  const draft = useSnapshot().host?.draft;
+  const before = draft ? flowsBefore(draft.sequence.blocks, currentTable(draft).name) : [];
   const update = (patch: FieldPatch) => void actions.send({ kind: 'draft.updateField', index, patch });
   const primary = field.selectors[0]!;
   const chain = field.scope === 'item' && item ? selectorChain([item.within?.[0], item.selectors[0], primary]) : selectorChain([primary]);
   const coverage = field.scope === 'item' ? field.coverage : null;
-  // One step at a time: each send resolves after the host answers with the step's result.
-  const replay = async () => {
-    for (let i = 0; i < steps; i++) await actions.send({ kind: 'draft.replayStep', index: i });
-  };
+  const replay = () => void actions.send({ kind: 'draft.replayFlowsBefore', table: draft!.activeTable });
   return (
     <div
       {...dragProps}
@@ -307,7 +305,7 @@ export function FieldRow({
             actions.startPicking();
           }}
           onOptional={() => update({ optional: true })}
-          {...(steps > 0 ? { onReplay: () => void replay() } : {})}
+          {...(before.length > 0 ? { onReplay: replay } : {})}
         />
       )}
     </div>

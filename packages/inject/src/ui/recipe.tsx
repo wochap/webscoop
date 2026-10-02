@@ -5,11 +5,11 @@ import { Icon } from './icons';
 import { Toggle } from './items';
 import { Section } from './section';
 
-/** Where a variable is used: "used in URL", "used in step N", "not in URL", or "not used". */
-export function varUsage(draft: Pick<Draft, 'url' | 'steps'>, name: string): { url: boolean; steps: number[]; text: string } {
+/** Where a variable is used: "used in URL", "used in <flow> step N", "not in URL", or "not used". */
+export function varUsage(draft: Pick<Draft, 'url' | 'flows'>, name: string): { url: boolean; steps: string[]; text: string } {
   const url = templateVariables(draft.url).includes(name);
-  const steps = draft.steps.flatMap((s, i) => (s.kind === 'type' && s.value && templateVariables(s.value).includes(name) ? [i + 1] : []));
-  const parts = [...(url ? ['used in URL'] : []), ...steps.map((n) => `used in step ${n}`), ...(steps.length > 0 && !url ? ['not in URL'] : [])];
+  const steps = draft.flows.flatMap((f) => f.steps.flatMap((s, i) => (s.kind === 'fill' && s.value && templateVariables(s.value).includes(name) ? [`${f.name} step ${i + 1}`] : [])));
+  const parts = [...(url ? ['used in URL'] : []), ...steps.map((n) => `used in ${n}`), ...(steps.length > 0 && !url ? ['not in URL'] : [])];
   return { url, steps, text: parts.length > 0 ? parts.join(' · ') : 'not used' };
 }
 
@@ -187,7 +187,7 @@ export function VarTableRow({ draft, variable, error, descriptionError = null }:
   const usage = varUsage(draft, variable.name);
   const used = usage.url || usage.steps.length > 0;
   const name = variable.name;
-  const where = [...(usage.url ? ['URL'] : []), ...usage.steps.map((n) => `step ${n}`)].join(', ');
+  const where = [...(usage.url ? ['URL'] : []), ...usage.steps].join(', ');
   return (
     <>
       <div className="ws-var-row" data-ws={`var-row-${name}`}>

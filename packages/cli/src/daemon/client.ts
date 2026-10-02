@@ -170,7 +170,8 @@ export async function submitJob(io: CliIo, command: JobCommand, recipe: string, 
             io.stderr.write(m.data);
             break;
           case 'attention':
-            if (m.reason === 'guard') prompt?.open(m.runId);
+            // Guards and await-user steps are answered at the terminal; a re-pick only in the browser.
+            if (m.reason === 'guard' || m.reason === 'await-user') prompt?.open(m.runId);
             break;
           case 'still-blocked':
             prompt?.stillBlocked();

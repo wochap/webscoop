@@ -13,7 +13,7 @@ const css = (value: string) => ({ strategy: 'css' as const, value, stability: 'm
 
 /** The price's only selector is dead and it has no fingerprint, so only the model can find it. */
 const recipe: RecipeInput = {
-  schemaVersion: 1,
+  schemaVersion: 2, sequence: [{ extract: 'items' }],
   name: 'shop',
   url: PAGE,
   item: { selectors: [{ strategy: 'testid', value: 'card', stability: 'stable' }] },

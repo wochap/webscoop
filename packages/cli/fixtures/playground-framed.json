@@ -1,15 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "playground-framed",
   "description": "The playground catalog shown inside an iframe of a menu page, with its details panel opened by a step inside the iframe.",
   "url": "http://127.0.0.1:{port}/framed",
-  "vars": [
-    {
-      "name": "port",
-      "type": "string",
-      "default": "4777"
-    }
-  ],
+  "vars": [{ "name": "port", "type": "string", "default": "4777" }],
   "tables": [
     {
       "name": "products",
@@ -19,10 +13,7 @@
           { "strategy": "css", "value": "iframe[name=\"catalog\"]", "stability": "medium" }
         ]
       },
-      "item": {
-        "selectors": [{ "strategy": "testid", "value": "product-card", "stability": "stable" }],
-        "exclude": []
-      },
+      "item": { "selectors": [{ "strategy": "testid", "value": "product-card", "stability": "stable" }], "exclude": [] },
       "fields": [
         {
           "name": "title",
@@ -41,9 +32,7 @@
     },
     {
       "name": "details",
-      "frame": {
-        "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }]
-      },
+      "frame": { "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }] },
       "fields": [
         {
           "name": "description",
@@ -54,16 +43,20 @@
       ]
     }
   ],
-  "steps": [
+  "flows": [
     {
-      "kind": "click",
-      "label": "details",
-      "target": {
-        "selectors": [{ "strategy": "id", "value": "details-toggle", "stability": "stable" }],
-        "frame": {
-          "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }]
+      "name": "setup",
+      "steps": [
+        {
+          "kind": "click",
+          "label": "details",
+          "target": {
+            "selectors": [{ "strategy": "id", "value": "details-toggle", "stability": "stable" }],
+            "frame": { "selectors": [{ "strategy": "id", "value": "frame-catalog", "stability": "stable" }] }
+          }
         }
-      }
+      ]
     }
-  ]
+  ],
+  "sequence": [{ "flow": "setup" }, { "extract": "products" }, { "extract": "details" }]
 }

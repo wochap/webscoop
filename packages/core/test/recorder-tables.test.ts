@@ -149,13 +149,14 @@ describe('draft reducer: tables', () => {
 
   it('round-trips the tables form', () => {
     const input: RecipeInput = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       name: 'results',
       url: MIXED,
       tables: [
         { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [css('h1')] }] },
         { name: 'products', item: { selectors: [css('.card')] }, fields: [{ name: 'title', type: 'text', selectors: [css('h2')] }] },
       ],
+      sequence: [{ extract: 'page' }, { extract: 'products' }],
     };
     const draft = draftFromRecipe(loadRecipe(input));
     expect(draft).toMatchObject({ form: 'tables', activeTable: 0 });
@@ -441,8 +442,9 @@ describe('RecorderController: tables', () => {
 
   it('moves a misplaced page field of a loaded mixed table and saves an untouched one unchanged', async () => {
     const recipe = loadRecipe({
-      schemaVersion: 1,
+      schemaVersion: 2,
       name: 'mixed',
+      sequence: [{ extract: 'products' }],
       url: MIXED,
       tables: [
         {
@@ -497,13 +499,13 @@ describe('RecorderController: tables', () => {
 
   it('keeps section collapse state for the session, outside the draft', async () => {
     const t = await products();
-    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, steps: false, pagination: true });
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: false, sequence: true });
     const dirty = t.controller.draft.dirty;
-    await t.send({ kind: 'panel.setCollapsed', section: 'steps', collapsed: true });
+    await t.send({ kind: 'panel.setCollapsed', section: 'flows', collapsed: true });
     expect(t.controller.draft.dirty).toBe(dirty);
     // The page is injected again after a navigation and announces itself.
     await t.send({ kind: 'session.ready', url: MIXED });
-    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, steps: true, pagination: true });
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: true, sequence: true });
     const reply = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
     expect(reply.ok).toBe(true);
     expect(JSON.stringify(await t.storage.load('shop-catalog'))).not.toMatch(/collapsed/);
@@ -571,9 +573,10 @@ describe('RecorderController: tables', () => {
 
   it('starts a re-pick of a field in the second table with that table active', () => {
     const recipe = loadRecipe({
-      schemaVersion: 1,
+      schemaVersion: 2,
       name: 'results',
       url: MIXED,
+      sequence: [{ extract: 'page' }, { extract: 'questions' }],
       tables: [
         { name: 'page', fields: [{ name: 'title', type: 'text', selectors: [css('h1')] }] },
         { name: 'questions', item: { selectors: [css('.mixed-questions')] }, fields: [{ name: 'title', type: 'text', selectors: [css('.gone')] }] },

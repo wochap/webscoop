@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { loadRecipe } from '@webscoop/core';
+import { loadRecipe, paginateOf, paginationOf } from '@webscoop/core';
 import { expect, hasDisplay, test } from './fixtures';
 import { sidebar, template, ws } from './sidebar';
 
@@ -20,15 +20,18 @@ test('marking a ?page=2 link proposes url pagination, saved and run', async ({ s
   await r.pick('#next-page');
   await r.clickPanel(ws('pick-pagination'));
   const pagination = await r.until((s) => s.host?.draft.pagination);
-  expect(pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 } });
-  await r.clickPanel(ws('pagination-limit-n'));
+  expect(pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, table: 'items' });
+  await r.until((s) => s.host?.draft.sequence.blocks.some((b) => 'paginate' in b));
+  await r.clickPanel(ws('paginate-toggle'));
+  await r.clickPanel(ws('paginate-limit-n'));
   await r.until((s) => s.host?.draft.pagination?.limit === 3);
   const path = await panel.save();
   expect((await r.closeWindow()).code).toBe(0);
 
   const recipe = loadRecipe(await readFile(path, 'utf8'));
-  expect(recipe.pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 });
-  expect(recipe.pagination.target!.selectors.length).toBeGreaterThan(0);
+  expect(paginationOf(recipe)).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 });
+  expect(paginateOf(recipe)!.target!.selectors.length).toBeGreaterThan(0);
+  expect(paginateOf(recipe)!.do).toEqual([{ extract: 'items' }]);
   // The unpaginated catalog ignores `page`: every page repeats the first, so dedup keeps 24 rows.
   const run = await scoop.run(['run', 'paged']);
   expect(run.code, run.stderr).toBe(0);

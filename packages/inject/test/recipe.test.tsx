@@ -102,9 +102,14 @@ describe('recipe bar', () => {
     let draft = emptyDraft({ name: 'shop', url: 'https://shop.test/c/{category}', vars: [{ name: 'category', value: 'shoes' }] });
     draft = {
       ...draft,
-      steps: [
-        { kind: 'click', when: 'first-page', optional: false, count: null },
-        { kind: 'type', value: '{email} {category}', when: 'first-page', optional: false, count: null },
+      flows: [
+        {
+          name: 'login',
+          steps: [
+            { kind: 'click', window: 'same', optional: false, count: null },
+            { kind: 'fill', value: '{email} {category}', window: 'same', optional: false, count: null },
+          ],
+        },
       ],
       vars: [
         { name: 'category', value: 'shoes' },
@@ -113,8 +118,8 @@ describe('recipe bar', () => {
       ],
     };
     const p = renderPanel(baseState(draft));
-    expect(p.q('var-usage-category')!.textContent).toBe('used in URL · used in step 2');
-    expect(p.q('var-usage-email')!.textContent).toBe('used in step 2 · not in URL');
+    expect(p.q('var-usage-category')!.textContent).toBe('used in URL · used in login step 2');
+    expect(p.q('var-usage-email')!.textContent).toBe('used in login step 2 · not in URL');
     expect(p.q('var-usage-later')!.textContent).toBe('not used');
   });
 
@@ -152,7 +157,7 @@ describe('recipe bar', () => {
 describe('collapsed recipe', () => {
   it('shows the collapsed recipe as one line with the name and the URL with its variable values', () => {
     const draft = { ...newDraft(), name: 'google-com-search', url: 'https://www.google.com/search?q={query}', vars: [{ name: 'query', value: 'top llms' }] };
-    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, steps: false, pagination: true } } });
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true } } });
     const summary = p.q('section-recipe')!.querySelector('[data-ws="section-summary"]')!;
     expect(summary.querySelector('[data-ws="recipe-summary-name"]')!.textContent).toBe('google-com-search');
     expect(summary.querySelector('[data-ws="recipe-summary-url"]')!.textContent).toBe('https://www.google.com/search?q=querytop llms');
@@ -172,7 +177,7 @@ describe('collapsed recipe', () => {
         { name: 'email', value: 'me@acme.dev', added: true as const },
       ],
     };
-    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, steps: false, pagination: true } } });
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true } } });
     const summary = p.q('section-recipe')!.querySelector('[data-ws="section-summary"]')!;
     expect(summary.querySelector('[data-ws="recipe-summary-url"]')!.textContent).toBe('https://www.google.com/search?q=querytop llms&hl=langen');
     expect(summary.querySelector('[data-ws="recipe-summary-var-lang"] .ws-chip-value')!.textContent).toBe('en');

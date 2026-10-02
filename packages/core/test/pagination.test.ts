@@ -14,8 +14,11 @@ import {
   RUN_EVENT_NAMES,
   RunEmitter,
   Runner,
+  paginateOf,
+  paginationOf,
   tablesOf,
   type PageSummary,
+  type Paginate,
   type Recipe,
   type RecipeInput,
   type Row,
@@ -59,14 +62,24 @@ const slice = (page: number) => products((page - 1) * 8 + 1, page * 8);
 const nextLink = (href: string | null, cls = 'next') =>
   h('nav', { class: 'pager' }, href === null ? h('a', { class: cls, 'aria-disabled': 'true' }, 'Next') : h('a', { class: cls, href, rel: 'next' }, 'Next'));
 
-function pagedRecipe(pagination: RecipeInput['pagination'], overrides: Partial<RecipeInput> = {}): Recipe {
-  const base = baseRecipe();
+/** Paginate settings as these tests write them; kind `none` stands for no paginate block. */
+type PaginationInput = Omit<Paginate, 'do' | 'kind' | 'limit' | 'stopRules' | 'delayMs'> & { kind: Paginate['kind'] | 'none'; limit?: Paginate['limit']; stopRules?: Paginate['stopRules']; delayMs?: number };
+
+/** The sequence: one paginate block extracting the tables on every page, or the extracts alone for kind `none`. */
+function sequenceFor(pagination: PaginationInput, tables: string[]): RecipeInput['sequence'] {
+  const extracts = tables.map((extract) => ({ extract }));
+  if (pagination.kind === 'none') return extracts;
+  return [{ paginate: { ...(pagination as Omit<PaginationInput, 'kind'> & { kind: Paginate['kind'] }), do: extracts } }];
+}
+
+function pagedRecipe(pagination: PaginationInput, overrides: Partial<RecipeInput> = {}): Recipe {
+  const { sequence: _sequence, ...base } = baseRecipe();
   return loadRecipe({
     ...base,
     url: `${BASE}?page={n}`,
     vars: [{ name: 'n', type: 'string' }],
     fields: base.fields!.map((f) => (f.name === 'url' ? { ...f, attr: 'href', key: true } : f)),
-    pagination,
+    sequence: sequenceFor(pagination, ['items']),
     ...overrides,
   });
 }
@@ -134,7 +147,8 @@ describe('url strategy', () => {
   });
 
   it('builds the first URL before the browser opens and rejects a non-numeric page variable', async () => {
-    expect(createStrategy(pagedRecipe(URL_PAGINATION), { n: '5' }).url).toBe(`${BASE}?page=5`);
+    const paged = pagedRecipe(URL_PAGINATION);
+    expect(createStrategy(paged, paginationOf(paged), { n: '5' }).url).toBe(`${BASE}?page=5`);
     const browser = urlSite(1);
     const r = await run(pagedRecipe(URL_PAGINATION), browser, { vars: { n: 'x' } }).result;
     expect(r).toMatchObject({ ok: false, reason: 'invalid-input', fields: ['n'] });
@@ -176,7 +190,7 @@ describe('next strategy', () => {
       [`${BASE}?p=3`]: listPage(slice(3), nextLink(lastHref)),
     });
   }
-  const nextRecipe = (extra: Partial<RecipeInput['pagination']> = {}) =>
+  const nextRecipe = (extra: Partial<PaginationInput> = {}) =>
     pagedRecipe({ kind: 'next', target: { selectors: [role('link|Next'), css('a.next')] }, limit: 'all', ...extra }, { url: BASE, vars: [] });
 
   it('clicks through three pages and stops when the link is disabled', async () => {
@@ -250,7 +264,7 @@ describe('next strategy', () => {
     expect(r.report.healed).toBe(1);
     expect(log.of('field.healed').map((e) => e.target)).toEqual(['pagination']);
     expect(saved).toHaveLength(1);
-    const promoted = saved[0]!.pagination.target!.selectors;
+    const promoted = paginateOf(saved[0]!)!.target!.selectors;
     expect(promoted[0]).not.toEqual(css('a.next'));
     const session = await browser.open('/check');
     await session.goto(BASE, { timeoutMs: 1000 });
@@ -447,13 +461,9 @@ describe('tables across pages', () => {
     return browser;
   }
 
-  function tablesPaged(pagination: RecipeInput['pagination'], tables?: RecipeInput['tables']): Recipe {
-    const { item: _item, fields: _fields, ...base } = baseRecipe();
-    return loadRecipe({
-      ...base,
-      url: `${BASE}?page={n}`,
-      vars: [{ name: 'n', type: 'string' }],
-      tables: tables ?? [
+  function tablesPaged(pagination: PaginationInput, tables?: RecipeInput['tables']): Recipe {
+    const { item: _item, fields: _fields, sequence: _sequence, ...base } = baseRecipe();
+    const list = tables ?? [
         { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [testid('category')] }] },
         {
           name: 'products',
@@ -464,8 +474,13 @@ describe('tables across pages', () => {
           ],
         },
         { name: 'questions', item: { selectors: [testid('question')] }, fields: [{ name: 'title', type: 'text', selectors: [css('h3')] }] },
-      ],
-      pagination,
+      ];
+    return loadRecipe({
+      ...base,
+      url: `${BASE}?page={n}`,
+      vars: [{ name: 'n', type: 'string' }],
+      tables: list,
+      sequence: sequenceFor(pagination, list.map((t) => t.name)),
     });
   }
 
@@ -599,9 +614,9 @@ describe('playground-paged reference recipe', () => {
     const { dataset, render } = await import('@webscoop/playground');
     const { snapshotFromHtml } = await import('./snapshot');
     const recipe = loadRecipe(readFileSync(new URL('../../cli/fixtures/playground-paged.json', import.meta.url), 'utf8'));
-    expect(recipe.pagination).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 'all' });
-    expect(recipe.pagination.target!.selectors[0]).toEqual(role('link|Next'));
-    expect(recipe.pagination.target!.fingerprint).toBeDefined();
+    expect(paginationOf(recipe)).toMatchObject({ kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 'all' });
+    expect(paginateOf(recipe)!.target!.selectors[0]).toEqual(role('link|Next'));
+    expect(paginateOf(recipe)!.target!.fingerprint).toBeDefined();
     expect(recipe.fields!.find((f) => f.key)?.name).toBe('url');
 
     const at = (page: number) => `http://127.0.0.1:4777/catalog?paginate=url&tier=0&page=${page}`;

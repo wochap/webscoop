@@ -46,9 +46,27 @@ export function cards(n: number, extra: (i: number) => Partial<CardSpec> = () =>
 export const css = (value: string): SelectorCandidate => ({ strategy: 'css', value, stability: 'medium' });
 export const testid = (value: string): SelectorCandidate => ({ strategy: 'testid', value, stability: 'stable' });
 
+/** The sequence that extracts every table once, in order. */
+export function extractAll(input: Pick<RecipeInput, 'tables' | 'fields'>): RecipeInput['sequence'] {
+  if (input.tables) return input.tables.map((t) => ({ extract: t.name }));
+  return input.fields ? [{ extract: 'items' }] : [];
+}
+
+/** The input with a sequence extracting every table, unless it has one. */
+export function sequenced(input: Omit<RecipeInput, 'sequence'> & { sequence?: RecipeInput['sequence'] }): RecipeInput {
+  return { ...input, sequence: input.sequence ?? extractAll(input) } as RecipeInput;
+}
+
+type PaginateInput = Omit<Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'], 'do'> & { do?: Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate']['do'] };
+
+/** A sequence of one paginate block, extracting `items` (or the given blocks) on every page. */
+export function paged(settings: PaginateInput, before: RecipeInput['sequence'] = []): RecipeInput['sequence'] {
+  return [...before, { paginate: { do: [{ extract: 'items' }], ...settings } }];
+}
+
 export function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
-  return {
-    schemaVersion: 1,
+  return sequenced({
+    schemaVersion: 2,
     name: 'shop',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'electronics' }],
@@ -60,7 +78,7 @@ export function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
       { name: 'category', type: 'text', scope: 'page', selectors: [testid('category')] },
     ],
     ...overrides,
-  };
+  });
 }
 
 /** A category page with a heading, a product list, and a block of questions. */
@@ -89,8 +107,8 @@ export function mixedPage(products: CardSpec[], questions: string[], category = 
 
 /** Tables `page` (the heading), `products` (cards, keyed by url), and `questions`; scopes left to their defaults. */
 export function tablesRecipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
-  const { item: _item, fields: _fields, ...rest } = recipe();
-  return {
+  const { item: _item, fields: _fields, sequence: _sequence, ...rest } = recipe();
+  return sequenced({
     ...rest,
     tables: [
       { name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [testid('category')] }] },
@@ -105,7 +123,7 @@ export function tablesRecipe(overrides: Partial<RecipeInput> = {}): RecipeInput 
       { name: 'questions', item: { selectors: [testid('question')] }, fields: [{ name: 'title', type: 'text', selectors: [css('h3')] }] },
     ],
     ...overrides,
-  };
+  });
 }
 
 export const frameId = (value: string): SelectorCandidate => ({ strategy: 'id', value, stability: 'stable' });

@@ -11,9 +11,11 @@ import { tempDir, testIo } from './helpers';
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
 const BASE = 'https://shop.test/list';
 
-function recipe(pagination: RecipeInput['pagination']): RecipeInput {
+type Settings = Omit<Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'], 'do'>;
+
+function recipe(pagination: Settings): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'shop',
     url: `${BASE}?page={n}`,
     vars: [{ name: 'n', type: 'string' }],
@@ -22,7 +24,7 @@ function recipe(pagination: RecipeInput['pagination']): RecipeInput {
       { name: 'title', type: 'text', scope: 'item', selectors: [{ strategy: 'css', value: 'h2', stability: 'medium' }] },
       { name: 'link', type: 'url', scope: 'item', selectors: [{ strategy: 'css', value: 'a', stability: 'medium' }], key: true },
     ],
-    pagination,
+    sequence: [{ paginate: { ...pagination, do: [{ extract: 'items' }] } }],
   };
 }
 
@@ -146,6 +148,7 @@ describe('summary', () => {
     savedTo: null,
     guards: [],
     steps: [],
+    flows: [],
     ...extra,
   });
 

@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { draftFromRecipe, draftToRecipe, loadRecipe, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
+import { draftFromRecipe, draftToRecipe, isReactive, loadRecipe, maxRetriesOf, paginationOf, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
 import { tablesRecipe } from './helpers';
 
 const referencePath = fileURLToPath(new URL('../../cli/fixtures/playground-catalog.json', import.meta.url));
 
 function base(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: 'shop',
     url: 'https://example.com/c/{category}',
     vars: [{ name: 'category', type: 'string' }],
@@ -20,6 +20,7 @@ function base(overrides: Partial<RecipeInput> = {}): RecipeInput {
         selectors: [{ strategy: 'css', value: 'h1', stability: 'medium' }],
       },
     ],
+    sequence: [{ extract: 'items' }],
     ...overrides,
   };
 }
@@ -31,9 +32,32 @@ function errorsOf(input: unknown) {
 }
 
 describe('recipe versioning', () => {
-  it('loads a valid version 1 recipe', () => {
+  it('loads a valid version 2 recipe', () => {
     const recipe = loadRecipe(JSON.stringify(base()), '/r/shop.json');
     expect(recipe.name).toBe('shop');
+  });
+
+  it('rejects a version 1 recipe with rewrite guidance, naming the file', () => {
+    const v1 = { ...base(), schemaVersion: 1, steps: [{ kind: 'click', target: { selectors: [{ strategy: 'css', value: 'b', stability: 'medium' }] } }] };
+    const error = (() => {
+      try {
+        loadRecipe(v1, '/r/shop.json');
+      } catch (e) {
+        return e as Error;
+      }
+      return null;
+    })();
+    expect(error).toBeInstanceOf(RecipeError);
+    expect(error!.message).toContain('/r/shop.json');
+    expect(error!.message).toMatch(/called flows/);
+    expect(error!.message).toMatch(/type and select steps into fill/);
+    expect(error!.message).toMatch(/paginate/);
+  });
+
+  it('rejects top level steps and pagination in version 2, naming the key', () => {
+    const errors = errorsOf({ ...base(), steps: [], pagination: { kind: 'none' } });
+    expect(errors.map((e) => e.path)).toEqual(['$.steps', '$.pagination']);
+    expect(errors[1]!.message).toContain('paginate block');
   });
 
   it('rejects an unknown version, naming the file and the value', () => {
@@ -226,7 +250,8 @@ describe('tables', () => {
   });
   const withTables = (tables: unknown[]): RecipeInput => {
     const { fields: _fields, ...rest } = base();
-    return { ...rest, tables } as RecipeInput;
+    const names = tables.flatMap((t) => (typeof (t as { name?: unknown }).name === 'string' ? [(t as { name: string }).name] : []));
+    return { ...rest, tables, sequence: [...new Set(names)].map((extract) => ({ extract })) } as RecipeInput;
   };
 
   it('accepts a page table and a list table, with scopes defaulting from the table', () => {
@@ -257,17 +282,17 @@ describe('tables', () => {
   });
 
   it('rejects tables together with top level fields, naming both', () => {
-    const errors = errorsOf({ ...base(), tables: [table('results')] });
+    const errors = errorsOf({ ...base(), tables: [table('results')], sequence: [{ extract: 'results' }] });
     expect(errors).toHaveLength(1);
     expect(errors[0]!.path).toBe('$.tables');
     expect(errors[0]!.message).toMatch(/tables.*fields/);
   });
 
-  it('rejects a recipe with neither tables nor fields', () => {
-    const errors = errorsOf(withTables([]));
-    expect(errors.map((e) => e.path)).toContain('$.tables');
+  it('accepts a recipe with neither tables nor fields that only runs flows', () => {
     const { fields: _fields, ...bare } = base();
-    expect(errorsOf(bare).map((e) => e.path)).toEqual(['$.fields']);
+    const flows = [{ name: 'submit', steps: [{ kind: 'click', target: { selectors: [{ strategy: 'css', value: 'button', stability: 'medium' }] } }] }];
+    const recipe = loadRecipe({ ...bare, flows, sequence: [{ flow: 'submit' }] });
+    expect(tablesOf(recipe)).toEqual([]);
   });
 
   it('rejects duplicate table names, naming the table', () => {
@@ -362,42 +387,13 @@ describe('selector candidates', () => {
 describe('reserved blocks', () => {
   it('fills defaults when optional blocks are absent', () => {
     const recipe = loadRecipe(base());
-    expect(recipe.pagination).toEqual({ kind: 'none', limit: 1, stopRules: [], delayMs: 0 });
+    expect(recipe.flows).toEqual([]);
     expect(recipe.guards).toEqual([
       { kind: 'login', enabled: true },
       { kind: 'captcha', enabled: true },
       { kind: 'zero-fields', enabled: true },
     ]);
     expect(recipe.healing).toEqual({ fuzzyThreshold: 0.7, llm: true });
-  });
-
-  it('accepts a url pagination block', () => {
-    const recipe = loadRecipe(
-      base({
-        url: 'https://example.com/c/{category}?page={n}',
-        vars: [
-          { name: 'category', type: 'string' },
-          { name: 'n', type: 'string', default: '1' },
-        ],
-        pagination: { kind: 'url', param: { name: 'n', start: 1, step: 1 }, limit: 3 },
-      }),
-    );
-    expect(recipe.pagination.kind).toBe('url');
-    expect(recipe.pagination.limit).toBe(3);
-  });
-
-  it('accepts limit "all" and stop rules', () => {
-    const result = validateRecipe(
-      base({
-        pagination: {
-          kind: 'next',
-          target: { selectors: [{ strategy: 'role', value: 'link|Next', stability: 'stable' }] },
-          limit: 'all',
-          stopRules: ['no-new-items', 'target-missing'],
-        },
-      }),
-    );
-    expect(result.ok).toBe(true);
   });
 
   it('rejects a fuzzy threshold outside 0..1', () => {
@@ -411,51 +407,194 @@ describe('reserved blocks', () => {
   });
 });
 
-describe('steps', () => {
+describe('paginate block', () => {
+  const next = { selectors: [{ strategy: 'role' as const, value: 'link|Next', stability: 'stable' as const }] };
+
+  it('accepts a url paginate block with defaults filled in', () => {
+    const recipe = loadRecipe(
+      base({
+        url: 'https://example.com/c/{category}?page={n}',
+        vars: [
+          { name: 'category', type: 'string' },
+          { name: 'n', type: 'string', default: '1' },
+        ],
+        sequence: [{ paginate: { kind: 'url', param: { name: 'n', start: 1, step: 1 }, limit: 3, do: [{ extract: 'items' }] } }],
+      }),
+    );
+    expect(paginationOf(recipe)).toEqual({ kind: 'url', param: { name: 'n', start: 1, step: 1 }, limit: 3, stopRules: [], delayMs: 0 });
+  });
+
+  it('reads no paginate block as kind none, one page', () => {
+    expect(paginationOf(loadRecipe(base()))).toEqual({ kind: 'none', limit: 1, stopRules: [], delayMs: 0 });
+  });
+
+  it('accepts limit "all" and stop rules', () => {
+    const result = validateRecipe(base({ sequence: [{ paginate: { kind: 'next', target: next, limit: 'all', stopRules: ['no-new-items', 'target-missing'], do: [{ extract: 'items' }] } }] }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects next without a target, naming the paginate block', () => {
+    const errors = errorsOf(base({ sequence: [{ paginate: { kind: 'next', do: [{ extract: 'items' }] } }] }));
+    expect(errors.map((e) => e.path)).toEqual(['$.sequence[0].paginate.target']);
+  });
+
+  it('checks the driving table: known, with an item block, extracted in do', () => {
+    const item = { selectors: [{ strategy: 'css' as const, value: 'li', stability: 'medium' as const }] };
+    const fields = [{ name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h2', stability: 'medium' as const }] }];
+    const { fields: _f, ...rest } = base();
+    const input = (table: string, inDo: string[]): RecipeInput => ({
+      ...rest,
+      tables: [{ name: 'page', fields }, { name: 'products', item, fields }],
+      sequence: [...['page', 'products'].filter((t) => !inDo.includes(t)).map((extract) => ({ extract })), { paginate: { kind: 'scroll', table, do: inDo.map((extract) => ({ extract })) } }],
+    });
+    expect(validateRecipe(input('products', ['page', 'products'])).ok).toBe(true);
+    expect(errorsOf(input('nope', ['page', 'products']))[0]!.message).toContain('not a table');
+    expect(errorsOf(input('page', ['page', 'products']))[0]!.message).toContain('no item block');
+    expect(errorsOf(input('products', ['page']))[0]!.message).toContain("not extracted in the paginate block's do");
+  });
+});
+
+describe('flows', () => {
   const accept = { selectors: [{ strategy: 'role' as const, value: 'button|Accept', stability: 'stable' as const }] };
+  const login = { selectors: [{ strategy: 'role' as const, value: 'button|Log in', stability: 'stable' as const }] };
+  const withFlows = (flows: unknown[], sequence: unknown[] = [{ extract: 'items' }], extra: Partial<RecipeInput> = {}) =>
+    ({ ...base(extra), flows, sequence }) as RecipeInput;
 
-  it('defaults to an empty list', () => {
-    expect(loadRecipe(base()).steps).toEqual([]);
-    expect(JSON.parse(saveRecipe(loadRecipe(base()))).steps).toBeUndefined();
+  it('accepts a called flow and a reactive flow, with the reactive defaults', () => {
+    const recipe = loadRecipe(
+      withFlows(
+        [
+          { name: 'reach-report', steps: [{ kind: 'click', target: accept }, { kind: 'wait', value: '100' }, { kind: 'click', target: accept, optional: true }] },
+          { name: 'login-wall', trigger: { appears: login }, steps: [{ kind: 'click', target: login }] },
+        ],
+        [{ flow: 'reach-report' }, { extract: 'items' }],
+      ),
+    );
+    expect(recipe.flows.map((f) => isReactive(f))).toEqual([false, true]);
+    expect(maxRetriesOf(recipe.flows[1]!)).toBe(2);
+    expect(recipe.flows[1]!.recover).toBeUndefined();
+    expect(recipe.flows[0]!.steps[0]).toEqual({ kind: 'click', target: accept, window: 'same', optional: false });
   });
 
-  it('accepts a click step and defaults when to first-page', () => {
-    const recipe = loadRecipe(base({ steps: [{ kind: 'click', target: accept, optional: true }] }));
-    expect(recipe.steps[0]).toEqual({ kind: 'click', target: accept, optional: true, when: 'first-page' });
+  it('rejects duplicate flow names, naming the flow', () => {
+    const flow = { name: 'setup', steps: [{ kind: 'click', target: accept }] };
+    const errors = errorsOf(withFlows([flow, flow], [{ flow: 'setup' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[1].name']);
+    expect(errors[0]!.message).toContain('setup');
   });
 
-  it('rejects a type step without a target, naming the step index', () => {
-    const errors = errorsOf(base({ steps: [{ kind: 'type', value: 'mouse' }] }));
+  it('rejects maxRetries and recover on a called flow', () => {
+    const errors = errorsOf(withFlows([{ name: 'setup', maxRetries: 3, recover: true, steps: [{ kind: 'click', target: accept }] }], [{ flow: 'setup' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].maxRetries', '$.flows[0].recover']);
+  });
+
+  it('rejects a fill step without a target, naming the flow and the step index', () => {
+    const errors = errorsOf(withFlows([{ name: 'search', steps: [{ kind: 'fill', value: 'mouse' }] }], [{ flow: 'search' }, { extract: 'items' }]));
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.path).toBe('$.steps[0].target');
+    expect(errors[0]!.path).toBe('$.flows[0].steps[0].target');
+    expect(errors[0]!.message).toContain('"search"');
     expect(errors[0]!.message).toContain('step 0');
   });
 
-  it('requires values for type, select, and press', () => {
-    const errors = errorsOf(base({ steps: [{ kind: 'select', target: accept }, { kind: 'press' }] }));
-    expect(errors.map((e) => e.path)).toEqual(['$.steps[0].value', '$.steps[1].value']);
+  it('applies the per-kind rules', () => {
+    const errors = errorsOf(
+      withFlows(
+        [
+          {
+            name: 'setup',
+            steps: [
+              { kind: 'fill', target: accept },
+              { kind: 'press' },
+              { kind: 'wait', value: 'soon' },
+              { kind: 'await-user', target: login },
+              { kind: 'click', target: accept, until: 'appears' },
+            ],
+          },
+        ],
+        [{ flow: 'setup' }, { extract: 'items' }],
+      ),
+    );
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].value', '$.flows[0].steps[1].value', '$.flows[0].steps[2]', '$.flows[0].steps[3].until', '$.flows[0].steps[4].until']);
   });
 
-  it('requires a target or milliseconds for wait', () => {
-    expect(errorsOf(base({ steps: [{ kind: 'wait', value: 'soon' }] }))[0]!.path).toBe('$.steps[0]');
-    expect(validateRecipe(base({ steps: [{ kind: 'wait', value: '500' }, { kind: 'wait', target: accept }] })).ok).toBe(true);
+  it('accepts await-user with until and a timeout, and popup steps', () => {
+    const recipe = loadRecipe(
+      withFlows([{ name: 'login', steps: [{ kind: 'click', target: login }, { kind: 'await-user', target: login, until: 'disappears', timeoutMs: 60000, window: 'popup', label: 'Log in to SOL' }] }], [{ flow: 'login' }, { extract: 'items' }]),
+    );
+    expect(recipe.flows[0]!.steps[1]).toMatchObject({ kind: 'await-user', until: 'disappears', timeoutMs: 60000, window: 'popup' });
   });
 
-  it('rejects an undeclared variable in a type value and names it', () => {
-    const errors = errorsOf(base({ steps: [{ kind: 'type', target: accept, value: '{query}' }] }));
+  it('rejects an undeclared variable in a fill value and names it', () => {
+    const errors = errorsOf(withFlows([{ name: 'search', steps: [{ kind: 'fill', target: accept, value: '{query}' }] }], [{ flow: 'search' }, { extract: 'items' }]));
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.path).toBe('$.steps[0].value');
+    expect(errors[0]!.path).toBe('$.flows[0].steps[0].value');
     expect(errors[0]!.message).toContain('query');
   });
 
-  it('round-trips steps through save and load', () => {
-    const input = base({
+  it('leaves an empty flows list out on save and round-trips flows', () => {
+    expect(JSON.parse(saveRecipe(loadRecipe(base()))).flows).toBeUndefined();
+    const input = withFlows([{ name: 'search', steps: [{ kind: 'fill', target: accept, value: '{q}', label: 'search' }] }], [{ flow: 'search' }, { extract: 'items' }], {
       vars: [{ name: 'category', type: 'string' }, { name: 'q', type: 'string' }],
-      steps: [{ kind: 'type', target: accept, value: '{q}', when: 'every-page', label: 'search' }],
     });
     const once = saveRecipe(loadRecipe(input));
     expect(saveRecipe(loadRecipe(once))).toBe(once);
-    expect(JSON.parse(once).steps[0].value).toBe('{q}');
+    expect(JSON.parse(once).flows[0].steps[0].value).toBe('{q}');
+  });
+});
+
+describe('sequence', () => {
+  const step = { kind: 'click', target: { selectors: [{ strategy: 'css' as const, value: 'button', stability: 'medium' as const }] } };
+  const item = { selectors: [{ strategy: 'css' as const, value: 'li', stability: 'medium' as const }] };
+  const fields = [{ name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h2', stability: 'medium' as const }] }];
+  const recipeWith = (sequence: unknown[], flows: unknown[] = [{ name: 'reach-report', steps: [step] }, { name: 'open-detail', steps: [step] }]) => {
+    const { fields: _f, ...rest } = base();
+    return { ...rest, tables: [{ name: 'summary', fields }, { name: 'results', item, fields }], flows, sequence } as RecipeInput;
+  };
+
+  it('accepts the typical sequence', () => {
+    const result = validateRecipe(
+      recipeWith([
+        { flow: 'reach-report' },
+        { extract: 'summary' },
+        { flow: 'open-detail' },
+        { paginate: { kind: 'next', target: step.target, table: 'results', do: [{ extract: 'results' }] } },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a table extracted twice, naming it', () => {
+    const errors = errorsOf(recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { paginate: { kind: 'scroll', do: [{ extract: 'summary' }, { extract: 'results' }] } }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.sequence[3].paginate.do[0]']);
+    expect(errors[0]!.message).toContain('"summary"');
+  });
+
+  it('rejects a reactive flow in the sequence, saying it is reactive', () => {
+    const flows = [{ name: 'login-wall', trigger: { appears: step.target }, steps: [step] }];
+    const errors = errorsOf(recipeWith([{ flow: 'login-wall' }, { extract: 'summary' }, { extract: 'results' }], flows));
+    expect(errors.map((e) => e.path)).toEqual(['$.sequence[0]']);
+    expect(errors[0]!.message).toContain('"login-wall" is reactive');
+  });
+
+  it('rejects unknown flows and tables, nested and second paginate blocks, and unused tables and flows', () => {
+    expect(errorsOf(recipeWith([{ flow: 'nope' }, { flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { extract: 'results' }]))[0]!.message).toContain('unknown flow "nope"');
+    expect(errorsOf(recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { extract: 'results' }, { extract: 'nope' }]))[0]!.message).toContain('unknown table "nope"');
+    const twice = errorsOf(
+      recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { paginate: { kind: 'scroll', do: [{ extract: 'summary' }] } }, { paginate: { kind: 'scroll', do: [{ extract: 'results' }] } }]),
+    );
+    expect(twice.map((e) => e.message)).toEqual(['a sequence has at most one paginate block']);
+    const nested = errorsOf(recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { paginate: { kind: 'scroll', do: [{ extract: 'results' }, { paginate: { kind: 'scroll', do: [] } }] } }]));
+    expect(nested.map((e) => e.path)).toContain('$.sequence[3].paginate.do[1]');
+    const unused = errorsOf(recipeWith([{ flow: 'reach-report' }, { extract: 'summary' }]));
+    expect(unused.map((e) => e.message)).toEqual(['table "results" is never extracted; add an extract block for it', 'called flow "open-detail" is never used; add a flow block for it or give it a trigger']);
+  });
+
+  it('lets a flow appear in more than one block', () => {
+    expect(validateRecipe(recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { flow: 'reach-report' }, { extract: 'results' }])).ok).toBe(true);
+  });
+
+  it('requires a non-empty sequence', () => {
+    expect(errorsOf(base({ sequence: [] })).map((e) => e.path)).toContain('$.sequence');
   });
 });
 
@@ -526,7 +665,7 @@ describe('recipe browser block', () => {
     const result = validateRecipe(base({ browser }));
     expect(result.ok).toBe(true);
     expect(result.ok && result.recipe.browser).toEqual(browser);
-    expect(result.ok && result.recipe.schemaVersion).toBe(1);
+    expect(result.ok && result.recipe.schemaVersion).toBe(2);
   });
 
   it('accepts a valid profile pin and rejects a path, naming browser.profile', () => {
@@ -579,6 +718,7 @@ describe('descriptions', () => {
     const { fields: _fields, ...rest } = base();
     return {
       ...rest,
+      sequence: [{ extract: 'results' }],
       description: 'Bing web search results for a query',
       vars: [{ name: 'category', type: 'string', description: 'search terms' }],
       tables: [

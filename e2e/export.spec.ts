@@ -50,7 +50,7 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       await scoop.writeRecipe(referenceRecipe(scoop.playground.port, STEPS_RECIPE));
       const steps = await exportAndRun(scoop, 'playground-steps', format);
       expect(steps.code, steps.stderr).toBe(0);
-      expect(steps.stderr).toMatch(/step 0 "accept cookies" \(click\) on page 1: ok/);
+      expect(steps.stderr).toMatch(/flow "setup" step 0 "accept cookies" \(click\) on page 1: ok/);
       expect(steps.rows).toHaveLength(24);
       expect(steps.rows).toEqual(await runRows(scoop, 'playground-steps'));
     });

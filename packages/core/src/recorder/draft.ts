@@ -1,20 +1,27 @@
 import { parseNumber } from '../convert';
 import { inlineVariable, renameVariable, templateProblem, templateVariables, VARIABLE_NAME } from '../template';
-import type { FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
+import type { Block, FieldScope, FieldType, Recipe, RecipeInput, SelectorCandidate, StepKind } from '../recipe/schema';
+import { defaultSequence, paginateOf } from '../recipe/sequence';
 import { SHORTHAND_TABLE, tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
 import type {
+  BlockPath,
   DescriptionTarget,
   Draft,
+  DraftBlock,
   DraftField,
+  DraftFlow,
+  DraftInnerBlock,
   DraftItem,
   DraftPagination,
   DraftStep,
   DraftTable,
   FieldPatch,
+  FlowPatch,
   FrameTarget,
   PaginationPatch,
   ProtocolCandidate,
+  SequenceError,
   StepPatch,
   VarValue,
 } from './protocol';
@@ -77,12 +84,14 @@ export function fieldDefaults(el: PickedElement, taken: readonly string[]): Fiel
   return { name, type: 'text' };
 }
 
-/** Variables the draft uses: those of the URL template, then those of `type` step values, in order of first use. */
-export function draftVariables(draft: Pick<Draft, 'url' | 'steps'>): string[] {
+/** Variables the draft uses: those of the URL template, then those of `fill` step values, in order of first use. */
+export function draftVariables(draft: { url: string; flows: readonly Pick<DraftFlow, 'steps'>[] }): string[] {
   const names = templateVariables(draft.url);
-  for (const step of draft.steps) {
-    if (step.kind !== 'type' || !step.value) continue;
-    for (const name of templateVariables(step.value)) if (!names.includes(name)) names.push(name);
+  for (const flow of draft.flows) {
+    for (const step of flow.steps) {
+      if (step.kind !== 'fill' || !step.value) continue;
+      for (const name of templateVariables(step.value)) if (!names.includes(name)) names.push(name);
+    }
   }
   return names;
 }
@@ -109,19 +118,108 @@ export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }
     tables: [{ name: SHORTHAND_TABLE, item: null, fields: [], defaultName: true }],
     activeTable: 0,
     form: 'shorthand',
-    steps: [],
+    flows: [],
+    activeFlow: null,
     pagination: null,
+    sequence: { custom: false, blocks: [] },
+    sequenceErrors: [],
     dirty: false,
     errors: [],
   });
 }
 
-export const DEFAULT_PAGINATION: DraftPagination = {
-  kind: 'none',
-  limit: 1,
-  stopRules: [],
-  delayMs: 0,
-};
+/** Settings of a freshly marked paginate block. */
+export function newPagination(kind: DraftPagination['kind']): DraftPagination {
+  return { kind, limit: 1, stopRules: [], delayMs: 0 };
+}
+
+/** Whether a table is still empty: no fields and no item container. */
+const emptyTable = (t: DraftTable) => t.fields.length === 0 && t.item === null;
+
+/**
+ * Whether the draft saves no table: its only table is still empty and it has
+ * flows, so the recipe only runs flows.
+ */
+export function flowsOnly(draft: Pick<Draft, 'tables' | 'flows'>): boolean {
+  return draft.flows.length > 0 && draft.tables.length === 1 && emptyTable(draft.tables[0]!);
+}
+
+/** Names of the tables the recipe will have, in strip order. */
+export function savedTables(draft: Pick<Draft, 'tables' | 'flows'>): string[] {
+  return flowsOnly(draft) ? [] : draft.tables.map((t) => t.name);
+}
+
+/** The default sequence of the draft: called flows, then each table once, the paginate block around the driving table and those after it. */
+export function defaultDraftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination'>): DraftBlock[] {
+  const blocks = defaultSequence(
+    draft.flows.map((f) => ({ name: f.name, ...(f.trigger ? { trigger: { appears: recipeTarget(f.trigger) } } : {}) })),
+    savedTables(draft),
+    draft.pagination ? { kind: draft.pagination.kind, limit: draft.pagination.limit, stopRules: draft.pagination.stopRules, delayMs: draft.pagination.delayMs, ...(draft.pagination.table ? { table: draft.pagination.table } : {}) } : null,
+  );
+  return blocks.map((b) => ('paginate' in b ? { paginate: { do: b.paginate.do } } : b));
+}
+
+/** The sequence the draft shows and saves: its own blocks once customized, else the default. */
+export function draftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination' | 'sequence'>): DraftBlock[] {
+  return draft.sequence.custom ? draft.sequence.blocks : defaultDraftSequence(draft);
+}
+
+/** The block at a path, or undefined. */
+export function blockAt(blocks: readonly DraftBlock[], path: BlockPath): DraftBlock | DraftInnerBlock | undefined {
+  const top = blocks[path[0]!];
+  if (path.length === 1) return top;
+  return top && 'paginate' in top ? top.paginate.do[path[1]!] : undefined;
+}
+
+/**
+ * Move a block: take it out of its place and put it at `to`, a top level
+ * position or a position inside the paginate block. A paginate block cannot
+ * move inside itself; any other move is allowed and checked by validation.
+ */
+export function moveBlock(blocks: readonly DraftBlock[], from: BlockPath, to: BlockPath): DraftBlock[] {
+  const block = blockAt(blocks, from);
+  if (!block) return [...blocks];
+  if ('paginate' in block && to.length === 2) return [...blocks];
+  const out: DraftBlock[] = blocks.map((b) => ('paginate' in b ? { paginate: { do: [...b.paginate.do] } } : b));
+  if (from.length === 1) out.splice(from[0]!, 1);
+  else (out[from[0]!] as { paginate: { do: DraftInnerBlock[] } }).paginate.do.splice(from[1]!, 1);
+  if (to.length === 1) {
+    out.splice(Math.max(0, Math.min(to[0]!, out.length)), 0, block as DraftBlock);
+  } else {
+    // The paginate block's index may have shifted when the block came from above it.
+    const paginateAt = out.findIndex((b) => 'paginate' in b);
+    if (paginateAt < 0) return [...blocks];
+    const inner = (out[paginateAt] as { paginate: { do: DraftInnerBlock[] } }).paginate.do;
+    inner.splice(Math.max(0, Math.min(to[1]!, inner.length)), 0, block as DraftInnerBlock);
+  }
+  return out;
+}
+
+/** Rewrite the blocks naming a flow or table: `rename` returns the new name, or null to drop the block. */
+function mapBlocks(blocks: readonly DraftBlock[], kind: 'flow' | 'extract', rename: (name: string) => string | null): DraftBlock[] {
+  const one = <B extends DraftBlock | DraftInnerBlock>(b: B): B | null => {
+    if (kind === 'flow' && 'flow' in b) {
+      const name = rename(b.flow);
+      return name === null ? null : ({ flow: name } as B);
+    }
+    if (kind === 'extract' && 'extract' in b) {
+      const name = rename(b.extract);
+      return name === null ? null : ({ extract: name } as B);
+    }
+    return b;
+  };
+  return blocks.flatMap((b): DraftBlock[] => {
+    if ('paginate' in b) return [{ paginate: { do: b.paginate.do.flatMap((d) => one(d) ?? []) } }];
+    const kept = one(b);
+    return kept ? [kept] : [];
+  });
+}
+
+/** In a custom sequence, the position for a new called flow block: before the first extract or paginate block. */
+function flowInsertAt(blocks: readonly DraftBlock[]): number {
+  const at = blocks.findIndex((b) => !('flow' in b));
+  return at < 0 ? blocks.length : at;
+}
 
 /**
  * Whether the draft is written in the shorthand form: one table named
@@ -189,15 +287,18 @@ export function draftToRecipe(draft: Draft): RecipeInput {
   const declared = draftVariables(draft);
   const shorthand = isShorthand(draft);
   const first = draft.tables[0]!;
+  const none = flowsOnly(draft);
   const recipe: RecipeInput = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: draft.name,
     ...(draft.description ? { description: draft.description } : {}),
     url: draft.url,
     vars: draft.vars
       .filter((v) => declared.includes(v.name))
       .map((v) => ({ name: v.name, type: 'string' as const, ...(v.value !== '' ? { default: v.value } : {}), ...(v.description ? { description: v.description } : {}) })),
-    ...(shorthand
+    ...(none
+      ? {}
+      : shorthand
       ? { fields: first.fields.map(recipeField) }
       : {
           tables: draft.tables.map((t) => ({
@@ -208,28 +309,45 @@ export function draftToRecipe(draft: Draft): RecipeInput {
             fields: t.fields.map(recipeField),
           })),
         }),
+    sequence: [],
   };
-  if (draft.steps.length > 0) {
-    recipe.steps = draft.steps.map((s) => ({
-      kind: s.kind,
-      ...(s.target ? { target: recipeTarget(s.target) } : {}),
-      ...(s.value !== undefined ? { value: s.value } : {}),
-      when: s.when,
-      optional: s.optional,
-      ...(s.label ? { label: s.label } : {}),
+  if (draft.flows.length > 0) {
+    recipe.flows = draft.flows.map((f) => ({
+      name: f.name,
+      ...(f.description ? { description: f.description } : {}),
+      ...(f.trigger ? { trigger: { appears: recipeTarget(f.trigger) } } : {}),
+      ...(f.trigger && f.maxRetries !== undefined ? { maxRetries: f.maxRetries } : {}),
+      ...(f.trigger && f.recover !== undefined ? { recover: f.recover } : {}),
+      steps: f.steps.map((s) => ({
+        kind: s.kind,
+        ...(s.target ? { target: recipeTarget(s.target) } : {}),
+        ...(s.value !== undefined ? { value: s.value } : {}),
+        ...(s.until ? { until: s.until } : {}),
+        ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+        ...(s.window === 'popup' ? { window: s.window } : {}),
+        ...(s.optional ? { optional: true } : {}),
+        ...(s.label ? { label: s.label } : {}),
+      })),
     }));
   }
-  if (shorthand && first.item) recipe.item = recipeItem(first.item);
-  if (shorthand && first.frame) recipe.frame = recipeFrame(first.frame);
-  const p = draft.pagination ?? DEFAULT_PAGINATION;
-  recipe.pagination = {
-    kind: p.kind,
-    ...(p.target ? { target: recipeTarget(p.target) } : {}),
-    ...(p.param ? { param: p.param } : {}),
-    limit: p.limit,
-    stopRules: p.stopRules,
-    delayMs: p.delayMs,
-  };
+  if (!none && shorthand && first.item) recipe.item = recipeItem(first.item);
+  if (!none && shorthand && first.frame) recipe.frame = recipeFrame(first.frame);
+  const p = draft.pagination;
+  recipe.sequence = draftSequence(draft).map((b): Block => {
+    if (!('paginate' in b)) return b;
+    return {
+      paginate: {
+        kind: p?.kind ?? 'next',
+        ...(p?.target ? { target: recipeTarget(p.target) } : {}),
+        ...(p?.param ? { param: p.param } : {}),
+        limit: p?.limit ?? 1,
+        stopRules: p?.stopRules ?? [],
+        delayMs: p?.delayMs ?? 0,
+        ...(p?.table ? { table: p.table } : {}),
+        do: b.paginate.do,
+      },
+    };
+  });
   if (draft.guards) recipe.guards = draft.guards;
   if (draft.healing) recipe.healing = draft.healing;
   if (draft.browser) recipe.browser = draft.browser;
@@ -250,25 +368,43 @@ export function errorTarget(path: string): { table: number; index?: number } | n
   return table ? { table: Number(table[1]) } : null;
 }
 
-/** Recompute per-field, per-table, name, and global validation errors. */
+/** The block a `$.sequence` error path names: `[i]`, `[i, j]` inside the paginate block, or null for the sequence as a whole. */
+export function sequenceErrorPath(path: string): BlockPath | null | undefined {
+  const inner = /^\$\.sequence\[(\d+)\]\.paginate\.do\[(\d+)\]/.exec(path);
+  if (inner) return [Number(inner[1]), Number(inner[2])];
+  const top = /^\$\.sequence\[(\d+)\]/.exec(path);
+  if (top) return [Number(top[1])];
+  return path === '$.sequence' ? null : undefined;
+}
+
+/** Recompute per-field, per-table, per-flow, per-step, sequence, name, and global validation errors. */
 export function validateDraft(draft: Draft): Draft {
   const result = validateRecipe(draftToRecipe(draft));
   const fieldErrors = new Map<string, string>();
   const tableErrors = new Map<number, string>();
-  const stepErrors = new Map<number, string>();
+  const stepErrors = new Map<string, string>();
+  const flowErrors = new Map<number, string>();
+  const sequenceErrors: SequenceError[] = [];
   let nameError: string | undefined;
   const errors: Draft['errors'] = [];
   for (const error of result.errors) {
     const target = errorTarget(error.path);
-    const step = /^\$\.steps\[(\d+)\]/.exec(error.path);
+    const step = /^\$\.flows\[(\d+)\]\.steps\[(\d+)\]/.exec(error.path);
+    const flow = /^\$\.flows\[(\d+)\]/.exec(error.path);
+    const block = sequenceErrorPath(error.path);
     if (target?.index !== undefined) {
       const key = `${target.table}:${target.index}`;
       if (!fieldErrors.has(key)) fieldErrors.set(key, error.message);
     } else if (target) {
       if (!tableErrors.has(target.table)) tableErrors.set(target.table, error.message);
     } else if (step) {
-      const index = Number(step[1]);
-      if (!stepErrors.has(index)) stepErrors.set(index, error.message);
+      const key = `${step[1]}:${step[2]}`;
+      if (!stepErrors.has(key)) stepErrors.set(key, error.message);
+    } else if (flow) {
+      const index = Number(flow[1]);
+      if (!flowErrors.has(index)) flowErrors.set(index, error.message);
+    } else if (block !== undefined) {
+      sequenceErrors.push({ path: block, message: error.message });
     } else if (error.path === '$.name') nameError ??= error.message;
     else errors.push(error);
   }
@@ -282,27 +418,42 @@ export function validateDraft(draft: Draft): Draft {
     const error = tableErrors.get(t);
     return { ...restTable, fields, ...(error ? { error } : {}) };
   });
-  const steps = draft.steps.map((s, i) => {
-    const { error: _old, ...rest } = s;
-    const error = stepErrors.get(i);
-    return error ? { ...rest, error } : rest;
+  const flows = draft.flows.map((f, fi) => {
+    const { error: _old, ...restFlow } = f;
+    const steps = f.steps.map((s, i) => {
+      const { error: _old, ...rest } = s;
+      const error = stepErrors.get(`${fi}:${i}`);
+      return error ? { ...rest, error } : rest;
+    });
+    const error = flowErrors.get(fi);
+    return { ...restFlow, steps, ...(error ? { error } : {}) };
   });
   const { nameError: _oldName, ...rest } = draft;
-  return { ...rest, ...(nameError ? { nameError } : {}), tables, steps, errors };
+  const sequence = draft.sequence.custom ? draft.sequence : { custom: false, blocks: defaultDraftSequence(draft) };
+  return { ...rest, ...(nameError ? { nameError } : {}), tables, flows, sequence, sequenceErrors, errors };
 }
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
 export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, string>> = {}): Draft {
-  const steps: DraftStep[] = recipe.steps.map((s) => ({
-    kind: s.kind,
-    ...(s.target ? { target: draftTarget(s.target) } : {}),
-    ...(s.value !== undefined ? { value: s.value } : {}),
-    when: s.when,
-    optional: s.optional,
-    ...(s.label ? { label: s.label } : {}),
-    count: null,
+  const flows: DraftFlow[] = recipe.flows.map((f) => ({
+    name: f.name,
+    ...(f.description ? { description: f.description } : {}),
+    ...(f.trigger ? { trigger: draftTarget(f.trigger.appears) } : {}),
+    ...(f.maxRetries !== undefined ? { maxRetries: f.maxRetries } : {}),
+    ...(f.recover !== undefined ? { recover: f.recover } : {}),
+    steps: f.steps.map((s) => ({
+      kind: s.kind,
+      ...(s.target ? { target: draftTarget(s.target) } : {}),
+      ...(s.value !== undefined ? { value: s.value } : {}),
+      ...(s.until ? { until: s.until } : {}),
+      ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+      window: s.window,
+      optional: s.optional,
+      ...(s.label ? { label: s.label } : {}),
+      count: null,
+    })),
   }));
-  const vars = draftVariables({ url: recipe.url, steps }).map((name) => {
+  const vars = draftVariables({ url: recipe.url, flows }).map((name) => {
     const declared = recipe.vars.find((v) => v.name === name);
     return {
       name,
@@ -342,18 +493,20 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
       }),
     ),
   }));
-  const p = recipe.pagination;
-  const pagination: DraftPagination | null =
-    p.kind === 'none' && !p.target && !p.param && p.limit === 1 && p.stopRules.length === 0 && p.delayMs === 0
-      ? null
-      : {
-          kind: p.kind,
-          ...(p.target ? { target: draftTarget(p.target) } : {}),
-          ...(p.param ? { param: p.param } : {}),
-          limit: p.limit,
-          stopRules: p.stopRules,
-          delayMs: p.delayMs,
-        };
+  const p = paginateOf(recipe);
+  const pagination: DraftPagination | null = p
+    ? {
+        kind: p.kind,
+        ...(p.target ? { target: draftTarget(p.target) } : {}),
+        ...(p.param ? { param: p.param } : {}),
+        limit: p.limit,
+        stopRules: p.stopRules,
+        delayMs: p.delayMs,
+        ...(p.table ? { table: p.table } : {}),
+      }
+    : null;
+  const blocks: DraftBlock[] = recipe.sequence.map((b) => ('paginate' in b ? { paginate: { do: b.paginate.do } } : b));
+  const shape = (list: readonly DraftBlock[]) => JSON.stringify(list);
   return validateDraft({
     name: recipe.name,
     ...(recipe.description ? { description: recipe.description } : {}),
@@ -362,8 +515,11 @@ export function draftFromRecipe(recipe: Recipe, values: Readonly<Record<string, 
     tables,
     activeTable: 0,
     form: recipe.tables ? 'tables' : 'shorthand',
-    steps,
+    flows,
+    activeFlow: flows.length > 0 ? 0 : null,
     pagination,
+    sequence: { custom: shape(blocks) !== shape(defaultDraftSequence({ tables, flows, pagination })), blocks },
+    sequenceErrors: [],
     guards: recipe.guards,
     healing: recipe.healing,
     ...(recipe.browser ? { browser: recipe.browser } : {}),
@@ -379,9 +535,29 @@ export function varNameError(draft: Pick<Draft, 'vars'>, name: string, except?: 
   return null;
 }
 
-/** The draft's steps with `rewrite` applied to every `type` step value. */
-function rewriteSteps(steps: readonly DraftStep[], rewrite: (value: string) => string): DraftStep[] {
-  return steps.map((s) => (s.kind === 'type' && s.value ? { ...s, value: rewrite(s.value) } : s));
+/** The draft's flows with `rewrite` applied to every `fill` step value. */
+function rewriteSteps(flows: readonly DraftFlow[], rewrite: (value: string) => string): DraftFlow[] {
+  return flows.map((f) => ({ ...f, steps: f.steps.map((s) => (s.kind === 'fill' && s.value ? { ...s, value: rewrite(s.value) } : s)) }));
+}
+
+const FLOW_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Why a flow name cannot be used, or null: it must be kebab-case and unique among the other flows. */
+export function flowNameError(draft: Pick<Draft, 'flows'>, name: string, except?: number): string | null {
+  if (!FLOW_NAME.test(name)) return 'flow names must be kebab-case';
+  if (draft.flows.some((f, i) => i !== except && f.name === name)) return `a flow named "${name}" already exists`;
+  return null;
+}
+
+/** Name for a new flow: `setup` for the first, else the first free `flow-N`. */
+export function defaultFlowName(draft: Pick<Draft, 'flows'>, base?: string): string {
+  const taken = draft.flows.map((f) => f.name);
+  if (base) {
+    if (!taken.includes(base)) return base;
+    for (let n = 2; ; n++) if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`;
+  }
+  if (!taken.includes('setup')) return 'setup';
+  for (let n = draft.flows.length + 1; ; n++) if (!taken.includes(`flow-${n}`)) return `flow-${n}`;
 }
 
 const TABLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -420,10 +596,13 @@ export interface NewDraftStep {
   kind: StepKind;
   target?: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget };
   value?: string;
-  when?: DraftStep['when'];
+  until?: DraftStep['until'];
+  window?: DraftStep['window'];
   optional?: boolean;
   count?: number | null;
 }
+
+type DraftTarget = NonNullable<DraftStep['target']>;
 
 /** Field and item actions act on the active table; count actions may name another. */
 export type DraftAction =
@@ -466,18 +645,31 @@ export type DraftAction =
   /** Set or clear (null) the item container's list parent. */
   | { type: 'setWithin'; within: ProtocolCandidate[] | null; fingerprint?: DraftField['fingerprint']; inferred?: boolean }
   | { type: 'setFieldCounts'; counts: { count: number | null; sample: string | null; coverage?: DraftField['coverage'] }[]; table?: number }
+  /** Set or clear (null) the paginate settings; setting them wraps the driving table's extract in a custom sequence. */
   | { type: 'setPagination'; pagination: DraftPagination | null }
   | { type: 'updatePagination'; patch: PaginationPatch }
-  | { type: 'addStep'; step: NewDraftStep }
-  | { type: 'updateStep'; index: number; patch: StepPatch }
-  | { type: 'replaceStepTarget'; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget; count: number | null }
+  /** Add a step to a flow (the active one when absent); without any flow the first step creates a called flow. */
+  | { type: 'addStep'; step: NewDraftStep; flow?: number }
+  | { type: 'updateStep'; flow: number; index: number; patch: StepPatch }
+  | { type: 'replaceStepTarget'; flow: number; index: number; selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget; count: number | null }
+  | { type: 'addFlow'; name: string }
+  | { type: 'updateFlow'; index: number; patch: FlowPatch }
+  /** Make a flow reactive with this trigger. */
+  | { type: 'setTrigger'; index: number; trigger: DraftTarget }
+  | { type: 'removeFlow'; index: number }
+  | { type: 'duplicateFlow'; index: number }
+  | { type: 'selectFlow'; index: number }
+  | { type: 'moveBlock'; from: BlockPath; to: BlockPath }
+  | { type: 'customizeSequence' }
+  | { type: 'resetSequence' }
   /** Set or clear (null) the active table's frame. */
   | { type: 'setTableFrame'; frame: FrameTarget | null }
   /** Replace every frame target whose primary candidate is `key` (`strategy=value`): tables, step targets, and the pagination target. */
   | { type: 'replaceFrame'; key: string; frame: FrameTarget }
-  | { type: 'removeStep'; index: number }
-  | { type: 'moveStep'; from: number; to: number }
-  | { type: 'setStepCounts'; counts: (number | null)[] }
+  | { type: 'removeStep'; flow: number; index: number }
+  | { type: 'moveStep'; flow: number; from: number; to: number }
+  /** Counts per flow, per step. */
+  | { type: 'setStepCounts'; counts: (number | null)[][] }
   | { type: 'setName'; name: string }
   /** Set a description, trimmed; empty removes it. Length is checked by the session. */
   | { type: 'setDescription'; target: DescriptionTarget; text: string }
@@ -488,7 +680,7 @@ export type DraftAction =
   | { type: 'setUrl'; url: string }
   /** Add a variable nothing uses yet; an invalid or taken name leaves the draft unchanged. */
   | { type: 'addVar'; name: string }
-  /** Rename a variable and each `{from}` in the template and `type` step values. */
+  /** Rename a variable and each `{from}` in the template and `fill` step values. */
   | { type: 'renameVar'; from: string; to: string }
   /** Remove a variable; each use becomes its value, encoded in the template and raw in steps. */
   | { type: 'removeVar'; name: string }
@@ -501,7 +693,7 @@ function withDescription<T extends { description?: string }>(value: T, text: str
 }
 
 /** Actions that only refresh live data and do not make the draft dirty. */
-const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved', 'selectTable']);
+const CLEAN_ACTIONS = new Set<DraftAction['type']>(['setItemCounts', 'setFieldCounts', 'setStepCounts', 'markSaved', 'selectTable', 'selectFlow']);
 
 /** Primary selector as a key, to tell whether two steps act on the same element. */
 const targetKey = (step: { target?: { selectors: ProtocolCandidate[] } }) => {
@@ -512,8 +704,12 @@ const targetKey = (step: { target?: { selectors: ProtocolCandidate[] } }) => {
 function applyStepPatch(step: DraftStep, patch: StepPatch): DraftStep {
   const next: DraftStep = { ...step };
   if (patch.kind !== undefined) next.kind = patch.kind;
-  if (patch.when !== undefined) next.when = patch.when;
+  if (patch.window !== undefined) next.window = patch.window;
   if (patch.optional !== undefined) next.optional = patch.optional;
+  if (patch.until === null) delete next.until;
+  else if (patch.until !== undefined) next.until = patch.until;
+  if (patch.timeoutMs === null) delete next.timeoutMs;
+  else if (patch.timeoutMs !== undefined) next.timeoutMs = patch.timeoutMs;
   if (patch.value === null) delete next.value;
   else if (patch.value !== undefined) next.value = patch.value;
   if (patch.label === null || patch.label === '') delete next.label;
@@ -577,6 +773,17 @@ export function followMode(table: DraftTable, others: readonly DraftTable[]): Dr
   for (let n = others.length + 1; ; n++) if (!taken.has(`table-${n}`)) return { ...rest, name: `table-${n}` };
 }
 
+/** The draft with a flow's steps replaced. */
+function withFlowSteps(draft: Draft, index: number, steps: DraftStep[]): Draft {
+  return { ...draft, flows: draft.flows.map((f, i) => (i === index ? { ...f, steps } : f)) };
+}
+
+/** In a custom sequence, rename (or drop, with null) the blocks naming a flow or table. */
+function withSequenceNames(draft: Draft, kind: 'flow' | 'extract', from: string, to: string | null): Draft {
+  if (!draft.sequence.custom) return draft;
+  return { ...draft, sequence: { custom: true, blocks: mapBlocks(draft.sequence.blocks, kind, (name) => (name === from ? to : name)) } };
+}
+
 /** The draft with table `index` replaced. */
 function withTable(draft: Draft, index: number, table: DraftTable): Draft {
   return { ...draft, tables: draft.tables.map((t, i) => (i === index ? table : t)) };
@@ -596,12 +803,14 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
         tables: [...draft.tables, { name: action.name, item: null, fields: [], ...(action.defaultName ? { defaultName: true } : {}) }],
         activeTable: draft.tables.length,
       };
+      // A custom sequence extracts the new table at its end, so it stays valid.
+      if (draft.sequence.custom) next = { ...next, sequence: { custom: true, blocks: [...draft.sequence.blocks, { extract: action.name }] } };
       break;
     case 'renameTable': {
       if (tableNameError(draft, action.name, at)) return draft;
       if (action.name === table.name) return draft;
       const { defaultName: _d, ...rest } = table;
-      next = withTable(draft, at, { ...rest, name: action.name });
+      next = withSequenceNames(withTable(draft, at, { ...rest, name: action.name }), 'extract', table.name, action.name);
       break;
     }
     case 'clearTable': {
@@ -623,7 +832,11 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = {
         ...draft,
         tables: draft.tables.map(swap),
-        steps: draft.steps.map((st) => (st.target ? { ...st, target: swap(st.target) } : st)),
+        flows: draft.flows.map((f) => ({
+          ...f,
+          ...(f.trigger ? { trigger: swap(f.trigger) } : {}),
+          steps: f.steps.map((st) => (st.target ? { ...st, target: swap(st.target) } : st)),
+        })),
         pagination: pagination?.target ? { ...pagination, target: swap(pagination.target) } : pagination,
       };
       break;
@@ -649,7 +862,11 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'removeTable': {
       if (draft.tables.length < 2) return draft;
       const tables = draft.tables.filter((_, i) => i !== at);
-      next = { ...draft, tables, activeTable: Math.min(at, tables.length - 1) };
+      next = withSequenceNames({ ...draft, tables, activeTable: Math.min(at, tables.length - 1) }, 'extract', table.name, null);
+      if (next.pagination?.table === table.name) {
+        const { table: _t, ...settings } = next.pagination;
+        next = { ...next, pagination: settings };
+      }
       break;
     }
     case 'selectTable':
@@ -758,11 +975,108 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = withTable(draft, t, { ...target, fields: target.fields.map((f, i) => (action.counts[i] ? { ...f, ...action.counts[i] } : f)) });
       break;
     }
-    case 'setPagination':
+    case 'setPagination': {
       next = { ...draft, pagination: action.pagination };
+      const blocks = draft.sequence.blocks;
+      if (draft.sequence.custom && action.pagination && !blocks.some((b) => 'paginate' in b)) {
+        // Marking pagination wraps the driving table's extract block in a new paginate block, where it stood.
+        const driving = action.pagination.table ?? table.name;
+        const at = blocks.findIndex((b) => 'extract' in b && b.extract === driving);
+        const wrapped: DraftBlock[] = at < 0 ? [...blocks, { paginate: { do: [{ extract: driving }] } }] : blocks.map((b, i) => (i === at ? { paginate: { do: [{ extract: driving }] } } : b));
+        next = { ...next, sequence: { custom: true, blocks: wrapped } };
+      } else if (draft.sequence.custom && !action.pagination) {
+        // Clearing pagination keeps the blocks it repeated, in place.
+        next = { ...next, sequence: { custom: true, blocks: blocks.flatMap((b) => ('paginate' in b ? b.paginate.do : [b])) } };
+      }
       break;
-    case 'updatePagination':
-      next = { ...draft, pagination: { ...(draft.pagination ?? DEFAULT_PAGINATION), ...action.patch } };
+    }
+    case 'updatePagination': {
+      if (!draft.pagination) return draft;
+      const { table: driving, ...patch } = action.patch;
+      const { table: _t, ...settings } = draft.pagination;
+      next = { ...draft, pagination: { ...settings, ...patch, ...(driving === null ? {} : driving !== undefined ? { table: driving } : draft.pagination.table ? { table: draft.pagination.table } : {}) } };
+      break;
+    }
+    case 'addFlow': {
+      if (flowNameError(draft, action.name)) return draft;
+      const flows = [...draft.flows, { name: action.name, steps: [] }];
+      next = { ...draft, flows, activeFlow: flows.length - 1 };
+      if (draft.sequence.custom) {
+        const blocks = [...draft.sequence.blocks];
+        blocks.splice(flowInsertAt(blocks), 0, { flow: action.name });
+        next = { ...next, sequence: { custom: true, blocks } };
+      }
+      break;
+    }
+    case 'updateFlow': {
+      const flow = draft.flows[action.index];
+      if (!flow) return draft;
+      const { patch } = action;
+      let updated: DraftFlow = { ...flow };
+      if (patch.name !== undefined && patch.name !== flow.name) {
+        if (flowNameError(draft, patch.name, action.index)) return draft;
+        updated.name = patch.name;
+      }
+      if (patch.trigger === null) {
+        const { trigger: _t, maxRetries: _m, recover: _r, ...rest } = updated;
+        updated = rest;
+      }
+      if (patch.maxRetries === null) delete updated.maxRetries;
+      else if (patch.maxRetries !== undefined) updated.maxRetries = patch.maxRetries;
+      if (patch.recover === null) delete updated.recover;
+      else if (patch.recover !== undefined) updated.recover = patch.recover;
+      next = { ...draft, flows: draft.flows.map((f, i) => (i === action.index ? updated : f)) };
+      if (updated.name !== flow.name) next = withSequenceNames(next, 'flow', flow.name, updated.name);
+      if (flow.trigger && !updated.trigger && next.sequence.custom) {
+        // A flow made called again runs where called flows start.
+        const blocks = [...next.sequence.blocks];
+        blocks.splice(flowInsertAt(blocks), 0, { flow: updated.name });
+        next = { ...next, sequence: { custom: true, blocks } };
+      }
+      break;
+    }
+    case 'setTrigger': {
+      const flow = draft.flows[action.index];
+      if (!flow) return draft;
+      next = withSequenceNames({ ...draft, flows: draft.flows.map((f, i) => (i === action.index ? { ...f, trigger: action.trigger } : f)) }, 'flow', flow.name, null);
+      break;
+    }
+    case 'removeFlow': {
+      const flow = draft.flows[action.index];
+      if (!flow) return draft;
+      const flows = draft.flows.filter((_, i) => i !== action.index);
+      const active = draft.activeFlow;
+      const activeFlow = flows.length === 0 ? null : active === null ? 0 : active > action.index ? active - 1 : Math.min(active, flows.length - 1);
+      next = withSequenceNames({ ...draft, flows, activeFlow }, 'flow', flow.name, null);
+      break;
+    }
+    case 'duplicateFlow': {
+      const flow = draft.flows[action.index];
+      if (!flow) return draft;
+      const copy: DraftFlow = { ...structuredClone(flow), name: defaultFlowName(draft, `${flow.name}-copy`) };
+      const flows = [...draft.flows.slice(0, action.index + 1), copy, ...draft.flows.slice(action.index + 1)];
+      next = { ...draft, flows, activeFlow: action.index + 1 };
+      if (draft.sequence.custom && !copy.trigger) {
+        const blocks = [...draft.sequence.blocks];
+        blocks.splice(flowInsertAt(blocks), 0, { flow: copy.name });
+        next = { ...next, sequence: { custom: true, blocks } };
+      }
+      break;
+    }
+    case 'selectFlow':
+      if (!draft.flows[action.index] || action.index === draft.activeFlow) return draft;
+      next = { ...draft, activeFlow: action.index };
+      break;
+    case 'moveBlock':
+      next = { ...draft, sequence: { custom: true, blocks: moveBlock(draftSequence(draft), action.from, action.to) } };
+      break;
+    case 'customizeSequence':
+      if (draft.sequence.custom) return draft;
+      next = { ...draft, sequence: { custom: true, blocks: draftSequence(draft) } };
+      break;
+    case 'resetSequence':
+      if (!draft.sequence.custom) return draft;
+      next = { ...draft, sequence: { custom: false, blocks: defaultDraftSequence(draft) } };
       break;
     case 'addStep': {
       const s = action.step;
@@ -772,41 +1086,63 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
           ? { target: { selectors: s.target.selectors, ...(s.target.fingerprint ? { fingerprint: s.target.fingerprint } : {}), ...(s.target.frame ? { frame: s.target.frame } : {}) } }
           : {}),
         ...(s.value !== undefined ? { value: s.value } : {}),
-        when: s.when ?? 'first-page',
+        ...(s.until ? { until: s.until } : {}),
+        window: s.window ?? 'same',
         optional: s.optional ?? false,
         count: s.count ?? null,
       };
-      const last = draft.steps.at(-1);
+      let base = draft;
+      let index = action.flow ?? draft.activeFlow;
+      if (index === null || !draft.flows[index]) {
+        // The first recorded step creates a called flow, makes it active, and puts it in the sequence.
+        base = reduceDraft(draft, { type: 'addFlow', name: defaultFlowName(draft) });
+        index = base.flows.length - 1;
+      }
+      const flow = base.flows[index]!;
+      const last = flow.steps.at(-1);
       // Typing into the same input again replaces the value instead of adding a step.
-      const replaces = step.kind === 'type' && last?.kind === 'type' && targetKey(last) !== null && targetKey(last) === targetKey(step);
-      next = { ...draft, steps: replaces ? [...draft.steps.slice(0, -1), { ...last, value: step.value ?? '' }] : [...draft.steps, step] };
+      const replaces = step.kind === 'fill' && last?.kind === 'fill' && targetKey(last) !== null && targetKey(last) === targetKey(step) && last.window === step.window;
+      const steps = replaces ? [...flow.steps.slice(0, -1), { ...last, value: step.value ?? '' }] : [...flow.steps, step];
+      next = withFlowSteps(base, index, steps);
       break;
     }
-    case 'updateStep':
-      next = { ...draft, steps: draft.steps.map((s, i) => (i === action.index ? applyStepPatch(s, action.patch) : s)) };
+    case 'updateStep': {
+      const flow = draft.flows[action.flow];
+      if (!flow) return draft;
+      next = withFlowSteps(draft, action.flow, flow.steps.map((s, i) => (i === action.index ? applyStepPatch(s, action.patch) : s)));
       break;
-    case 'replaceStepTarget':
-      next = {
-        ...draft,
-        steps: draft.steps.map((s, i) =>
+    }
+    case 'replaceStepTarget': {
+      const flow = draft.flows[action.flow];
+      if (!flow) return draft;
+      next = withFlowSteps(
+        draft,
+        action.flow,
+        flow.steps.map((s, i) =>
           i === action.index
-            ? {
-                ...s,
-                target: { selectors: action.selectors, ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}), ...(action.frame ? { frame: action.frame } : {}) },
-                count: action.count,
-              }
+            ? { ...s, target: { selectors: action.selectors, ...(action.fingerprint ? { fingerprint: action.fingerprint } : {}), ...(action.frame ? { frame: action.frame } : {}) }, count: action.count }
             : s,
         ),
-      };
+      );
       break;
-    case 'removeStep':
-      next = { ...draft, steps: draft.steps.filter((_, i) => i !== action.index) };
+    }
+    case 'removeStep': {
+      const flow = draft.flows[action.flow];
+      if (!flow) return draft;
+      next = withFlowSteps(draft, action.flow, flow.steps.filter((_, i) => i !== action.index));
       break;
-    case 'moveStep':
-      next = { ...draft, steps: move(draft.steps, action.from, action.to) };
+    }
+    case 'moveStep': {
+      const flow = draft.flows[action.flow];
+      if (!flow) return draft;
+      next = withFlowSteps(draft, action.flow, move(flow.steps, action.from, action.to));
       break;
+    }
     case 'setStepCounts':
-      next = { ...draft, steps: draft.steps.map((s, i) => (action.counts[i] !== undefined ? { ...s, count: action.counts[i]! } : s)) };
+      next = {
+        ...draft,
+        flows: draft.flows.map((f, fi) => ({ ...f, steps: f.steps.map((s, i) => (action.counts[fi]?.[i] !== undefined ? { ...s, count: action.counts[fi]![i]! } : s)) })),
+      };
       break;
     case 'setName':
       next = { ...draft, name: action.name };
@@ -848,7 +1184,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = {
         ...draft,
         url: renameVariable(draft.url, from, to),
-        steps: rewriteSteps(draft.steps, (value) => renameVariable(value, from, to)),
+        flows: rewriteSteps(draft.flows, (value) => renameVariable(value, from, to)),
         vars: draft.vars.map((v) => (v.name === from ? { ...v, name: to } : v)),
       };
       break;
@@ -859,7 +1195,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = {
         ...draft,
         url: inlineVariable(draft.url, variable.name, variable.value, true),
-        steps: rewriteSteps(draft.steps, (value) => inlineVariable(value, variable.name, variable.value, false)),
+        flows: rewriteSteps(draft.flows, (value) => inlineVariable(value, variable.name, variable.value, false)),
         vars: draft.vars.filter((v) => v !== variable),
       };
       break;

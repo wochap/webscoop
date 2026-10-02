@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = join(import.meta.dirname, '../../..');
-const NAME = /^(panel|footer|section|recipe|var|steps?|pagination|tabs?|table|rows|pick|list|fields?|chip|stack|input|results|repick|guard|frame)(-[a-z0-9]+)*$/;
+const NAME = /^(panel|footer|section|recipe|var|steps?|flows?|trigger|sequence|block|paginate|bar|sheet|tabs?|table|rows|pick|list|fields?|chip|stack|input|results|repick|guard|frame)(-[a-z0-9]+)*$/;
 
 function files(dir: string, ext: RegExp): string[] {
   // The nix package build copies only `packages/`, so `e2e/` may be absent.
@@ -44,8 +44,13 @@ function sourceHooks() {
     // Hooks a shared component derives from its `testId`, such as `${testId}-go`.
     for (const m of text.matchAll(/data-ws=\{`\$\{testId\}(-[a-z-]+)`\}/g)) suffixes.add(m[1]!);
     for (const m of text.matchAll(/TestId = `\$\{testId\}(-[a-z-]+)`/g)) suffixes.add(m[1]!);
+    // A shared component that appends a value, such as `${testId}-${o.value}`, makes every testId a prefix.
+    if (/data-ws=\{`\$\{testId\}-\$\{/.test(text)) suffixes.add('-');
   }
-  for (const h of propHooks) if (!h.prefix && h.name) for (const s of suffixes) hooks.push({ ...h, name: h.name + s });
+  for (const h of propHooks) {
+    if (h.prefix || !h.name) continue;
+    for (const s of suffixes) hooks.push(s === '-' ? { ...h, name: `${h.name}-`, prefix: true } : { ...h, name: h.name + s });
+  }
   return hooks.filter((h) => h.name !== '' || !h.prefix);
 }
 

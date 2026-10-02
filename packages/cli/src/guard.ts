@@ -10,9 +10,10 @@ import { log, type CliIo } from './context';
 import { CliError } from './exit';
 
 /**
- * The guard banner: the recorder bundle in guard mode, shown in the run's own
- * tab while the run holds attention for a guard, and taken out of the page
- * once attention resolves.
+ * The guard banner: the recorder bundle in guard mode, shown in the window
+ * that needs the user (the run's own tab, or a popup for an await-user step)
+ * while the run holds attention, and taken out of the page once attention
+ * resolves.
  */
 export function guardBanner(
   io: CliIo,
@@ -29,12 +30,14 @@ export function guardBanner(
         draft: draftFromRecipe(opts.recipe, opts.vars),
         mode: { kind: 'guard' },
         timeoutMs: opts.timeoutMs,
+        abortOnClose: !info.popup,
       });
       controller = next;
       // Set before attaching, so the page gets the banner with its first state.
-      const hooks = await next.showGuard(info);
+      const { popup: _popup, ...context } = info;
+      const hooks = await next.showGuard(context);
       await next.attach();
-      log(io, 'the page shows the guard banner: Continue checks again now, Abort stops the run');
+      log(io, `the page shows the ${info.kind === 'await-user' ? `banner for "${info.label ?? 'await-user'}"` : 'guard banner'}: Continue checks again now, Abort stops the run`);
       return hooks;
     },
     async hide() {

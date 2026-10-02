@@ -129,6 +129,8 @@ export function EditActions({ onUpdate, onCancel, canUpdate }: { onUpdate: () =>
 export function PickActionGrid({
   onAddField,
   onRecordStep,
+  onAwaitUser,
+  flowName = null,
   onPagination,
   onDismiss: _onDismiss,
   repicking,
@@ -137,6 +139,10 @@ export function PickActionGrid({
 }: {
   onAddField: () => void;
   onRecordStep: () => void;
+  /** Add an await-user step that waits until the element disappears. */
+  onAwaitUser?: () => void;
+  /** The active flow steps go into; null creates one. */
+  flowName?: string | null;
   onPagination: () => void;
   onDismiss: () => void;
   repicking: boolean;
@@ -162,10 +168,16 @@ export function PickActionGrid({
           <Icon name="arrow-right" size={12} />
           Pagination target
         </button>
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onRecordStep} data-ws="pick-as-step" title="Add a step that acts on this element, without acting now">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onRecordStep} data-ws="pick-as-step" title={`Add a step that acts on this element to ${flowName ?? 'a new flow'}, without acting now`}>
           <Icon name="record" size={12} />
-          Record as step
+          Add to flow
         </button>
+        {onAwaitUser && (
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onAwaitUser} data-ws="pick-as-await" title="Pause the run for the user until this element disappears">
+            <Icon name="hand" size={12} />
+            Add as await-user
+          </button>
+        )}
       </div>
     </div>
   );

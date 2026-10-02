@@ -40,7 +40,8 @@ test('the recipe timezone and locale reach the page', async ({ scoop }) => {
   const port = await listen(server);
   try {
     const recipe: RecipeInput = {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      sequence: [{ extract: 'items' }],
       name: 'identity',
       url: `http://127.0.0.1:${port}/`,
       fields: [field('tz', '#tz'), field('lang', '#lang')],

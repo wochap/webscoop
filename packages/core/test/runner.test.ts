@@ -132,6 +132,8 @@ describe('Runner', () => {
           focus: async () => {},
           setTitle: async () => {},
           pageText: async () => '',
+          onPopup: () => () => {},
+          isClosed: () => false,
           close: async () => {
             closed = true;
             releaseGoto();
@@ -227,7 +229,22 @@ describe('Runner with tables', () => {
     const { log, result } = run(mixedPage(cards(4), QUESTIONS));
     const out = await result;
     expect(out.ok).toBe(true);
-    expect(log.sequence()).toEqual(['browser.started', 'run.start', 'page.loaded', 'field.resolved', 'row.emitted', 'page.done', 'pagination.stopped', 'run.done', 'browser.closed']);
+    // Each extract block emits its rows at once, so a table's rows follow its own field reports.
+    expect(log.sequence()).toEqual([
+      'browser.started',
+      'run.start',
+      'page.loaded',
+      'field.resolved',
+      'row.emitted',
+      'field.resolved',
+      'row.emitted',
+      'field.resolved',
+      'row.emitted',
+      'page.done',
+      'pagination.stopped',
+      'run.done',
+      'browser.closed',
+    ]);
     expect(log.of('row.emitted').map((e) => e.table)).toEqual(['page', 'products', 'products', 'products', 'products', 'questions', 'questions']);
     expect(log.of('row.emitted').map((e) => e.row._index)).toEqual([0, 0, 1, 2, 3, 0, 1]);
     expect(log.of('field.resolved').map((e) => `${e.table}.${e.field.name}`)).toEqual(['page.heading', 'products.title', 'products.url', 'questions.title']);

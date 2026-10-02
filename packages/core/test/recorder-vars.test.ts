@@ -13,7 +13,7 @@ function catalog(): Draft {
   return emptyDraft({ name: 'shop-catalog', url: 'http://127.0.0.1:4777/catalog?tier={tier}', vars: [{ name: 'tier', value: '0' }] });
 }
 
-const typeStep = (value: string) => ({ type: 'addStep' as const, step: { kind: 'type' as const, value } });
+const typeStep = (value: string) => ({ type: 'addStep' as const, step: { kind: 'fill' as const, value } });
 
 describe('draft variable actions', () => {
   it('edits the template and adds a variable with an empty value', () => {
@@ -31,12 +31,12 @@ describe('draft variable actions', () => {
     expect(reduceDraft(draft, { type: 'setUrl', url: 'https://shop.test/c/{category' })).toBe(draft);
   });
 
-  it('renames a variable in the template and in type step values', () => {
+  it('renames a variable in the template and in fill step values', () => {
     let draft = emptyDraft({ name: 'login', url: 'https://shop.test/login', vars: [] });
     draft = reduceDraft(draft, typeStep('{login_email}'));
     draft = reduceDraft(draft, { type: 'setVar', name: 'login_email', value: 'me@acme.dev' });
     draft = reduceDraft(draft, { type: 'renameVar', from: 'login_email', to: 'email' });
-    expect(draft.steps[0]!.value).toBe('{email}');
+    expect(draft.flows[0]!.steps[0]!.value).toBe('{email}');
     expect(draft.vars).toEqual([{ name: 'email', value: 'me@acme.dev' }]);
   });
 
@@ -54,7 +54,7 @@ describe('draft variable actions', () => {
     draft = reduceDraft(draft, { type: 'setVar', name: 'category', value: 'red shoes' });
     draft = reduceDraft(draft, { type: 'removeVar', name: 'category' });
     expect(draft.url).toBe('https://shop.test/c/red%20shoes');
-    expect(draft.steps[0]!.value).toBe('red shoes');
+    expect(draft.flows[0]!.steps[0]!.value).toBe('red shoes');
     expect(draft.vars).toEqual([]);
   });
 

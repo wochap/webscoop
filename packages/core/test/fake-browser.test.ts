@@ -237,3 +237,38 @@ describe('FakeBrowser iframes', () => {
     expect(JSON.stringify(await session.snapshot(root))).toContain('Inner');
   });
 });
+
+describe('FakeBrowser popups', () => {
+  const MAIN = 'https://shop.test/';
+  const POPUP = 'https://shop.test/login';
+  const OTHER = 'https://shop.test/other';
+
+  it('opens a popup from a scripted click, reports it to the opener and its window listeners, and closes it from the page', async () => {
+    const browser = new FakeBrowser({
+      [MAIN]: { dom: h('html', {}, h('body', {}, h('button', { id: 'open' }, 'Log in'))), on: { click: () => ({ popup: '/login' }) } },
+      [POPUP]: {
+        dom: h('html', {}, h('body', {}, h('button', { id: 'again' }, 'Again'), h('button', { id: 'done' }, 'Done'))),
+        on: { click: (el) => (el?.attrs.id === 'done' ? { close: true } : { popup: '/other' }) },
+      },
+      [OTHER]: { dom: h('html', {}, h('body', {}, h('p', {}, 'deep'))) },
+    });
+    const session = await browser.open('/p');
+    await session.goto(MAIN, { timeoutMs: 1000 });
+    const popups: string[] = [];
+    const windows: string[] = [];
+    session.onPopup(async (p) => popups.push(await p.url()));
+    session.onWindow((w) => windows.push(`${w.id}<${w.opener}`));
+    await session.click((await session.resolve({ strategy: 'id', value: 'open', stability: 'stable' }))[0]!);
+    const popup = browser.popups[0]!;
+    expect(popup.windowId).toBe('popup-1');
+    await popup.click((await popup.resolve({ strategy: 'id', value: 'again', stability: 'stable' }))[0]!);
+    await Promise.resolve();
+    expect(popups).toEqual([POPUP, OTHER]);
+    expect(windows).toEqual(['popup-1<main', 'popup-2<popup-1']);
+    expect(browser.openSessions).toBe(3);
+    await popup.click((await popup.resolve({ strategy: 'id', value: 'done', stability: 'stable' }))[0]!);
+    await Promise.resolve();
+    expect(popup.isClosed()).toBe(true);
+    expect(session.isClosed()).toBe(false);
+  });
+});

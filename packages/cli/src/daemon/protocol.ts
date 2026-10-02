@@ -46,7 +46,7 @@ export type DaemonMessage =
   | { type: 'started' }
   | { type: 'stdout'; data: string }
   | { type: 'stderr'; data: string }
-  | { type: 'attention'; runId: string; reason: string; kind?: string; page: number; url: string }
+  | { type: 'attention'; runId: string; reason: string; kind?: string; label?: string; page: number; url: string }
   | { type: 'attention-resolved'; runId: string }
   | { type: 'still-blocked'; runId: string }
   | { type: 'waiting-attention'; holder: string }

@@ -1,5 +1,6 @@
 import type { ElementRef, Session } from '../ports';
-import type { Recipe } from '../recipe/schema';
+import type { Pagination, Recipe } from '../recipe/schema';
+import { paginationOf } from '../recipe/sequence';
 import { fillTemplate, templateVariables } from '../template';
 import { PaginationInputError, type Advance, type PageStrategy, type PagerContext } from './types';
 
@@ -31,8 +32,8 @@ async function usableTarget(ctx: PagerContext): Promise<ElementRef | null> {
 const TARGET_MISSING: Advance = { kind: 'stop', reason: 'target-missing' };
 
 /** The page variable's first value: the user's `--var` when given, else `param.start`. */
-function startValue(recipe: Recipe, vars: Readonly<Record<string, string>>): number {
-  const param = recipe.pagination.param!;
+function startValue(pagination: Pagination, vars: Readonly<Record<string, string>>): number {
+  const param = pagination.param!;
   const given = vars[param.name];
   if (given === undefined) return param.start;
   if (!/^-?\d+$/.test(given.trim())) {
@@ -41,15 +42,15 @@ function startValue(recipe: Recipe, vars: Readonly<Record<string, string>>): num
   return Number(given);
 }
 
-/** Build the strategy for the recipe's pagination kind. Throws when variables are missing or invalid. */
-export function createStrategy(recipe: Recipe, vars: Readonly<Record<string, string>> = {}): PageStrategy {
-  const { kind } = recipe.pagination;
+/** Build the strategy for the paginate block's kind (`none` without one). Throws when variables are missing or invalid. */
+export function createStrategy(recipe: Recipe, pagination: Pagination, vars: Readonly<Record<string, string>> = {}): PageStrategy {
+  const { kind } = pagination;
   const goto = (ctx: PagerContext, url: string) => ctx.session.goto(url, { timeoutMs: ctx.timeoutMs });
 
   if (kind === 'url') {
-    const param = recipe.pagination.param;
-    if (!param) throw new PaginationInputError('pagination kind url needs pagination.param');
-    const start = startValue(recipe, vars);
+    const param = pagination.param;
+    if (!param) throw new PaginationInputError('pagination kind url needs a param');
+    const start = startValue(pagination, vars);
     // A template without the page variable (as the recorder saves it) gets it as a query parameter.
     const inTemplate = templateVariables(recipe.url).includes(param.name);
     const urlFor = (page: number) => {
@@ -123,5 +124,5 @@ export function createStrategy(recipe: Recipe, vars: Readonly<Record<string, str
 
 /** URL of a recipe's first page with the given variables, the page variable included. */
 export function firstPageUrl(recipe: Recipe, vars: Readonly<Record<string, string>> = {}): string {
-  return createStrategy(recipe, vars).url;
+  return createStrategy(recipe, paginationOf(recipe), vars).url;
 }

@@ -15,7 +15,7 @@ const sel = (strategy: 'css' | 'testid', value: string) => ({ strategy, value, s
 
 function recipe(overrides: Partial<RecipeInput> = {}): RecipeInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2, sequence: [{ extract: 'items' }],
     name: 'shop',
     url: 'https://shop.test/c/{category}',
     vars: [{ name: 'category', type: 'string', default: 'shoes' }],
@@ -174,7 +174,7 @@ describe('guard flags', () => {
 
   it('keeps the rows of completed pages in the JSON array on exit 2', async () => {
     const paged = (n: number) => `${PAGE}?page=${n}`;
-    const dir = await home([recipe({ pagination: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 } })]);
+    const dir = await home([recipe({ sequence: [{ paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3, do: [{ extract: 'items' }] } }] })]);
     const browser = new FakeBrowser({ [paged(1)]: shopPage(2, 'A'), [paged(2)]: shopPage(2, 'B'), [paged(3)]: { dom: challenge(), status: 403 } });
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--guard-timeout', '0'], t)).toBe(ExitCode.Paused);
@@ -185,7 +185,7 @@ describe('guard flags', () => {
 
   it('streams the rows of completed pages with --jsonl before exiting 2', async () => {
     const paged = (n: number) => `${PAGE}?page=${n}`;
-    const dir = await home([recipe({ pagination: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3 } })]);
+    const dir = await home([recipe({ sequence: [{ paginate: { kind: 'url', param: { name: 'page', start: 1, step: 1 }, limit: 3, do: [{ extract: 'items' }] } }] })]);
     const browser = new FakeBrowser({ [paged(1)]: shopPage(2, 'A'), [paged(2)]: { dom: challenge(), status: 403 } });
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--jsonl', '--guard-timeout', '0'], t)).toBe(ExitCode.Paused);
@@ -275,7 +275,7 @@ describe('guard banner', () => {
 
 describe('summary', () => {
   it('mentions cleared guards', () => {
-    const report = { recipe: 'shop', durationMs: 1500, pageCount: 1, rowCount: 3, tables: [], healed: 0, duplicateCount: 0, guards: [{ kind: 'login', page: 1, url: PAGE, waitedMs: 12_000, cleared: true }], steps: [] };
+    const report = { recipe: 'shop', durationMs: 1500, pageCount: 1, rowCount: 3, tables: [], healed: 0, duplicateCount: 0, guards: [{ kind: 'login', page: 1, url: PAGE, waitedMs: 12_000, cleared: true }], steps: [], flows: [] };
     expect(summary(report as never)).toBe('3 rows from 1 page, 1 guard cleared in 1.50s (shop)');
   });
 });

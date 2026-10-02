@@ -121,6 +121,14 @@ export interface Session {
   setTitle(title: string): Promise<void>;
   /** Visible text of the document body, capped at `PAGE_TEXT_LIMIT` characters. */
   pageText(): Promise<string>;
+  /**
+   * Called with each popup the page opens (`window.open`, `target=_blank`),
+   * as a session of its own; popups of a popup are reported too. Returns an
+   * unsubscribe function.
+   */
+  onPopup(cb: (popup: Session) => void): () => void;
+  /** Whether the page is closed, by the run or by the page itself (a popup that called `window.close`). */
+  isClosed(): boolean;
   close(): Promise<void>;
 }
 
@@ -141,8 +149,14 @@ export interface Geometry {
 export interface InteractiveSession extends Session {
   /** Run the script in the current page now and in every page loaded afterwards. */
   inject(source: string): Promise<void>;
-  /** Expose `window[name](msg)` to the page; the page receives the handler's result. Exposing a name again replaces its handler. */
-  expose(name: string, fn: (msg: unknown) => Promise<unknown>): Promise<void>;
+  /**
+   * Expose `window[name](msg)` to the page and to its popups; the page receives
+   * the handler's result. The handler gets the id of the window that called
+   * (`MAIN_WINDOW` for the page itself). Exposing a name again replaces its handler.
+   */
+  expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void>;
+  /** Called with each popup of the page, or of its popups, as a window of its own. Returns an unsubscribe function. */
+  onWindow(cb: (win: RecorderWindow) => void): () => void;
   /** Deliver a message to the injected page (`window.__webscoopPage.dispatch`). */
   dispatch(msg: unknown): Promise<void>;
   /** Called with the new URL after each main frame navigation. Returns an unsubscribe function. */
@@ -151,6 +165,18 @@ export interface InteractiveSession extends Session {
   onClosed(cb: () => void): () => void;
   /** Bounding box of an element in CSS pixels. */
   geometry(ref: ElementRef): Promise<Geometry>;
+}
+
+/** Id of a session's own page among its windows. */
+export const MAIN_WINDOW = 'main';
+
+/** A popup window of an interactive session: the recorder's script and binding reach it too. */
+export interface RecorderWindow {
+  /** Unique within the session; the id the binding reports for calls from this window. */
+  readonly id: string;
+  /** Id of the window that opened it. */
+  readonly opener: string;
+  readonly session: InteractiveSession;
 }
 
 export function isInteractiveSession(session: Session): session is InteractiveSession {

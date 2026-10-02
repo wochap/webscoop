@@ -70,39 +70,54 @@ export function PanelShell({ header, footer, bar, children }: { header: ReactNod
 
 export function PanelFooter({
   dirty,
+  tableCount = 0,
   fieldCount = 0,
+  flowCount = 0,
   stepCount = 0,
   canTest,
+  blocker = null,
   onTest,
   onSave,
   savedName,
 }: {
   dirty: boolean;
+  tableCount?: number;
   fieldCount?: number;
+  flowCount?: number;
   stepCount?: number;
   canTest: boolean;
+  /** Why Save and Test run are disabled, such as sequence errors; null when they are not. */
+  blocker?: string | null;
   onTest: () => void;
   onSave: () => void;
   savedName: string | null;
 }) {
+  const counts = [tableCount === 0 ? 'No tables' : plural(tableCount, 'table'), plural(fieldCount, 'field'), plural(flowCount, 'flow'), plural(stepCount, 'step')].join(' · ');
   return (
-    <footer className="ws-footer">
-      <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest} data-ws="footer-test">
-        <Icon name="play" size={12} />
-        Test run
-      </button>
-      <span className="ws-meta" data-ws="footer-count">
-        {plural(fieldCount, 'field')}
-        {stepCount > 0 ? ` · ${plural(stepCount, 'step')}` : ''}
-      </span>
-      <span className="ws-spacer" />
-      <span className="ws-meta" data-ws="footer-status">
-        {dirty ? 'Unsaved changes' : savedName ? `Saved ${savedName}` : ''}
-      </span>
-      <button type="button" className="ws-btn ws-btn-primary ws-btn-lg" onClick={onSave} data-ws="footer-save">
-        Save <Kbd>Ctrl S</Kbd>
-      </button>
-    </footer>
+    <>
+      {blocker && (
+        <div className="ws-footer-blocker" role="alert" data-ws="footer-blocker">
+          <Icon name="warning" size={11} />
+          {blocker}
+        </div>
+      )}
+      <footer className="ws-footer">
+        <button type="button" className="ws-btn ws-btn-lg" onClick={onTest} disabled={!canTest || blocker !== null} title={blocker ?? undefined} data-ws="footer-test">
+          <Icon name="play" size={12} />
+          Test run
+        </button>
+        <span className="ws-meta ws-ellipsis" title={counts} data-ws="footer-count">
+          {counts}
+        </span>
+        <span className="ws-spacer" />
+        <span className="ws-meta" data-ws="footer-status">
+          {dirty ? 'Unsaved' : savedName ? `Saved ${savedName}` : ''}
+        </span>
+        <button type="button" className="ws-btn ws-btn-primary ws-btn-lg" onClick={onSave} disabled={blocker !== null} title={blocker ?? undefined} data-ws="footer-save">
+          Save <Kbd>Ctrl S</Kbd>
+        </button>
+      </footer>
+    </>
   );
 }
 
