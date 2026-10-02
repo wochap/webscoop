@@ -479,6 +479,37 @@ export const RepickContextSchema = z.object({
   picked: z.nullable(z.object({ score: z.nullable(z.number()), sample: z.nullable(z.string()), selector: SelectorSchema })),
 });
 
+/** The target a target edit replaces: a step's, a reactive flow's trigger, or the paginate block's. */
+export const TargetRefSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('step'), flow: index(), index: index() }),
+  z.object({ kind: z.literal('trigger'), flow: index() }),
+  z.object({ kind: z.literal('pagination') }),
+]);
+
+/** Why a popup step cannot be re-picked while no popup is open; `index` is the step's index in its flow. */
+export function popupClosedReason(index: number): string {
+  if (index === 0) return 'popup not open';
+  return `popup not open — replay ${index === 1 ? 'step 1' : `steps 1–${index}`} first`;
+}
+
+/** A target edit in progress: typing a selector, picking on the page, or a pick waiting for "Use". */
+export const TargetEditSchema = z.object({
+  ref: TargetRefSchema,
+  phase: z.enum(['typing', 'picking', 'picked']),
+  /** What is edited, for the Pick section header: `flow-2 · step 1`, `trigger for login-wall`, `pagination target`. */
+  title: z.string(),
+  /** The page strip while picking. */
+  strip: z.string(),
+  /** The apply button's text: `Use for step`, `Use for trigger`, `Use for pagination`. */
+  use: z.string(),
+  /** The frame lookups run in: the picked element's, else the target's; null for the top document. */
+  frame: z.nullable(FrameTargetSchema),
+  /** The picked element with its page scope candidates, counted, verified, and ranked. */
+  selection: z.nullable(SelectionSchema),
+  /** Index in `selection.candidates` of the highlighted candidate, saved first. */
+  primary: z._default(index(), 0),
+});
+
 /** What the guard banner shows while an interactive run waits for a human: a guard, or an `await-user` step with its label. */
 export const GuardContextSchema = z.object({
   kind: z.enum([...GUARD_KINDS, 'await-user'] as const),
@@ -513,8 +544,10 @@ export const RecorderStateSchema = z.object({
   levelPick: z._default(z.nullable(LevelPickSchema), null),
   /** Field index waiting for a re-pick. */
   repick: z.nullable(index()),
-  /** Step waiting for a re-pick: its flow and index. */
-  repickStep: z._default(z.nullable(z.object({ flow: index(), index: index() })), null),
+  /** A step, trigger, or pagination target being edited. */
+  targetEdit: z._default(z.nullable(TargetEditSchema), null),
+  /** How many popups of the session are open. */
+  popups: z._default(count(), 0),
   /** Flow whose trigger waits for a pick in the trigger editor. */
   pickTrigger: z._default(z.nullable(index()), null),
   /** How this window shows the panel: the full panel, the rail of a main window, or the strip of a popup. */
@@ -681,8 +714,19 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.updateEditedField', { patch: FieldPatchSchema }),
   msg('draft.cancelEdit', {}),
   msg('draft.moveField', { from: index(), to: index() }),
-  /** Re-pick a field's selectors, or a step's target (`flow` names its flow, the active one when absent). */
-  msg('draft.repickTarget', { target: z.enum(['field', 'step']), index: z.nullable(index()), flow: z.optional(index()) }),
+  /** Re-pick a field's selectors; null ends the re-pick. */
+  msg('draft.repickTarget', { target: z.literal('field'), index: z.nullable(index()) }),
+  /**
+   * Edit a step, trigger, or pagination target: `pick` starts picking in the
+   * target's window, `type` opens the typed selector input.
+   */
+  msg('target.edit.start', { ref: TargetRefSchema, mode: z.enum(['pick', 'type']) }),
+  /** Count typed selector text in the target's window and frame; answered with `inspect.countResult`. */
+  msg('target.edit.count', { ref: TargetRefSchema, selector: z.string() }),
+  /** Save the edit: the typed selector first (`selector`), or the picked element's ranked candidates (`selection`). */
+  msg('target.edit.apply', { ref: TargetRefSchema, by: z.enum(['selector', 'selection']), selector: z.optional(z.string()) }),
+  /** End the edit and keep the previous target. */
+  msg('target.edit.cancel', {}),
   /** Add a step to a flow (the active one when absent); without any flow the first step creates one. */
   msg('draft.addStep', { step: NewStepSchema, selection: z.optional(z.nullable(SelectionSchema)), flow: z.optional(index()) }),
   msg('draft.updateStep', { flow: z.optional(index()), index: index(), patch: StepPatchSchema }),
@@ -765,7 +809,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
 
 export const HostMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.state', { state: RecorderStateSchema }),
-  msg('inspect.countResult', { count: count() }),
+  /** `error` is set for selector text that cannot be resolved. */
+  msg('inspect.countResult', { count: count(), error: z.optional(z.string()) }),
   msg('test.results', { results: TestResultsSchema, state: RecorderStateSchema }),
   msg('save.result', {
     ok: z.boolean(),
@@ -825,6 +870,8 @@ export type TestResults = z.infer<typeof TestResultsSchema>;
 export type TestTable = z.infer<typeof TestTableSchema>;
 export type RecorderState = z.infer<typeof RecorderStateSchema>;
 export type RepickContext = z.infer<typeof RepickContextSchema>;
+export type TargetRef = z.infer<typeof TargetRefSchema>;
+export type TargetEdit = z.infer<typeof TargetEditSchema>;
 export type GuardContextView = z.infer<typeof GuardContextSchema>;
 export type FieldPatch = z.infer<typeof FieldPatchSchema>;
 export type PaginationPatch = z.infer<typeof PaginationPatchSchema>;

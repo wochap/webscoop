@@ -5,7 +5,7 @@ import { Segmented } from './flows';
 import { Icon } from './icons';
 import { Toggle } from './items';
 import { Section } from './section';
-import { SelectorChip } from './selector-chip';
+import { TargetEditor } from './target-editor';
 
 const STOP_LABELS: Record<(typeof STOP_RULES)[number], string> = {
   'no-new-items': 'no new items',
@@ -38,6 +38,7 @@ export function sequenceBlocker(draft: Pick<Draft, 'sequenceErrors'>): string | 
 /** The paginate block's settings: kind, target, limit, stop rules, and the driving table. */
 function PaginateSettings({ draft, pagination }: { draft: Draft; pagination: DraftPagination }) {
   const actions = useActions();
+  const snap = useSnapshot();
   const update = (patch: PaginationPatch) => void actions.send({ kind: 'paginate.update', patch });
   const [pages, setPages] = useState(typeof pagination.limit === 'number' && pagination.limit > 1 ? pagination.limit : 3);
   const limit = pagination.limit === 'all' ? 'all' : pagination.limit === 1 ? 'one' : 'n';
@@ -62,7 +63,7 @@ function PaginateSettings({ draft, pagination }: { draft: Draft; pagination: Dra
       <div className="ws-edit-line">
         <span className="ws-edit-label">target</span>
         <span className="ws-row ws-spacer" data-ws="paginate-target">
-          {pagination.target ? <SelectorChip candidate={pagination.target.selectors[0]!} level="page" /> : <span className="ws-meta">{pagination.kind === 'scroll' ? 'none: the page loads more while scrolling' : 'none: pick a next link or load more button'}</span>}
+          {pagination.target ? <TargetEditor targetRef={{ kind: 'pagination' }} target={pagination.target} edit={snap.host?.targetEdit ?? null} testId="paginate-target-edit" /> : <span className="ws-meta">{pagination.kind === 'scroll' ? 'none: the page loads more while scrolling' : 'none: pick a next link or load more button'}</span>}
         </span>
       </div>
       {pagination.kind === 'url' && pagination.param && (

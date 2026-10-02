@@ -3,6 +3,7 @@ import { useActions, useSnapshot } from './context';
 import { FlowsSection } from './flows';
 import { Icon } from './icons';
 import { Kbd } from './shell';
+import { TargetPickPanel, targetBack } from './target-editor';
 
 /** The rail of a main window that does not own the panel: pressing it takes the panel back. */
 export function PanelRail() {
@@ -34,8 +35,11 @@ export function PanelStrip() {
 
 /** The compact bar of an owner window narrower than 640 pixels, and its sheet with the Flows section and the Pick and Browse controls. */
 export function CompactBar({ draft }: { draft: Draft }) {
-  const { ui } = useSnapshot();
+  const { ui, host } = useSnapshot();
   const actions = useActions();
+  // A target edit's pick opens the sheet on its details.
+  const edit = host?.targetEdit && host.targetEdit.phase !== 'typing' ? host.targetEdit : null;
+  const sheet = ui.sheet || edit !== null;
   const flow = draft.activeFlow !== null ? draft.flows[draft.activeFlow] : undefined;
   return (
     <>
@@ -56,14 +60,15 @@ export function CompactBar({ draft }: { draft: Draft }) {
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label="Pick element" title="Pick element (P)" onClick={actions.startPicking} data-ws="bar-pick">
           <Icon name="crosshair-simple" size={12} />
         </button>
-        <button type="button" className="ws-btn ws-btn-sm" aria-expanded={ui.sheet} onClick={() => actions.setUi({ sheet: !ui.sheet })} data-ws="bar-panel">
-          <Icon name={ui.sheet ? 'caret-down' : 'caret-right'} size={10} />
-          {ui.sheet ? 'Less' : 'Panel'}
+        <button type="button" className="ws-btn ws-btn-sm" aria-expanded={sheet} onClick={() => actions.setUi({ sheet: !ui.sheet })} data-ws="bar-panel">
+          <Icon name={sheet ? 'caret-down' : 'caret-right'} size={10} />
+          {sheet ? 'Less' : 'Panel'}
         </button>
       </div>
-      {ui.sheet && (
+      {sheet && (
         <div className="ws-sheet" data-ws="panel-sheet">
           <div className="ws-sheet-body">
+            {edit && host && <TargetPickPanel edit={edit} trail={ui.trail} onBack={() => targetBack(edit, host, actions)} />}
             <FlowsSection draft={draft} collapsed={false} onCollapse={() => {}} />
           </div>
           <div className="ws-sheet-foot">

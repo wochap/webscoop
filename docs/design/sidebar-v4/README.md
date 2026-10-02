@@ -1,8 +1,8 @@
 # Sidebar v4 design reference
 
-Claude Design frames for the recorder sidebar with flows, the sequence, iframes, popup windows, and forms. The `.dc.html` files open in Chromium; frame labels are the `label` attributes in the files. The main file is `Webscoop Sidebar v4 - Flows.dc.html`; it links to the v3 and v2 files, which are kept here unchanged so the links work. Frames are drawn 376px wide; the panel is 400px wide.
+Claude Design frames for the recorder sidebar with flows, the sequence, iframes, popup windows, and forms. The `.dc.html` files open in Chromium; frame labels are the `label` attributes in the files. The main file is `Webscoop Sidebar v4 - Flows.dc.html`; it links to the v3 and v2 files, which are kept here unchanged so the links work. Frames are drawn 376px wide, except section `I`, drawn 400px wide; the panel is 400px wide.
 
-The design is implemented by three OpenSpec changes: `frame-support` (elements inside iframes, frame targets), `flows` (flows replacing steps, the sequence replacing pagination, popup windows and panel ownership, await-user, the run-time banner), and `forms` (fill on every input kind, variables with secret and path, pick to prefill, recipes without tables).
+The design is implemented by four OpenSpec changes: `frame-support` (elements inside iframes, frame targets), `flows` (flows replacing steps, the sequence replacing pagination, popup windows and panel ownership, await-user, the run-time banner), `forms` (fill on every input kind, variables with secret and path, pick to prefill, recipes without tables), and `step-target-editor` (typed selectors and full selection details when editing step, trigger, and paginate targets).
 
 ## Frame index
 
@@ -35,6 +35,16 @@ The design is implemented by three OpenSpec changes: `frame-support` (elements i
 | `F3 Popup inactive` | `flows` | done |
 | `H1 Banner full` | `flows` | done |
 | `H2 Banner popup` | `flows` | done |
+| `I Step target editor` (section) | — | container of the frames below; drawn 400px wide |
+| `I1 Step edit` | `step-target-editor` | done |
+| `I2 Typed states` | `step-target-editor` | done |
+| `I3 Repick in progress` | `step-target-editor` | done |
+| `I4 Selection details for step` | `step-target-editor` | done |
+| `I5 Layout a` | — | rejected alternative (inline in the flow card); layout (b) in `I4` is built |
+| `I6 Trigger editor` | `step-target-editor` | done |
+| `I7a Iframe repick` | `step-target-editor` | done |
+| `I7b Popup picking` | `step-target-editor` | done |
+| `I7b Popup details` | `step-target-editor` | done |
 
 ### Earlier rounds
 
@@ -71,3 +81,6 @@ Agreed differences between the frames and the panel.
 | `C4` "Remove 4.2" and "Remove" on each error | Errors listed on their blocks and under the sequence | Moving a block or Reset to default fixes them |
 | `F1` rail with a "Panel" label | 30px rail with "Panel active in another window" written vertically | Same meaning in the rail's width |
 | `G` "Add a table" creates a table | "Add a table" shows the tab bar and the first table, which picks fill | A recipe with flows keeps its one empty table unsaved until it has fields |
+| `I3` back link to the step | "← back" opens the step's edit form again (the trigger's flow, or the paginate settings) | The Pick section keeps the pick while the user looks at the target |
+| `I4` "Use for step" carries the candidates | The host keeps the pick; Use sends only which target and whether the typed or the picked selector is saved | The host already holds the counted, verified candidates |
+| `I6` new trigger | A flow without a trigger keeps "Pick"; the target editor shows once the flow is reactive | The editor edits an existing target |

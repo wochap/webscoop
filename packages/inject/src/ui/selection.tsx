@@ -25,6 +25,7 @@ import { SelectorInput } from "./selector-input";
 import { SelectorStack, stackLevels } from "./selector-stack";
 import { Kbd } from "./shell";
 import { newTableName, tableNameProblem } from "./tables";
+import { TargetPickPanel, targetBack } from "./target-editor";
 
 type Suggestion = NonNullable<SelectedView["suggestion"]>;
 
@@ -66,7 +67,13 @@ export function SelectionPanel({
   host: RecorderState;
   trail: Crumb[];
 }) {
+  const actions = useActions();
   const { selected, editing, draft, proposal } = host;
+  // A target edit's pick shows its own details: page scope, Use for the target.
+  if (host.targetEdit && host.targetEdit.phase !== "typing") {
+    const edit = host.targetEdit;
+    return <TargetPickPanel edit={edit} trail={trail} onBack={() => targetBack(edit, host, actions)} />;
+  }
   if (proposal) return null;
   if (!selected && !editing) {
     return (

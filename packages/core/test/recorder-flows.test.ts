@@ -242,17 +242,103 @@ describe('RecorderController flows', () => {
     ]);
   });
 
-  it('counts step targets on recount and re-picks a step target', async () => {
+  it('counts step targets on recount and re-picks a step target with the selection details', async () => {
     const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
     await t.send({ kind: 'draft.addStep', step: { kind: 'click' }, selection: { ...selectionOf(descendantsOf(t.page).find((n) => n.tag === 'input')!), candidates: [{ strategy: 'css', value: '.gone', stability: 'medium' }] } });
     await t.controller.recount();
     expect(steps(t.controller.draft)[0]!.count).toBe(0);
-    await t.send({ kind: 'draft.repickTarget', target: 'step', index: 0 });
-    expect(t.controller.state.repickStep).toEqual({ flow: 0, index: 0 });
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref, mode: 'pick' });
+    expect(t.controller.state.targetEdit).toMatchObject({ ref, phase: 'picking', strip: 'Picking target for setup · step 1', use: 'Use for step' });
+    const before = JSON.stringify(t.controller.draft.tables);
     await t.pick(descendantsOf(t.page).find((n) => n.tag === 'button')!);
-    expect(t.controller.state.repickStep).toBeNull();
-    expect(steps(t.controller.draft)[0]!.count).toBe(1);
-    expect(steps(t.controller.draft)[0]!.target!.fingerprint?.tag).toBe('button');
+    const edit = t.controller.state.targetEdit!;
+    expect(edit.phase).toBe('picked');
+    expect(edit.selection!.tag).toBe('button');
+    expect(edit.selection!.candidates.length).toBeGreaterThan(1);
+    expect(edit.selection!.candidates.every((c) => c.count !== undefined && c.hit !== undefined)).toBe(true);
+    // A page scope pick touches no table state and makes no selection.
+    expect(t.controller.state.selected).toBeNull();
+    expect(JSON.stringify(t.controller.draft.tables)).toBe(before);
+    await t.send({ kind: 'inspect.primary', index: 1 });
+    const highlighted = edit.selection!.candidates[1]!;
+    await t.send({ kind: 'target.edit.apply', ref, by: 'selection' });
+    expect(t.controller.state.targetEdit).toBeNull();
+    const step = steps(t.controller.draft)[0]!;
+    expect(step.target!.selectors[0]).toMatchObject({ strategy: highlighted.strategy, value: highlighted.value });
+    expect(step.count).toBe(1);
+    expect(step.target!.fingerprint?.tag).toBe('button');
+  });
+
+  it('keeps the previous target when the pick is cancelled', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
+    await t.send({ kind: 'draft.addStep', step: { kind: 'click' }, selection: selectionOf(descendantsOf(t.page).find((n) => n.tag === 'input')!) });
+    const target = steps(t.controller.draft)[0]!.target;
+    await t.send({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'pick' });
+    await t.send({ kind: 'picker.cancel' });
+    expect(t.controller.state.targetEdit).toBeNull();
+    expect(steps(t.controller.draft)[0]!.target).toEqual(target);
+  });
+
+  it('keeps a fill step value, window, optional flag, and label when its target changes', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
+    const box = descendantsOf(t.page).find((n) => n.tag === 'input')!;
+    await t.send({ kind: 'draft.addStep', step: { kind: 'fill', value: 'x' }, selection: selectionOf(box) });
+    await t.send({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { value: '{password}', optional: true, label: 'pw' } });
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref, mode: 'pick' });
+    await t.pick(box);
+    await t.send({ kind: 'target.edit.apply', ref, by: 'selection' });
+    expect(steps(t.controller.draft)[0]).toMatchObject({ kind: 'fill', value: '{password}', optional: true, label: 'pw', window: 'same' });
+  });
+
+  it('counts typed selector text and puts the typed selector first', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
+    await t.send({ kind: 'draft.addStep', step: { kind: 'click' }, selection: selectionOf(descendantsOf(t.page).find((n) => n.tag === 'button')!) });
+    const previous = steps(t.controller.draft)[0]!.target!.selectors;
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref, mode: 'type' });
+    expect(t.controller.state.targetEdit).toMatchObject({ phase: 'typing' });
+    expect(await t.send({ kind: 'target.edit.count', ref, selector: 'css=form button' })).toEqual({ kind: 'inspect.countResult', count: 1 });
+    expect(await t.send({ kind: 'target.edit.count', ref, selector: 'css=.nothing' })).toEqual({ kind: 'inspect.countResult', count: 0 });
+    expect(await t.send({ kind: 'target.edit.count', ref, selector: 'css=form *' })).toEqual({ kind: 'inspect.countResult', count: 2 });
+    expect(await t.send({ kind: 'target.edit.count', ref, selector: 'css=[[[' })).toMatchObject({ kind: 'inspect.countResult', count: 0, error: expect.stringContaining('invalid selector') });
+    await t.send({ kind: 'target.edit.apply', ref, by: 'selector', selector: 'css=form button' });
+    const selectors = steps(t.controller.draft)[0]!.target!.selectors;
+    expect(selectors[0]).toEqual({ strategy: 'css', value: 'form button', stability: 'medium', count: 1 });
+    expect(selectors.slice(1).map((c) => c.value)).toEqual(previous.filter((c) => c.value !== 'form button').map((c) => c.value));
+    expect(t.controller.state.targetEdit).toBeNull();
+  });
+
+  it('applies a typed selector that matches nothing', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
+    await t.send({ kind: 'draft.addStep', step: { kind: 'click' }, selection: selectionOf(descendantsOf(t.page).find((n) => n.tag === 'button')!) });
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref, mode: 'type' });
+    await t.send({ kind: 'target.edit.apply', ref, by: 'selector', selector: '.later' });
+    expect(steps(t.controller.draft)[0]!.target!.selectors[0]).toMatchObject({ value: '.later', count: 0 });
+    expect(steps(t.controller.draft)[0]!.count).toBe(0);
+  });
+
+  it('edits a reactive trigger and the paginate target with the same editor', async () => {
+    const t = await harness(searchPage(), withFields());
+    await t.send({ kind: 'draft.addStep', step: { kind: 'press', value: 'Enter' }, selection: null });
+    await t.send({ kind: 'draft.updateFlow', index: 0, patch: { name: 'login-wall' } });
+    await t.send({ kind: 'draft.setTrigger', index: 0, selection: selectionOf(descendantsOf(t.page).find((n) => n.tag === 'input')!) });
+    const trigger = { kind: 'trigger', flow: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref: trigger, mode: 'pick' });
+    expect(t.controller.state.targetEdit).toMatchObject({ strip: 'Picking trigger for login-wall', use: 'Use for trigger' });
+    await t.pick(descendantsOf(t.page).find((n) => n.tag === 'button')!);
+    await t.send({ kind: 'target.edit.apply', ref: trigger, by: 'selection' });
+    expect(t.controller.draft.flows[0]!.trigger!.fingerprint?.tag).toBe('button');
+
+    await t.pick(descendantsOf(t.page).find((n) => n.tag === 'button')!);
+    await t.send({ kind: 'draft.markPagination' });
+    const pagination = { kind: 'pagination' } as const;
+    await t.send({ kind: 'target.edit.start', ref: pagination, mode: 'type' });
+    expect(t.controller.state.targetEdit).toMatchObject({ strip: 'Picking pagination target', use: 'Use for pagination' });
+    await t.send({ kind: 'target.edit.apply', ref: pagination, by: 'selector', selector: 'css=form button' });
+    expect(t.controller.draft.pagination!.target!.selectors[0]).toMatchObject({ value: 'form button', count: 1 });
   });
 
   it('sets a trigger from the trigger editor pick', async () => {
@@ -369,5 +455,36 @@ describe('RecorderController windows', () => {
     expect(t.popup.dispatchedOf('panel.mode').at(-1)).toEqual({ kind: 'panel.mode', mode: 'strip', popup: true });
     await t.popup.callHost({ kind: 'window.activity' });
     expect(t.controller.state.popup).toBe(true);
+  });
+
+  it('re-picks a popup step in the newest open popup, which takes the panel', async () => {
+    const t = await withPopup();
+    const user = descendantsOf(annotate(popupDom())).find((n) => n.tag === 'input')!;
+    await t.popup.callHost({ kind: 'draft.addStep', step: { kind: 'fill', value: 'u' }, selection: selectionOf(user) });
+    expect(t.controller.state.popups).toBe(1);
+    await t.send({ kind: 'window.activity' });
+    expect(t.controller.state.popup).toBe(false);
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    expect(await t.send({ kind: 'target.edit.start', ref, mode: 'pick' })).toEqual({ kind: 'panel.mode', mode: 'rail', popup: false });
+    expect(t.controller.state).toMatchObject({ popup: true, targetEdit: { phase: 'picking' } });
+    expect(t.popup.dispatchedOf('draft.state').at(-1)).toMatchObject({ state: { targetEdit: { phase: 'picking' } } });
+    await t.popup.callHost({ kind: 'picker.select', url: LOGIN, selection: selectionOf(user), snapshot: popupDom() });
+    expect(t.controller.state.targetEdit!.selection!.candidates[0]).toMatchObject({ count: 1, hit: true });
+    await t.popup.callHost({ kind: 'target.edit.apply', ref, by: 'selection' });
+    expect(steps(t.controller.draft)[0]).toMatchObject({ value: 'u', window: 'popup' });
+  });
+
+  it('refuses to re-pick a popup step while no popup is open', async () => {
+    const t = await withPopup();
+    const user = descendantsOf(annotate(popupDom())).find((n) => n.tag === 'input')!;
+    await t.popup.callHost({ kind: 'draft.addStep', step: { kind: 'press', value: 'Tab' }, selection: null });
+    await t.popup.callHost({ kind: 'draft.addStep', step: { kind: 'press', value: 'Tab' }, selection: null });
+    await t.popup.callHost({ kind: 'draft.addStep', step: { kind: 'fill', value: 'u' }, selection: selectionOf(user) });
+    await t.popup.userClose();
+    await t.controller.idle();
+    expect(t.controller.state.popups).toBe(0);
+    await t.send({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 2 }, mode: 'pick' });
+    expect(t.controller.state.error).toBe('popup not open — replay steps 1–2 first');
+    expect(t.controller.state.targetEdit).toBeNull();
   });
 });

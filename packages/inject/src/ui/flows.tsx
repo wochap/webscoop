@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { DEFAULT_MAX_RETRIES, STEP_KINDS, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
+import { DEFAULT_MAX_RETRIES, STEP_KINDS, popupClosedReason, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
 import { ZeroMatchWarning } from './fields';
@@ -9,6 +9,7 @@ import { Toggle } from './items';
 import { Section } from './section';
 import { SelectorChip } from './selector-chip';
 import { Kbd } from './shell';
+import { TargetEditor, sameRef } from './target-editor';
 
 type StepKind = DraftStep['kind'];
 
@@ -219,16 +220,19 @@ function TimeoutLine({ step, update }: { step: DraftStep; update: (patch: StepPa
   );
 }
 
+/** Why a step's target cannot be re-picked: a popup step while no popup is open. */
+function repickBlocked(step: DraftStep, at: StepRef, host: { popups: number; popup: boolean }): string | null {
+  if (step.window !== 'popup' || host.popup || host.popups > 0) return null;
+  return popupClosedReason(at.index);
+}
+
 /** The edit state of a step: target, value, window, frame, optional; label, until, and timeout for await-user. */
 function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; vars: VarValue[]; onDone: () => void }) {
   const actions = useActions();
   const update = (patch: StepPatch) => void actions.send({ kind: 'draft.updateStep', flow: at.flow, index: at.index, patch });
+  const { host } = useSnapshot();
   const [label, setLabel] = useState(step.label ?? '');
   useEffect(() => setLabel(step.label ?? ''), [step.label]);
-  const repick = () => {
-    void actions.send({ kind: 'draft.repickTarget', target: 'step', index: at.index, flow: at.flow });
-    actions.startPicking();
-  };
   return (
     <div className="ws-col ws-step-edit" data-ws="step-edit">
       {step.kind === 'await-user' && (
@@ -250,10 +254,11 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
         </EditLine>
       )}
       <EditLine label={step.kind === 'await-user' ? 'element' : 'target'}>
-        {step.target ? <SelectorChip candidate={step.target.selectors[0]!} level="page" /> : <span className="ws-meta">{targetSummary(step)}</span>}
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={repick} data-ws="step-repick">
-          Re-pick
-        </button>
+        {step.target || step.kind === 'await-user' ? (
+          <TargetEditor targetRef={{ kind: 'step', ...at }} target={step.target} edit={host?.targetEdit ?? null} disabled={host ? repickBlocked(step, at, host) : null} testId="step-target-edit" />
+        ) : (
+          <span className="ws-meta">{targetSummary(step)}</span>
+        )}
       </EditLine>
       {step.kind in VALUE_HINT && (
         <EditLine label="value">
@@ -364,14 +369,15 @@ export function StepRow({
           {step.error}
         </span>
       )}
-      {repicking && <span className="ws-meta">Pick the element for this step on the page.</span>}
+      {repicking && !editing && (
+        <span className="ws-meta" data-ws="step-repicking">
+          re-picking…
+        </span>
+      )}
       {step.count === 0 && !repicking && step.kind !== 'await-user' && (
         <ZeroMatchWarning
           optional={step.optional}
-          onRepick={() => {
-            void actions.send({ kind: 'draft.repickTarget', target: 'step', index: at.index, flow: at.flow });
-            actions.startPicking();
-          }}
+          onRepick={() => void actions.send({ kind: 'target.edit.start', ref: { kind: 'step', ...at }, mode: 'pick' })}
           onOptional={() => update({ optional: true })}
         />
       )}
@@ -382,6 +388,7 @@ export function StepRow({
 /** The trigger editor of a flow: called or reactive, the element whose appearance fires it, and where it is checked. */
 function TriggerEditor({ flow, index, picking }: { flow: DraftFlow; index: number; picking: boolean }) {
   const actions = useActions();
+  const { host } = useSnapshot();
   const pick = () => {
     void actions.send({ kind: 'draft.pickTrigger', index });
     actions.startPicking();
@@ -403,10 +410,16 @@ function TriggerEditor({ flow, index, picking }: { flow: DraftFlow; index: numbe
         <span className="ws-meta">appears</span>
       </EditLine>
       <EditLine label="element">
-        {flow.trigger ? <SelectorChip candidate={flow.trigger.selectors[0]!} level="page" /> : <span className="ws-meta">{picking ? 'Pick the element on the page…' : 'none yet'}</span>}
-        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={pick} data-ws="trigger-pick">
-          {flow.trigger ? 'Re-pick' : 'Pick'}
-        </button>
+        {flow.trigger ? (
+          <TargetEditor targetRef={{ kind: 'trigger', flow: index }} target={flow.trigger} edit={host?.targetEdit ?? null} testId="trigger-target-edit" />
+        ) : (
+          <>
+            <span className="ws-meta">{picking ? 'Pick the element on the page…' : 'none yet'}</span>
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={pick} data-ws="trigger-pick">
+              Pick
+            </button>
+          </>
+        )}
       </EditLine>
       <EditLine label="where">
         <span className="ws-meta">any window · checked after a page settles, before each step, before extraction, and every second while waiting for you</span>
@@ -514,6 +527,8 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
   const [dragging, setDragging] = useState<number | null>(null);
   const menuId = `flow-menu-${index}`;
   const picking = host?.pickTrigger === index;
+  const edit = host?.targetEdit ?? null;
+  const triggerEdit = edit !== null && sameRef(edit.ref, { kind: 'trigger', flow: index });
   const toggleOpen = () => {
     if (active) return;
     actions.setUi({ openFlows: open ? ui.openFlows.filter((n) => n !== flow.name) : [...ui.openFlows, flow.name] });
@@ -573,7 +588,7 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
       )}
       {open && (
         <div className="ws-col ws-flow-steps">
-          {(trigger || picking || (flow.trigger && active)) && <TriggerEditor flow={flow} index={index} picking={picking} />}
+          {(trigger || picking || triggerEdit || (flow.trigger && active)) && <TriggerEditor flow={flow} index={index} picking={picking} />}
           {flow.steps.map((step, i) => {
             const at = { flow: index, index: i };
             return (
@@ -584,7 +599,7 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
                 vars={draft.vars}
                 focused={ui.focusedStep?.flow === index && ui.focusedStep.index === i}
                 editing={ui.editingStep?.flow === index && ui.editingStep.index === i}
-                repicking={host?.repickStep?.flow === index && host.repickStep.index === i}
+                repicking={edit !== null && edit.phase !== 'typing' && sameRef(edit.ref, { kind: 'step', flow: index, index: i })}
                 onFocus={() => actions.setUi({ focusedStep: at, focusedField: null, focusedTab: null, focusedBlock: null })}
                 dragging={dragging === i}
                 dragProps={{

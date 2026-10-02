@@ -73,9 +73,8 @@ describe('flows section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { window: 'popup' } });
     fireEvent.click(p.q('step-optional')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { optional: true } });
-    fireEvent.click(p.q('step-repick')!);
-    expect(p.sent.at(-1)).toEqual({ kind: 'draft.repickTarget', target: 'step', index: 0, flow: 0 });
-    expect(p.store.get().ui.picking).toBe(true);
+    fireEvent.click(p.q('step-target-edit-repick')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'pick' });
   });
 
   it('turns a literal fill value into a variable', async () => {

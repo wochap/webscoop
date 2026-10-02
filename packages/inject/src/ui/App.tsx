@@ -142,7 +142,8 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
       void actions.send({ kind: 'draft.cancelEdit' });
       return;
     case 'clearSelection':
-      void actions.send({ kind: 'selection.clear' });
+      // Esc on a target edit's pick keeps the previous target.
+      void actions.send(host?.targetEdit ? { kind: 'target.edit.cancel' } : { kind: 'selection.clear' });
       return;
     case 'moveTabLeft':
     case 'moveTabRight': {
@@ -183,7 +184,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     hasProposal: Boolean(snap.host?.proposal),
     canConfirm: (snap.host?.proposal?.proposed.count ?? 0) > 0,
     canSetupList: Boolean(host && selected?.suggestion && !host.editing && host.repick === null && tableMode(currentTable(host.draft)) === 'none'),
-    hasSelection: Boolean(snap.host?.selected),
+    hasSelection: Boolean(snap.host?.selected || snap.host?.targetEdit),
     focusedField: snap.ui.focusedField,
     focusedStep: snap.ui.focusedStep,
     focusedBlock: snap.ui.focusedBlock,

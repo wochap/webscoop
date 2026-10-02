@@ -60,6 +60,9 @@ export function SelectorInput({
   candidatesTestId = `${testId}-candidates`,
   strategyTestId = `${testId}-strategy`,
   extra,
+  counter,
+  onLive,
+  onEscape,
 }: {
   /** The current selector as `strategy=value`; the input follows it when it changes. */
   value?: string;
@@ -87,12 +90,18 @@ export function SelectorInput({
   candidatesTestId?: string;
   strategyTestId?: string;
   extra?: ReactNode;
+  /** Counts the text in place of the host's page count, also while it equals `value`; `error` marks text that cannot be resolved. */
+  counter?: (selector: string) => Promise<{ count: number; error: string | null } | null>;
+  /** The text and its live count after each count; null while counting. */
+  onLive?: (selector: string, result: { count: number; error: string | null } | null) => void;
+  onEscape?: () => void;
 }) {
   const actions = useActions();
   const seed = () => (value ? splitSelector(value) : { strategy: 'css' as Strategy, value: '' });
   const [state, setState] = useState(seed);
   const [shown, setShown] = useState(value);
   const [live, setLive] = useState<number | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
   // Follow the host's value when it changes (a pick, a new primary), keeping the user's typing otherwise.
   if (shown !== value) {
     setShown(value);
@@ -103,6 +112,21 @@ export function SelectorInput({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setLive(null);
+    setLiveError(null);
+    if (counter) {
+      onLive?.(text, null);
+      if (!text) return;
+      timer.current = setTimeout(() => {
+        void counter(text).then((result) => {
+          setLive(result?.count ?? null);
+          setLiveError(result?.error ?? null);
+          onLive?.(text, result);
+        });
+      }, 250);
+      return () => {
+        if (timer.current) clearTimeout(timer.current);
+      };
+    }
     if (!text || submitted || !actions.countSelector) return;
     timer.current = setTimeout(() => {
       void actions.countSelector!(text, scope).then(setLive);
@@ -110,8 +134,10 @@ export function SelectorInput({
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
+    // `counter` and `onLive` are fresh closures each render; the text is what counts.
   }, [text, submitted, scope, actions]);
-  const shownCount = !text ? null : submitted ? count : live;
+  const shownCount = !text ? null : submitted && !counter ? count : live;
+  const shownError = error ?? liveError;
   const submit = () => {
     if (!text) return;
     onSubmit(text);
@@ -119,7 +145,7 @@ export function SelectorInput({
   };
   const tag = STRATEGY_TAGS[state.strategy];
   return (
-    <div className="ws-selin" data-ws="input" data-invalid={error ? true : undefined}>
+    <div className="ws-selin" data-ws="input" data-invalid={shownError ? true : undefined}>
       <div className="ws-row">
         <form
           className="ws-selin-box ws-spacer"
@@ -154,10 +180,16 @@ export function SelectorInput({
             value={state.value}
             placeholder={placeholder}
             aria-label={label}
-            aria-invalid={error ? true : undefined}
+            aria-invalid={shownError ? true : undefined}
             data-ws={testId}
             onChange={(e) => setState(applyTyping(state.strategy, e.target.value))}
             onKeyDown={(e) => {
+              if (e.key === 'Escape' && onEscape) {
+                e.preventDefault();
+                e.stopPropagation();
+                onEscape();
+                return;
+              }
               if (e.key !== 'Enter') return;
               e.preventDefault();
               submit();
@@ -167,10 +199,10 @@ export function SelectorInput({
             className="ws-selin-count"
             title="Live match count"
             data-ws={`${testId}-count`}
-            data-zero={shownCount === 0 || error ? true : undefined}
-            data-empty={shownCount === null && !error ? true : undefined}
+            data-zero={shownCount === 0 || shownError ? true : undefined}
+            data-empty={shownCount === null && !shownError ? true : undefined}
           >
-            {error && <Icon name="warning" weight="bold" size={11} />}
+            {shownError && <Icon name="warning" weight="bold" size={11} />}
             {shownCount ?? '—'}
           </span>
           {onPick && (
@@ -192,9 +224,9 @@ export function SelectorInput({
         )}
         {extra}
       </div>
-      {error && (
+      {shownError && (
         <span className="ws-error" data-ws={errorTestId}>
-          {error}
+          {shownError}
         </span>
       )}
     </div>

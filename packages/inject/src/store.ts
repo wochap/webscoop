@@ -1,4 +1,4 @@
-import type { BlockPath, Crumb, PageMessage, PanelMode, Path, RecorderState } from '@webscoop/core/page';
+import type { BlockPath, Crumb, PageMessage, PanelMode, Path, RecorderState, TargetRef } from '@webscoop/core/page';
 
 export type Mode = 'idle' | 'picking' | 'browsing' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
 
@@ -138,7 +138,7 @@ export function modeOf({ host, ui }: Snapshot): Mode {
   if (host?.proposal) return host.proposal.origin === 'edit' ? 'editing' : 'items';
   if (host?.editing) return 'editing';
   if (host?.selected) return 'selected';
-  if (ui.focusedField !== null || ui.editingStep !== null || (host?.repick ?? null) !== null || (host?.repickStep ?? null) !== null) return 'editing';
+  if (ui.focusedField !== null || ui.editingStep !== null || (host?.repick ?? null) !== null || (host?.targetEdit ?? null) !== null) return 'editing';
   return 'idle';
 }
 
@@ -154,6 +154,10 @@ export interface Actions {
   stopBrowsing(): void;
   /** Select the element at a path, keeping the original breadcrumb trail. */
   selectPath(path: Path): void;
+  /** Count typed selector text for a target edit in the target's window and frame; null when it cannot be counted. */
+  countTarget?(ref: TargetRef, selector: string): Promise<{ count: number; error: string | null } | null>;
+  /** Outline the first match of typed selector text with the match highlight; null clears it. */
+  previewSelector?(selector: string | null): void;
   /** Outline the element at a path on the page while a ladder row is hovered; null clears it. */
   previewPath?(path: Path | null): void;
   setUi(patch: Partial<UiState>): void;

@@ -11,6 +11,7 @@ import {
   type ProtocolCandidate,
   type DraftItem,
   type RecorderState,
+  type TargetRef,
 } from '@webscoop/core/page';
 import {
   compactLabel,
@@ -80,6 +81,8 @@ export class Runtime implements Actions {
   private selecting: Promise<void> = Promise.resolve();
   /** Similar sibling counts of hover targets, per picking session. */
   private similar = new WeakMap<Element, number>();
+  /** The first match of a target edit's typed selector, outlined with the match highlight. */
+  private typedMatch: Element | null = null;
   /** The hover target and walk depth the panel's hovering card shows. */
   private hovered: { el: Element | null; depth: number } = { el: null, depth: 0 };
 
@@ -266,7 +269,8 @@ export class Runtime implements Actions {
     // Picking a list level opens ready to pick; picking ends when the host clears it.
     if (next.levelPick && !prev?.levelPick && !this.store.get().ui.picking) this.startPicking();
     if (next.repick !== null && prev?.repick === null && !this.store.get().ui.picking) this.startPicking();
-    if (next.repickStep !== null && (prev?.repickStep ?? null) === null && !this.store.get().ui.picking) this.startPicking();
+    if (next.targetEdit?.phase === 'picking' && prev?.targetEdit?.phase !== 'picking' && !this.store.get().ui.picking) this.startPicking();
+    if (!next.targetEdit) this.typedMatch = null;
     if (next.pickTrigger !== null && (prev?.pickTrigger ?? null) === null && !this.store.get().ui.picking) this.startPicking();
     // The focused re-pick mode opens ready to pick.
     if (next.repickContext && !next.repickContext.picked && !prev?.repickContext && !this.store.get().ui.picking) this.startPicking();
@@ -324,6 +328,7 @@ export class Runtime implements Actions {
   /** "Picking", or "Picking in <table>" when the active table is a list. */
   private stripTitle(): string {
     const host = this.store.get().host;
+    if (host?.targetEdit) return host.targetEdit.strip;
     const table = host ? currentTable(host.draft) : null;
     return table?.item ? `Picking in ${table.name}` : 'Picking';
   }
@@ -411,7 +416,7 @@ export class Runtime implements Actions {
    */
   private listPicking(): { name: string; parent: Element | null; items: Element[]; others: ListOutlines['others'] } | null {
     const { host, ui } = this.store.get();
-    if (!ui.picking || !host || host.levelPick || host.proposal || host.repickContext || host.repick !== null || host.repickStep !== null) return null;
+    if (!ui.picking || !host || host.levelPick || host.proposal || host.repickContext || host.repick !== null || host.targetEdit) return null;
     const table = currentTable(host.draft);
     if (!table.item) return null;
     const items = containersLocal(table.item, this.doc);
@@ -425,6 +430,31 @@ export class Runtime implements Actions {
   }
 
   /** Outline the element at a path (a hovered ladder row), or clear it. */
+  /** Count typed selector text for a target edit through the host. */
+  async countTarget(ref: TargetRef, selector: string): Promise<{ count: number; error: string | null } | null> {
+    const fn = this.hostFn();
+    if (!fn) return null;
+    try {
+      const reply = parseHostMessage(await fn({ kind: 'target.edit.count', ref, selector }));
+      return reply.kind === 'inspect.countResult' ? { count: reply.count, error: reply.error ?? null } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  previewSelector = (selector: string | null): void => {
+    let first: Element | null = null;
+    if (selector) {
+      try {
+        first = resolveLocal(parseSelector(selector), undefined, this.doc)[0] ?? null;
+      } catch {
+        // Invalid text outlines nothing.
+      }
+    }
+    this.typedMatch = first;
+    this.syncOverlay();
+  };
+
   previewPath = (path: Path | null): void => {
     const el = path ? elementAt(path, this.doc) : null;
     this.opts.overlay.setHover(el, el ? excerpt(el) : '');
@@ -531,8 +561,8 @@ export class Runtime implements Actions {
   syncOverlay(): void {
     const { host } = this.store.get();
     const overlay = this.opts.overlay;
-    const selected = host?.selected ? elementAt(host.selected.selection.path, this.doc) : null;
-    overlay.setSelected(selected);
+    const path = host?.targetEdit ? host.targetEdit.selection?.path : host?.selected?.selection.path;
+    overlay.setSelected(path ? elementAt(path, this.doc) : null);
     overlay.setStrip(this.picking ? this.stripTitle() : null);
     // Cross-origin iframes stay opaque: while picking, a cover over each lets the pick select the `<iframe>` itself.
     overlay.setShields(this.picking ? crossOriginFrames(this.topDoc) : []);
@@ -567,6 +597,7 @@ export class Runtime implements Actions {
   private selectionMatches(): Element[] {
     const host = this.store.get().host;
     if (!host) return [];
+    if (host.targetEdit) return this.typedMatch?.isConnected ? [this.typedMatch] : [];
     const selected = host.selected;
     const editing = host.editing;
     if (editing) {

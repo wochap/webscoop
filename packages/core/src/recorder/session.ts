@@ -62,6 +62,7 @@ import {
   type DraftItem,
   type DraftTable,
   type Draft,
+  type DraftStep,
   type FieldPatch,
   type FrameTarget,
   type HostMessage,
@@ -80,6 +81,9 @@ import {
   type RecorderState,
   type SelectedView,
   type RepickContext,
+  type TargetEdit,
+  type TargetRef,
+  popupClosedReason,
   type TestResults,
   type TestTable,
 } from './protocol';
@@ -344,7 +348,8 @@ export class RecorderController {
       descriptionError: null,
       openedUrl: '',
       repick: repickContext ? repickContext.index : null,
-      repickStep: null,
+      targetEdit: null,
+      popups: 0,
       pickTrigger: null,
       panelMode: 'owner',
       popup: false,
@@ -433,6 +438,7 @@ export class RecorderController {
   /** A popup of the session: it takes the panel when it opens and hands it back to its opener when it closes. */
   private addWindow(win: RecorderWindow): void {
     this.windows.set(win.id, { session: win.session, opener: win.opener });
+    this.current = { ...this.current, popups: this.windows.size - 1 };
     // A popup starts on about:blank, whose window Chromium keeps for the first page it loads, so the
     // context's script may never boot there: load the bundle now and once the first page commits.
     const bundle = this.opts.bundle;
@@ -451,6 +457,7 @@ export class RecorderController {
       win.session.onClosed(() => {
         const entry = this.windows.get(win.id);
         this.windows.delete(win.id);
+        this.current = { ...this.current, popups: this.windows.size - 1 };
         if (this.owner !== win.id) return;
         const opener = entry && this.windows.has(entry.opener) ? entry.opener : MAIN_WINDOW;
         void this.handleInternal(async () => {
@@ -466,6 +473,7 @@ export class RecorderController {
   /** The frame host lookups run in: the override, else the selection's (null in the top document), else the active table's. */
   private scopeFrame(): FrameTarget | null {
     if (this.frameOverride) return this.frameOverride.frame;
+    if (this.current.targetEdit) return this.current.targetEdit.frame;
     const selected = this.current.selected;
     if (selected) return selected.selection.frame;
     return this.table().frame ?? null;
@@ -504,7 +512,8 @@ export class RecorderController {
   /** Put the current frame in the state, for the page to read paths in the right document. */
   private syncFrame(): void {
     const frame = this.scopeFrame();
-    const path = this.current.selected?.selection.framePath ?? null;
+    const edit = this.current.targetEdit;
+    const path = (edit ? edit.selection?.framePath : this.current.selected?.selection.framePath) ?? null;
     const view = frame ? { path, selectors: frame.selectors } : null;
     if (JSON.stringify(view) !== JSON.stringify(this.current.frame)) this.current = { ...this.current, frame: view };
   }
@@ -646,6 +655,11 @@ export class RecorderController {
       const reply = await this.route(msg);
       if (this.current.error) this.current = { ...this.current, error: null };
       this.syncFrame();
+      // The message moved the panel to another window (a popup step's target edit): that window gets the state.
+      if (windowId !== this.owner) {
+        await this.push();
+        return this.modeMessage(windowId);
+      }
       return reply && 'state' in reply ? { ...reply, state: this.outgoing() } : (reply ?? this.stateMessage());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -731,6 +745,8 @@ export class RecorderController {
         return;
       case 'picker.cancel':
         if (this.current.levelPick) this.current = { ...this.current, levelPick: null };
+        // Cancelling the pick of a target edit keeps the previous target.
+        if (this.current.targetEdit?.phase === 'picking') this.current = { ...this.current, targetEdit: null };
         return;
       case 'picker.select':
         this.current = { ...this.current, url: msg.url };
@@ -748,6 +764,12 @@ export class RecorderController {
         return { kind: 'inspect.countResult', count };
       }
       case 'inspect.primary': {
+        const edit = this.current.targetEdit;
+        if (edit?.selection) {
+          if (msg.index >= edit.selection.candidates.length) throw new Error('no candidate at that index');
+          this.current = { ...this.current, targetEdit: { ...edit, primary: msg.index } };
+          return;
+        }
         const selected = this.current.selected;
         const editing = this.current.editing;
         if (!selected && editing && msg.index < editing.candidates.length) {
@@ -853,8 +875,16 @@ export class RecorderController {
         this.apply({ type: 'moveField', from: msg.from, to: msg.to });
         return;
       case 'draft.repickTarget':
-        if (msg.target === 'field') this.current = { ...this.current, repick: msg.index, repickStep: null };
-        else this.current = { ...this.current, repickStep: msg.index === null ? null : { flow: this.flowIndex(msg.flow), index: msg.index }, repick: null };
+        this.current = { ...this.current, repick: msg.index, targetEdit: null };
+        return;
+      case 'target.edit.start':
+        return void (await this.startTargetEdit(msg.ref, msg.mode));
+      case 'target.edit.count':
+        return this.countTyped(msg.ref, msg.selector);
+      case 'target.edit.apply':
+        return void (await this.applyTargetEdit(msg.ref, msg.by, msg.selector));
+      case 'target.edit.cancel':
+        this.current = { ...this.current, targetEdit: null };
         return;
       case 'draft.addStep':
         if (msg.selection === undefined) this.notEditing();
@@ -973,7 +1003,7 @@ export class RecorderController {
         this.notEditingItem();
         if (this.current.selected && !this.current.editing && this.draft.tables[msg.index]) {
           // The selection follows the active tab: computed again for the table.
-          this.current = { ...this.current, repick: null, repickStep: null };
+          this.current = { ...this.current, repick: null };
           this.apply({ type: 'selectTable', index: msg.index });
           await this.retarget(msg.index);
         } else this.activate(msg.index);
@@ -1311,6 +1341,8 @@ export class RecorderController {
 
   /** Take a pick: inside an iframe, its frame candidates are checked in the top document and lookups run in that frame. */
   private async select(selection: ParsedSelection, snapshot: AnnotatedNode): Promise<void> {
+    // A target edit takes the pick in page scope; tables, fields, and the selection stay as they are.
+    if (this.current.targetEdit && this.current.targetEdit.phase !== 'typing') return this.selectTarget(selection, snapshot);
     const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
     await this.inFrame(frame, () => this.selectIn({ ...selection, frame }, snapshot));
   }
@@ -1399,22 +1431,6 @@ export class RecorderController {
       return;
     }
 
-    const repickStep = this.current.repickStep;
-    if (repickStep !== null && this.draft.flows[repickStep.flow]?.steps[repickStep.index]) {
-      const selectors = orderForSave(rank(await this.withCounts(generate(node), 'page', [])), 0);
-      this.apply({
-        type: 'replaceStepTarget',
-        flow: repickStep.flow,
-        index: repickStep.index,
-        selectors,
-        fingerprint: selection.fingerprint,
-        ...(selection.frame ? { frame: selection.frame } : {}),
-        count: selectors[0]?.count ?? null,
-      });
-      this.current = { ...this.current, repickStep: null };
-      return;
-    }
-
     const repick = this.current.repick;
     if (repick !== null && this.table().fields[repick]) {
       const field = this.table().fields[repick]!;
@@ -1488,7 +1504,7 @@ export class RecorderController {
     if (this.current.proposal) throw new Error('the list setup is already open');
     if (from === 'newTable') {
       if (!this.current.selected || !this.node) throw new Error('select an element first');
-      this.current = { ...this.current, repick: null, repickStep: null };
+      this.current = { ...this.current, repick: null };
       this.apply({ type: 'addTable', name: defaultTableName(this.draft), defaultName: true });
       await this.retarget(this.draft.activeTable);
       await this.refreshOtherLists();
@@ -1623,7 +1639,7 @@ export class RecorderController {
     if (!this.draft.tables[index]) throw new Error(`no table at index ${index}`);
     if (index === this.draft.activeTable) return;
     this.clearSelection();
-    this.current = { ...this.current, repick: null, repickStep: null };
+    this.current = { ...this.current, repick: null };
     this.apply({ type: 'selectTable', index });
   }
 
@@ -1827,7 +1843,6 @@ export class RecorderController {
     this.current = {
       ...this.current,
       repick: null,
-      repickStep: null,
       editing: {
         index,
         options: {
@@ -2652,6 +2667,155 @@ export class RecorderController {
       target: primary ? `${primary.strategy}=${primary.value}` : null,
       ...(value !== undefined ? { value } : {}),
     });
+  }
+
+  // Target edits -----------------------------------------------------------
+
+  /** The target a target edit replaces; undefined for a trigger not set yet. Throws for a missing step, flow, or paginate block. */
+  private targetOf(ref: TargetRef): DraftStep['target'] {
+    if (ref.kind === 'step') return this.stepOf(ref.flow, ref.index).target;
+    if (ref.kind === 'trigger') {
+      const flow = this.draft.flows[ref.flow];
+      if (!flow) throw new Error(`no flow at index ${ref.flow}`);
+      return flow.trigger;
+    }
+    if (!this.draft.pagination) throw new Error('mark a pagination target first');
+    return this.draft.pagination.target;
+  }
+
+  /** The newest open popup's window id, or null. */
+  private newestPopup(): string | null {
+    const ids = [...this.windows.keys()].filter((id) => id !== MAIN_WINDOW);
+    return ids.at(-1) ?? null;
+  }
+
+  /**
+   * Start editing a target in its window: a popup step's in the newest open
+   * popup, which becomes the owner (refused while none is open); a same
+   * window step's and the paginate target's in the main window.
+   */
+  private async startTargetEdit(ref: TargetRef, mode: 'pick' | 'type'): Promise<void> {
+    const target = this.targetOf(ref);
+    if (ref.kind === 'step' && this.stepOf(ref.flow, ref.index).window === 'popup') {
+      const popup = this.newestPopup();
+      if (popup === null) throw new Error(popupClosedReason(ref.index));
+      await this.setOwner(popup);
+    } else if (ref.kind !== 'trigger' && this.ownerIsPopup()) {
+      await this.setOwner(MAIN_WINDOW);
+    }
+    let title: string;
+    let strip: string;
+    let use: string;
+    if (ref.kind === 'step') {
+      const name = this.draft.flows[ref.flow]!.name;
+      title = `${name} · step ${ref.index + 1}`;
+      strip = `Picking target for ${title}`;
+      use = 'Use for step';
+    } else if (ref.kind === 'trigger') {
+      const name = this.draft.flows[ref.flow]!.name;
+      title = `trigger for ${name}`;
+      strip = `Picking trigger for ${name}`;
+      use = 'Use for trigger';
+    } else {
+      title = 'pagination target';
+      strip = 'Picking pagination target';
+      use = 'Use for pagination';
+    }
+    const edit: TargetEdit = { ref, phase: mode === 'pick' ? 'picking' : 'typing', title, strip, use, frame: target?.frame ?? null, selection: null, primary: 0 };
+    this.current = { ...this.current, targetEdit: edit, repick: null, pickTrigger: null };
+  }
+
+  /** The edit in progress for `ref`; throws when another target, or none, is being edited. */
+  private editFor(ref: TargetRef): TargetEdit {
+    const edit = this.current.targetEdit;
+    if (!edit || JSON.stringify(edit.ref) !== JSON.stringify(ref)) throw new Error('no edit of that target is in progress');
+    return edit;
+  }
+
+  /** Matches of typed selector text in the target's window and frame, with an error for text that cannot be resolved. */
+  private async countTyped(ref: TargetRef, text: string): Promise<HostMessage> {
+    this.editFor(ref);
+    const trimmed = text.trim();
+    if (!trimmed) return { kind: 'inspect.countResult', count: 0, error: 'type a selector' };
+    const candidate = parseSelector(trimmed);
+    try {
+      return { kind: 'inspect.countResult', count: (await this.session.resolve(bare(candidate))).length };
+    } catch (error) {
+      return { kind: 'inspect.countResult', count: 0, error: `invalid selector: ${(error as Error).message.split('\n')[0]}` };
+    }
+  }
+
+  /**
+   * A pick during a target edit: candidates for the element in page scope,
+   * relative to its document (the frame's inside an iframe), counted,
+   * verified against it, and ranked. No table state changes.
+   */
+  private async selectTarget(selection: ParsedSelection, snapshot: AnnotatedNode): Promise<void> {
+    const frame = selection.frame ? await this.verifyFrame(selection.frame) : null;
+    const handPicked = this.handPicked;
+    try {
+      await this.inFrame(frame, async () => {
+        const node = nodeAt(annotate(snapshot), selection.path);
+        if (!node) throw new Error('the selected element is not in the page snapshot');
+        this.handPicked = true;
+        const candidates = await this.pageCandidates(dedupe(generate(node)), node);
+        const edit = this.current.targetEdit!;
+        this.current = { ...this.current, targetEdit: { ...edit, phase: 'picked', frame, selection: { ...selection, frame, containerPath: null, candidates }, primary: 0 } };
+      });
+    } finally {
+      this.handPicked = handPicked;
+    }
+  }
+
+  /**
+   * Save a target edit: the typed selector rated by its strategy, then the
+   * previous candidates in their order; or the picked element's candidates
+   * with the highlighted one first, its fingerprint, and its frame. A step
+   * keeps its value, window, optional flag, and label.
+   */
+  private async applyTargetEdit(ref: TargetRef, by: 'selector' | 'selection', typed: string | undefined): Promise<void> {
+    const edit = this.editFor(ref);
+    const previous = this.targetOf(ref);
+    let next: NonNullable<DraftStep['target']>;
+    if (by === 'selector') {
+      const text = typed?.trim() ?? '';
+      if (!text) throw new Error('type a selector');
+      const candidate = parseSelector(text);
+      let count: number;
+      try {
+        count = (await this.session.resolve(bare(candidate))).length;
+      } catch (error) {
+        throw new Error(`invalid selector "${text}": ${(error as Error).message.split('\n')[0]}`, { cause: error });
+      }
+      const rest = (previous?.selectors ?? []).filter((c) => !sameSelector(c, candidate));
+      next = {
+        selectors: [{ ...candidate, count }, ...rest],
+        ...(previous?.fingerprint ? { fingerprint: previous.fingerprint } : {}),
+        ...(previous?.frame ? { frame: previous.frame } : {}),
+      };
+    } else {
+      const selection = edit.selection;
+      if (!selection) throw new Error('pick an element first');
+      const selectors = orderForSave(selection.candidates, edit.primary);
+      if (selectors.length === 0) throw new Error('the element has no selector candidates');
+      next = { selectors, fingerprint: selection.fingerprint, ...(edit.frame ? { frame: edit.frame } : {}) };
+    }
+    if (ref.kind === 'step') {
+      this.apply({
+        type: 'replaceStepTarget',
+        flow: ref.flow,
+        index: ref.index,
+        selectors: next.selectors,
+        ...(next.fingerprint ? { fingerprint: next.fingerprint } : {}),
+        ...(next.frame ? { frame: next.frame } : {}),
+        count: next.selectors[0]?.count ?? null,
+      });
+    } else if (ref.kind === 'trigger') {
+      this.apply({ type: 'setTrigger', index: ref.flow, trigger: next });
+    } else {
+      this.apply({ type: 'setPagination', pagination: { ...this.draft.pagination!, target: next } });
+    }
+    this.current = { ...this.current, targetEdit: null };
   }
 
   /** Make a flow reactive with the selected element as its trigger. */
