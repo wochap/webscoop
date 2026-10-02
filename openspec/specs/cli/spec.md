@@ -238,14 +238,19 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 - **THEN** the table shows `candidate` for every field on tier 0 and at least one `model` on tier 3
 
 ### Requirement: Pagination flags
-`webscoop run` and `webscoop test` SHALL accept `--pages <1|N|all>` overriding the recipe limit, `--max-pages <N>` (default 500) capping `all`, and `--delay <ms>` overriding `pagination.delayMs`. `test` SHALL default to one page regardless of the recipe limit; `run` SHALL default to the recipe limit. Invalid values SHALL exit 1 naming the flag.
+`webscoop run` and `webscoop test` SHALL accept:
+- `--pages <1|N|all>`, overriding the paginate block's limit
+- `--max-pages <N>` (default 500), capping `all`
+- `--delay <ms>`, overriding the paginate block's `delayMs`
+
+`test` SHALL default to one page regardless of the limit; `run` SHALL default to the limit. Invalid values SHALL exit 1 naming the flag. For a recipe without a paginate block, these flags SHALL have no effect.
 
 #### Scenario: Override to all
-- **WHEN** the recipe limit is 1 and `--pages all` is passed
+- **WHEN** the paginate block's limit is 1 and `--pages all` is passed
 - **THEN** the run walks pages until a stop rule fires or the cap is hit
 
 #### Scenario: Test stays on one page
-- **WHEN** `webscoop test shop` runs a recipe with limit `all`
+- **WHEN** `webscoop test shop` runs a recipe whose paginate limit is `all`
 - **THEN** only the first page is extracted
 
 #### Scenario: Invalid pages value
@@ -298,16 +303,16 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 - **WHEN** pages 1 and 2 completed and page 3 timed out on a guard in JSON array mode
 - **THEN** stdout holds an array with the rows of pages 1 and 2 and the exit code is 2
 
-### Requirement: Steps flags and test behavior
-`webscoop run` and `webscoop test` SHALL accept `--skip-steps`, which replays no steps. `webscoop test` SHALL replay steps by default so its result matches a run. The stderr log SHALL print one line per replayed or skipped step with its index, kind, and outcome.
+### Requirement: Flows flags and test behavior
+`webscoop run` and `webscoop test` SHALL accept `--skip-flows`, which runs no flow, called or reactive, and runs the sequence's `extract` and `paginate` blocks only. `webscoop test` SHALL run flows by default so its result matches a run. The stderr log SHALL print one line per flow run with its name and kind, and one line per replayed or skipped step with its flow, index, kind, and outcome.
 
 #### Scenario: Test replays steps
-- **WHEN** `webscoop test shop` runs a recipe with a required click step behind a cookie gate
-- **THEN** the step is replayed and every field resolves
+- **WHEN** `webscoop test shop` runs a recipe whose sequence starts with a flow that clicks through a cookie gate
+- **THEN** the flow runs and every field resolves
 
 #### Scenario: Skip steps
-- **WHEN** `webscoop run shop --skip-steps` runs the same recipe
-- **THEN** no step is replayed and the run reports the fields as missing behind the gate
+- **WHEN** `webscoop run shop --skip-flows` runs the same recipe
+- **THEN** no flow runs and the run reports the fields as missing behind the gate
 
 ### Requirement: `export` command
 `webscoop export <recipe> [--format ts|py] [--out <path>] [--headless]` SHALL load the recipe by name or path, validate it, render the script for the format (default `ts`), and write it to `--out` or print it to stdout. `--headless` SHALL make the generated script default to headless. Invalid recipes SHALL exit 1 with the validation errors. Recipes with any number of tables SHALL be accepted. The command SHALL NOT open a browser and SHALL NOT require a display.

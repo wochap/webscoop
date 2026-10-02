@@ -26,8 +26,11 @@ The CLI SHALL fire these events:
 - `run.start`: when `run` or `test` starts navigating a recipe.
 - `run.done`: when a run or test ends successfully.
 - `run.failed`: when a run or test ends unsuccessfully, including a guard timeout and an abort.
-- `attention.needed`: when a run needs the user in the browser. The reason SHALL be `guard` when a guard is raised and `repick` when an interactive run asks for a re-pick.
-- `attention.resolved`: when that need ends: the guard cleared, the re-pick was answered, or the run ended while it was open. Every `attention.needed` SHALL be followed by exactly one `attention.resolved`.
+- `attention.needed`: when a run needs the user in the browser. The reason SHALL be:
+  - `guard` when a guard is raised
+  - `repick` when an interactive run asks for a re-pick
+  - `await-user` when an `await-user` step waits for the user, with `WEBSCOOP_URL` set to the URL of the step's window and the step's label in the JSON details
+- `attention.resolved`: when that need ends: the guard cleared, the re-pick was answered, the `await-user` condition held, or the run ended while it was open. Every `attention.needed` SHALL be followed by exactly one `attention.resolved`.
 - `browser.show` and `browser.hide`: fired only by the `webscoop browser` command.
 
 `record`, `edit`, and `bench` SHALL fire the browser events for the browser they launch. For `run` and `test`, the daemon SHALL fire `browser.starting` and `browser.started` when it launches a profile's browser and `browser.closed` when it closes it, once per browser lifetime, not once per job; a job served by an already open browser fires no browser events.
@@ -47,6 +50,10 @@ The CLI SHALL fire these events:
 #### Scenario: Queued job
 - **WHEN** `daemon.concurrency` is 1, a job runs on profile `default`, and a second job on `default` is submitted
 - **THEN** `run.queued` fires for the second job with 1 job ahead
+
+#### Scenario: Await-user attention
+- **WHEN** a run's `await-user` step labeled "Log in to SOL" waits in a popup and the user logs in
+- **THEN** `attention.needed` fires with reason `await-user` and the popup's URL, followed by `attention.resolved`
 
 ### Requirement: Hooks in the daemon
 Hooks for events of `run` and `test` SHALL be run by the daemon, one at a time per daemon, with the same contract as other hooks. Hooks of `run.*` and `attention.*` events SHALL receive the environment of the command that submitted the job. Hooks of browser events SHALL receive the environment of the job that caused the launch, or of the last job served by that browser for `browser.closed`. A hook's standard output and error SHALL go to the daemon log.

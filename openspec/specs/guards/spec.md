@@ -48,18 +48,18 @@ When a guard is raised, the runner SHALL enter a paused state. Once the run hold
 - **THEN** the tab is brought to the front, the run pauses, and no notification is sent
 
 ### Requirement: Clearing and resuming
-While paused, the runner SHALL re-evaluate the guard at least every second. The guard clears when the detection rule no longer matches and the page has settled. After clearing, if the current URL differs from the intended URL for that page, the runner SHALL navigate to the intended URL, wait for it to settle, and re-check guards once before extracting. Resuming SHALL continue the run at the same page number and preserve rows already emitted.
+While paused, the runner SHALL re-evaluate the guard at least every second. The guard clears when the detection rule no longer matches and the page has settled. After clearing, the runner SHALL restore the page state as defined by the flows capability's "Recovery" requirement and continue at the same point of the sequence and the same page number. Rows already emitted SHALL be preserved.
 
 #### Scenario: User logs in and is redirected back
-- **WHEN** the user submits the login form and the site redirects to `/catalog`
-- **THEN** the guard clears and extraction proceeds on `/catalog` as page 1
+- **WHEN** the recipe has no flow before its extraction, and the user submits the login form and the site redirects to the recipe URL
+- **THEN** the guard clears and extraction proceeds on that page as page 1
 
 #### Scenario: User lands on the home page after login
 - **WHEN** the user logs in and the site redirects to `/`
-- **THEN** the runner navigates to the intended catalog URL and extracts it
+- **THEN** the runner navigates to the recipe URL and extracts it
 
 #### Scenario: Guard on page 3 of a paginated run
-- **WHEN** pages 1 and 2 were emitted and page 3 raises a `captcha` guard which the user clears
+- **WHEN** pages 1 and 2 were emitted and page 3 of `url` pagination raises a `captcha` guard which the user clears
 - **THEN** page 3 is extracted and the run continues with page 4
 
 ### Requirement: Guard timeout
@@ -78,7 +78,7 @@ A run SHALL wait at most the guard timeout (default 600000 milliseconds, configu
 - **THEN** it still has 60 seconds to be cleared
 
 ### Requirement: Interactive banner
-While a run holds attention for a guard, the runner SHALL show a banner over its page with the guard kind, a short reason, a countdown to the timeout, and Continue and Abort actions, in every run, interactive or not. Continue SHALL trigger an immediate re-check; Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when attention resolves. When the config sets `guards.banner` to false, no banner SHALL be shown and nothing SHALL be injected into the page of an unattended run. Outside attention, unattended runs SHALL NOT inject anything into the page.
+While a run holds attention for a guard or an `await-user` step, the runner SHALL show a banner over the page of the window that needs the user. The banner SHALL show the guard kind or the step's label, a short reason, a countdown to the timeout, and Continue and Abort actions, in every run, interactive or not. Continue SHALL trigger an immediate re-check. Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when attention resolves. When the config sets `guards.banner` to false, no banner SHALL be shown and nothing SHALL be injected into the page of an unattended run. Outside attention, unattended runs SHALL NOT inject anything into the page. In a window narrower than 640 pixels the banner SHALL span the full width at the top.
 
 #### Scenario: Continue re-checks
 - **WHEN** the user logs in on another tab and clicks Continue
@@ -91,6 +91,10 @@ While a run holds attention for a guard, the runner SHALL show a banner over its
 #### Scenario: Unattended run injects nothing
 - **WHEN** `guards.banner` is false and a guard is raised in a non-interactive run
 - **THEN** the page contains no recorder elements
+
+#### Scenario: Await-user banner in a popup
+- **WHEN** an `await-user` step labeled "Log in to SOL" runs in a 500 pixel wide popup
+- **THEN** the popup shows the banner across its top with that label, and the main window shows none
 
 ### Requirement: Guard reporting
 The run report SHALL list every guard occurrence with kind, page number, URL where it was detected, wait time, and whether it cleared or timed out. Events `guard.raised`, `guard.cleared`, and `guard.timeout` SHALL be emitted with kind, page, and URL. The stderr summary SHALL mention the number of guards cleared when non-zero.

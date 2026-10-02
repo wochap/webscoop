@@ -7,15 +7,24 @@ Defines the recipe document that describes how to scrape one site: where to go, 
 ## Requirements
 
 ### Requirement: Recipe is a versioned JSON document
-A recipe SHALL be a single JSON file with a top-level `schemaVersion` integer. The current version is 1. Loading a recipe with an unknown or missing `schemaVersion` SHALL fail with an error that names the file and the version found.
+A recipe SHALL be a single JSON file with a top-level `schemaVersion` integer. The current version is 2. Loading a recipe with an unknown or missing `schemaVersion` SHALL fail with an error that names the file and the version found. Loading a version 1 recipe SHALL fail with an error that names the file and says how to rewrite it:
+- move `steps` into called flows, placed in `sequence` before the extract or paginate block for first-page steps and inside the paginate block's `do` for every-page steps
+- turn `type` and `select` steps into `fill`
+- move `pagination` into a `paginate` block of `sequence`
+
+A version 2 recipe that declares `steps` or `pagination` at the top level SHALL fail validation naming the key.
 
 #### Scenario: Valid version loads
-- **WHEN** a recipe file with `schemaVersion: 1` and otherwise valid content is loaded
+- **WHEN** a recipe file with `schemaVersion: 2` and otherwise valid content is loaded
 - **THEN** loading succeeds and the recipe is available to the caller
 
 #### Scenario: Unknown version is rejected
 - **WHEN** a recipe file with `schemaVersion: 7` is loaded
 - **THEN** loading fails with an error that includes the file path and the value 7
+
+#### Scenario: Version 1 is rejected with guidance
+- **WHEN** a recipe file with `schemaVersion: 1` and a `steps` list is loaded
+- **THEN** loading fails with an error naming the file and explaining how steps and pagination map to flows and sequence
 
 ### Requirement: Recipe identity and URL template
 A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a `url` template. The template SHALL support variables written as `{name}`. Every variable used in the template SHALL be declared under `vars` with a `name`, a `type` of `string`, and an optional `default`. A template variable without a declaration SHALL be a validation error.
@@ -113,20 +122,19 @@ Each selector candidate SHALL have a `strategy` among `role`, `testid`, `id`, `t
 - **THEN** validation fails and the error names `magic`
 
 ### Requirement: Reserved blocks for later capabilities
-A recipe MAY contain `pagination`, `guards`, and `healing` blocks. Their shapes SHALL be fixed by the schema now so that recipes written today remain valid later:
-- `pagination`: `kind` among `none`, `url`, `next`, `more`, `scroll`; optional `target` (selector candidates plus fingerprint); optional `param` with `name`, `start`, `step`; `limit` as `1`, a positive integer, or `"all"`; `stopRules` list drawn from `no-new-items`, `first-item-repeats`, `target-missing`; `delayMs`.
+A recipe MAY contain `guards` and `healing` blocks:
 - `guards`: list of entries with `kind` among `login`, `captcha`, `zero-fields`, and `enabled` boolean.
 - `healing`: `fuzzyThreshold` number between 0 and 1, default 0.7; `llm` boolean, default true.
 
-When a block is absent, defaults SHALL apply: `pagination.kind` is `none`, `guards` lists all kinds enabled, `healing` uses its defaults. A runner that does not yet implement a block SHALL ignore it without error.
+When a block is absent, defaults SHALL apply: `guards` lists all kinds enabled, and `healing` uses its defaults.
 
 #### Scenario: Recipe without optional blocks validates
-- **WHEN** a recipe declares only `schemaVersion`, `name`, `url`, `vars`, and `fields`
+- **WHEN** a recipe declares only `schemaVersion`, `name`, `url`, `vars`, `fields`, and a `sequence` extracting `items`
 - **THEN** validation succeeds and defaults are filled in
 
 #### Scenario: Pagination block validates
-- **WHEN** a recipe declares `pagination` with kind `url`, param `n` starting at 1 step 1, and limit 3
-- **THEN** validation succeeds
+- **WHEN** a recipe declares a top-level `pagination` block
+- **THEN** validation fails naming `pagination`, which now lives in the sequence's paginate block
 
 ### Requirement: Fingerprint shape
 A `fingerprint` object, where present, SHALL carry `tag`, optional `role`, optional `name`, `textSample` (first 80 characters of text at record time), `attrs` (a map of the stable attributes observed), `ancestors` (an ordered list of ancestor tag or role tokens, nearest first, at most 6), and `bbox` with `x`, `y`, `w`, `h` in CSS pixels at record time. Fingerprints are data for later healing; this change SHALL only validate and preserve them.
@@ -141,21 +149,6 @@ Validation SHALL collect every error in the document and report them together, e
 #### Scenario: Multiple errors reported
 - **WHEN** a recipe has an undeclared variable and a field with an unknown type
 - **THEN** validation reports two errors with distinct JSON paths
-
-### Requirement: Steps block
-A recipe MAY declare `steps`, an ordered list. Each step SHALL have `kind` among `click`, `type`, `select`, `press`, `wait`; an optional `target` with ranked `selectors` and an optional `fingerprint`; an optional `value` string; `when` among `first-page` and `every-page`, default `first-page`; `optional` boolean, default false; and an optional `label`. Validation SHALL require a `target` for `click`, `type`, and `select`; a `value` for `type`, `select`, and `press`; and for `wait` either a `target` or a numeric `value` in milliseconds. A `type` value MAY reference template variables, which SHALL be declared under `vars`. When `steps` is absent it SHALL default to an empty list.
-
-#### Scenario: Valid click step
-- **WHEN** a step is `{ "kind": "click", "target": { "selectors": [ { "strategy": "role", "value": "button|Accept", "stability": "stable" } ] }, "optional": true }`
-- **THEN** validation succeeds with `when` defaulting to `first-page`
-
-#### Scenario: Type without target is rejected
-- **WHEN** a `type` step has a value and no target
-- **THEN** validation fails and the error names the step index
-
-#### Scenario: Undeclared variable in a step value
-- **WHEN** a `type` step value is `{query}` and `vars` does not declare `query`
-- **THEN** validation fails and the error names `query`
 
 ### Requirement: Browser block
 A recipe MAY contain a `browser` block with these optional keys:
@@ -239,3 +232,49 @@ A recipe without any `frame` SHALL validate and run exactly as before.
 #### Scenario: Nested frame rejected
 - **WHEN** a table's `frame` object contains its own `frame`
 - **THEN** validation fails with an error naming the table
+
+### Requirement: Flows block
+A recipe MAY declare `flows` as defined by the flows capability, with steps as defined by the steps capability. A step SHALL have:
+- `kind` among `click`, `fill`, `press`, `wait`, `await-user`
+- an optional `target` with ranked `selectors`, an optional `fingerprint`, and an optional `frame`
+- an optional `value` string
+- an optional `until` among `appears` and `disappears`
+- an optional `timeoutMs` positive integer
+- `window` among `same` and `popup`, default `same`
+- `optional` boolean, default false
+- an optional `label`
+
+Validation SHALL apply the per-kind rules of the steps capability and SHALL name the flow and the step index in each error. A `fill` value MAY reference template variables, which SHALL be declared under `vars`. When `flows` is absent it SHALL default to an empty list.
+
+#### Scenario: Valid click step
+- **WHEN** a flow's step is `{ "kind": "click", "target": { "selectors": [ { "strategy": "role", "value": "button|Accept", "stability": "stable" } ] }, "optional": true }`
+- **THEN** validation succeeds with `window` defaulting to `same`
+
+#### Scenario: Fill without target is rejected
+- **WHEN** a `fill` step in flow `search` has a value and no target
+- **THEN** validation fails and the error names `search` and the step index
+
+#### Scenario: Undeclared variable in a fill value
+- **WHEN** a `fill` step value is `{query}` and `vars` does not declare `query`
+- **THEN** validation fails and the error names `query`
+
+### Requirement: Sequence block
+A recipe SHALL declare `sequence` as defined by the flows capability. A `paginate` block's settings SHALL be:
+- `kind` among `url`, `next`, `more`, `scroll`
+- an optional `target` (selector candidates, fingerprint, and frame)
+- an optional `param` with `name`, `start`, and `step`
+- `limit` as `1`, a positive integer, or `"all"`, default 1
+- `stopRules`, a list drawn from `no-new-items`, `first-item-repeats`, `target-missing`, default empty
+- `delayMs`, default 0
+- an optional `table` naming the driving table
+- `do`
+
+`next` and `more` SHALL require `target`. `table` SHALL name a table with an `item` block that is extracted in `do`. When `table` is absent, the first such table in `do` SHALL drive.
+
+#### Scenario: Paginate block validates
+- **WHEN** a sequence holds `paginate` with kind `url`, param `n` starting at 1 step 1, limit 3, and `do: [extract items]`
+- **THEN** validation succeeds
+
+#### Scenario: Next without target
+- **WHEN** a paginate block has kind `next` and no `target`
+- **THEN** validation fails naming the paginate block

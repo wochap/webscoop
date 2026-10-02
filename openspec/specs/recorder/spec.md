@@ -22,19 +22,43 @@ Starting a recording session SHALL open the target URL in a headed persistent br
 - **THEN** the panel reappears on the new page with the same two fields
 
 ### Requirement: Panel layout and sections
-The panel SHALL be laid out, top to bottom, as: a fixed header with the logo, the mode pill, and the end session control; a Recipe section; a Steps section; a Pagination section; the table tab bar; the content of the active table; and a fixed footer with the test run control, the field and step counts, the save status, and the save control. The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Steps, and Pagination sections SHALL apply to the whole recipe. The content of the active table SHALL hold, in order: a table header with the table's name, its mode ("List · N rows" for a list with its row count, "Page · 1 row" for a page table, "No mode yet" for a table with neither fields nor item container) and a "…" menu; a Rows section showing the item container when one is set; a Pick section; and a Fields section. Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Steps, and Pagination sections SHALL be collapsible with a chevron in their header. A collapsed Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values; a collapsed Steps section SHALL show the step count and a summary of the first steps; a collapsed Pagination section SHALL show the pagination kind and limit, or that pagination is off. The Pagination section SHALL start collapsed; the Recipe and Steps sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
+The panel SHALL be laid out, top to bottom, as:
+- a fixed header with the logo, the mode pill, and the end session control
+- a Recipe section
+- a Flows section
+- a Sequence section
+- the table tab bar
+- the content of the active table
+- a fixed footer with the test run control, the counts (tables, fields, flows, steps), the save status, and the save control
+
+The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Flows, and Sequence sections SHALL apply to the whole recipe.
+
+The content of the active table SHALL hold, in order:
+- a table header with the table's name, its mode ("List · N rows" for a list with its row count, "Page · 1 row" for a page table, "No mode yet" for a table with neither fields nor item container), a pages badge when the table drives the paginate block, and a "…" menu
+- a Rows section showing the item container when one is set
+- a Pick section
+- a Fields section
+
+A recipe with no tables SHALL show, in place of the tab bar and table content, an empty state saying the recipe only runs flows, with an action to add a table.
+
+Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Flows, and Sequence sections SHALL be collapsible with a chevron in their header. When collapsed:
+- the Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values
+- the Flows section SHALL show the active flow and the number of called and reactive flows
+- the Sequence section SHALL show its blocks in short form, with an error marker when it has errors
+
+The Recipe and Flows sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
 
 #### Scenario: Sections in order
-- **WHEN** the panel shows a draft with two steps, pagination set, and tables `results` and `page`
-- **THEN** the panel shows, in order, the header, the Recipe, Steps, and Pagination sections, the tab bar with `results` and `page`, the active table's header, Rows, Pick, and Fields sections, and the footer
+- **WHEN** the panel shows a draft with two flows, a paginate block, and tables `results` and `page`
+- **THEN** the panel shows, in order, the header, the Recipe, Flows, and Sequence sections, the tab bar with `results` and `page`, the active table's header, Rows, Pick, and Fields sections, and the footer
 
 #### Scenario: Collapsed recipe summary
 - **WHEN** the recipe is `google-com-search` with URL `https://www.google.com/search?q={query}` and `query` is `top llms`, and the user collapses the Recipe section
 - **THEN** the section shows one line with `google-com-search` and the URL with a `query` chip holding `top llms`
 
 #### Scenario: Collapse survives navigation
-- **WHEN** the user collapses the Steps section and follows a link on the page
-- **THEN** the panel reappears on the new page with the Steps section still collapsed
+- **WHEN** the user collapses the Flows section and follows a link on the page
+- **THEN** the panel reappears on the new page with the Flows section still collapsed
 
 #### Scenario: Footer stays visible
 - **WHEN** the active table has enough fields that the panel content scrolls
@@ -294,22 +318,27 @@ The user SHALL be able to turn the selection into a field with a name (defaultin
 - **THEN** the inspector, the candidate list, and the selected element highlight are gone, and the pick strip offers a new pick
 
 ### Requirement: Zero match fields
-A field whose primary selector matches nothing on the current page SHALL be marked with a warning in the field list and offer to re-pick or mark optional. When the draft has recorded steps, the warning SHALL also say that the element may appear only after the steps and offer to replay them in order.
+A field whose primary selector matches nothing on the current page SHALL be marked with a warning in the field list and offer to re-pick or mark optional. When the sequence has flow blocks before the table's extract block, the warning SHALL also say that the element may appear only after those flows and offer to replay them in order.
 
 #### Scenario: Field breaks after navigation
 - **WHEN** a field matched 24 elements on page one and matches 0 after navigating to another page
 - **THEN** the field row shows the warning with the two actions
 
 #### Scenario: Field behind a gate
-- **WHEN** the draft has a consent click step, the page was reloaded, and a field matches 0
-- **THEN** the warning offers to replay the steps, and after replaying the field's count is 24 again
+- **WHEN** the sequence runs a consent flow before the table's extract, the page was reloaded, and a field matches 0
+- **THEN** the warning offers to replay the flows, and after replaying the field's count is 24 again
 
 ### Requirement: Pagination target
-The user SHALL be able to mark a selection as the pagination target. The recorder SHALL detect the likely kind: `url` when the target is a link whose `href` differs from the current URL only by a numeric query parameter or path segment, `next` for any other link, `more` for a button. The user MAY override the kind, and MAY choose `scroll` without a target. The panel SHALL let the user choose the limit (first page only, first N pages, all pages) and toggle stop rules. The result SHALL be saved in the recipe's `pagination` block. Pagination SHALL NOT be executed by the recorder in this change.
+The user SHALL be able to mark a selection as the pagination target. The recorder SHALL detect the likely kind:
+- `url` when the target is a link whose `href` differs from the current URL only by a numeric query parameter or path segment
+- `next` for any other link
+- `more` for a button
+
+The user MAY override the kind, and MAY choose `scroll` without a target. Marking SHALL create the sequence's paginate block when there is none, with the active table's `extract` block moved into its `do` and the active table as its driving table, or update the existing block's target and kind. The paginate block's settings SHALL be edited in the Sequence section: kind, target, limit (first page only, first N pages, all pages), stop rules, and driving table. The recorder SHALL NOT execute pagination.
 
 #### Scenario: Numeric page link detected as url kind
 - **WHEN** the current URL is `/catalog?page=1` and the user marks a link to `/catalog?page=2`
-- **THEN** the panel proposes kind `url` with parameter `page`, start 1, step 1
+- **THEN** the sequence gains a paginate block with kind `url`, parameter `page`, start 1, step 1, wrapping the active table's extract
 
 ### Requirement: Test run from the panel
 The panel SHALL offer a test run that executes the draft recipe on the current page using the same extraction behavior as `webscoop run`, without pagination, and shows a results drawer with one tab per table, opened on the active table, each showing the first rows as a table, a JSON view, per-field status (`ok`, `partial`, `missing`), row count, the number of rows dropped for missing required fields with the fields that caused them, and the run's duration. A required field whose element reads empty counts as missing on that row, as in the runner. The drawer SHALL NOT overlap the panel.
@@ -425,39 +454,55 @@ The recorder SHALL support a focused re-pick mode for one field of one table. Th
 - **THEN** the panel activates `questions` and names `questions` and `title`, and confirming replaces only that field
 
 ### Requirement: Guard banner
-During an interactive run, when a guard is raised the recorder bundle SHALL render a banner across the top of the page, above host content and outside the sidebar, showing the guard kind, a one-line reason, a countdown to the guard timeout, and Continue and Abort buttons. The countdown SHALL switch to the warning tone with under 90 seconds remaining. The banner SHALL be removed when the guard clears or the run ends.
+During an interactive run, when a guard is raised or an `await-user` step waits, the recorder bundle SHALL render the banner defined by the guards capability on the page of the window that needs the user, above host content and outside the sidebar, showing the guard kind or the step's label, a one-line reason, a countdown to the timeout, and Continue and Abort buttons. The countdown SHALL switch to the warning tone with under 90 seconds remaining. The banner SHALL be removed when attention resolves or the run ends.
 
 #### Scenario: Banner shows and clears
 - **WHEN** a login guard is raised in an interactive run and the user logs in
 - **THEN** the banner appears with the countdown and disappears once the guard clears
 
 ### Requirement: Browse mode records steps
-The panel SHALL offer a browse mode, toggled with `b`, in which host page interaction works normally and the recorder captures actions as steps: a click on an element becomes a `click` step targeting that element; typing into an input or textarea becomes one `type` step with the final value, replacing a previous `type` step for the same target in the same browse session; changing a `select` becomes a `select` step; pressing Enter in an input becomes a `press` step. Clicks and keys inside the panel SHALL NOT be recorded. Leaving browse mode with `b` or Esc SHALL stop capturing. Steps recorded while browsing SHALL survive navigations caused by them.
+The panel SHALL offer a browse mode, toggled with `b`, in which host page interaction works normally and the recorder captures actions as steps of the active flow:
+- a click on an element becomes a `click` step targeting that element
+- typing into an input, textarea, or contenteditable becomes one `fill` step with the final value, replacing a previous `fill` step for the same target in the same browse session
+- changing a `select` becomes a `fill` step with the chosen option's value
+- pressing Enter in an input becomes a `press` step
+
+A step recorded in a popup window SHALL get `window` `popup`, and one recorded in the main window `window` `same`. Clicks and keys inside the panel SHALL NOT be recorded. Leaving browse mode with `b` or Esc SHALL stop capturing. Steps recorded while browsing SHALL survive navigations caused by them. When no flow exists, the first recorded step SHALL create a called flow, make it active, and add it to the sequence.
 
 #### Scenario: Accept cookie banner
-- **WHEN** browse mode is on and the user clicks the consent button
-- **THEN** a `click` step targeting that button appears in the steps list and the banner closes as it would without the recorder
+- **WHEN** browse mode is on, the active flow is `setup`, and the user clicks the consent button
+- **THEN** a `click` step targeting that button appears in `setup`, and the banner closes as it would without the recorder
 
 #### Scenario: Search then Enter
 - **WHEN** the user types `mouse` in the search box and presses Enter
-- **THEN** the steps list shows a `type` step with value `mouse` and a `press` step with `Enter`, and the panel is still present on the results page
+- **THEN** the active flow shows a `fill` step with value `mouse` and a `press` step with `Enter`, and the panel is still present on the results page
+
+#### Scenario: Step recorded in a popup
+- **WHEN** a click opens a login popup and the user types into its user input while browsing
+- **THEN** the `fill` step has `window` `popup`
 
 ### Requirement: Record a pick as a step
-From a selected element, the panel SHALL offer "record as step", creating a `click` step for the element, or a `type` step with an empty value when the element is an input, without performing the action.
+From a selected element, the panel SHALL offer "Add to flow", which creates a step in the active flow without performing the action: a `fill` step with the element's current value when the element is an input, textarea, contenteditable, or `select`; otherwise a `click` step. The panel SHALL also offer "Add as await-user", creating an `await-user` step targeting the element with `until` `disappears`.
 
 #### Scenario: Pick a tab as a step
-- **WHEN** the user picks the Products tab and chooses record as step
-- **THEN** a `click` step is added and the tab is not activated
+- **WHEN** the user picks the Products tab and chooses "Add to flow"
+- **THEN** a `click` step is added to the active flow and the tab is not activated
 
 ### Requirement: Steps list editing
-The panel SHALL list steps in order with kind, target summary, value, `when`, and `optional`. The user SHALL be able to edit the value (including inserting a `{var}` chip), toggle `when` and `optional`, reorder with drag or Alt+Up and Alt+Down, delete, and replay a single step on the live page. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
+Each flow in the Flows section SHALL list its steps in order with kind, target summary, value, a window badge when `window` is `popup`, a frame badge when the target has a frame, and an optional marker. Selecting a step SHALL open its edit state, where the user can:
+- edit the value, including inserting a `{var}` chip, or turn a literal value into a variable with "make variable"
+- toggle `window` between `same` and `popup`, and `optional`
+- re-pick the target, and edit its frame
+- for `await-user`, edit `until`, the label, and a timeout override, shown as "guard budget" by default
+
+The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Alt+Down, delete them, and replay one step on the live page. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
 
 #### Scenario: Mark the consent click optional
 - **WHEN** the user toggles `optional` on the consent step and saves
-- **THEN** the recipe's step has `optional: true`
+- **THEN** the recipe's step in that flow has `optional: true`
 
 #### Scenario: Replay one step
-- **WHEN** the user replays the search `type` step
+- **WHEN** the user replays the search `fill` step
 - **THEN** the search box on the live page contains the step's value
 
 ### Requirement: Editing the proposal fields
@@ -1157,3 +1202,58 @@ A table SHALL take its frame from its first field or item container: picked insi
 #### Scenario: Field from another frame refused
 - **WHEN** the active table reads from `iframe#app` and the user picks an element in the top document
 - **THEN** "Add field" is disabled with a reason saying the table reads from `iframe#app`
+
+### Requirement: Flows section
+The Flows section SHALL list called flows, then reactive flows, in two labeled groups, each flow with its name, step count, and, for a reactive flow, its trigger target. One flow SHALL be active, shown as active in the list and in the section header ("into <flow>"). Browse recording and "Add to flow" SHALL go into the active flow.
+- **Switcher:** Alt+F SHALL open a switcher listing every flow, grouped as called and reactive. Keys 1 to 9 SHALL choose a flow, and an entry SHALL create a new flow and make it active.
+- **Flow menu:** each flow's "…" menu SHALL offer replay, rename, make reactive or make called, duplicate, delete, and, for a reactive flow, `maxRetries` (default 2, "times this flow may fire between two successful extractions; more fails the run with flow-loop") and `recover`.
+- **Trigger editor:** making a flow reactive SHALL open the trigger editor, where the user picks the element whose appearance fires the flow. The editor SHALL explain that the trigger is checked in any window after a page settles, before each step, before extraction, and every second while waiting, and that the flow does not re-fire while its own steps run.
+- **Replay:** replaying a flow SHALL run its steps on the live page in order and report each step's outcome.
+
+#### Scenario: Switch the active flow
+- **WHEN** the user presses Alt+F and then 2
+- **THEN** the second flow in the switcher becomes active and the next browse click is recorded into it
+
+#### Scenario: Make a flow reactive
+- **WHEN** the user chooses "make reactive" on `login-wall` and picks the "Log in" button
+- **THEN** `login-wall` moves to the reactive group with that trigger, and its block is removed from the sequence
+
+### Requirement: Sequence section
+The Sequence section SHALL show the sequence as an ordered list of numbered blocks: flow blocks, extract blocks, and a paginate block whose `do` blocks are nested under it.
+- **Default sequence:** while the user has not edited the sequence, the recorder SHALL keep it as the default (called flows in list order, then each table once, with the paginate block if one was marked) and show it as default. Editing any block SHALL make it custom, and "Reset to default" SHALL return to the default. The saved recipe SHALL always contain the sequence as shown.
+- **Editing:** blocks SHALL be reorderable by drag or Alt+Up and Alt+Down. A block dragged into the paginate block runs on every page.
+- **Paginate settings:** the paginate block SHALL expand to its settings: kind, target, limit, stop rules, and driving table.
+- **Errors:** sequence validation errors SHALL be shown on the offending blocks: a table extracted twice, a reactive flow in the sequence, a paginate block inside another, an unused table or called flow. While any error exists, Save and Test run SHALL be disabled with the reason "Fix N sequence errors to save".
+
+#### Scenario: Default follows the draft
+- **WHEN** the sequence is default and the user adds a table `details`
+- **THEN** the sequence gains `extract details` at the end
+
+#### Scenario: Errors block saving
+- **WHEN** the user drags `extract summary` into the paginate block while it is also extracted before it
+- **THEN** both blocks show the duplicate error, and Save and Test run are disabled
+
+### Requirement: Recording across windows
+The recorder SHALL run its panel in every window of the session, including popups opened by the page, but exactly one window SHALL own the panel at a time:
+- a popup becomes the owner when it opens
+- when the owner popup closes, its opener becomes the owner
+- otherwise, a real pointer press or key press in a window makes that window the owner
+
+Ownership SHALL NOT depend on the operating system's window focus.
+- **The owner window** SHALL show the full panel. In a window narrower than 640 pixels, the owner panel SHALL start as a 34 pixel bar at the top that pushes the page down; expanding it SHALL open a temporary sheet over the page with the Flows section and the Pick and Browse controls, which Esc closes.
+- **A non-owner main window** SHALL shrink the panel to a 30 pixel rail, giving the page the rest of the width.
+- **A non-owner popup** SHALL show a 22 pixel strip at the top.
+- **The rail and the strip** SHALL say that the panel is active in another window, and pressing them SHALL make their window the owner. Picking and browse recording SHALL work only in the owner window.
+- **Popup restriction:** in a popup, "Add as field" SHALL be disabled with the reason "Fields extract from the main window".
+
+#### Scenario: Login popup takes the panel
+- **WHEN** a click in the main window opens a 500 pixel wide login popup
+- **THEN** the popup shows the 34 pixel bar and owns the panel, and the main window shows the rail
+
+#### Scenario: Closing the popup returns the panel
+- **WHEN** the owner popup closes
+- **THEN** the main window owns the panel again
+
+#### Scenario: Clicking the strip
+- **WHEN** the main window owns the panel and the user clicks the popup's strip
+- **THEN** the popup owns the panel and the main window shows the rail

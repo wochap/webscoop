@@ -70,7 +70,12 @@ A command SHALL send its webscoop version and program path when it connects. Whe
 - **THEN** the old daemon exits and the run is served by a new daemon of the new version
 
 ### Requirement: Attention per browser
-At most one job per browser SHALL hold the user's attention at a time. When a guard is raised, or an interactive run asks for a re-pick, the job SHALL wait for attention. A job that had to wait SHALL, once it gets attention, reload its page, wait for it to settle, and re-check the guard; when the guard no longer matches it SHALL release attention and continue without asking the user. Otherwise it SHALL bring its tab to the front and emit `attention.needed`, and SHALL keep attention until `attention.resolved`. While a job waits for attention, its command SHALL print one stderr line naming the run holding attention, unless `--quiet` is given.
+At most one job per browser SHALL hold the user's attention at a time. When a guard is raised, an `await-user` step starts, or an interactive run asks for a re-pick, the job SHALL wait for attention.
+- **After waiting for a guard:** a job that had to wait SHALL, once it gets attention, reload its page, wait for it to settle, and re-check the guard. When the guard no longer matches, it SHALL release attention and continue without asking the user.
+- **After waiting for an `await-user` step:** the job SHALL check the step's condition once without reloading, and continue without asking the user when it holds.
+- **Otherwise** the job SHALL bring the window that needs the user to the front and emit `attention.needed`, and SHALL keep attention until `attention.resolved`.
+
+While a job waits for attention, its command SHALL print one stderr line naming the run holding attention, unless `--quiet` is given.
 
 #### Scenario: One solve frees the queue
 - **WHEN** two runs of `bing` in one browser both hit a captcha, the first gets attention, and the user solves it
@@ -80,10 +85,14 @@ At most one job per browser SHALL hold the user's attention at a time. When a gu
 - **WHEN** a run of `bing` holds attention for a captcha and a run of `shop` in the same browser hits a login guard
 - **THEN** the `shop` run gets attention after the `bing` attention resolves, re-checks, and, still blocked, emits `attention.needed`
 
+#### Scenario: Shared login satisfies a waiting await-user
+- **WHEN** two runs of `sunat` share a profile, both reach an `await-user` login step, and the user logs in for the first
+- **THEN** the second run's condition already holds when it gets attention, and it continues without an `attention.needed` of its own
+
 ### Requirement: Answering attention
-While a job holds attention it SHALL accept a continue signal, which re-checks the guard at once, and an abort signal, which ends the run with failure reason `aborted`. The signals SHALL come from any of:
+While a job holds attention it SHALL accept a continue signal, which re-checks the guard or the `await-user` condition at once, and an abort signal, which ends the run with failure reason `aborted`. The signals SHALL come from any of:
 - the in-page banner defined by the guards capability;
-- when the submitting command's standard error is a terminal, a prompt `Solved? [Y/n/a]` on the controlling terminal: `Y` or Enter sends continue, `n` keeps waiting without prompting again, `a` sends abort; when a continue finds the guard still present, the command SHALL say so and prompt again;
+- when the submitting command's standard error is a terminal, a prompt `Solved? [Y/n/a]` on the controlling terminal, for guards and for `await-user` steps: `Y` or Enter sends continue, `n` keeps waiting without prompting again, `a` sends abort; when a continue finds the guard or the condition still present, the command SHALL say so and prompt again;
 - `webscoop attention continue [run-id]` and `webscoop attention abort [run-id]`, which act on the job with that run id, or on the only job holding attention when no id is given, and exit 1 listing the run ids when none or more than one job holds attention and no id is given.
 
 When attention resolves by any path, a pending prompt SHALL be withdrawn. The prompt SHALL be shown even with `--quiet` and SHALL NOT be written to stdout.
@@ -99,6 +108,10 @@ When attention resolves by any path, a pending prompt SHALL be withdrawn. The pr
 #### Scenario: Pipe keeps the prompt off stdout
 - **WHEN** `webscoop run shop | jq .` holds attention in a terminal
 - **THEN** the prompt appears on the terminal and stdout carries only rows
+
+#### Scenario: Terminal answer for await-user
+- **WHEN** an `await-user` step waits, the user logs in, and presses Enter at `Solved? [Y/n/a]`
+- **THEN** the condition is checked at once and the step completes
 
 ### Requirement: Exclusive commands
 `record`, `edit`, and `bench` SHALL NOT use the daemon and SHALL take the profile lock themselves. When the daemon has a browser open on their profile, they SHALL, on a terminal, print the number of running and queued jobs on it and ask `Stop it? [y/N]`; `y` SHALL cancel those jobs, close that browser, and continue; any other answer SHALL exit 1 without changes. `--force` SHALL skip the question and stop the browser. Without a terminal and without `--force`, they SHALL exit 1 with a message naming the profile. Cancelled jobs SHALL end their commands with exit 1 and a message saying which command stopped them. Jobs submitted for that profile while an exclusive command holds the lock SHALL wait in the queue.

@@ -54,19 +54,19 @@ For the list parent, the item container, and each field, the runner SHALL try se
 - **THEN** every element with role `listitem` inside the list parent is a container
 
 ### Requirement: Tables and the primary table
-On every page the runner SHALL extract each table of the recipe, in recipe order, against the same loaded page, after the page's steps and guards. A table without an `item` block SHALL yield one row per page with `_index` 0. The primary table SHALL be the first table with an `item` block; it SHALL drive the item count used by `more` and `scroll` pagination and the page summary the stop rules see. A recipe with no item table SHALL treat every page as having one item for those purposes. Each table SHALL be resolved and healed independently.
+The runner SHALL extract each table where the sequence's `extract` block for it stands, against the main window's page at that point, after the guards of that page. A table without an `item` block SHALL yield one row per extraction with `_index` 0. Each table SHALL be resolved and healed independently. The driving table of pagination is defined by the pagination capability.
 
 #### Scenario: Two tables on one page
-- **WHEN** a recipe has a table `page` with a `heading` field and a table `products` with 24 containers and a `title` field
-- **THEN** page 1 yields 1 `page` row and 24 `products` rows, and `heading` is not present on the `products` rows
+- **WHEN** the sequence extracts a table `page` with a `heading` field and a table `products` with 24 containers and a `title` field, one after the other
+- **THEN** the run yields 1 `page` row and 24 `products` rows, and `heading` is not present on the `products` rows
 
 #### Scenario: Primary table drives scroll pagination
-- **WHEN** a recipe has tables `page`, `products` (item), and `questions` (item) and `scroll` pagination
+- **WHEN** a paginate block of kind `scroll` extracts tables `products` (item) and `questions` (item) and names `products` as its table
 - **THEN** the runner counts `products` containers to detect that scrolling loaded more items
 
 #### Scenario: Second list empty on a page
-- **WHEN** `questions` matches no container on page 2 while `products` matches 8
-- **THEN** page 2 yields 8 `products` rows, 0 `questions` rows, and the run continues
+- **WHEN** `questions` matches no container on page 2 of a paginate block while `products` matches 8
+- **THEN** page 2 yields 8 `products` rows and 0 `questions` rows, and the run continues
 
 ### Requirement: Item scoped extraction
 When a table has an `item` block, the runner SHALL resolve the list parent from `item.within` when present and resolve containers inside it, else against the document; drop containers matching an `exclude` selector; and resolve each `item` scoped field relative to each remaining container. A field that resolves more than one element within a container SHALL use the first. Page scoped fields SHALL be resolved once against the document and repeated on every row of their table. When `within` is present and resolves nothing, the container SHALL count as unresolved and the run report SHALL name `within` as the missing target for that table.

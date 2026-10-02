@@ -200,6 +200,7 @@ With `gate=tabs`, `/catalog` SHALL render two tabs, `About` (active by default, 
 #### Scenario: Products tab needed on every page
 - **WHEN** `gate=tabs&paginate=url&page=2` is loaded
 - **THEN** no product element exists until the Products tab is clicked
+
 ### Requirement: Mixed result blocks
 `/catalog` SHALL accept `mixed=1`. When set, the product list SHALL keep every product card in dataset order and additionally: insert a `questions` block after every fourth card, rendered with the card tag and a `mixed-questions` class but children that are a heading and three `button` elements and no product content; render a thumbnail `img` with class `product-thumb` only on cards whose dataset index is odd; and mark the first card as an ad with class `mixed-ad`, keeping its product content. The parameter SHALL combine with `paginate`, in which case blocks are inserted per page after every fourth card of that page.
 
@@ -265,3 +266,22 @@ The playground SHALL serve `/framed`: a page with a menu of buttons and one same
 #### Scenario: Menu swaps the visible iframe
 - **WHEN** `/framed?show=about` is loaded and the user clicks the Catalog menu button
 - **THEN** `iframe#frame-catalog` is visible, `iframe#frame-about` is hidden, and the URL is unchanged
+
+### Requirement: SPA with a login popup
+The playground SHALL serve `/spa`, a single-page app whose URL never changes after load:
+- **Login.** While the visitor is logged out, the page SHALL show a "Log in" button and no menu. Clicking it SHALL call `window.open` for `/spa/login`, a page of about 500 by 600 pixels with user and password inputs and a "Sign in" button. Any non-empty user and password SHALL log the visitor in: the page sets a session cookie and closes itself, and the `/spa` page notices within one second and shows its menu.
+- **Session expiry.** `/spa?ttl=<seconds>` SHALL make the session expire that many seconds after login. The page SHALL then show the "Log in" button again in place of its content, without changing the URL.
+- **Menu.** The menu SHALL have the buttons "Catalog" and "Report". "Catalog" SHALL show the catalog cards of the dataset, 8 per page, with a "Next" button that pages client-side and is disabled on the last page. "Report" SHALL show a page table with a heading and a total.
+- **Fresh state.** A reload while logged in SHALL show the menu with no section open.
+
+#### Scenario: Login through the popup
+- **WHEN** the visitor opens `/spa`, clicks "Log in", and submits the popup with user `u` and password `p`
+- **THEN** the popup closes and `/spa` shows the menu within one second, at the same URL
+
+#### Scenario: Session expires
+- **WHEN** `/spa?ttl=5` was logged in 6 seconds ago
+- **THEN** the page shows the "Log in" button and no catalog cards
+
+#### Scenario: Click pagination without URL change
+- **WHEN** the visitor opens Catalog and clicks Next twice
+- **THEN** the third page of cards is shown and the URL is unchanged

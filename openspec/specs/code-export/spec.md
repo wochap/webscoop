@@ -47,7 +47,13 @@ Each stored selector candidate SHALL map to the same Playwright locator the runn
 - **THEN** the script extracts with the second candidate
 
 ### Requirement: Steps and extraction parity
-The script SHALL replay steps by kind and `when` as the runner does, skipping optional steps whose target is absent and exiting 3 for required ones; SHALL extract every table of the recipe on each page in recipe order, for each table resolving the list parent from `item.within` when present and the item container inside it, dropping excluded containers, reading item scoped fields within each container and page scoped fields once, and yielding one row per page for a table without an item block; SHALL read attributes, inner HTML, or text per field type and attribute; SHALL convert values with the same rules as the CLI (`number`, `url`, `image`, `date`, `html`, `text`); and SHALL emit rows with `_page` and `_index` per table. The script SHALL resolve `class` candidates as CSS selectors.
+The script SHALL support recipes whose sequence has the classic shape: zero or more `flow` blocks, followed either by `extract` blocks only or by one `paginate` block whose `do` holds zero or more `flow` blocks followed by `extract` blocks only. Flow blocks before the extracts run once; flow blocks inside `do` run on every page. The script SHALL:
+- replay steps as the runner does, skipping optional steps whose target is absent and exiting 3 for required ones
+- extract every table in sequence order on each page, for each table resolving the list parent from `item.within` when present and the item container inside it, dropping excluded containers, reading item scoped fields within each container and page scoped fields once, and yielding one row per page for a table without an item block
+- read attributes, inner HTML, or text per field type and attribute
+- convert values with the same rules as the CLI (`number`, `url`, `image`, `date`, `html`, `text`)
+- emit rows with `_page` and `_index` per table
+- resolve `class` candidates as CSS selectors
 
 #### Scenario: Rows equal the runner
 - **WHEN** the reference catalog recipe is exported and run against playground tier 0
@@ -59,21 +65,28 @@ The script SHALL replay steps by kind and `when` as the runner does, skipping op
 
 #### Scenario: Required step absent
 - **WHEN** a required click step finds no target
-- **THEN** the script exits 3 naming the step
+- **THEN** the script exits 3 naming the flow and the step
 
 #### Scenario: Multi-table rows equal the runner
 - **WHEN** a recipe with tables `page`, `products`, and `questions` is exported and run against `/catalog?mixed=1`
 - **THEN** the script's output equals `webscoop run` output table by table, including `_page` and `_index`
 
 ### Requirement: Pagination parity
-The script SHALL implement the recipe's pagination kind (`url`, `next`, `more`, `scroll`), the limit with `--pages` override and a 500 page cap on `all`, disabled and missing target detection, dedup per item table by its key or by all of its values with no dedup for tables without an item block, and the stop rules `no-new-items`, `first-item-repeats`, plus the loop guard and zero-container stop, all evaluated on the primary table (the first table with an item block) as the runner does. Item counts for `more` and `scroll` SHALL come from the primary table.
+The script SHALL implement:
+- the paginate block's kind (`url`, `next`, `more`, `scroll`)
+- the limit, with the `--pages` override and a 500 page cap on `all`
+- disabled and missing target detection
+- dedup per item table, by its key or by all of its values, with no dedup for tables without an item block
+- the stop rules `no-new-items` and `first-item-repeats`, the loop guard, and the zero-container stop, all evaluated on the driving table as the runner does
+
+Item counts for `more` and `scroll` SHALL come from the driving table.
 
 #### Scenario: Paged recipe parity
 - **WHEN** the paged reference recipe is exported and run with `--pages all` against the playground
 - **THEN** the script emits 24 rows across 3 pages equal to `webscoop run --pages all`
 
 #### Scenario: Page table across pages
-- **WHEN** a recipe with tables `page` and `products` is exported and run with `--pages 2` on the url paginated catalog
+- **WHEN** a recipe with tables `page` and `products` both in the paginate block's `do` is exported and run with `--pages 2` on the url paginated catalog
 - **THEN** `page` has 2 rows and `products` has the deduplicated rows of both pages, equal to `webscoop run`
 
 ### Requirement: Missing field policy
@@ -123,3 +136,14 @@ Exporting a recipe that uses `frame` on any table, step target, or pagination ta
 #### Scenario: Framed recipe
 - **WHEN** `webscoop export sunat` runs on a recipe whose table has `frame`
 - **THEN** the command exits 1, names that table, and writes no file
+
+### Requirement: Unsupported flow features
+Exporting a recipe SHALL fail with exit 1, write no file, and name the first offending flow, step, or block when the recipe has any of:
+- a reactive flow
+- an `await-user` step
+- a step with `window` `popup`
+- a sequence that does not have the classic shape
+
+#### Scenario: Reactive flow
+- **WHEN** `webscoop export sunat` runs on a recipe with the reactive flow `login-wall`
+- **THEN** the command exits 1 naming `login-wall` and writes no file

@@ -7,19 +7,18 @@ Defines how a run advances from one page of results to the next for each paginat
 ## Requirements
 
 ### Requirement: Pagination kinds
-The runner SHALL advance pages according to `pagination.kind`:
-- `none`: exactly one page.
-- `url`: the page number is the template variable named by `pagination.param.name`, starting at `param.start` and incremented by `param.step` for each page; the runner fills the variable itself and navigates to the resulting URL; when the URL template has no such variable, the runner SHALL set it as a query parameter instead. A user-supplied value for that variable SHALL be used as the start instead.
-- `next`: after extracting a page, the runner resolves `pagination.target`, clicks it, waits for the page to settle, and extracts again.
-- `more`: after extracting, the runner resolves `pagination.target`, clicks it, waits for the item count to grow or the target to disappear, and extracts only the items beyond the previous count as the next page.
-- `scroll`: after extracting, the runner scrolls to the bottom of the document, waits for the item count to grow, and extracts items beyond the previous count as the next page; when the count does not grow within the wait, the run stops.
+The runner SHALL advance pages according to the paginate block's `kind`:
+- `url`: the page number is the template variable named by `param.name`, starting at `param.start` and incremented by `param.step` for each page. The runner fills the variable itself and navigates to the resulting URL. When the URL template has no such variable, the runner SHALL set it as a query parameter instead. A user-supplied value for that variable SHALL be used as the start instead.
+- `next`: after running the page's `do` blocks, the runner resolves `target`, clicks it, waits for the page to settle, and runs `do` again.
+- `more`: after running `do`, the runner resolves `target`, clicks it, and waits for the driving table's item count to grow or the target to disappear. It then runs `do` again, with every item table extracting only the items beyond its previous count.
+- `scroll`: after running `do`, the runner scrolls to the bottom of the document and waits for the driving table's item count to grow. It then runs `do` again on the items beyond the previous count. When the count does not grow within the wait, the run stops.
 
 #### Scenario: url kind fills the page variable
-- **WHEN** the recipe url is `/catalog?paginate=url&page={n}` with param `n` start 1 step 1 and limit 3
+- **WHEN** the recipe url is `/catalog?paginate=url&page={n}`, and the paginate block has param `n` start 1 step 1 and limit 3
 - **THEN** the runner navigates to pages 1, 2, and 3 in order
 
 #### Scenario: next kind clicks through
-- **WHEN** the pagination kind is `next` and the target resolves on pages 1 and 2 but not on page 3
+- **WHEN** the paginate kind is `next` and the target resolves on pages 1 and 2 but not on page 3
 - **THEN** three pages are extracted and the run stops after page 3
 
 #### Scenario: more kind extracts growth only
@@ -31,7 +30,7 @@ The runner SHALL advance pages according to `pagination.kind`:
 - **THEN** the run stops with the pages extracted so far
 
 ### Requirement: Limits
-`pagination.limit` SHALL bound the number of pages: `1` means one page, an integer N means at most N pages, `all` means until a stop rule fires. A command line override SHALL replace the recipe limit for that run. `all` SHALL be additionally capped by a maximum page count (default 500) that the user may change; hitting the cap SHALL stop the run with a warning, not an error.
+The paginate block's `limit` SHALL bound the number of pages: `1` means one page, an integer N means at most N pages, and `all` means until a stop rule fires. A command line override SHALL replace the limit for that run. `all` SHALL be additionally capped by a maximum page count (default 500) that the user may change. Hitting the cap SHALL stop the run with a warning, not an error.
 
 #### Scenario: Limit reached
 - **WHEN** limit is 2 and the site has 3 pages
@@ -42,7 +41,16 @@ The runner SHALL advance pages according to `pagination.kind`:
 - **THEN** 2 pages are extracted and stderr warns that the cap was hit
 
 ### Requirement: Stop rules
-The runner SHALL always stop when the limit is reached and, for `next` and `more`, when the target cannot be resolved or is disabled (`disabled` attribute, `aria-disabled="true"`, or an anchor without `href`). Additionally, each enabled rule in `pagination.stopRules` SHALL stop the run, evaluated on the primary table: `no-new-items` when a page yields zero primary table rows after dropping rows with missing required fields and after dedup; `first-item-repeats` when the first extracted row of the primary table on a page, before dropping, equals the first row of the previous page on the key field; `target-missing` is implied for `next` and `more` and SHALL be a no-op for other kinds. A page on which the primary table resolves zero item containers SHALL always stop the run. A page whose primary containers were all dropped for missing required fields SHALL NOT count as such an empty page. A page whose URL and primary first row both equal the previous page's SHALL always stop the run, as a loop guard. A recipe with no item table SHALL stop only on the limit, the cap, or a missing target.
+The runner SHALL always stop:
+- when the limit is reached
+- for `next` and `more`, when the target cannot be resolved or is disabled (`disabled` attribute, `aria-disabled="true"`, or an anchor without `href`)
+- when the driving table resolves zero item containers on a page. A page whose driving containers were all dropped for missing required fields SHALL NOT count as such an empty page.
+- when a page's URL and driving first row both equal the previous page's, as a loop guard
+
+Additionally, each enabled rule in `stopRules` SHALL stop the run, evaluated on the driving table:
+- `no-new-items`: a page yields zero driving table rows after dropping rows with missing required fields and after dedup.
+- `first-item-repeats`: the first extracted row of the driving table on a page, before dropping, equals the first row of the previous page on the key field.
+- `target-missing`: implied for `next` and `more`; a no-op for other kinds.
 
 #### Scenario: Last page repeats
 - **WHEN** the site serves page 3 again for every page beyond 3 and `first-item-repeats` is enabled
@@ -57,7 +65,7 @@ The runner SHALL always stop when the limit is reached and, for `next` and `more
 - **THEN** the run advances to page 3
 
 #### Scenario: Secondary table empty does not stop
-- **WHEN** `no-new-items` is set, page 2 yields 8 new `products` rows and 0 `questions` rows
+- **WHEN** `no-new-items` is set, and page 2 yields 8 new `products` rows (the driving table) and 0 `questions` rows
 - **THEN** the run continues to page 3
 
 ### Requirement: Dedup across pages
@@ -87,18 +95,18 @@ Rows SHALL carry `_page` as the 1-based page number in extraction order and `_in
 - **THEN** the emitted rows carry `_index` 0, 1, and 2
 
 ### Requirement: Delay between pages
-The runner SHALL wait `pagination.delayMs` between finishing a page and advancing, overridable per run. The delay SHALL NOT apply before the first page.
+The runner SHALL wait the paginate block's `delayMs` between finishing a page and advancing, overridable per run. The delay SHALL NOT apply before the first page.
 
 #### Scenario: Delay applied
 - **WHEN** `delayMs` is 500 and 3 pages are extracted
 - **THEN** the run takes at least 1 second longer than the same run with delay 0
 
 ### Requirement: Pagination target healing
-The pagination target SHALL be resolved through the healing ladder like a field, with promotion and write-back on success. A healed target SHALL be reported in the run report and counted as healed.
+The paginate block's target SHALL be resolved through the healing ladder like a field, with promotion and write-back on success. A healed target SHALL be reported in the run report and counted as healed.
 
 #### Scenario: Next link healed
 - **WHEN** the stored next-link candidates fail and the fuzzy rung finds the link by fingerprint
-- **THEN** the run advances and the recipe's `pagination.target` is promoted on write-back
+- **THEN** the run advances and the paginate block's `target` is promoted on write-back
 
 ### Requirement: Pagination reporting
 The run report SHALL include `pageCount`, `duplicateCount`, `stopReason` among `limit`, `cap`, `target-missing`, `no-new-items`, `first-item-repeats`, `loop`, `no-growth`, `none`, and per page the URL and row count. A `page.advanced` event SHALL be emitted before each navigation with the page number and kind, and a `pagination.stopped` event with the reason.
@@ -106,3 +114,10 @@ The run report SHALL include `pageCount`, `duplicateCount`, `stopReason` among `
 #### Scenario: Report after three pages
 - **WHEN** a `url` run extracts 3 pages and stops on the limit
 - **THEN** the report shows `pageCount` 3, `stopReason` `limit`, and three page entries
+
+### Requirement: Paginate block
+Pagination SHALL be declared by the sequence's `paginate` block, as defined by the flows and recipe-format capabilities. The settings below (kind, target, param, limit, stop rules, delay) are that block's. The driving table SHALL be the block's `table`, or, when absent, the first table with an `item` block extracted in its `do`. The driving table supplies the item counts for `more` and `scroll` and the page summary the stop rules see. A paginate block whose `do` extracts no item table SHALL stop only on the limit, the cap, or a missing target. A recipe without a paginate block SHALL extract one page.
+
+#### Scenario: Explicit driving table
+- **WHEN** a paginate block extracts `products` and `questions` and sets `table` to `questions`
+- **THEN** `more` pagination counts `questions` containers to detect growth
