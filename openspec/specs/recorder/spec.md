@@ -492,7 +492,7 @@ From a selected element, the panel SHALL offer "Add to flow", which creates a st
 Each flow in the Flows section SHALL list its steps in order with kind, target summary, value, a window badge when `window` is `popup`, a frame badge when the target has a frame, and an optional marker. Selecting a step SHALL open its edit state, where the user can:
 - edit the value, including inserting a `{var}` chip, or turn a literal value into a variable with "make variable"
 - toggle `window` between `same` and `popup`, and `optional`
-- re-pick the target, and edit its frame
+- edit the target with the target editor defined in "Target editor for steps, triggers, and the paginate target", and edit its frame
 - for `await-user`, edit `until`, the label, and a timeout override, shown as "guard budget" by default
 
 The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Alt+Down, delete them, and replay one step on the live page. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
@@ -1305,3 +1305,55 @@ The user SHALL be able to mark a text variable secret and to change a variable's
 #### Scenario: Externally bound password
 - **WHEN** the config binds `pass` for this recipe and the user opens the recorder
 - **THEN** the variables list shows `pass` as external with "from config", and its value cannot be edited
+
+
+### Requirement: Target editor for steps, triggers, and the paginate target
+The target of a step, a reactive flow's trigger, and the paginate block's target SHALL be edited with one target editor. The editor SHALL show:
+- the target's chip (its primary candidate)
+- a line naming how many candidates the target has
+- the actions "Re-pick" and "Edit selector"
+
+**Edit selector.** "Edit selector" SHALL open the selector input below the target, prefilled with the primary candidate.
+- While the user types, the panel SHALL show how many elements the text matches on the current page of the target's window, inside the target's frame when it has one.
+- With 0 matches, it SHALL warn that the selector matches nothing and still allow applying.
+- With several matches, it SHALL say that the first match is used, and outline that match on the page.
+- Invalid text SHALL show an inline error and disable applying.
+- Applying with Enter or "Use" SHALL make the typed selector the target's first candidate, rated for stability like any generated candidate, followed by the previous candidates in their order. Esc SHALL close the input without change.
+
+**Re-pick.** "Re-pick" SHALL put the target's window in picking mode, with the page strip "Picking target for <flow> · step <n>" (or "Picking trigger for <flow>", or "Picking pagination target"). The edited row SHALL show "re-picking…", and the Pick section SHALL show a header naming the target and a link back to it. After a pick, the Pick section SHALL show the selection details used for tables:
+- the element card with tag, accessible name, and attributes rated stable or hashed
+- the breadcrumb with the walk to parent and child
+- the candidates generated for the element in page scope, verified against it and ranked, with match counts and stability, where a candidate whose first match is another element is marked "reads another element"
+- the selector input
+
+"Use for step" (or "Use for trigger", "Use for pagination") SHALL save the ranked candidates, with the highlighted row first, and a fingerprint of the picked element. A candidate marked "reads another element" SHALL stay in the list but SHALL NOT be first unless the user highlights it. Cancel or Esc SHALL end picking and keep the previous target.
+
+**Iframes.** An element picked inside an iframe SHALL show the "Inside iframe · Edit" card, and the saved target SHALL carry that frame.
+
+**Popup steps.** Re-picking a step whose `window` is `popup` SHALL happen in the newest open popup, which becomes the panel's owner and shows the details in its compact sheet. While no popup is open, Re-pick SHALL be disabled with the reason "popup not open — replay steps 1–<n-1> first".
+
+Changing a `fill` step's target SHALL keep its value, including a `{var}` reference.
+
+#### Scenario: Typed selector for a step
+- **WHEN** the user opens "Edit selector" on a click step, types `css=nav a.tab`, sees 1 match, and presses Enter
+- **THEN** the step's first candidate is `css=nav a.tab` rated `medium`, and the previous primary candidate is second
+
+#### Scenario: Typed selector matching several elements
+- **WHEN** the typed text matches 3 elements
+- **THEN** the panel says the first match is used and outlines it, and applying is allowed
+
+#### Scenario: Re-pick shows the selection details
+- **WHEN** the user chooses Re-pick on step 1 of `flow-2` and clicks the "Images" tab
+- **THEN** the Pick section shows the element card, breadcrumb, and ranked candidates with match counts, and "Use for step" replaces the step's target with them
+
+#### Scenario: Trigger uses the same editor
+- **WHEN** the user re-picks the trigger of the reactive flow `login-wall`
+- **THEN** the page strip reads "Picking trigger for login-wall", and "Use for trigger" saves the new candidates on the trigger
+
+#### Scenario: Popup closed
+- **WHEN** step 3 of a flow has `window` `popup` and no popup is open
+- **THEN** Re-pick on step 3 is disabled with "popup not open — replay steps 1–2 first"
+
+#### Scenario: Fill keeps its variable
+- **WHEN** the user re-picks the target of a fill step whose value is `{password}`
+- **THEN** the step keeps the value `{password}`
