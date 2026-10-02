@@ -35,7 +35,7 @@ Both SHALL exit 1 naming any variable without a value. Secret variables follow t
 - **THEN** the step runs with the command's output, and stderr names the step without the value
 
 ### Requirement: Header and declared limits
-The script SHALL start with a comment naming the recipe, the export timestamp, the webscoop version, and a fixed list of behaviors it does not include: fingerprint healing, model healing, guards, notifications, window hiding, recipe write-back. It SHALL advise re-exporting after re-recording rather than editing selectors in place.
+The script SHALL start with a comment naming the recipe, the export timestamp, the webscoop version, and a fixed list of behaviors it does not include: fingerprint healing, model healing, guards, notifications, hooks, recipe write-back. It SHALL advise re-exporting after re-recording rather than editing selectors in place.
 
 #### Scenario: Header present
 - **WHEN** a recipe is exported

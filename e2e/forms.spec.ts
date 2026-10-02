@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadRecipe, type RecipeInput } from '@webscoop/core';
+import { loadRecipe } from '@webscoop/core';
 import { expect, formsRecipe, hasDisplay, test } from './fixtures';
 
 test.skip(!hasDisplay, 'the recorder and the CLI need WAYLAND_DISPLAY or DISPLAY');

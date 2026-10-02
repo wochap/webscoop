@@ -93,7 +93,7 @@ describe.skipIf(!hasDisplay)('injected recorder (live browser)', () => {
     const box = (await page.locator('h2.product-title').first().boundingBox())!;
     await page.mouse.move(box.x + 10, box.y + box.height / 2);
     await expect.poll(() => hook(page, (h) => h.boxes().filter((b) => b.variant === 'hover'))).toHaveLength(1);
-    expect((await hook(page, (h) => h.boxes()))[0]!.light).toBe(true);
+    await expect.poll(async () => (await hook(page, (h) => h.boxes())).find((b) => b.variant === 'hover')?.light).toBe(true);
     await page.screenshot({ path: join(SHOTS, 'halo-light.png') });
 
     await page.addStyleTag({ content: 'body, .product-card { background: #10121c !important; color: #eee !important; }' });
