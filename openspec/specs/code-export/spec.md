@@ -7,7 +7,12 @@ Defines the standalone script produced from a recipe: which recipe behavior it r
 ## Requirements
 
 ### Requirement: Targets and invocation
-The export SHALL produce either a TypeScript script for Node using the `playwright` package, runnable with `npx tsx <file>`, or a Python script using the `playwright` sync API, runnable with `python3 <file>`. Both SHALL accept variables as `--var name=value` arguments and as environment variables named `WEBSCOOP_VAR_<NAME>` (uppercased), with arguments taking precedence and recipe defaults as the fallback, and SHALL exit 1 naming any variable without a value. Both SHALL accept `--jsonl`, `--out <path>`, `--table <name>`, `--pages <1|N|all>`, and `--headless`. Export SHALL accept recipes with any number of tables, in either the shorthand or the `tables` form.
+The export SHALL produce either a TypeScript script for Node using the `playwright` package, runnable with `npx tsx <file>`, or a Python script using the `playwright` sync API, runnable with `python3 <file>`. Both SHALL take variables from these sources, the first that gives a value winning:
+1. the arguments `--var name=value`, `--var-file name=PATH`, or `--var-command name=CMD` (trimmed standard output of `/bin/sh -c CMD`)
+2. the environment variable `WEBSCOOP_VAR_<NAME>` (uppercased)
+3. the recipe default
+
+Both SHALL exit 1 naming any variable without a value. Secret variables follow the variables capability: the script SHALL NOT print their values. Path variables SHALL be split on `:` and checked for readability before use. Both SHALL accept `--jsonl`, `--out <path>`, `--table <name>`, `--pages <1|N|all>`, `--await-timeout <ms>`, and `--headless`. Export SHALL accept every valid recipe, with any number of tables, in either the shorthand or the `tables` form.
 
 #### Scenario: Variable from the environment
 - **WHEN** the exported script runs with `WEBSCOOP_VAR_CATEGORY=shoes` and no `--var`
@@ -24,6 +29,10 @@ The export SHALL produce either a TypeScript script for Node using the `playwrig
 #### Scenario: Unknown table flag
 - **WHEN** the exported script runs with `--table ads` and the recipe has no such table
 - **THEN** the script exits 1 naming `ads` and the declared tables
+
+#### Scenario: Secret from a command
+- **WHEN** the script runs with `--var-command pass='pass show sunat/sol'` and a later step fails
+- **THEN** the step runs with the command's output, and stderr names the step without the value
 
 ### Requirement: Header and declared limits
 The script SHALL start with a comment naming the recipe, the export timestamp, the webscoop version, and a fixed list of behaviors it does not include: fingerprint healing, model healing, guards, notifications, window hiding, recipe write-back. It SHALL advise re-exporting after re-recording rather than editing selectors in place.
@@ -47,13 +56,23 @@ Each stored selector candidate SHALL map to the same Playwright locator the runn
 - **THEN** the script extracts with the second candidate
 
 ### Requirement: Steps and extraction parity
-The script SHALL support recipes whose sequence has the classic shape: zero or more `flow` blocks, followed either by `extract` blocks only or by one `paginate` block whose `do` holds zero or more `flow` blocks followed by `extract` blocks only. Flow blocks before the extracts run once; flow blocks inside `do` run on every page. The script SHALL:
-- replay steps as the runner does, skipping optional steps whose target is absent and exiting 3 for required ones
-- extract every table in sequence order on each page, for each table resolving the list parent from `item.within` when present and the item container inside it, dropping excluded containers, reading item scoped fields within each container and page scoped fields once, and yielding one row per page for a table without an item block
+The script SHALL run the recipe's sequence as the runner does, as defined by the flows capability:
+- flow, extract, and paginate blocks in order
+- reactive flows checked at the same checkpoints, with `maxRetries`, `flow-loop`, and `recover`
+- recovery by reloading the batch URL and replaying earlier flow blocks, and `pagination-lost` exiting 1
+- `window` `popup` steps acting in the newest popup opened by an earlier step of the flow
+- frame targets resolved before their inner targets
+- `fill` acting by element kind as defined by the steps capability
+
+It SHALL:
+- skip optional steps whose target is absent, and exit 3 naming the flow and the step for required ones
+- for each extracted table, resolve the list parent from `item.within` when present and the item container inside it, drop excluded containers, read item scoped fields within each container and page scoped fields once, and yield one row per extraction for a table without an item block
 - read attributes, inner HTML, or text per field type and attribute
 - convert values with the same rules as the CLI (`number`, `url`, `image`, `date`, `html`, `text`)
 - emit rows with `_page` and `_index` per table
 - resolve `class` candidates as CSS selectors
+
+An `await-user` step SHALL print its label and the condition on stderr. It SHALL check the condition at least every second in every open window, and re-check at once when Enter is pressed on a terminal. It SHALL fail with exit 2 when `--await-timeout` (default 600000 milliseconds) runs out.
 
 #### Scenario: Rows equal the runner
 - **WHEN** the reference catalog recipe is exported and run against playground tier 0
@@ -70,6 +89,22 @@ The script SHALL support recipes whose sequence has the classic shape: zero or m
 #### Scenario: Multi-table rows equal the runner
 - **WHEN** a recipe with tables `page`, `products`, and `questions` is exported and run against `/catalog?mixed=1`
 - **THEN** the script's output equals `webscoop run` output table by table, including `_page` and `_index`
+
+#### Scenario: Framed table parity
+- **WHEN** the framed fixture recipe is exported and run against `/framed`
+- **THEN** the script's rows equal `webscoop run` rows
+
+#### Scenario: Reactive login and popup parity
+- **WHEN** a recipe whose reactive flow clicks "Log in" on `/spa`, fills the popup's inputs from variables, and signs in is exported and run
+- **THEN** the script logs in through the popup, and its catalog rows equal `webscoop run` rows
+
+#### Scenario: Await-user times out
+- **WHEN** a recipe with an `await-user` step is exported and run with `--await-timeout 0` while the condition does not hold
+- **THEN** the script exits 2 after printing the step's label
+
+#### Scenario: Forms parity
+- **WHEN** the forms fixture recipe is exported and run against `/forms` with the same variables as `webscoop run`
+- **THEN** `/forms/submit` echoes the same values for both
 
 ### Requirement: Pagination parity
 The script SHALL implement:
@@ -129,28 +164,3 @@ An exported script (TS or Python) SHALL, for a field with `hover: true`, hover t
 #### Scenario: Exported hover
 - **WHEN** a recipe with a `hover` field is exported and the script runs against the hover-reveal playground page
 - **THEN** its output carries the real URLs, matching `webscoop run`
-
-### Requirement: Frames not exported
-Exporting a recipe that uses `frame` on any table, step target, or pagination target SHALL fail with exit 1 and a message saying iframe targets are not supported by export, naming the first table or step that uses one. No file SHALL be written.
-
-#### Scenario: Framed recipe
-- **WHEN** `webscoop export sunat` runs on a recipe whose table has `frame`
-- **THEN** the command exits 1, names that table, and writes no file
-
-### Requirement: Unsupported flow features
-Exporting a recipe SHALL fail with exit 1, write no file, and name the first offending flow, step, or block when the recipe has any of:
-- a reactive flow
-- an `await-user` step
-- a step with `window` `popup`
-- a sequence that does not have the classic shape
-
-#### Scenario: Reactive flow
-- **WHEN** `webscoop export sunat` runs on a recipe with the reactive flow `login-wall`
-- **THEN** the command exits 1 naming `login-wall` and writes no file
-
-### Requirement: Variable kinds not exported
-Exporting a recipe that declares a secret variable or a `path` variable SHALL fail with exit 1, write no file, and name the first such variable.
-
-#### Scenario: Recipe with a secret
-- **WHEN** `webscoop export sunat-menu` runs on a recipe whose `pass` variable is secret
-- **THEN** the command exits 1 naming `pass` and writes no file
