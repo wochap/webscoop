@@ -45,7 +45,7 @@
         npmDeps = pkgs.fetchNpmDeps {
           inherit src;
           fetcherVersion = 2;
-          hash = "sha256-7YS+SB1PRHWpuaNM5obfCVjI8Faky0jWOWSwUPI2Wwc=";
+          hash = "sha256-F6jwj6NKaYaydpHDyY3DpuqWcdi5kaX29eT1rI9Kw9g=";
         };
 
         nativeBuildInputs = [
