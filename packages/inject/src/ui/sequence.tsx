@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type HTMLAttributes, type ReactNode } from 'react';
 import { STOP_RULES, type BlockPath, type Draft, type DraftBlock, type DraftInnerBlock, type DraftPagination, type PaginationPatch, type SequenceError } from '@webscoop/core/page';
 import { useActions, useSnapshot } from './context';
+import { dropIndex, lineClass, rowHeader, useDragList, type DragRowState } from './drag';
 import { Segmented } from './flows';
 import { Icon } from './icons';
 import { Toggle } from './items';
@@ -163,7 +164,7 @@ function BlockRow({
   errors,
   focused,
   children,
-  onDrop,
+  drag,
 }: {
   draft: Draft;
   block: DraftBlock | DraftInnerBlock;
@@ -172,7 +173,7 @@ function BlockRow({
   errors: SequenceError[];
   focused: boolean;
   children?: ReactNode;
-  onDrop: (from: BlockPath, to: BlockPath) => void;
+  drag: { props: HTMLAttributes<HTMLDivElement>; state: DragRowState };
 }) {
   const snap = useSnapshot();
   const actions = useActions();
@@ -183,7 +184,8 @@ function BlockRow({
   const open = snap.ui.paginateOpen;
   return (
     <div
-      className={`ws-block${own.length > 0 ? ' ws-block-error' : ''}${kind === 'paginate' ? ' ws-block-paginate' : ''}${focused ? ' ws-field-focused' : ''}`}
+      {...drag.props}
+      className={`ws-block${own.length > 0 ? ' ws-block-error' : ''}${kind === 'paginate' ? ' ws-block-paginate' : ''}${focused ? ' ws-field-focused' : ''}${drag.state.dragging ? ' ws-block-dragging' : ''}${lineClass(drag.state)}`}
       data-ws="block"
       data-kind={kind}
       data-path={path.join('.')}
@@ -195,18 +197,6 @@ function BlockRow({
       onClick={(e) => {
         e.stopPropagation();
         actions.setUi({ focusedBlock: path, focusedStep: null, focusedField: null, focusedTab: null });
-      }}
-      onDragStart={(e) => {
-        e.stopPropagation();
-        e.dataTransfer?.setData('text/plain', path.join('.'));
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const raw = e.dataTransfer?.getData('text/plain') ?? '';
-        const from = raw.split('.').map(Number);
-        if (from.length > 0 && from.every(Number.isInteger) && !samePath(from, path)) onDrop(from, path);
       }}
     >
       <div className="ws-row">
@@ -245,7 +235,19 @@ export function SequenceSection({ draft, collapsed, onCollapse }: { draft: Draft
   const actions = useActions();
   const { blocks, custom } = draft.sequence;
   const errors = draft.sequenceErrors;
-  const move = (from: BlockPath, to: BlockPath) => void actions.send({ kind: 'sequence.move', from, to });
+  const p = blocks.findIndex((b) => 'paginate' in b);
+  const blockPath = (container: string, index: number): BlockPath => (container === 'do' ? [p, index] : [index]);
+  const drag = useDragList({
+    list: 'sequence',
+    axis: 'y',
+    getImage: rowHeader,
+    // The paginate block cannot move into itself.
+    accepts: (from, slot) => !(slot.container === 'do' && from.container === 'top' && from.index === p),
+    onMove: (from, slot) => {
+      const to = from.container === slot.container ? dropIndex(from.index, slot.index) : slot.index;
+      void actions.send({ kind: 'sequence.move', from: blockPath(from.container, from.index), to: blockPath(slot.container, to) });
+    },
+  });
   const focused = snap.ui.focusedBlock;
   const headActions = (
     <>
@@ -280,31 +282,26 @@ export function SequenceSection({ draft, collapsed, onCollapse }: { draft: Draft
         </span>
       }
     >
-      <div className="ws-col" data-ws="sequence">
+      <div className="ws-col" data-ws="sequence" {...drag.containerProps}>
         {blocks.length === 0 && <span className="ws-meta">Nothing runs yet. Add a table or record a flow.</span>}
         {blocks.map((block, i) => {
           const path: BlockPath = [i];
           if (!('paginate' in block)) {
-            return <BlockRow key={i} draft={draft} block={block} path={path} number={String(i + 1)} errors={errors} focused={samePath(focused, path)} onDrop={move} />;
+            return <BlockRow key={i} draft={draft} block={block} path={path} number={String(i + 1)} errors={errors} focused={samePath(focused, path)} drag={drag.row(i, 'top')} />;
           }
+          const empty = drag.slot(0, 'do');
           return (
-            <BlockRow key={i} draft={draft} block={block} path={path} number={String(i + 1)} errors={errors} focused={samePath(focused, path)} onDrop={move}>
+            <BlockRow key={i} draft={draft} block={block} path={path} number={String(i + 1)} errors={errors} focused={samePath(focused, path)} drag={drag.row(i, 'top')}>
               {snap.ui.paginateOpen && draft.pagination && <PaginateSettings draft={draft} pagination={draft.pagination} />}
               <div
                 className="ws-col ws-paginate-do"
                 data-ws="paginate-do"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const from = (e.dataTransfer?.getData('text/plain') ?? '').split('.').map(Number);
-                  if (from.length > 0 && from.every(Number.isInteger)) move(from, [i, block.paginate.do.length]);
-                }}
               >
                 {block.paginate.do.map((inner, j) => {
                   const innerPath: BlockPath = [i, j];
-                  return <BlockRow key={j} draft={draft} block={inner} path={innerPath} number={`${i + 1}.${j + 1}`} errors={errors} focused={samePath(focused, innerPath)} onDrop={move} />;
+                  return <BlockRow key={j} draft={draft} block={inner} path={innerPath} number={`${i + 1}.${j + 1}`} errors={errors} focused={samePath(focused, innerPath)} drag={drag.row(j, 'do')} />;
                 })}
+                {block.paginate.do.length === 0 && <div {...empty.props} className={`ws-paginate-empty${empty.line ? ' ws-drop-before' : ''}`} data-ws="paginate-empty" />}
                 <span className="ws-meta">repeats on every page</span>
               </div>
             </BlockRow>

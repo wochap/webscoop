@@ -21,7 +21,33 @@ function withFlows(flows: DraftFlow[], extra: Partial<Draft> = {}): Draft {
 const setup = (steps: DraftStep[] = [step('click')]): DraftFlow => ({ name: 'setup', steps });
 const loginWall: DraftFlow = { name: 'login-wall', trigger: { selectors: [{ strategy: 'role', value: 'button|Log in', stability: 'stable', count: 1 }] }, steps: [step('click')] };
 
+/** Gives rows a vertical layout of 40px tall rows for drag tests. */
+function stack(rows: HTMLElement[]) {
+  rows.forEach((r, i) => (r.getBoundingClientRect = () => ({ left: 0, top: i * 40, width: 200, height: 40, right: 200, bottom: i * 40 + 40, x: 0, y: i * 40, toJSON: () => ({}) })));
+}
+
 describe('flows section', () => {
+  it('drags a step into the gap the line shows, and ignores a step of another flow', () => {
+    const steps = [step('click'), step('fill', { value: 'x' }), step('press', { value: 'Enter' })];
+    const p = renderPanel(baseState(withFlows([setup(steps), { ...loginWall, steps: [step('click')] }])), { openFlows: ['login-wall'] });
+    const rows = p.qa('step');
+    expect(rows.map((r) => r.dataset.kind)).toEqual(['click', 'fill', 'press', 'click']);
+    stack(rows);
+    fireEvent.dragStart(rows[2]!);
+    fireEvent.dragOver(rows[0]!, { clientY: 10 });
+    expect(rows[0]!.className).toContain('ws-drop-before');
+    fireEvent.drop(rows[0]!, { clientY: 10 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.moveStep', flow: 0, from: 2, to: 0 });
+
+    const before = p.sent.length;
+    fireEvent.dragStart(rows[3]!);
+    fireEvent.dragOver(rows[0]!, { clientY: 10 });
+    expect(p.container.querySelectorAll('.ws-drop-before, .ws-drop-after')).toHaveLength(0);
+    fireEvent.drop(rows[0]!, { clientY: 10 });
+    expect(p.sent).toHaveLength(before);
+    fireEvent.dragEnd(rows[3]!);
+  });
+
   it('groups called and reactive flows, marks the active one, and counts flows and steps in the footer', () => {
     const p = renderPanel(baseState(withFlows([setup([step('click'), step('fill', { value: 'mouse', target: { selectors: [{ strategy: 'css', value: 'input', stability: 'medium' }] } })]), loginWall])));
     expect(p.qa('flow').map((f) => [f.dataset.name, f.dataset.kind, f.dataset.active ?? ''])).toEqual([

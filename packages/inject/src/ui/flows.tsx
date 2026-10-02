@@ -3,6 +3,7 @@ import { DEFAULT_MAX_RETRIES, STEP_KINDS, popupClosedReason, type Draft, type Dr
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
 import { ZeroMatchWarning } from './fields';
+import { dropIndex, lineClass, rowHeader, useDragList, type DragRowState } from './drag';
 import { FrameBadge } from './frame';
 import { Icon, type IconName } from './icons';
 import { Toggle } from './items';
@@ -305,8 +306,7 @@ export function StepRow({
   editing,
   repicking,
   onFocus,
-  dragging,
-  dragProps,
+  drag,
 }: {
   step: DraftStep;
   at: StepRef;
@@ -315,16 +315,15 @@ export function StepRow({
   editing: boolean;
   repicking: boolean;
   onFocus: () => void;
-  dragging: boolean;
-  dragProps: Omit<HTMLAttributes<HTMLDivElement>, 'className'>;
+  drag: { props: Omit<HTMLAttributes<HTMLDivElement>, 'className'>; state: DragRowState };
 }) {
   const actions = useActions();
   const update = (patch: StepPatch) => void actions.send({ kind: 'draft.updateStep', flow: at.flow, index: at.index, patch });
   const edit = (on: boolean) => actions.setUi({ editingStep: on ? at : null });
   return (
     <div
-      {...dragProps}
-      className={`ws-field ws-step${focused || editing ? ' ws-field-focused' : ''}${dragging ? ' ws-field-dragging' : ''}${step.kind === 'await-user' ? ' ws-step-await' : ''}`}
+      {...drag.props}
+      className={`ws-field ws-step${focused || editing ? ' ws-field-focused' : ''}${drag.state.dragging ? ' ws-field-dragging' : ''}${lineClass(drag.state)}${step.kind === 'await-user' ? ' ws-step-await' : ''}`}
       data-ws="step"
       data-kind={step.kind}
       data-index={at.index}
@@ -524,7 +523,16 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
   const open = active || ui.openFlows.includes(flow.name);
   const [renaming, setRenaming] = useState(false);
   const [trigger, setTrigger] = useState(false);
-  const [dragging, setDragging] = useState<number | null>(null);
+  const drag = useDragList({
+    list: `steps:${index}`,
+    axis: 'y',
+    getImage: rowHeader,
+    onMove: (from, slot) => {
+      const to = dropIndex(from.index, slot.index);
+      void actions.send({ kind: 'draft.moveStep', flow: index, from: from.index, to });
+      actions.setUi({ focusedStep: { flow: index, index: to } });
+    },
+  });
   const menuId = `flow-menu-${index}`;
   const picking = host?.pickTrigger === index;
   const edit = host?.targetEdit ?? null;
@@ -587,7 +595,7 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
         </span>
       )}
       {open && (
-        <div className="ws-col ws-flow-steps">
+        <div className="ws-col ws-flow-steps" {...drag.containerProps}>
           {(trigger || picking || triggerEdit || (flow.trigger && active)) && <TriggerEditor flow={flow} index={index} picking={picking} />}
           {flow.steps.map((step, i) => {
             const at = { flow: index, index: i };
@@ -601,24 +609,7 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
                 editing={ui.editingStep?.flow === index && ui.editingStep.index === i}
                 repicking={edit !== null && edit.phase !== 'typing' && sameRef(edit.ref, { kind: 'step', flow: index, index: i })}
                 onFocus={() => actions.setUi({ focusedStep: at, focusedField: null, focusedTab: null, focusedBlock: null })}
-                dragging={dragging === i}
-                dragProps={{
-                  onDragStart: (e) => {
-                    setDragging(i);
-                    e.dataTransfer?.setData('text/plain', String(i));
-                  },
-                  onDragOver: (e) => e.preventDefault(),
-                  onDrop: (e) => {
-                    e.preventDefault();
-                    const from = dragging ?? Number(e.dataTransfer?.getData('text/plain'));
-                    setDragging(null);
-                    if (Number.isInteger(from) && from !== i) {
-                      void actions.send({ kind: 'draft.moveStep', flow: index, from, to: i });
-                      actions.setUi({ focusedStep: at });
-                    }
-                  },
-                  onDragEnd: () => setDragging(null),
-                }}
+                drag={drag.row(i)}
               />
             );
           })}

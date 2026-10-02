@@ -54,10 +54,19 @@ describe('fields', () => {
     fireEvent.keyDown(rows[0]!, { key: 'ArrowUp', altKey: true });
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.moveField', from: 1, to: 0 });
 
+    rows.forEach((r, i) => (r.getBoundingClientRect = () => ({ left: 0, top: i * 40, width: 200, height: 40, right: 200, bottom: i * 40 + 40, x: 0, y: i * 40, toJSON: () => ({}) })));
     fireEvent.dragStart(rows[2]!);
-    fireEvent.dragOver(rows[0]!);
-    fireEvent.drop(rows[0]!);
+    fireEvent.dragOver(rows[0]!, { clientY: 10 });
+    expect(rows[0]!.className).toContain('ws-drop-before');
+    fireEvent.drop(rows[0]!, { clientY: 10 });
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.moveField', from: 2, to: 0 });
+
+    fireEvent.dragStart(rows[0]!);
+    fireEvent.dragOver(rows[1]!, { clientY: 70 });
+    expect(rows[1]!.className).toContain('ws-drop-after');
+    expect(p.container.querySelectorAll('.ws-drop-before, .ws-drop-after')).toHaveLength(1);
+    fireEvent.drop(rows[1]!, { clientY: 70 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.moveField', from: 0, to: 1 });
   });
 
   it('removes a field from its row', () => {

@@ -22,6 +22,11 @@ function draft(extra: Partial<Draft> = {}): Draft {
 
 const open = (d: Draft) => ({ ...baseState(d), panel: { collapsed: { recipe: false, flows: false, sequence: false } } });
 
+/** Gives rows a vertical layout of 40px tall rows for drag tests. */
+function stack(rows: HTMLElement[]) {
+  rows.forEach((r, i) => (r.getBoundingClientRect = () => ({ left: 0, top: i * 40, width: 200, height: 40, right: 200, bottom: i * 40 + 40, x: 0, y: i * 40, toJSON: () => ({}) })));
+}
+
 describe('sequence section', () => {
   it('starts collapsed with its blocks in short form, and shows the default badge', () => {
     const p = renderPanel(baseState(draft()));
@@ -74,6 +79,59 @@ describe('sequence section', () => {
     p.store.setUi({ focusedBlock: [2, 0] });
     key('ArrowUp');
     expect(p.sent.at(-1)).toEqual({ kind: 'sequence.move', from: [2, 0], to: [2] });
+  });
+});
+
+describe('sequence drag', () => {
+  const nested = (inner: Draft['sequence']['blocks']) => draft({ pagination, sequence: { custom: true, blocks: [{ flow: 'reach-report' }, ...inner] } });
+
+  it('drops a top-level block into the paginate block', () => {
+    const p = renderPanel(open(nested([{ paginate: { do: [{ extract: 'results' }] } }])));
+    const rows = p.qa('block');
+    expect(rows.map((b) => b.dataset.path)).toEqual(['0', '1', '1.0']);
+    stack(rows);
+    fireEvent.dragStart(rows[0]!);
+    fireEvent.dragOver(rows[2]!, { clientY: 110 });
+    expect(rows[2]!.className).toContain('ws-drop-after');
+    expect(p.container.querySelectorAll('.ws-drop-before, .ws-drop-after')).toHaveLength(1);
+    fireEvent.drop(rows[2]!, { clientY: 110 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'sequence.move', from: [0], to: [1, 1] });
+  });
+
+  it('drops an inner block before the first top-level block', () => {
+    const p = renderPanel(open(nested([{ paginate: { do: [{ extract: 'results' }] } }])));
+    const rows = p.qa('block');
+    stack(rows);
+    fireEvent.dragStart(rows[2]!);
+    fireEvent.dragOver(rows[0]!, { clientY: 10 });
+    expect(rows[0]!.className).toContain('ws-drop-before');
+    fireEvent.drop(rows[0]!, { clientY: 10 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'sequence.move', from: [1, 0], to: [0] });
+  });
+
+  it('drops into an empty paginate block', () => {
+    const p = renderPanel(open(nested([{ extract: 'results' }, { paginate: { do: [] } }])));
+    const rows = p.qa('block');
+    fireEvent.dragStart(rows[1]!);
+    const empty = p.q('paginate-empty')!;
+    fireEvent.dragOver(empty, { clientY: 0 });
+    expect(empty.className).toContain('ws-drop-before');
+    fireEvent.drop(empty, { clientY: 0 });
+    expect(p.sent.at(-1)).toEqual({ kind: 'sequence.move', from: [1], to: [2, 0] });
+  });
+
+  it('shows no line inside the paginate block while it is dragged', () => {
+    const p = renderPanel(open(nested([{ paginate: { do: [{ extract: 'results' }, { extract: 'summary' }] } }])));
+    const rows = p.qa('block');
+    stack(rows);
+    const before = p.sent.length;
+    fireEvent.dragStart(rows[1]!);
+    for (const [row, y] of [[rows[2]!, 85], [rows[2]!, 95], [rows[3]!, 125], [rows[3]!, 135]] as const) {
+      fireEvent.dragOver(row, { clientY: y });
+      expect(p.container.querySelectorAll('.ws-drop-before, .ws-drop-after')).toHaveLength(0);
+    }
+    fireEvent.drop(rows[3]!, { clientY: 135 });
+    expect(p.sent).toHaveLength(before);
   });
 });
 

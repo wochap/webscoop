@@ -441,6 +441,7 @@
 
 /* Fields */
 .ws-field {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -451,6 +452,11 @@
 }
 .ws-field-focused { box-shadow: inset 0 0 0 1px var(--ws-accent); }
 .ws-field-dragging { opacity: 0.5; }
+/* Drop line in the gap a dragged row lands in, drawn inside the row so no scroll container clips it. */
+.ws-drop-before::before,
+.ws-drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; border-radius: 1px; background: var(--ws-accent-400); pointer-events: none; z-index: 1; }
+.ws-drop-before::before { top: 0; }
+.ws-drop-after::after { bottom: 0; }
 .ws-field[data-editing] { box-shadow: inset 0 0 0 2px var(--ws-accent); }
 .ws-clickable { cursor: pointer; }
 .ws-handle { cursor: grab; color: var(--ws-text-faint); font-family: var(--ws-mono); user-select: none; }
@@ -593,8 +599,8 @@
 .ws-tab-name { font-family: var(--ws-mono); font-size: 11.5px; }
 .ws-tab-count { font-family: var(--ws-mono); font-size: 10px; color: var(--ws-text-faint); }
 .ws-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ws-danger); flex: none; }
-.ws-tab-drop::before { content: ''; position: absolute; left: -2px; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--ws-accent-400); }
-.ws-tab-drop-end::before { left: auto; right: -2px; }
+.ws-tab-drop::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--ws-accent-400); pointer-events: none; }
+.ws-tab-drop-end::before { left: auto; right: 0; }
 .ws-tab-dragging { opacity: 0.4; }
 .ws-tab-badge { font-size: 9px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ws-accent-300); padding: 1px 4px; border-radius: 3px; background: var(--ws-accent-900); }
 #ws-root .ws-tab-rename { width: 100px; height: 22px; font-size: 11px; }
@@ -841,7 +847,9 @@
 .ws-menu-block { gap: 4px; padding: 6px 8px; border-top: 1px solid var(--ws-neutral-800); border-bottom: 1px solid var(--ws-neutral-800); margin: 4px 0; }
 
 /* Sequence */
-.ws-block { display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: var(--ws-r-sm); }
+.ws-block { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: var(--ws-r-sm); }
+.ws-block-dragging { opacity: 0.5; }
+.ws-paginate-empty { position: relative; min-height: 16px; }
 .ws-block:hover { background: var(--ws-neutral-900); }
 .ws-block-paginate { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ws-level-list) 45%, transparent); background: color-mix(in srgb, var(--ws-level-list) 6%, transparent); }
 .ws-block-error { box-shadow: inset 0 0 0 1px var(--ws-invalid); background: color-mix(in srgb, var(--ws-danger-tint) 60%, transparent); }

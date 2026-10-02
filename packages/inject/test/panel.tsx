@@ -1,3 +1,4 @@
+import './drag-event';
 import { fireEvent, render } from '@testing-library/react';
 import { emptyDraft, type Draft, type DraftTable, type PageMessage, type Path, type RecorderState } from '@webscoop/core';
 import { byClass, harness } from '../../core/test/recorder-helpers';

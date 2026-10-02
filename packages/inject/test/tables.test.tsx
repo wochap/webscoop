@@ -4,7 +4,8 @@ import { emptyDraft, validateDraft, type Draft, type DraftField, type DraftTable
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acceptList, byClass, harness, openList, type Harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
-import { clippedTabs, dropIndex } from '../src/ui/tables';
+import { dropIndex } from '../src/ui/drag';
+import { clippedTabs } from '../src/ui/tables';
 import { baseState, newDraft, renderPanel } from './panel';
 
 afterEach(cleanup);
@@ -140,6 +141,19 @@ describe('table tab bar', () => {
     expect(p.q('tab-add')!.getAttribute('draggable')).toBeNull();
     expect(dropIndex(0, 3)).toBe(2);
     expect(dropIndex(2, 0)).toBe(0);
+  });
+
+  it('drags `results` after the last tab `summary` with the line inside it, and shows no line for a no-op gap', () => {
+    const p = renderPanel(baseState(threeLists()));
+    const tabs = p.qa('tab');
+    tabs.forEach((t, i) => (t.getBoundingClientRect = () => ({ left: i * 80, top: 0, width: 80, height: 28, right: i * 80 + 80, bottom: 28, x: i * 80, y: 0, toJSON: () => ({}) })));
+    fireEvent.dragStart(tabs[0]!);
+    fireEvent.dragOver(tabs[1]!, { clientX: 90 });
+    expect(p.container.querySelectorAll('.ws-tab-drop')).toHaveLength(0);
+    fireEvent.dragOver(tabs[2]!, { clientX: 230 });
+    expect(tabs[2]!.className).toContain('ws-tab-drop-end');
+    fireEvent.drop(tabs[2]!, { clientX: 230 });
+    expect(p.sent).toEqual([{ kind: 'draft.moveTable', from: 0, to: 2 }]);
   });
 
   it('locks switching and moving tabs while the list setup is open', async () => {

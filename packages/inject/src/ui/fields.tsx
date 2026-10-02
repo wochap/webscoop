@@ -2,6 +2,7 @@ import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { currentTable, defaultAttr, FIELD_TYPES, flowsBefore, type DraftField, type DraftItem, type FieldOptions, type FieldPatch, type FrameTarget } from '@webscoop/core/page';
 import { selectorChain } from '../chain';
 import { useActions, useSnapshot } from './context';
+import { dropIndex, lineClass, rowHeader, useDragList, type DragRowState } from './drag';
 import { Dropdown, type DropdownOption } from './dropdown';
 import { FrameBadge } from './frame';
 import { Icon } from './icons';
@@ -168,8 +169,7 @@ export function FieldRow({
   editLocked = false,
   onFocus,
   onEdit,
-  dragging,
-  dragProps,
+  drag,
 }: {
   field: DraftField;
   index: number;
@@ -185,8 +185,7 @@ export function FieldRow({
   editLocked?: boolean;
   onFocus: () => void;
   onEdit: () => void;
-  dragging: boolean;
-  dragProps: Omit<HTMLAttributes<HTMLDivElement>, 'className'>;
+  drag: { props: Omit<HTMLAttributes<HTMLDivElement>, 'className'>; state: DragRowState };
 }) {
   const actions = useActions();
   const draft = useSnapshot().host?.draft;
@@ -198,8 +197,8 @@ export function FieldRow({
   const replay = () => void actions.send({ kind: 'draft.replayFlowsBefore', table: draft!.activeTable });
   return (
     <div
-      {...dragProps}
-      className={`ws-field${focused || editing ? ' ws-field-focused' : ''}${dragging ? ' ws-field-dragging' : ''}`}
+      {...drag.props}
+      className={`ws-field${focused || editing ? ' ws-field-focused' : ''}${drag.state.dragging ? ' ws-field-dragging' : ''}${lineClass(drag.state)}`}
       data-ws="field"
       data-name={field.name}
       data-editing={editing || undefined}
@@ -339,10 +338,20 @@ export function FieldList({
   onEdit?: (index: number) => void;
 }) {
   const actions = useActions();
-  const [dragging, setDragging] = useState<number | null>(null);
+  const table = useSnapshot().host?.draft.activeTable ?? 0;
+  const drag = useDragList({
+    list: `fields:${table}`,
+    axis: 'y',
+    getImage: rowHeader,
+    onMove: (from, slot) => {
+      const to = dropIndex(from.index, slot.index);
+      void actions.send({ kind: 'draft.moveField', from: from.index, to });
+      onFocus(to);
+    },
+  });
   if (fields.length === 0) return <span className="ws-meta">No fields yet. Pick an element and add it as a field.</span>;
   return (
-    <div className="ws-col">
+    <div className="ws-col" {...drag.containerProps}>
       {fields.map((field, index) => (
         <FieldRow
           key={`${index}-${field.name}`}
@@ -356,24 +365,7 @@ export function FieldList({
           editLocked={editLocked}
           onFocus={() => onFocus(index)}
           onEdit={() => onEdit(index)}
-          dragging={dragging === index}
-          dragProps={{
-            onDragStart: (e) => {
-              setDragging(index);
-              e.dataTransfer?.setData('text/plain', String(index));
-            },
-            onDragOver: (e) => e.preventDefault(),
-            onDrop: (e) => {
-              e.preventDefault();
-              const from = dragging ?? Number(e.dataTransfer?.getData('text/plain'));
-              setDragging(null);
-              if (Number.isInteger(from) && from !== index) {
-                void actions.send({ kind: 'draft.moveField', from, to: index });
-                onFocus(index);
-              }
-            },
-            onDragEnd: () => setDragging(null),
-          }}
+          drag={drag.row(index)}
         />
       ))}
     </div>

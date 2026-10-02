@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { tableMode, type Draft, type DraftTable, type TableMode } from '@webscoop/core/page';
 import { useActions, useSnapshot } from './context';
+import { dropIndex, useDragList } from './drag';
 import { Icon, type IconName } from './icons';
 import { DescriptionInput } from './recipe';
 import { Kbd } from './shell';
@@ -70,11 +71,6 @@ export function drivingTableIndex(draft: Pick<Draft, 'tables' | 'pagination' | '
   return -1;
 }
 
-/** Where a tab dropped before tab `before` (or at the end, `before` = length) lands, as a `moveTable` target index. */
-export function dropIndex(from: number, before: number): number {
-  return from < before ? before - 1 : before;
-}
-
 /** Indexes of the tabs not fully visible in the strip, from their horizontal extents. */
 export function clippedTabs(strip: { left: number; right: number }, tabs: readonly { left: number; right: number }[]): number[] {
   return tabs.flatMap((t, i) => (t.left < strip.left - 0.5 || t.right > strip.right + 0.5 ? [i] : []));
@@ -133,8 +129,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   const actions = useActions();
   const { ui } = useSnapshot();
   const strip = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [drop, setDrop] = useState<number | null>(null);
+  const drag = useDragList({ list: 'tabs', axis: 'x', onMove: (from, slot) => move(from.index, dropIndex(from.index, slot.index)) });
   const [hidden, setHidden] = useState<number[]>([]);
   const [renameError, setRenameError] = useState<string | null>(null);
   const primary = drivingTableIndex(draft);
@@ -181,7 +176,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
   return (
     <div className="ws-col">
       <div className="ws-tabbar">
-        <div className="ws-tabs" ref={strip} role="tablist" aria-label="Tables" data-ws="tabs">
+        <div className="ws-tabs" ref={strip} {...drag.containerProps} role="tablist" aria-label="Tables" data-ws="tabs">
           {draft.tables.map((table, index) => {
             const active = index === draft.activeTable;
             const count = tableRowCount(table);
@@ -203,13 +198,14 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                 </div>
               );
             }
+            const tab = drag.row(index);
             return (
               <button
                 key={table.name}
                 type="button"
                 role="tab"
                 aria-selected={active}
-                className={`ws-tab${dragging === index ? ' ws-tab-dragging' : ''}${drop === index ? ' ws-tab-drop' : ''}${drop === draft.tables.length && index === draft.tables.length - 1 ? ' ws-tab-drop ws-tab-drop-end' : ''}`}
+                className={`ws-tab${tab.state.dragging ? ' ws-tab-dragging' : ''}${tab.state.lineBefore ? ' ws-tab-drop' : ''}${tab.state.lineAfter ? ' ws-tab-drop ws-tab-drop-end' : ''}`}
                 disabled={locked && !active}
                 title={title}
                 draggable={!locked}
@@ -223,29 +219,7 @@ export function TabBar({ draft, locked }: { draft: Draft; locked: boolean }) {
                 onBlur={(e) => {
                   if (e.relatedTarget) actions.setUi({ focusedTab: null });
                 }}
-                onDragStart={(e) => {
-                  setDragging(index);
-                  e.dataTransfer?.setData('text/plain', String(index));
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const after = rect.width > 0 && e.clientX > rect.left + rect.width / 2;
-                  setDrop(after ? index + 1 : index);
-                }}
-                onDragLeave={() => setDrop(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = dragging ?? Number(e.dataTransfer?.getData('text/plain'));
-                  const before = drop ?? index;
-                  setDragging(null);
-                  setDrop(null);
-                  if (Number.isInteger(from)) move(from, dropIndex(from, before));
-                }}
-                onDragEnd={() => {
-                  setDragging(null);
-                  setDrop(null);
-                }}
+                {...(locked ? {} : tab.props)}
                 data-ws="tab"
                 data-table={table.name}
                 data-active={active || undefined}
