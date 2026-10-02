@@ -9,7 +9,7 @@ Defines recorded user actions that a run replays before extracting: what a step 
 ### Requirement: Step kinds
 A step SHALL be one of:
 - `click`: resolve the target and click it.
-- `fill`: resolve the target and set its value. For a text input, textarea, or contenteditable, clear it and type the value. For a native `select`, choose the option whose value or visible label equals the value. The value MAY reference template variables as `{name}`, substituted with the run's variable values.
+- `fill`: resolve the target and set its value according to the element, as defined in "Fill by element kind". The value MAY reference template variables as `{name}`, substituted with the run's variable values.
 - `press`: press the named key (`Enter`, `Escape`, `Tab`, or a single character) on the target when given, else on the focused element.
 - `wait`: wait for the given milliseconds, or until the target resolves, bounded by the navigation timeout.
 - `await-user`: wait for the user until the target appears or disappears, as defined by the flows capability.
@@ -64,3 +64,33 @@ The runner SHALL emit `step.replayed` after each completed step, with its flow n
 #### Scenario: Report with one healed step
 - **WHEN** a flow replays two steps and the first heals
 - **THEN** the report lists step 0 of that flow as `healed` and step 1 as `ok`
+
+### Requirement: Fill by element kind
+A `fill` step SHALL act on its resolved target by kind, checked in this order:
+- **File:** an `input[type=file]` SHALL receive the files named by the value. The value is a path list as defined by the variables capability.
+- **Element that opens a file chooser:** any other element, when the value comes only from a `path` variable, SHALL be clicked, and the file chooser that opens within 5 seconds SHALL receive the files. When no chooser opens, the step's target counts as not resolving.
+- **Checkbox, switch, or radio:** an `input[type=checkbox|radio]`, or an element with role `checkbox`, `switch`, or `radio`. The value SHALL be `true` or `false`; the element SHALL be clicked only when its checked state differs. `false` on a radio SHALL be an error naming the step.
+- **Native `select`:** the option whose value or visible label equals the value SHALL be chosen. For a multiple select, a value with `\n` separators SHALL choose each listed option.
+- **Combobox:** an element with role `combobox`, or an input with `aria-autocomplete` or a `list` attribute. It SHALL be clicked, cleared, and typed into. Then the visible element with role `option` whose accessible name equals the value SHALL be clicked, waiting up to the navigation timeout. When none appears, the step's target counts as not resolving.
+- **OTP boxes:** an input with `maxlength` 1 and a value longer than one character. The input SHALL be focused and the value typed character by character with key presses, so the page moves focus between boxes.
+- **Text-like:** any other input, textarea, or contenteditable element SHALL be cleared and typed into. The page SHALL receive the input and change events a user's typing produces, so controlled inputs of script frameworks keep the value.
+
+#### Scenario: Controlled input keeps the value
+- **WHEN** a `fill` step types `Ada` into an input whose value a script framework controls
+- **THEN** after the step the input and the framework's state both hold `Ada`
+
+#### Scenario: Checkbox already checked
+- **WHEN** a `fill` step with value `true` targets a checked checkbox
+- **THEN** the checkbox is not clicked and stays checked
+
+#### Scenario: Combobox option
+- **WHEN** a `fill` step with value `Lima` targets a combobox whose listbox shows `Lima` after typing
+- **THEN** the `Lima` option is clicked and the combobox shows `Lima`
+
+#### Scenario: OTP boxes
+- **WHEN** a `fill` step with value `482913` targets the first of six one-character boxes
+- **THEN** each box holds one digit in order
+
+#### Scenario: Upload through a button
+- **WHEN** a `fill` step with `{video}` targets a "Select file" button whose click opens a file chooser
+- **THEN** the chooser receives the file and the page shows its name

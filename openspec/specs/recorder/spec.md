@@ -1257,3 +1257,51 @@ Ownership SHALL NOT depend on the operating system's window focus.
 #### Scenario: Clicking the strip
 - **WHEN** the main window owns the panel and the user clicks the popup's strip
 - **THEN** the popup owns the panel and the main window shows the rail
+
+### Requirement: Fill picks
+When the selection is an element a `fill` step can set, as defined by the steps capability, the selection panel SHALL offer "Add to flow as fill". It SHALL show what the fill will set, prefilled from the element's current state:
+- typed text
+- the chosen option's label
+- `true` or `false` for a checkbox, switch, or radio
+- the combobox's shown text
+- the OTP boxes' joined characters
+
+The value is stored as literal text unless the user chooses "make variable". The panel SHALL list the element kinds a fill supports.
+- **Password inputs.** Picking or recording a fill on an `input[type=password]` SHALL create a secret variable, named from the input's label, `name`, or `id` (else `password`), unique in the recipe. The step's value becomes `{that name}`, and the typed value is kept as the variable's value for the session only.
+- **File inputs.** Picking or recording a fill on an `input[type=file]`, or an element that opened a file chooser while browsing, SHALL create a `path` variable, named from the input's label, `name`, or `id` (else `file`), with an empty value. The user types the path. The panel SHALL show whether every path names an existing file, checked on the host.
+
+#### Scenario: Pick a text input
+- **WHEN** the user picks an email input holding `dev@example.test` and chooses "Add to flow as fill"
+- **THEN** the active flow gains a `fill` step with value `dev@example.test`
+
+#### Scenario: Password becomes a secret
+- **WHEN** browse mode is on and the user types into a password input labeled "Password"
+- **THEN** the step's value is `{password}`, `password` is a secret variable, and saving writes no password value
+
+#### Scenario: File input becomes a path variable
+- **WHEN** the user picks a file input named `video` and adds it as a fill
+- **THEN** the step's value is `{video}`, `video` is a path variable with an empty value, and the panel shows the file check once a path is typed
+
+### Requirement: Browse recording of form inputs
+In browse mode the recorder SHALL record:
+- toggling a checkbox, switch, or radio as one `fill` with `true` or `false`, replacing an earlier fill of the same target in the same browse session
+- choosing an option of a combobox as one `fill` with the option's label, targeting the combobox
+- typing into OTP boxes as one `fill` on the first box with the joined characters
+- choosing files in a file input or file chooser as one `fill` with a path variable, as defined in "Fill picks"
+
+#### Scenario: Combobox choice
+- **WHEN** the user types `Li` into a combobox and clicks the option `Lima`
+- **THEN** one `fill` step with value `Lima` targeting the combobox is recorded, and no separate click on the option
+
+### Requirement: Variable kinds in the panel
+The Recipe section's variables list SHALL show for each variable a "shown as" label:
+- `text`
+- `secret`: a flag on a text variable; the value is masked, kept for the session only, and never saved
+- `path`: the default is saved
+- `external`: the value is bound outside the recipe, in the config file or on the command line, and is read-only in the panel, with a hint "from config" or "from CLI"
+
+The user SHALL be able to mark a text variable secret and to change a variable's type between text and path. Marking a variable secret SHALL remove its default from the draft. Saving SHALL never write a secret variable's value.
+
+#### Scenario: Externally bound password
+- **WHEN** the config binds `pass` for this recipe and the user opens the recorder
+- **THEN** the variables list shows `pass` as external with "from config", and its value cannot be edited

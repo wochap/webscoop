@@ -147,3 +147,10 @@ Exporting a recipe SHALL fail with exit 1, write no file, and name the first off
 #### Scenario: Reactive flow
 - **WHEN** `webscoop export sunat` runs on a recipe with the reactive flow `login-wall`
 - **THEN** the command exits 1 naming `login-wall` and writes no file
+
+### Requirement: Variable kinds not exported
+Exporting a recipe that declares a secret variable or a `path` variable SHALL fail with exit 1, write no file, and name the first such variable.
+
+#### Scenario: Recipe with a secret
+- **WHEN** `webscoop export sunat-menu` runs on a recipe whose `pass` variable is secret
+- **THEN** the command exits 1 naming `pass` and writes no file

@@ -285,3 +285,30 @@ The playground SHALL serve `/spa`, a single-page app whose URL never changes aft
 #### Scenario: Click pagination without URL change
 - **WHEN** the visitor opens Catalog and clicks Next twice
 - **THEN** the third page of cards is shown and the URL is unchanged
+
+### Requirement: Forms page
+The playground SHALL serve `/forms`, one form holding one labeled instance of each input kind:
+- a text input and an email input
+- a password input
+- a textarea
+- a native select and a native multiple select
+- a checkbox, a radio group, and an element with role `switch`
+- a date input
+- a controlled input whose value is held in script state: it is updated on `input` events and restored from that state on every render, so setting the element's value without events is lost
+- a custom combobox with role `combobox` that shows a filtered listbox of options with role `option` as the user types
+- six one-character OTP boxes that move focus forward on input
+- a contenteditable element
+- an input inside an open shadow root
+- a visible file input
+- a hidden file input opened by a "Select file" button
+- a dropzone that also opens a hidden file input on click
+
+The submit button SHALL post the form to `/forms/submit`, which renders every received value as JSON, with each file's name and size in bytes. The controlled input SHALL be posted from the script state, not from the element.
+
+#### Scenario: Echo of submitted values
+- **WHEN** the form is filled and submitted with the combobox set to `Lima` and the OTP set to `482913`
+- **THEN** `/forms/submit` shows `combobox` `Lima` and `otp` `482913`
+
+#### Scenario: File through the button
+- **WHEN** a file of 12 bytes named `a.txt` is chosen through the "Select file" button and the form is submitted
+- **THEN** the echo shows `a.txt` with size 12

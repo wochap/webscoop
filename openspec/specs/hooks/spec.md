@@ -73,7 +73,7 @@ Each command SHALL be run with `/bin/sh -c`, with the environment of the webscoo
 - `WEBSCOOP_URL`: the page URL, when there is one
 - `WEBSCOOP_REASON`: the attention reason, or the failure reason for `run.failed`
 
-Its stdin SHALL receive one JSON object holding `event`, `at` (ISO timestamp), the same values as the variables above, the recipe's variable values as `vars`, and the event's details: for `attention.needed` the guard kind or re-pick target and the page number; for `run.done` and `run.failed` the row count, the page count, and the failure message. Values SHALL never be substituted into the command line.
+Its stdin SHALL receive one JSON object holding `event`, `at` (ISO timestamp), the same values as the variables above, the recipe's variable values as `vars` (secret variables left out), and the event's details: for `attention.needed` the guard kind or re-pick target and the page number; for `run.done` and `run.failed` the row count, the page count, and the failure message. Values SHALL never be substituted into the command line.
 
 #### Scenario: Script reads the pid
 - **WHEN** a hook for `browser.started` runs `hyprctl dispatch focuswindow pid:$WEBSCOOP_BROWSER_PID`
@@ -82,6 +82,10 @@ Its stdin SHALL receive one JSON object holding `event`, `at` (ISO timestamp), t
 #### Scenario: Payload on stdin
 - **WHEN** `webscoop run bing --var query=cat` fires `run.start` to a hook running `jq -r .vars.query`
 - **THEN** the hook prints `cat`
+
+#### Scenario: Secrets stay out of hooks
+- **WHEN** a run with secret variable `pass` fires `run.start` to a hook running `jq .vars`
+- **THEN** the printed object has no `pass` key
 
 ### Requirement: Hook ordering and failure
 Hook commands of one webscoop process SHALL run one at a time, in the order their events fired, and for one event in the order configured. The command SHALL wait for `browser.starting` hooks to finish before launching the browser. It SHALL NOT wait for other hooks, except that before the process exits it SHALL wait for hooks still pending. A command that runs longer than `hookTimeoutMs` SHALL be killed. A command that fails to start, exits non-zero, or times out SHALL produce one stderr warning naming the event and the command, and SHALL NOT change the outcome or exit code of the webscoop command.

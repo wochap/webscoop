@@ -100,7 +100,7 @@ A reactive flow SHALL fire at most `maxRetries` times between two successful ext
 - **THEN** the third match fails the run with `flow-loop` naming `login-wall`
 
 ### Requirement: Await user
-An `await-user` step SHALL pause the run until its target appears or disappears, as its `until` says, in the step's window. The pause SHALL:
+An `await-user` step SHALL pause the run until its target appears or disappears, as its `until` says, in any open window of the run: the step's window, the main window, or another open popup. When the step's window has closed, the step SHALL wait from the flow's starting window. The pause SHALL:
 - acquire attention for the run's browser as defined by the browser-daemon capability
 - bring the step's window to the front
 - emit `attention.needed` with reason `await-user` and the step's label

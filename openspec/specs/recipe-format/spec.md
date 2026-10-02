@@ -27,7 +27,13 @@ A version 2 recipe that declares `steps` or `pagination` at the top level SHALL 
 - **THEN** loading fails with an error naming the file and explaining how steps and pagination map to flows and sequence
 
 ### Requirement: Recipe identity and URL template
-A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a `url` template. The template SHALL support variables written as `{name}`. Every variable used in the template SHALL be declared under `vars` with a `name`, a `type` of `string`, and an optional `default`. A template variable without a declaration SHALL be a validation error.
+A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a `url` template. The template SHALL support variables written as `{name}`. Every variable used in the template or in a step value SHALL be declared under `vars` with:
+- a `name`
+- a `type` of `string` or `path`
+- an optional `secret` boolean (default false)
+- an optional `default`
+
+A template variable without a declaration SHALL be a validation error. A `secret` variable SHALL NOT have a `default`, and SHALL NOT be used in the template, as defined by the variables capability.
 
 #### Scenario: Declared variables validate
 - **WHEN** the url is `https://example.com/c/{category}?page={n}` and `vars` declares `category` and `n`
@@ -36,6 +42,10 @@ A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a
 #### Scenario: Undeclared variable is rejected
 - **WHEN** the url is `https://example.com/c/{category}` and `vars` declares nothing
 - **THEN** validation fails and the error names `category`
+
+#### Scenario: Secret and path variables
+- **WHEN** `vars` declares `pass` with `secret: true` and `video` with `type: "path"` and default `~/clips/demo.mp4`
+- **THEN** validation succeeds
 
 ### Requirement: Tables
 A recipe MAY declare `tables`: a non-empty list of tables, each with a `name` (kebab-case, unique within the recipe), an optional `item` block, and a non-empty `fields` list. A table with an `item` block yields one row per matched container on each page; a table without one yields exactly one row per page. A recipe SHALL declare either `tables` or the top level `item` and `fields`, not both. The top level form SHALL be the shorthand for a single table named `items` and SHALL validate and run exactly as before. A recipe MAY declare `tables` with a single entry. Within a table, a field `scope` of `item` SHALL require the table's `item` block, and at most one field per table MAY set `key: true`.
