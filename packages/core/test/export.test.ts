@@ -10,6 +10,7 @@ import {
   buildPlan,
   convertValue,
   Dedup,
+  encodeReserved,
   EXCLUDED_BEHAVIORS,
   header,
   loadRecipe,
@@ -595,6 +596,25 @@ process.stdout.write(JSON.stringify({ conversions, pages, numbers: ['x 1,5', 'no
       expect(out.dates).toEqual(['1 jan 2020'].map(parseDate));
     }
   }, 60_000);
+});
+
+describe('reserved URL variables in the preludes', () => {
+  const CASES = ['ID/edit?usp=drive_link', 'a b/c%20d', '%', 'é', "x:y@z[1]!$&'()*+,;=#"];
+
+  it('fill {+name} with the reserved encoder, matching core', () => {
+    expect(TS_PRELUDE).toContain("plus === '+' ? encodeReserved(");
+    expect(PY_PRELUDE).toContain('encode_reserved(value) if m.group(1) == "+"');
+    const source = /function encodeReserved[\s\S]*?\n}\n/.exec(TS_PRELUDE)![0];
+    const safe = /const RESERVED_SAFE = .*;/.exec(TS_PRELUDE)![0];
+    const encode = new Function(`${safe}\n${source.replace(/: string/g, '').replace(/\)!/g, ')')}\nreturn encodeReserved;`)() as (v: string) => string;
+    for (const value of CASES) expect(encode(value)).toBe(encodeReserved(value));
+  });
+
+  it.skipIf(!hasPython)('Python encode_reserved matches core', () => {
+    const source = /def encode_reserved[\s\S]*?\n\n/.exec(PY_PRELUDE)![0];
+    const out = execFileSync('python3', ['-c', `import json, re, sys\nfrom urllib.parse import quote\n${source}\nprint(json.dumps([encode_reserved(v) for v in json.loads(sys.argv[1])]))`, JSON.stringify(CASES)], { encoding: 'utf8' });
+    expect(JSON.parse(out)).toEqual(CASES.map(encodeReserved));
+  });
 });
 
 /** Stand-in for the `playwright` package, so the prelude loads without it; `new URL` is done by Node. */

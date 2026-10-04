@@ -78,6 +78,13 @@ describe('recipe bar', () => {
     expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('top%20llms');
   });
 
+  it('renders and highlights a reserved variable', () => {
+    const draft = emptyDraft({ name: 'slides', url: 'https://docs.google.com/presentation/d/{+path}', vars: [{ name: 'path', value: 'ID/edit' }] });
+    const p = renderPanel(baseState(draft, 'https://docs.google.com/presentation/d/ID/edit'));
+    expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('ID/edit');
+    expect(p.q('recipe-url-backdrop')!.querySelector('.ws-token')!.textContent).toBe('{+path}');
+  });
+
   it('flags Reopen and the template when the rendered URL differs from the opened one', () => {
     const same = renderPanel(google());
     expect(same.q('recipe-reopen-dot')).toBeNull();

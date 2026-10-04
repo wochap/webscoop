@@ -351,7 +351,7 @@ async function locate(session: Session, recipe: Recipe, flow: string, step: Step
 async function fillOptions(recipe: Recipe, step: Step, ctx: FlowContext): Promise<FillOptions> {
   const opts: FillOptions = { timeoutMs: ctx.timeoutMs };
   const raw = step.value ?? '';
-  const whole = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw.trim());
+  const whole = /^\{\+?([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw.trim());
   const variable = whole ? recipe.vars.find((v) => v.name === whole[1] && v.type === 'path') : undefined;
   if (!variable) return opts;
   const value = fillText(raw, recipe.vars, ctx.vars);

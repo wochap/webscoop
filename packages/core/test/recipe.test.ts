@@ -123,6 +123,16 @@ describe('identity and URL template', () => {
     expect(errors[0]!.message).toContain('secret');
   });
 
+  it('checks reserved {+name} variables like plain ones', () => {
+    const undeclared = errorsOf(base({ url: 'https://example.com/c/{category}/{+x}' }));
+    expect(undeclared).toHaveLength(1);
+    expect(undeclared[0]!.message).toContain('x');
+    const secret = errorsOf(base({ url: 'https://example.com/c/{category}/{+token}', vars: [{ name: 'category', type: 'string' }, { name: 'token', type: 'string', secret: true }] }));
+    expect(secret).toHaveLength(1);
+    expect(secret[0]!.path).toBe('$.url');
+    expect(secret[0]!.message).toContain('token');
+  });
+
   it('rejects a name that is not kebab-case', () => {
     const errors = errorsOf(base({ name: 'My Shop' }));
     expect(errors[0]!.path).toBe('$.name');

@@ -198,7 +198,7 @@ function action(recipe: Recipe, flow: string, step: Step, index: number): PlanAc
       return { kind: 'click' };
     case 'fill': {
       const text = step.value ?? '';
-      const whole = /^\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(text.trim());
+      const whole = /^\{\+?([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(text.trim());
       const path = whole && recipe.vars.some((v) => v.name === whole[1] && v.type === 'path') ? whole[1]! : null;
       return { kind: 'fill', text, path, vars: templateVariables(text) };
     }

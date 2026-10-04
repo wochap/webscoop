@@ -303,7 +303,24 @@ function expandPath(path: string): string {
 // Variables and templates (cli vars.ts, core template.ts)
 // ---------------------------------------------------------------------------
 
-const VARIABLE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const VARIABLE = /\{(\+?)([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const RESERVED_SAFE = /[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=]/;
+
+/** Reserved encoding for {+name}: keep reserved characters and valid %XX escapes, encode the rest. */
+function encodeReserved(value: string): string {
+  let out = '';
+  for (let i = 0; i < value.length; ) {
+    if (value[i] === '%' && /^%[0-9A-Fa-f]{2}/.test(value.slice(i, i + 3))) {
+      out += value.slice(i, i + 3);
+      i += 3;
+      continue;
+    }
+    const ch = String.fromCodePoint(value.codePointAt(i)!);
+    out += RESERVED_SAFE.test(ch) ? ch : encodeURIComponent(ch);
+    i += ch.length;
+  }
+  return out;
+}
 
 const envName = (name: string) => 'WEBSCOOP_VAR_' + name.toUpperCase();
 
@@ -358,14 +375,14 @@ function resolveVars(given: Record<string, string>): Record<string, string> {
   return values;
 }
 
-/** Fill a URL template: every value URL-encoded. */
+/** Fill a URL template: {name} values URL-encoded, {+name} values reserved-encoded. */
 function fillTemplate(template: string, values: Record<string, string>): string {
-  return template.replace(VARIABLE, (_, name: string) => encodeURIComponent(values[name] ?? ''));
+  return template.replace(VARIABLE, (_, plus: string, name: string) => (plus === '+' ? encodeReserved(values[name] ?? '') : encodeURIComponent(values[name] ?? '')));
 }
 
 /** Fill a typed value: inserted as it is. */
 function fillText(template: string, values: Record<string, string>): string {
-  return template.replace(VARIABLE, (_, name: string) => values[name] ?? '');
+  return template.replace(VARIABLE, (_, _plus: string, name: string) => values[name] ?? '');
 }
 
 /** The files of a fill whose value is one path variable alone: split on ":", each checked readable before the step acts. */

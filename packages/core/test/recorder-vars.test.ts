@@ -48,6 +48,13 @@ describe('draft variable actions', () => {
     expect(draft.url).toBe('https://www.google.com/search?q={q}&hl={lang}');
   });
 
+  it('renames and removes a variable used in both forms', () => {
+    let draft = emptyDraft({ name: 'h', url: 'https://h.test/{+path}?q={path}', vars: [{ name: 'path', value: 'ID/edit' }] });
+    expect(reduceDraft(draft, { type: 'renameVar', from: 'path', to: 'p' }).url).toBe('https://h.test/{+p}?q={p}');
+    draft = reduceDraft(draft, { type: 'removeVar', name: 'path' });
+    expect(draft.url).toBe('https://h.test/ID/edit?q=ID%2Fedit');
+  });
+
   it('removes a used variable by writing its value in place', () => {
     let draft = emptyDraft({ name: 'shop', url: 'https://shop.test/c/{category}', vars: [{ name: 'category', value: 'shoes' }] });
     draft = reduceDraft(draft, typeStep('{category}'));

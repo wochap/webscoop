@@ -85,6 +85,8 @@ describe('webscoop record', () => {
     expect(encodedValueWarnings('https://x.test/{a}', { a: 'bad%zz' })).toEqual([]);
     expect(encodedValueWarnings('https://x.test/{a}', { a: '100%25%' })).toEqual(['warning: --var a="100%25%" is URL-encoded again ("%" becomes "%25")']);
     expect(encodedValueWarnings('https://x.test/{a}', { a: 'plain text' })).toEqual([]);
+    expect(encodedValueWarnings('https://h.test/d/{+path}', { path: 'ID/edit?q=a+b' })).toEqual([]);
+    expect(encodedValueWarnings('https://h.test/d/{+path}?q={path}', { path: 'a+b' })).toHaveLength(1);
   });
 
   it('prompts for variables without a value, unless given with --var', async () => {

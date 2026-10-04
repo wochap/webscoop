@@ -27,6 +27,7 @@ import {
   type FlowOptions,
   type StepReport,
   tablesOf,
+  templateParts,
   templateVariables,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
@@ -140,7 +141,9 @@ export function healingFromFlags(opts: Pick<RunCommandOptions, 'heal' | 'save'>)
  */
 export function encodedValueWarnings(template: string, values: Readonly<Record<string, string>>): string[] {
   const warnings: string[] = [];
-  for (const name of templateVariables(template)) {
+  // Reserved `{+name}` keeps `+` and `%XX`; only plain `{name}` re-encodes them.
+  const plain = templateParts(template).flatMap((part) => ('name' in part && !part.reserved ? [part.name] : []));
+  for (const name of new Set(plain)) {
     const value = values[name];
     if (value === undefined) continue;
     if (/%[0-9A-Fa-f]{2}/.test(value)) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeUrlDiff, fillTemplate, inlineVariable, MissingVariableError, renameVariable, retemplateUrl, templateProblem, templateVariables, urlDiff } from '../src';
+import { describeUrlDiff, encodeFor, encodeReserved, fillTemplate, fillText, inlineVariable, MissingVariableError, renameVariable, retemplateUrl, templateParts, templateProblem, templateVariables, urlDiff } from '../src';
 
 describe('URL template', () => {
   it('lists variables in order of first use', () => {
@@ -66,5 +66,47 @@ describe('template helpers', () => {
     expect(describeUrlDiff(urlDiff('https://x/a?q=1', 'https://x/a')!)).toBe('?q=1 removed');
     expect(describeUrlDiff(urlDiff('https://x/c/red', 'https://x/c/blue')!)).toBe('red → blue');
     expect(urlDiff('https://x', 'https://x')).toBeNull();
+  });
+});
+
+describe('reserved {+name} variables', () => {
+  const str = (name: string) => ({ name, type: 'string' as const });
+
+  it('reserved-encodes values', () => {
+    expect(encodeReserved('ID/edit?usp=drive_link')).toBe('ID/edit?usp=drive_link');
+    expect(encodeReserved('a b/c%20d')).toBe('a%20b/c%20d');
+    expect(encodeReserved('%')).toBe('%25');
+    expect(encodeReserved('é')).toBe('%C3%A9');
+    expect(encodeFor(true, 'a/b')).toBe('a/b');
+    expect(encodeFor(false, 'a/b')).toBe('a%2Fb');
+  });
+
+  it('fills each occurrence by its form', () => {
+    expect(fillTemplate('https://h.test/d/{+path}', [str('path')], { path: 'ID/edit?usp=drive_link' })).toBe('https://h.test/d/ID/edit?usp=drive_link');
+    expect(fillTemplate('https://h.test/d/{path}', [str('path')], { path: 'ID/edit' })).toBe('https://h.test/d/ID%2Fedit');
+    expect(fillTemplate('https://h.test/{+x}?q={x}', [str('x')], { x: 'a/b' })).toBe('https://h.test/a/b?q=a%2Fb');
+    expect(fillText('{+x} and {x}', [str('x')], { x: 'a/b c' })).toBe('a/b c and a/b c');
+    expect(templateVariables('https://h.test/{+x}?q={x}&y={+y}')).toEqual(['x', 'y']);
+  });
+
+  it('validates, splits, renames, and inlines the reserved form', () => {
+    expect(templateProblem('https://h.test/d/{+path}')).toBeNull();
+    expect(templateProblem('https://h.test/d/{+}')).toMatch(/unmatched/);
+    expect(templateProblem('https://h.test/d/{+1x}')).toMatch(/unmatched/);
+    expect(templateProblem('https://h.test/d/{+path')).toMatch(/unmatched/);
+    expect(templateParts('https://h.test/{+p}?q={p}')).toEqual([
+      { text: 'https://h.test/' },
+      { name: 'p', reserved: true },
+      { text: '?q=' },
+      { name: 'p', reserved: false },
+    ]);
+    expect(renameVariable('https://h.test/{+path}?q={path}', 'path', 'p')).toBe('https://h.test/{+p}?q={p}');
+    expect(inlineVariable('https://h.test/{+path}?q={path}', 'path', 'ID/edit', true)).toBe('https://h.test/ID/edit?q=ID%2Fedit');
+    expect(inlineVariable('{+path} {path}', 'path', 'ID/edit', false)).toBe('ID/edit ID/edit');
+  });
+
+  it('puts back {+name} when only the reserved form matches', () => {
+    expect(retemplateUrl('https://h.test/d/ID/edit?usp=sharing', [{ name: 'path', value: 'ID/edit' }])).toBe('https://h.test/d/{+path}?usp=sharing');
+    expect(retemplateUrl('https://shop.test/search?q=red+shoes&page=2', [{ name: 'query', value: 'red shoes' }])).toBe('https://shop.test/search?q={query}&page=2');
   });
 });

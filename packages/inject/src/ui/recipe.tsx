@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
-import { describeUrlDiff, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type RecorderState, type VarValue } from '@webscoop/core/page';
+import { describeUrlDiff, encodeFor, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type RecorderState, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Icon } from './icons';
 import { Toggle } from './items';
@@ -43,7 +43,7 @@ export function renderedUrl(draft: Pick<Draft, 'url' | 'vars'>): string {
   }
 }
 
-/** The template as text runs and highlighted `{name}` tokens, for the input backdrop. */
+/** The template as text runs and highlighted `{name}` and `{+name}` tokens, for the input backdrop. */
 function TemplateHighlight({ template }: { template: string }) {
   return (
     <>
@@ -51,7 +51,7 @@ function TemplateHighlight({ template }: { template: string }) {
         'text' in part ? (
           <span key={i}>{part.text}</span>
         ) : (
-          <span key={i} className="ws-token">{`{${part.name}}`}</span>
+          <span key={i} className="ws-token">{`{${part.reserved ? '+' : ''}${part.name}}`}</span>
         ),
       )}
     </>
@@ -127,7 +127,7 @@ export function RenderedUrl({ draft }: { draft: Pick<Draft, 'url' | 'vars'> }) {
             <span key={i}>{part.text}</span>
           ) : (
             <span key={i} className="ws-rendered-value">
-              {encodeURIComponent(values[part.name] ?? '')}
+              {encodeFor(part.reserved, values[part.name] ?? '')}
             </span>
           ),
         )}
@@ -438,7 +438,7 @@ export function RecipeSummary({ draft }: { draft: Draft }) {
           'text' in part ? (
             <span key={i}>{part.text}</span>
           ) : (
-            <span key={i} className="ws-chip" data-ws={`recipe-summary-var-${part.name}`} title={`{${part.name}}`}>
+            <span key={i} className="ws-chip" data-ws={`recipe-summary-var-${part.name}`} title={`{${part.reserved ? '+' : ''}${part.name}}`}>
               {part.name}
               <span className="ws-chip-value">{draft.vars.find((v) => v.name === part.name)?.value ?? ''}</span>
             </span>
