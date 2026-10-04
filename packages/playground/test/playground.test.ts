@@ -560,6 +560,25 @@ describe('focus thief', () => {
     expect(JSON.parse(doc.getElementById('counts')!.textContent!)).toEqual({ keydown: 1, click: 1 });
     window.close();
   });
+
+  it('capture mode listens on window in the capture phase and checks the focused element', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/focus-thief?mode=capture`)).text();
+    const { window } = new JSDOM(html, { runScripts: 'dangerously' });
+    const doc = window.document;
+    const thief = (window as unknown as { __thief: { keydown: number; click: number } }).__thief;
+    // A capture listener on window sees the key even when the target stops it.
+    doc.body.addEventListener('keydown', (e) => e.stopPropagation(), true);
+    doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'h', bubbles: true }));
+    expect(doc.activeElement?.id).toBe('q');
+    expect(thief.keydown).toBe(1);
+    // The focused element decides, not the event target.
+    doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'i', bubbles: true }));
+    expect(thief.keydown).toBe(2);
+    expect(doc.activeElement?.id).toBe('q');
+    expect((await fetch(`${pg.url}/focus-thief?mode=nope`)).status).toBe(400);
+    window.close();
+  });
 });
 
 describe('framed page', () => {

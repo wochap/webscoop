@@ -183,7 +183,24 @@ function filesPage(): string {
 </body></html>`;
 }
 
-function focusThiefPage(): string {
+function focusThiefPage(mode: 'bubble' | 'capture'): string {
+  // Bubble mode listens on `document` and checks the event target; capture mode listens on
+  // `window` before anyone else and checks `document.activeElement`, like Bing's results page.
+  const listen = mode === 'capture'
+    ? `window.addEventListener('keydown', () => {
+  thief.keydown++;
+  show();
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') q.focus();
+}, true);
+window.addEventListener('click', () => { thief.click++; show(); }, true);`
+    : `document.addEventListener('keydown', (e) => {
+  thief.keydown++;
+  show();
+  const tag = e.target && e.target.tagName;
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') q.focus();
+});
+document.addEventListener('click', () => { thief.click++; show(); });`;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Focus thief</title>
 <style>body{font-family:sans-serif;margin:40px}</style></head>
@@ -195,13 +212,7 @@ function focusThiefPage(): string {
 const thief = window.__thief = { keydown: 0, click: 0 };
 const q = document.getElementById('q');
 const show = () => { document.getElementById('counts').textContent = JSON.stringify(thief); };
-document.addEventListener('keydown', (e) => {
-  thief.keydown++;
-  show();
-  const tag = e.target && e.target.tagName;
-  if (tag !== 'INPUT' && tag !== 'TEXTAREA') q.focus();
-});
-document.addEventListener('click', () => { thief.click++; show(); });
+${listen}
 </script>
 </body></html>`;
 }
@@ -446,7 +457,11 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="report.csv"', 'cache-control': 'no-store' });
       return void res.end(REPORT_CSV);
     }
-    if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/focus-thief') {
+      const mode = url.searchParams.get('mode') ?? 'bubble';
+      if (mode !== 'bubble' && mode !== 'capture') throw new HttpError(400, `invalid mode ${JSON.stringify(mode)}, expected bubble or capture`);
+      return send(res, 200, focusThiefPage(mode), 'text/html; charset=utf-8');
+    }
     if (url.pathname === '/framed') return send(res, 200, framedPage(url.searchParams.get('show') ?? 'catalog'), 'text/html; charset=utf-8');
     if (url.pathname === '/framed/inner') return send(res, 200, framedInner(url.searchParams.get('view') ?? 'catalog', products, control.seed), 'text/html; charset=utf-8');
     if (url.pathname === '/forms') return send(res, 200, formsPage(), 'text/html; charset=utf-8');

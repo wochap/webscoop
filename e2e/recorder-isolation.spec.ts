@@ -55,3 +55,37 @@ test('focus-thief: panel typing, clicks, and shortcuts stay out of the page bubb
   const result = await r.closeWindow();
   expect(result.code, result.stderr).toBe(0);
 });
+
+test('focus-thief capture mode: panel typing keeps focus in the panel, page clicks give it to the page', async ({ scoop }) => {
+  const r = await scoop.record([`http://127.0.0.1:${scoop.playground.port}/focus-thief?mode=capture`, '--name', 'thief']);
+  const panelFocused = () => r.page.evaluate(() => document.activeElement?.tagName === 'WEBSCOOP-ROOT');
+
+  // Control: a key on the page body is stolen into the search box.
+  await r.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await r.page.keyboard.press('Shift');
+  expect(await activeId(r)).toBe('q');
+  await r.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await r.pick('#intro');
+
+  // Typing into a panel input keeps the characters and focus in the panel.
+  await r.mousePanel(ws('pick-form-name'));
+  await r.page.evaluate((sel) => (window as unknown as { __webscoopTest: { focus(s: string): void } }).__webscoopTest.focus(sel), ws('pick-form-name'));
+  await r.page.keyboard.press('Control+a');
+  await r.page.keyboard.press('Backspace');
+  for (const ch of 'hello') {
+    await r.page.keyboard.type(ch);
+    expect(await panelFocused()).toBe(true);
+  }
+  expect((await r.query(ws('pick-form-name')))!.value).toBe('hello');
+  expect(await r.page.evaluate(() => (document.getElementById('q') as HTMLInputElement).value)).toBe('');
+
+  // Clicking the page search box hands focus to the page, and typing stays there.
+  await r.page.click('#q');
+  await r.page.keyboard.type('abc');
+  expect(await activeId(r)).toBe('q');
+  expect(await r.page.evaluate(() => (document.getElementById('q') as HTMLInputElement).value)).toBe('abc');
+  expect((await r.query(ws('pick-form-name')))!.value).toBe('hello');
+
+  const result = await r.closeWindow();
+  expect(result.code, result.stderr).toBe(0);
+});

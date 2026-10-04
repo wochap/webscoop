@@ -83,7 +83,7 @@ function boot(win: Window & typeof globalThis): void {
       delete globals[PAGE_GLOBAL];
       if (__WEBSCOOP_E2E__) delete (win as unknown as Record<string, unknown>).__webscoopTest;
     };
-    runtime = new Runtime({ win, overlay: layer, setDrawerSpace: mounted.setDrawerSpace, setLayout: mounted.setLayout, onDetach, flushBrowse });
+    runtime = new Runtime({ win, overlay: layer, setDrawerSpace: mounted.setDrawerSpace, setLayout: mounted.setLayout, shadows: mounted.shadows, onDetach, flushBrowse });
     const reactRoot = createRoot(mounted.panel);
     reactRoot.render(
       <RecorderProvider store={runtime.store} actions={runtime} drawerHost={mounted.drawer}>

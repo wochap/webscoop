@@ -30,6 +30,7 @@ import {
   similarSiblings,
   snapshotOf,
 } from './dom';
+import { FocusGuard } from './focus-guard';
 import { crossOriginFrames, frameDocument, frameElementOf } from './frames';
 import type { HoverPlace, HoverWalkInfo, ListOutlines, Overlay } from './overlay';
 import { walkChain, type HoverWalk, type ObservedAction } from './picker';
@@ -53,6 +54,8 @@ export interface RuntimeOptions {
   flushBrowse?: () => void;
   /** Lay the page out for how the panel shows: full panel, rail, strip, compact bar, or nothing. */
   setLayout?: (layout: PanelLayout) => void;
+  /** The recorder's shadow roots, where the focus guard keeps typing focus. */
+  shadows?: ShadowRoot[];
 }
 
 /** How the panel takes room from the page. */
@@ -88,9 +91,11 @@ export class Runtime implements Actions {
 
   private layout: PanelLayout | null = null;
   private readonly offLayout: () => void;
+  private readonly focusGuard: FocusGuard | null;
 
   constructor(private readonly opts: RuntimeOptions) {
     this.store = opts.store ?? new Store();
+    this.focusGuard = opts.shadows ? new FocusGuard(opts.win, opts.shadows) : null;
     opts.win.addEventListener('keydown', this.onWindowKey, { capture: true });
     opts.win.addEventListener('keydown', this.onActivity, { capture: true });
     opts.win.addEventListener('pointerdown', this.onActivity, { capture: true });
@@ -256,6 +261,7 @@ export class Runtime implements Actions {
     this.opts.win.removeEventListener('keydown', this.onActivity, { capture: true });
     this.opts.win.removeEventListener('pointerdown', this.onActivity, { capture: true });
     this.opts.win.removeEventListener('resize', this.onResize);
+    this.focusGuard?.dispose();
     this.offLayout();
     this.store.setUi({ picking: false, browsing: false });
   }
