@@ -13,8 +13,9 @@ A step SHALL be one of:
 - `press`: press the named key (`Enter`, `Escape`, `Tab`, or a single character) on the target when given, else on the focused element.
 - `wait`: wait for the given milliseconds, or until the target resolves, bounded by the navigation timeout.
 - `await-user`: wait for the user until the target appears or disappears, as defined by the flows capability.
+- `download`: with a target, resolve and click it, then wait for the download the click starts; without a target, wait for a download already in progress in the step's window or one that starts there within the navigation timeout. The file SHALL be saved as defined in "Download step".
 
-`click`, `fill`, and `await-user` SHALL require a target. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`.
+`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables.
 
 Every step MAY have:
 - `window`: `same` (default) or `popup`, as defined by the flows capability
@@ -32,6 +33,10 @@ Every step MAY have:
 #### Scenario: Wait for a target
 - **WHEN** a `wait` step targets the product list and the list appears after 800 milliseconds
 - **THEN** the step completes once the list resolves
+
+#### Scenario: Download step with a target
+- **WHEN** a `download` step targets the "Export PDF" button and the click starts a download of `report.pdf`
+- **THEN** the step completes once the file is saved as `report.pdf` in the download directory
 
 ### Requirement: Target resolution and healing
 A step's target SHALL be resolved in the step's window through the healing ladder like a field target: the stored candidates, then the fuzzy fingerprint match, then the model rung, then failure. A healed step target SHALL be promoted and written back with the recipe, addressed by its flow name and step index. Within one run, a step that resolved SHALL reuse its resolved selector on its next runs, and re-heal only when that selector stops resolving.
@@ -94,3 +99,20 @@ A `fill` step SHALL act on its resolved target by kind, checked in this order:
 #### Scenario: Upload through a button
 - **WHEN** a `fill` step with `{video}` targets a "Select file" button whose click opens a file chooser
 - **THEN** the chooser receives the file and the page shows its name
+
+### Requirement: Download step
+A `download` step SHALL wait for one download, bounded by the navigation timeout, and save it in the download directory. A download that the step's window started before the step and that no earlier `download` step took SHALL count as in progress, so a targetless `download` step after a navigation that downloaded takes that file. The saved name SHALL be the step `value` with variables substituted when given, else the name the server suggests. When a file of that name exists, the step SHALL save as `name (1).ext`, `name (2).ext`, and so on, and SHALL NOT overwrite. A step value that resolves to an empty name, or a name holding `/`, SHALL fail the step naming the value.
+
+When no download starts within the timeout, or the download fails or is cancelled, the step SHALL fail naming the step and the reason. An `optional` `download` step SHALL be skipped instead.
+
+#### Scenario: Recipe URL starts the download
+- **WHEN** the recipe URL is `https://docs.google.com/presentation/d/{id}/export/pdf` and the sequence is one flow with a targetless `download` step valued `{id}.pdf`
+- **THEN** the run saves `<id>.pdf` in the download directory and succeeds
+
+#### Scenario: No download starts
+- **WHEN** a targetless `download` step runs and no download starts within the navigation timeout
+- **THEN** the run fails with exit 1 naming the step and saying no download started
+
+#### Scenario: Name taken
+- **WHEN** `report.pdf` already exists in the download directory and a step saves `report.pdf`
+- **THEN** the file is saved as `report (1).pdf` and the existing file is unchanged

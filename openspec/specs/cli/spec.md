@@ -590,3 +590,25 @@ A config file that declares a `window` block SHALL load, with one stderr warning
 #### Scenario: Old config still loads
 - **WHEN** the config declares `"window": { "provider": "hyprland" }` and `webscoop run shop` starts
 - **THEN** stderr has the warning, no window is hidden, and the run proceeds
+
+### Requirement: Download directory
+`run`, `test`, and `record` SHALL accept `--download-dir <path>`. The download directory SHALL be the first of: `--download-dir`, config `downloads.dir`, `~/Downloads/webscoop`. A leading `~/` SHALL be the home directory. A relative `--download-dir` SHALL resolve against the working directory of the command; a relative `downloads.dir` SHALL resolve against the config file's directory. The directory SHALL be created when the first file is saved. Jobs run by the daemon SHALL use the directory resolved by the submitting command.
+
+#### Scenario: Flag wins over config
+- **WHEN** config sets `downloads.dir` to `~/files` and `webscoop run gslides --download-dir ./out` runs in `/tmp/w`
+- **THEN** files are saved in `/tmp/w/out`
+
+#### Scenario: Default directory
+- **WHEN** no flag or config sets the directory
+- **THEN** files are saved in `~/Downloads/webscoop`
+
+### Requirement: Downloads table output
+A recipe with at least one `download` step SHALL have an output table `downloads`, after the recipe's tables. Each file a `download` step saved SHALL be one row with `file` (absolute path), `name`, `url` (the download's source URL), `bytes`, `_page`, and `_index`, emitted when the file is saved. Downloads that no `download` step took SHALL NOT be rows. The table SHALL follow the output stream and row shape rules like any other table: a recipe with no other tables SHALL print a JSON array of download rows, and `--table downloads` SHALL select it.
+
+#### Scenario: Download-only recipe
+- **WHEN** `webscoop run gslides --var id=1Qi | jq -r '.[0].file'` runs and the recipe has no tables and one `download` step
+- **THEN** jq prints the absolute path of the saved PDF
+
+#### Scenario: Recipe with a table and a download
+- **WHEN** a recipe has a table `page` and a `download` step
+- **THEN** stdout is one JSON object with keys `page` and `downloads`

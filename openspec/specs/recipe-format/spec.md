@@ -261,7 +261,7 @@ A recipe without any `frame` SHALL validate and run exactly as before.
 
 ### Requirement: Flows block
 A recipe MAY declare `flows` as defined by the flows capability, with steps as defined by the steps capability. A step SHALL have:
-- `kind` among `click`, `fill`, `press`, `wait`, `await-user`
+- `kind` among `click`, `fill`, `press`, `wait`, `await-user`, `download`
 - an optional `target` with ranked `selectors`, an optional `fingerprint`, and an optional `frame`
 - an optional `value` string
 - an optional `until` among `appears` and `disappears`
@@ -270,7 +270,7 @@ A recipe MAY declare `flows` as defined by the flows capability, with steps as d
 - `optional` boolean, default false
 - an optional `label`
 
-Validation SHALL apply the per-kind rules of the steps capability and SHALL name the flow and the step index in each error. A `fill` value MAY reference template variables, which SHALL be declared under `vars`. When `flows` is absent it SHALL default to an empty list.
+Validation SHALL apply the per-kind rules of the steps capability and SHALL name the flow and the step index in each error. A `fill` or `download` value MAY reference template variables, which SHALL be declared under `vars`. A recipe with at least one `download` step SHALL NOT declare a table named `downloads`; validation SHALL fail naming the table. When `flows` is absent it SHALL default to an empty list.
 
 #### Scenario: Valid click step
 - **WHEN** a flow's step is `{ "kind": "click", "target": { "selectors": [ { "strategy": "role", "value": "button|Accept", "stability": "stable" } ] }, "optional": true }`
@@ -283,6 +283,14 @@ Validation SHALL apply the per-kind rules of the steps capability and SHALL name
 #### Scenario: Undeclared variable in a fill value
 - **WHEN** a `fill` step value is `{query}` and `vars` does not declare `query`
 - **THEN** validation fails and the error names `query`
+
+#### Scenario: Download step validates
+- **WHEN** a flow's step is `{ "kind": "download", "value": "{id}.pdf" }` and `vars` declares `id`
+- **THEN** validation succeeds
+
+#### Scenario: Reserved downloads table
+- **WHEN** a recipe has a `download` step and declares a table named `downloads`
+- **THEN** validation fails naming `downloads`
 
 ### Requirement: Sequence block
 A recipe SHALL declare `sequence` as defined by the flows capability. A `paginate` block's settings SHALL be:

@@ -112,3 +112,10 @@ Hook commands of one webscoop process SHALL run one at a time, in the order thei
 #### Scenario: Nothing running
 - **WHEN** no browser is running for profile `shop` and the user runs `webscoop browser show --profile shop`
 - **THEN** it exits 1 with a message naming `shop`
+
+### Requirement: Download hook event
+The CLI SHALL fire `download.saved` for each file a run, test, or recording session saves, with `WEBSCOOP_FILE` set to the absolute path of the saved file and the name, source URL, and size in the JSON details. A `downloads.saved` hook SHALL be a config error naming it, like any unknown event.
+
+#### Scenario: Hook gets the file
+- **WHEN** the config has `"hooks": { "download.saved": "notify-send saved \"$WEBSCOOP_FILE\"" }` and a run saves `deck.pdf`
+- **THEN** the hook runs once with `WEBSCOOP_FILE` set to the path of `deck.pdf`

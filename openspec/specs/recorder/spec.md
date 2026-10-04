@@ -1419,3 +1419,16 @@ The `+` tab SHALL stay outside the drop targets as defined in "Table tab bar".
 #### Scenario: Cancelled drag
 - **WHEN** the user drags a field and presses Esc
 - **THEN** the line and the dimming go away and the order is unchanged
+
+### Requirement: Downloads while recording
+A recording session SHALL save every download its windows start in the download directory, with the run's name rules, and SHALL fire `download.saved`. The panel SHALL show a notice naming the saved file for a few seconds. When the session's start URL, or a Reopen, starts a download instead of loading a document, the session SHALL NOT fail: the window SHALL show a blank page with the panel, and the panel SHALL say that the URL downloaded the file.
+
+In browse mode, a click that starts a download SHALL be recorded as a `download` step with the clicked target instead of a `click` step. When the start URL downloaded a file and the draft has no steps, the panel SHALL offer to add a targetless `download` step to the first flow.
+
+#### Scenario: Record a download button
+- **WHEN** browse mode is on and the user clicks a link that downloads `report.csv`
+- **THEN** `report.csv` is saved in the download directory, the panel shows the notice, and the flow gains a `download` step targeting the link
+
+#### Scenario: Start URL downloads
+- **WHEN** `webscoop record 'https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx' --var id=11Q` starts
+- **THEN** the file is saved, the panel shows on a blank page saying the URL downloaded the file, and it offers a targetless `download` step

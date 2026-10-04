@@ -259,3 +259,20 @@ For a table, step target, or pagination target with `frame`, the runner SHALL fi
 #### Scenario: Humanized click inside an iframe
 - **WHEN** humanized input clicks a button inside an iframe offset 300 pixels from the left edge of the page
 - **THEN** the click lands on the button
+
+### Requirement: Downloads in a run
+Every download a run's windows start SHALL be saved in the download directory, whether or not a `download` step waits for it, using the name rules of the steps capability's "Download step". A navigation, by the recipe URL or by a step, that starts a download instead of loading a document SHALL NOT fail the run: the window SHALL keep its previous document, guards SHALL NOT be checked for it, and the run SHALL continue with the next block or step. The runner SHALL wait for downloads in progress to finish, bounded by the navigation timeout, before the run ends and closes its windows.
+
+For each saved file the runner SHALL emit `download.saved` with the absolute path, the saved name, the source URL, the size in bytes, and whether a `download` step took it. The run report SHALL list each saved file with the same data. The stderr summary SHALL give the number of saved files when it is not zero.
+
+#### Scenario: Export URL as the recipe URL
+- **WHEN** the recipe URL starts a download and the first block is a flow with a targetless `download` step
+- **THEN** the run does not fail on the navigation, the step saves the file, and `download.saved` is emitted
+
+#### Scenario: Download from a plain click
+- **WHEN** a `click` step's click starts a download of `a.csv` and no `download` step follows
+- **THEN** `a.csv` is saved in the download directory, listed in the report, and the run continues
+
+#### Scenario: Download still running at the end
+- **WHEN** the last step starts a large download and the sequence ends
+- **THEN** the run waits for the file to finish before closing its tab
