@@ -69,10 +69,10 @@ The Recipe and Flows sections SHALL start expanded. Collapse state SHALL last fo
 - **THEN** the table header reads `results` and "List · 11 rows"
 
 ### Requirement: URL template and variables
-The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be URL-encoded when substituted into the template, as the runner does.
+The session SHALL accept a URL template with `{name}` and `{+name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be encoded when substituted into the template by the form of each occurrence, as the runner does: fully URL-encoded for `{name}`, reserved-encoded for `{+name}` (as defined in the recipe-format capability).
 
 The expanded Recipe section SHALL show:
-- the URL template as an editable text input, with each `{name}` variable highlighted inside it;
+- the URL template as an editable text input, with each `{name}` and `{+name}` variable highlighted inside it;
 - below the input, a read-only rendered URL: the exact URL the template opens with the current values;
 - a variables table with one row per variable, holding its name, its value, and a remove control, plus a control to add a variable;
 - a "Use current page URL" control and a "Reopen" control.
@@ -81,18 +81,18 @@ A variable name SHALL be a letter or underscore followed by letters, digits, or 
 
 Template edits:
 - A template edit SHALL be committed on Enter or when the input loses focus.
-- A committed template that has a brace outside a `{name}` variable, or that does not form an absolute `http` or `https` URL once its variables are filled, SHALL be refused with an inline error, and the previous template SHALL stay in effect. The refusal SHALL use the same rule and message as the command line.
+- A committed template that has a brace outside a `{name}` or `{+name}` variable, or that does not form an absolute `http` or `https` URL once its variables are filled, SHALL be refused with an inline error, and the previous template SHALL stay in effect. The refusal SHALL use the same rule and message as the command line.
 - A committed template that uses a new variable SHALL add that variable to the table with an empty value.
 
 The variables table:
 - It SHALL list every variable used by the template or by a `type` step value, plus any variable the user added that nothing uses yet.
 - Each row SHALL say where the variable is used: "used in URL", "used in step N" for each `type` step whose value references it, "not in URL" when steps use it but the template does not, or "not used".
 - Editing a value SHALL change the rendered URL at once, without navigating.
-- Renaming a variable SHALL rename every `{old}` reference in the template and in `type` step values to `{new}`. A name that is invalid, or taken by another variable, SHALL be refused with an inline error.
-- Removing a variable that nothing uses SHALL remove it at once. Removing a variable still used by the template or by a step SHALL first ask for confirmation, naming where it is used. Confirming SHALL replace each reference with the variable's current value (URL-encoded in the template, raw in step values), then remove the variable.
+- Renaming a variable SHALL rename every `{old}` reference in the template and in `type` step values to `{new}`, and every `{+old}` reference to `{+new}`. A name that is invalid, or taken by another variable, SHALL be refused with an inline error.
+- Removing a variable that nothing uses SHALL remove it at once. Removing a variable still used by the template or by a step SHALL first ask for confirmation, naming where it is used. Confirming SHALL replace each reference with the variable's current value (in the template encoded by the form of each occurrence, raw in step values), then remove the variable.
 - A variable that nothing uses SHALL NOT be saved in the recipe.
 
-"Use current page URL" SHALL set the template to the URL of the page that is open now. Each variable with a non-empty value whose encoded value appears exactly once in that URL SHALL be put back as its `{name}` placeholder. The encoded value is the URL-encoded form or the form encoding with `+` for spaces. Other variables SHALL be left out of the template.
+"Use current page URL" SHALL set the template to the URL of the page that is open now. Each variable with a non-empty value whose encoded value appears exactly once in that URL SHALL be put back as a placeholder. The URL-encoded form and the form encoding with `+` for spaces SHALL be tried first and put back as `{name}`; when neither matches and the reserved-encoded form differs from the URL-encoded form, the reserved-encoded form SHALL be tried and put back as `{+name}`. Other variables SHALL be left out of the template.
 
 When the rendered URL differs from the URL the session last opened (at start or on the last Reopen), the panel SHALL:
 - mark the template "edited";
@@ -142,6 +142,18 @@ A collapsed Recipe section SHALL keep showing the recipe name and the current te
 #### Scenario: Navigation in the page does not flag Reopen
 - **WHEN** the user clicks a link on the page and nothing in the template or values changed
 - **THEN** "Reopen" shows no changed dot
+
+#### Scenario: Reserved variable keeps the path
+- **WHEN** the template is `https://docs.google.com/presentation/d/{+path}` and `path` is `ID/edit?usp=drive_link`
+- **THEN** `{+path}` is highlighted as a variable, and the rendered URL is `https://docs.google.com/presentation/d/ID/edit?usp=drive_link`
+
+#### Scenario: Rename keeps the reserved form
+- **WHEN** the template is `https://h.test/{+path}?q={path}` and the user renames `path` to `p`
+- **THEN** the template becomes `https://h.test/{+p}?q={p}`
+
+#### Scenario: Use the current page URL with a path value
+- **WHEN** the template is `https://h.test/d/{+path}` with `path` set to `ID/edit`, and the open page is `https://h.test/d/ID/edit?usp=sharing`
+- **THEN** the template becomes `https://h.test/d/{+path}?usp=sharing`
 
 ### Requirement: Picking mode
 The panel SHALL offer a picking mode. While picking, hovering an element SHALL draw a highlight box around it with a tag showing its tag name, role when present, and a short text excerpt. When the hover target repeats among its siblings, the tag SHALL also say how many similar elements repeat at its level ("N similar siblings", N counting the target, shown when N is at least 2), using the similarity the sibling inference uses. Clicking SHALL select the hover target and leave picking mode. Esc SHALL leave picking mode without selecting. Alt+click SHALL select the element under the cursor even when a host overlay or modal backdrop covers it. Host page click handlers SHALL NOT fire during picking. Key presses aimed at the page SHALL NOT reach the page's own handlers during picking; Esc, the hover walk keys, and the panel's Ctrl+S SHALL keep working. Key presses typed into a panel input SHALL be left alone.
