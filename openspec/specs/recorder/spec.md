@@ -1432,3 +1432,27 @@ In browse mode, a click that starts a download SHALL be recorded as a `download`
 #### Scenario: Start URL downloads
 - **WHEN** `webscoop record 'https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx' --var id=11Q` starts
 - **THEN** the file is saved, the panel shows on a blank page saying the URL downloaded the file, and it offers a targetless `download` step
+
+### Requirement: Sidebar shows the pick result
+When a pick on the page lands, the panel SHALL scroll its body so that the card holding the result is fully visible:
+- a pick in picking mode: the selected element inspector in the Pick section;
+- a re-pick of a step target, a trigger, or the paginate target: the target editor's pick panel;
+- a pick in re-pick mode: the re-pick panel.
+
+The panel SHALL NOT scroll when the card is already fully visible. When the card is taller than the panel body, its top SHALL be aligned with the top of the body. The scroll SHALL move the panel body only and SHALL NOT scroll the page. A selection changed from inside the panel (the selector input, the breadcrumb, or the level keys) SHALL NOT scroll the panel body.
+
+#### Scenario: Pick while the sidebar shows Fields
+- **WHEN** the panel body is scrolled so the Pick section is above the visible area and the user picks an element on the page
+- **THEN** the panel body scrolls until the inspector card is fully visible, and the page scroll position does not change
+
+#### Scenario: Card already visible
+- **WHEN** the inspector card is fully visible and the user picks another element on the page
+- **THEN** the panel body scroll position does not change
+
+#### Scenario: Re-pick a step target
+- **WHEN** the user re-picks the target of a step far down in the Flows section and clicks an element on the page
+- **THEN** the panel body scrolls until the target editor's pick panel is fully visible
+
+#### Scenario: Breadcrumb does not scroll
+- **WHEN** the user scrolls the panel so the inspector is half visible and clicks a breadcrumb level in it
+- **THEN** the panel body scroll position does not change
