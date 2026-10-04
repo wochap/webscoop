@@ -1153,7 +1153,9 @@ The recorder's preview SHALL NOT move the mouse pointer for hover fields; it SHA
 - **THEN** its preview value shows the hover badge and the pointer is not moved by the preview
 
 ### Requirement: Panel input events stay out of the page
-User input events that start inside the recorder UI (the panel, the overlay, and the results drawer) SHALL NOT reach event listeners the page registered in the bubble phase on its own elements, `document`, or `window`. This covers keyboard (`keydown`, `keyup`, `keypress`), text input (`beforeinput`, `input`, `change`, composition events), clipboard (`copy`, `cut`, `paste`), pointer, mouse (including `click`, `dblclick`, `auxclick`, `contextmenu`), `wheel`, and focus-change (`focusin`, `focusout`) events. Characters typed into panel inputs SHALL still appear there, and every panel control SHALL keep working, including its keyboard shortcuts, menus, and outside-click closing. Listeners the page registered in the capture phase are not covered by this requirement.
+User input events that start inside the recorder UI (the panel, the overlay, and the results drawer) SHALL NOT reach event listeners the page registered in the bubble phase on its own elements, `document`, or `window`. This covers keyboard (`keydown`, `keyup`, `keypress`), text input (`beforeinput`, `input`, `change`, composition events), clipboard (`copy`, `cut`, `paste`), pointer, mouse (including `click`, `dblclick`, `auxclick`, `contextmenu`), `wheel`, and focus-change (`focusin`, `focusout`) events. Characters typed into panel inputs SHALL still appear there, and every panel control SHALL keep working, including its keyboard shortcuts, menus, and outside-click closing. Listeners the page registered in the capture phase still receive these events.
+
+Focus SHALL stay in the panel while the user types there, whatever phase the page listens in and however it decides to move focus (including by checking `document.activeElement`, which is the recorder host while panel elements are focused). When focus moves from a panel element to a page element without a user gesture aimed at the page, the panel SHALL give focus back to the panel element, with its text selection, before the key's default action, so the typed character lands in the panel input. A gesture aimed at the page is a pointer press on the page outside the recorder UI, or Tab or Shift+Tab pressed in the panel; after such a gesture the focus move SHALL be kept. The focus guard SHALL be active only in recording sessions and in runs that show the panel for a re-pick, and SHALL NOT change page prototypes or wrap page listeners.
 
 #### Scenario: Page does not steal focus while typing
 - **WHEN** the page moves focus to its search box on any `keydown` it receives on `document`, and the user types `hello` into a panel text input
@@ -1166,6 +1168,14 @@ User input events that start inside the recorder UI (the panel, the overlay, and
 #### Scenario: Panel shortcuts still work
 - **WHEN** focus is in the panel (not in an input) and the user presses a panel shortcut such as `p`
 - **THEN** the shortcut acts as before
+
+#### Scenario: Capture-phase thief
+- **WHEN** the page listens for `keydown` on `window` in the capture phase and moves focus to its search box when `document.activeElement` is not an input, and the user types `hello` into a panel text input
+- **THEN** the panel input holds `hello`, the page's search box is empty, and focus is in the panel input after each key
+
+#### Scenario: User clicks the page search box
+- **WHEN** focus is in a panel input and the user clicks the page's search box and types `abc`
+- **THEN** the page's search box holds `abc` and focus stays there
 
 ### Requirement: Description inputs
 The panel SHALL let the user edit every description of the draft:

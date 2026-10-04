@@ -252,8 +252,14 @@ The catalog page SHALL accept a `hover` flag. With it, every product link SHALL 
 ### Requirement: Focus-thief page
 The playground SHALL serve `/focus-thief`, a page with a search box and bubble-phase listeners on `document` that move focus to the search box on any `keydown` whose target is not an input, and that count `keydown` and `click` events they receive. The counts SHALL be readable from the page (for example, on `window` and in the DOM) so tests can assert them.
 
+`/focus-thief?mode=capture` SHALL serve the same page with its listeners registered on `window` in the capture phase instead, moving focus to the search box on any `keydown` when `document.activeElement` is not an `input` or `textarea`, like a search page that checks the focused element.
+
 #### Scenario: Thief steals focus from the page
 - **WHEN** the page body has focus and the user presses `h`
+- **THEN** the search box gains focus and the `keydown` count increases
+
+#### Scenario: Capture mode sees every key
+- **WHEN** `/focus-thief?mode=capture` is open, the page body has focus, and the user presses `h`
 - **THEN** the search box gains focus and the `keydown` count increases
 
 ### Requirement: Framed page
