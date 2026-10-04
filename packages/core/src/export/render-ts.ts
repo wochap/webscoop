@@ -11,6 +11,8 @@ export interface RenderOptions {
   now: Date;
   /** Make the script headless unless run with `--headed`. Default false. */
   headless?: boolean;
+  /** Where the script saves downloads. Default `~/Downloads/webscoop` on the machine that runs it. */
+  downloadDir?: string;
 }
 
 const SECTION = '// ---------------------------------------------------------------------------';
@@ -52,6 +54,8 @@ function constants(plan: ExportPlan, opts: RenderOptions): string {
     `const FILE_CHOOSER_TIMEOUT_MS = ${t.fileChooserMs};`,
     '/** Most pages --pages all walks. */',
     `const DEFAULT_PAGE_CAP = ${plan.pagination.cap};`,
+    '/** Where download steps save files. */',
+    opts.downloadDir !== undefined ? `const DOWNLOAD_DIR = ${literal(opts.downloadDir)};` : "const DOWNLOAD_DIR = join(homedir(), 'Downloads', 'webscoop');",
     '',
     '/** Page URL; {name} marks a variable. */',
     `const URL_TEMPLATE = ${literal(plan.url)};`,

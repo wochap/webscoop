@@ -28,6 +28,8 @@ export interface RecorderEvents {
   'recorder.testRun': { rows: number; durationMs: number; error?: string };
   'recorder.saved': { name: string; path?: string };
   'recorder.error': { message: string };
+  /** A window of the session saved a download in the download directory. */
+  'recorder.download': { file: string; name: string; url: string; bytes: number };
   'recorder.closed': { name: string; dirty: boolean };
 }
 

@@ -169,6 +169,20 @@ function framedInner(view: string, products: readonly Product[], seed: number): 
   return render(shown, { tier: 0, seed, category: first?.category }).replace('</body>', `${details}\n</body>`);
 }
 
+/** Body of the file `/files/report.csv` serves as an attachment. */
+export const REPORT_CSV = 'id,title\n1,Trail Shoe\n2,Road Shoe\n';
+
+/** A page with a link that downloads the report. */
+function filesPage(): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Files</title>
+<style>body{font-family:sans-serif;margin:40px}</style></head>
+<body>
+<h1>Files</h1>
+<a id="download-report" href="/files/report.csv">Download report</a>
+</body></html>`;
+}
+
 function focusThiefPage(): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Focus thief</title>
@@ -427,6 +441,11 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     }
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
 
+    if (url.pathname === '/files') return send(res, 200, filesPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/files/report.csv') {
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="report.csv"', 'cache-control': 'no-store' });
+      return void res.end(REPORT_CSV);
+    }
     if (url.pathname === '/focus-thief') return send(res, 200, focusThiefPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/framed') return send(res, 200, framedPage(url.searchParams.get('show') ?? 'catalog'), 'text/html; charset=utf-8');
     if (url.pathname === '/framed/inner') return send(res, 200, framedInner(url.searchParams.get('view') ?? 'catalog', products, control.seed), 'text/html; charset=utf-8');

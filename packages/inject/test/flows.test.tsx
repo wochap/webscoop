@@ -103,6 +103,22 @@ describe('flows section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'pick' });
   });
 
+  it('shows download steps like click steps, with the file name as the editable value', () => {
+    const p = renderPanel(baseState(withFlows([setup([step('download', { value: 'report.pdf' }), step('download', { target: undefined })])])));
+    expect(p.qa('step').map((r) => r.dataset.kind)).toEqual(['download', 'download']);
+    expect(p.qa('step-target').map((t) => t.title)).toEqual(['button "Accept all"', 'next download']);
+    expect(p.q('step-value-text')!.textContent).toBe('report.pdf');
+    fireEvent.click(p.qa('step-edit-toggle')[0]!);
+    const value = p.q('step-value') as HTMLInputElement;
+    expect(value.placeholder).toContain('File name');
+    fireEvent.change(value, { target: { value: '{category}.pdf' } });
+    fireEvent.blur(value);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { value: '{category}.pdf' } });
+    expect(p.q('step-var-category')).not.toBeNull();
+    fireEvent.click(p.q('step-target-edit-repick')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'pick' });
+  });
+
   it('turns a literal fill value into a variable', async () => {
     const p = renderPanel(baseState(withFlows([setup([step('fill', { value: 'Example GmbH', label: 'company' })])])));
     fireEvent.click(p.q('step-edit-toggle')!);

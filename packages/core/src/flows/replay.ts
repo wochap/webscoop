@@ -4,7 +4,8 @@ import { RunFailure } from '../failure';
 import { candidatesResolver } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type HealOutcome, type HealTarget, type Resolver } from '../healing/types';
-import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type PageInfo, type Session } from '../ports';
+import { downloadNameProblem } from '../downloads';
+import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type PageInfo, type SavedDownload, type Session } from '../ports';
 import type { Flow, Recipe, SelectorCandidate, Step, StepKind } from '../recipe/schema';
 import { fillText, templateVariables } from '../template';
 import { targetPresent, type RunWindows } from './windows';
@@ -33,6 +34,8 @@ export interface StepReport {
   notes?: string[];
   /** How the target's frame resolved, for a target with `frame`. */
   frame?: FrameReport;
+  /** The file a `download` step saved. */
+  download?: { file: string; name: string; url: string; bytes: number };
 }
 
 /** Selectors steps settled on, for the target and its frame, keyed by `flow:index`, so later runs of a step skip the ladder. */
@@ -81,6 +84,8 @@ export interface FlowContext {
   sleep?: (ms: number) => Promise<void>;
   /** Interval between looks for a `wait` step's target. Default `WAIT_POLL_MS`. */
   pollMs?: number;
+  /** Called with each file a `download` step took, before the step's report. */
+  onDownloadTaken?: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => void;
 }
 
 export interface FlowResult {
@@ -227,6 +232,28 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         continue;
       }
 
+      let downloadName: string | undefined;
+      if (step.kind === 'download' && step.value !== undefined) {
+        downloadName = fillText(step.value, recipe.vars, ctx.vars);
+        const problem = downloadNameProblem(downloadName);
+        if (problem) fail(`cannot save its download: value ${JSON.stringify(step.value)}: ${problem}`, { heal: null, candidate: null });
+      }
+      const takeDownload = async (since: number, found: Pick<StepReport, 'heal' | 'candidate' | 'frame'> & { notes?: string[] }): Promise<StepReport['download']> => {
+        try {
+          const saved = await session.nextDownload({ since, timeoutMs: ctx.timeoutMs, ...(downloadName !== undefined ? { name: downloadName } : {}) });
+          ctx.onDownloadTaken?.(saved, { flow: flow.name, index, ...(step.label ? { label: step.label } : {}) });
+          return { file: saved.file, name: saved.name, url: saved.url, bytes: saved.bytes };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return fail(/^no download started/.test(message) ? `saw no download: ${message}` : `saw its download fail: ${message}`, found);
+        }
+      };
+      if (step.kind === 'download' && !step.target) {
+        const download = await takeDownload(0, { heal: null, candidate: null });
+        finish({ ...base, outcome: 'ok', heal: null, candidate: null, download });
+        continue;
+      }
+
       let found: Found = { ref: null, heal: null, candidate: null, notes: [] };
       if (step.target) {
         found = await locate(session, recipe, flow.name, step, index, ctx, sleep);
@@ -237,6 +264,7 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
 
       const fillOpts = step.kind === 'fill' ? await fillOptions(recipe, step, ctx) : undefined;
       const previousUrl = await session.url();
+      const downloadMark = session.downloadMark();
       try {
         await act(session, recipe, step, found.ref, ctx.vars, fillOpts);
       } catch (error) {
@@ -252,9 +280,11 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         });
         if (settled && session === ctx.windows.main) {
           info = settled;
-          if (settled.url !== previousUrl && ctx.onNavigated) info = await ctx.onNavigated(settled);
+          // A navigation that downloaded leaves the document as it was: no guard check.
+          if (settled.url !== previousUrl && !settled.download && ctx.onNavigated) info = await ctx.onNavigated(settled);
         }
       }
+      const download = step.kind === 'download' ? await takeDownload(downloadMark, found) : undefined;
       finish({
         ...base,
         outcome: isHealed(found.heal) ? 'healed' : 'ok',
@@ -262,6 +292,7 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         candidate: found.candidate,
         ...(found.notes.length > 0 ? { notes: found.notes } : {}),
         ...(found.frame ? { frame: found.frame } : {}),
+        ...(download ? { download } : {}),
       });
     } catch (error) {
       if (error === SKIPPED) continue;
@@ -381,6 +412,7 @@ async function act(
 ): Promise<void> {
   switch (step.kind) {
     case 'click':
+    case 'download':
       return session.click(ref!);
     case 'fill':
       return session.fill(ref!, fillText(step.value ?? '', recipe.vars, vars), fillOpts);

@@ -125,7 +125,7 @@ describe('runner healing', () => {
   });
 
   it('lists the new events in RUN_EVENT_NAMES', () => {
-    expect(RUN_EVENT_NAMES).toEqual(['browser.started', 'run.start', 'page.loaded', 'guard.raised', 'guard.cleared', 'guard.timeout', 'flow.started', 'flow.done', 'step.replayed', 'step.skipped', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'attention.needed', 'attention.resolved', 'run.done', 'run.failed', 'browser.closed']);
+    expect(RUN_EVENT_NAMES).toEqual(['browser.started', 'run.start', 'page.loaded', 'guard.raised', 'guard.cleared', 'guard.timeout', 'flow.started', 'flow.done', 'step.replayed', 'step.skipped', 'field.resolved', 'field.healed', 'repick.requested', 'repick.resolved', 'row.emitted', 'page.done', 'page.advanced', 'pagination.stopped', 'recipe.saved', 'download.saved', 'attention.needed', 'attention.resolved', 'run.done', 'run.failed', 'browser.closed']);
   });
 });
 

@@ -20,6 +20,7 @@ const KIND_ICON: Record<StepKind, IconName> = {
   press: 'arrow-right',
   wait: 'circle',
   'await-user': 'hand',
+  download: 'download-simple',
 };
 
 /** Kinds whose value the user edits, with the placeholder the input shows. */
@@ -27,6 +28,7 @@ const VALUE_HINT: Partial<Record<StepKind, string>> = {
   fill: 'Text to fill or option to choose, {var} allowed',
   press: 'Enter, Escape, Tab, or a key',
   wait: 'Milliseconds',
+  download: 'File name, {var} allowed; empty keeps the name the server suggests',
 };
 
 export function KindSelect({ value, onChange }: { value: StepKind; onChange: (kind: StepKind) => void }) {
@@ -44,7 +46,7 @@ export function KindSelect({ value, onChange }: { value: StepKind; onChange: (ki
 /** Short description of what a step acts on: role and name, else tag and text, else null when only the selector says. */
 export function targetLabel(step: Pick<DraftStep, 'kind' | 'target'>): string | null {
   const target = step.target;
-  if (!target) return step.kind === 'press' ? 'focused element' : 'no target';
+  if (!target) return step.kind === 'press' ? 'focused element' : step.kind === 'download' ? 'next download' : 'no target';
   const fp = target.fingerprint;
   if (fp?.role && fp.name) return `${fp.role} "${fp.name}"`;
   if (fp?.textSample) return `${fp.tag} "${fp.textSample.slice(0, 40)}"`;
@@ -143,7 +145,7 @@ function ValueField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: Va
         onBlur={() => commit()}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
       />
-      {step.kind === 'fill' &&
+      {(step.kind === 'fill' || step.kind === 'download') &&
         vars.map((v) => (
           <button key={v.name} type="button" className="ws-chip" onMouseDown={(e) => e.preventDefault()} onClick={() => insert(v.name)} title={`Insert {${v.name}}`} data-ws={`step-var-${v.name}`}>
             {`{${v.name}}`}
@@ -255,7 +257,7 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
         </EditLine>
       )}
       <EditLine label={step.kind === 'await-user' ? 'element' : 'target'}>
-        {step.target || step.kind === 'await-user' ? (
+        {step.target || step.kind === 'await-user' || step.kind === 'download' ? (
           <TargetEditor targetRef={{ kind: 'step', ...at }} target={step.target} edit={host?.targetEdit ?? null} disabled={host ? repickBlocked(step, at, host) : null} testId="step-target-edit" />
         ) : (
           <span className="ws-meta">{targetSummary(step)}</span>
@@ -285,7 +287,7 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
       ) : (
         <EditLine label="optional">
           <Toggle on={step.optional} onChange={(optional) => update({ optional })} label="Optional" testId="step-optional" />
-          <span className="ws-meta">skip if the target is missing</span>
+          <span className="ws-meta">{step.kind === 'download' ? 'skip if no download starts' : 'skip if the target is missing'}</span>
         </EditLine>
       )}
       <div className="ws-row">
@@ -686,6 +688,30 @@ export function switcherOrder(draft: Pick<Draft, 'flows'>): number[] {
 }
 
 /** The Flows section: called and reactive groups, the active flow and its switcher, and adding flows. */
+/** The start URL downloaded a file instead of loading a page: say so, and offer a targetless download step while the draft has no steps. */
+export function StartDownloadNotice({ host }: { host: { startDownload: { name: string; file: string } | null; draft: Pick<Draft, 'flows'> } }) {
+  const actions = useActions();
+  if (!host.startDownload) return null;
+  const empty = host.draft.flows.every((f) => f.steps.length === 0);
+  return (
+    <section className="ws-card ws-col" data-ws="flows-start-download">
+      <span className="ws-title">
+        <Icon name="download-simple" size={12} /> The URL downloaded {host.startDownload.name}
+      </span>
+      <span className="ws-meta ws-mono-sm ws-ellipsis" title={host.startDownload.file}>
+        {host.startDownload.file}
+      </span>
+      {empty && (
+        <div className="ws-row">
+          <button type="button" className="ws-btn ws-btn-sm" onClick={() => void actions.send({ kind: 'draft.addDownloadStep' })} data-ws="flows-start-download-add">
+            <Icon name="plus" size={12} /> Add download step
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function FlowsSection({ draft, collapsed, onCollapse }: { draft: Draft; collapsed: boolean; onCollapse: (collapsed: boolean) => void }) {
   const snap = useSnapshot();
   const actions = useActions();

@@ -1,4 +1,4 @@
-import { RunEmitter, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
+import { RunEmitter, type DownloadReport, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
 import { RunFailure } from './failure';
 import { RunWindows } from './flows/windows';
 import type { AttentionLease, AttentionPort } from './guards/attention';
@@ -8,7 +8,7 @@ import { enabledDetectors } from './guards/detectors';
 import { applyPromotions } from './healing/apply';
 import type { Promotion } from './healing/promote';
 import { targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
-import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type NotifyPort, type OpenOptions, type Session } from './ports';
+import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type NotifyPort, type OpenOptions, type SavedDownload, type Session } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { paginationOf } from './recipe/sequence';
 import { tablesOf } from './recipe/tables';
@@ -261,6 +261,7 @@ export class Runner {
       guards: [],
       steps: [],
       flows: [],
+      downloads: [],
     };
     const finish = () => {
       const ended = now();
@@ -269,6 +270,22 @@ export class Runner {
     };
 
     const rows: Row[] = [];
+    // Saved files no step took yet, by queue id, with the page they were saved on.
+    const untaken = new Map<number, DownloadReport>();
+    let currentPage = 1;
+    const offPage = this.emitter.on('page.loaded', (e) => (currentPage = e.page));
+    const saved = (download: DownloadReport) => {
+      report.downloads.push(download);
+      this.emitter.emit('download.saved', download);
+    };
+    const downloadReport = (d: SavedDownload, page: number, step: DownloadReport['step']): DownloadReport => ({ page, file: d.file, name: d.name, url: d.url, bytes: d.bytes, step });
+    /** Wait for downloads still running, bounded by the navigation timeout, then report the files no step took. */
+    const flushDownloads = async () => {
+      if (!session) return;
+      await session.settleDownloads(this.opts.timeoutMs ?? 30_000).catch(() => {});
+      for (const download of untaken.values()) saved(download);
+      untaken.clear();
+    };
     let opened = false;
     let session: Session | undefined;
     let windows: RunWindows | undefined;
@@ -290,7 +307,7 @@ export class Runner {
       try {
         strategy = createStrategy(recipe, pagination, this.opts.vars);
         // Fill values need their variables too; a missing one fails before the browser opens.
-        for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) fillText(step.value, recipe.vars, this.opts.vars);
+        for (const flow of recipe.flows) for (const step of flow.steps) if ((step.kind === 'fill' || step.kind === 'download') && step.value) fillText(step.value, recipe.vars, this.opts.vars);
       } catch (error) {
         if (error instanceof MissingVariableError || error instanceof PaginationInputError) {
           throw new RunFailure('invalid-input', error.message, error.names);
@@ -308,6 +325,7 @@ export class Runner {
       opened = true;
       const live = session;
       windows = new RunWindows(live);
+      live.onDownload((d) => untaken.set(d.id, downloadReport(d, currentPage, null)));
       const pid = lifecycle?.browserPid ? await lifecycle.browserPid().catch(() => undefined) : undefined;
       this.emitter.emit('browser.started', pid !== undefined ? { pid } : {});
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
@@ -365,6 +383,10 @@ export class Runner {
         needAttention: (payload) => this.needAttention(payload),
         resolveAttention: (outcome) => this.resolveAttention(outcome),
         sleep: (ms) => delay(ms, signal),
+        onDownloadTaken: (page, download, step) => {
+          untaken.delete(download.id);
+          saved(downloadReport(download, page, step));
+        },
       });
 
       const reason = await program.run();
@@ -380,6 +402,7 @@ export class Runner {
         this.emitter.emit('recipe.saved', { path });
       }
 
+      await flushDownloads();
       await closeSession();
       finish();
       this.transition('done');
@@ -387,6 +410,7 @@ export class Runner {
       this.emitter.emit('browser.closed', {});
       return { ok: true, rows, report };
     } catch (error) {
+      if (!signal?.aborted) await flushDownloads();
       await closeSession();
       finish();
       this.resolveAttention('ended');
@@ -409,6 +433,7 @@ export class Runner {
         report,
       };
     } finally {
+      offPage();
       signal?.removeEventListener('abort', onAbort);
     }
   }

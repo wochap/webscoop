@@ -28,6 +28,8 @@ export interface PageInfo {
   url: string;
   title: string;
   status: number | null;
+  /** Set when the navigation started a download instead of loading a document; the page keeps its previous document. */
+  download?: true;
 }
 
 export interface OpenOptions {
@@ -45,6 +47,8 @@ export interface OpenOptions {
   locale?: string;
   /** Humanized input: curved pointer paths, typing rhythm, wheel scrolling, think times, and a page dwell. */
   humanize?: boolean;
+  /** Absolute directory where the session saves downloads; created on the first save. */
+  downloadDir?: string;
 }
 
 export interface ProxySettings {
@@ -133,7 +137,69 @@ export interface Session {
   onPopup(cb: (popup: Session) => void): () => void;
   /** Whether the page is closed, by the run or by the page itself (a popup that called `window.close`). */
   isClosed(): boolean;
+  /**
+   * Mark in the download queue of this page and its popups: a later
+   * `nextDownload({ since })` takes only downloads started after the mark.
+   */
+  downloadMark(): number;
+  /**
+   * Take the oldest download of this page or its popups that started at or
+   * after `since` and that no earlier call took, waiting up to `timeoutMs` for
+   * one to start and finish. With `name`, the file is renamed to it (with the
+   * ` (n)` collision rule). Rejects with `DownloadError` when none starts in
+   * time or the download fails.
+   */
+  nextDownload(opts: NextDownloadOptions): Promise<SavedDownload>;
+  /** Called with each download of this page or its popups once it is saved under its suggested name. Returns an unsubscribe function. */
+  onDownload(cb: (download: SavedDownload) => void): () => void;
+  /** Wait, up to `timeoutMs`, for downloads of this page and its popups that are still in progress. */
+  settleDownloads(timeoutMs: number): Promise<void>;
   close(): Promise<void>;
+}
+
+export interface NextDownloadOptions {
+  since: number;
+  timeoutMs: number;
+  /** File name to save as, without directories. */
+  name?: string;
+}
+
+/** A file a session saved in its download directory. */
+export interface SavedDownload {
+  /** Unique within the session's download queue, in start order. */
+  id: number;
+  /** Absolute path. */
+  file: string;
+  /** File name in the download directory. */
+  name: string;
+  /** Source URL of the download. */
+  url: string;
+  bytes: number;
+  /** The session whose page started the download: the session itself or one of its popups. */
+  origin: Session;
+}
+
+/** A download that did not start in time, failed, or was cancelled. */
+export class DownloadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DownloadError';
+  }
+}
+
+/** Default download directory below the home directory. */
+export const DEFAULT_DOWNLOAD_SUBDIR = ['Downloads', 'webscoop'] as const;
+
+/** `name` made unique among `taken` names: `name (1).ext`, `name (2).ext`, and so on. */
+export function uniqueFileName(name: string, taken: (candidate: string) => boolean): string {
+  if (!taken(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) {
+    const candidate = `${stem} (${n})${ext}`;
+    if (!taken(candidate)) return candidate;
+  }
 }
 
 /** Most characters `Session.pageText` returns. */
@@ -153,6 +219,8 @@ export interface Geometry {
 export interface InteractiveSession extends Session {
   /** Run the script in the current page now and in every page loaded afterwards. */
   inject(source: string): Promise<void>;
+  /** Run the script in the current document only, in the page's main world. */
+  evaluate(source: string): Promise<void>;
   /**
    * Expose `window[name](msg)` to the page and to its popups; the page receives
    * the handler's result. The handler gets the id of the window that called

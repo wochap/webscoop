@@ -3,6 +3,8 @@ import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import {
   DEFAULT_GUARD_TIMEOUT_MS,
+  DOWNLOADS_TABLE,
+  hasDownloadStep,
   fillText,
   firstPageUrl,
   type AttentionPort,
@@ -31,7 +33,7 @@ import {
   templateVariables,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
-import { loadConfig, type Config } from '../config';
+import { loadConfig, resolveDownloadDir, type Config } from '../config';
 import { log, type BrowserInfo, type CliIo } from '../context';
 import { submitJob } from '../daemon/client';
 import { requireDisplay } from '../display';
@@ -87,6 +89,8 @@ export interface RunCommandOptions {
   skipFlows?: boolean;
   /** `--quiet`: print only errors and prompts to act on stderr. */
   quiet?: boolean;
+  /** `--download-dir`; absolute once the submitting command resolved it. */
+  downloadDir?: string;
 }
 
 /** How long `browser.started` waits for the browser's process id. */
@@ -181,7 +185,9 @@ export function summary(report: RunReport): string {
   const skipped = skippedSteps > 0 ? `, ${skippedSteps} step${skippedSteps === 1 ? '' : 's'} skipped` : '';
   const firings = report.flows.filter((f) => f.kind === 'reactive').length;
   const reactive = firings > 0 ? `, reactive flows fired ${firings} time${firings === 1 ? '' : 's'}` : '';
-  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped}${reactive} in ${seconds}s (${report.recipe})`;
+  const files = report.downloads.length;
+  const downloads = files > 0 ? `, ${files} file${files === 1 ? '' : 's'} saved` : '';
+  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped}${reactive}${downloads} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -303,10 +309,15 @@ export async function isOutDir(out: string, path: string): Promise<boolean> {
   return (await stat(path).catch(() => null))?.isDirectory() ?? false;
 }
 
-/** `--table` must name one of the recipe's tables. */
+/** Output tables of a recipe, in order: its own tables, then `downloads` when a flow has a `download` step. */
+export function outputTables(recipe: Recipe): string[] {
+  return [...tablesOf(recipe).map((t) => t.name), ...(hasDownloadStep(recipe) ? [DOWNLOADS_TABLE] : [])];
+}
+
+/** `--table` must name one of the recipe's output tables. */
 export function checkTable(recipe: Recipe, table: string | undefined): void {
   if (table === undefined) return;
-  const names = tablesOf(recipe).map((t) => t.name);
+  const names = outputTables(recipe);
   if (!names.includes(table)) throw new CliError(`recipe "${recipe.name}" has no table "${table}" (tables: ${names.join(', ')})`);
 }
 
@@ -324,6 +335,8 @@ export interface Prepared {
   profileDir: string;
   browser: BrowserInfo;
   settings: BrowserSettings;
+  /** Absolute directory for the job's downloads. */
+  downloadDir: string;
   hooks: HookRunner;
 }
 
@@ -332,7 +345,7 @@ export async function prepare(
   io: CliIo,
   command: 'run' | 'test',
   recipeRef: string,
-  opts: VarSources & { resolvedVars?: ResolvedVars; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean },
+  opts: VarSources & { resolvedVars?: ResolvedVars; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean; downloadDir?: string },
   hookOpts: Partial<HookRunnerOptions> = {},
 ): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
@@ -344,7 +357,7 @@ export async function prepare(
   const vars = resolved.values;
   try {
     firstPageUrl(recipe, vars);
-    for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) fillText(step.value, recipe.vars, vars);
+    for (const flow of recipe.flows) for (const step of flow.steps) if ((step.kind === 'fill' || step.kind === 'download') && step.value) fillText(step.value, recipe.vars, vars);
   } catch (error) {
     if (error instanceof MissingVariableError) {
       throw new CliError(`${error.message}; pass --var ${error.names[0]}=<value>`);
@@ -362,7 +375,8 @@ export async function prepare(
   checkProfileName(profile.profile);
   const { profileDir, browser } = await prepareProfile(io, config, paths, profile.profile, infoLog(io, opts.quiet));
   const hooks = new HookRunner(config, { command, profile: profile.profile, profileDir, recipe: recipe.name, vars: { ...defaults, ...vars }, secrets: resolved.secrets }, { stderr: io.stderr, env: io.env, ...hookOpts });
-  return { config, storage, recipe, recipePath: storage.pathFor(recipeRef), vars, secrets: resolved.secrets, profile, profileDir, browser, settings, hooks };
+  const downloadDir = resolveDownloadDir(opts.downloadDir, config, io.cwd, io.homedir);
+  return { config, storage, recipe, recipePath: storage.pathFor(recipeRef), vars, secrets: resolved.secrets, profile, profileDir, browser, settings, downloadDir, hooks };
 }
 
 /** Launch-level options of a job's browser: network identity, extra arguments, and the e2e DevTools port. */
@@ -438,6 +452,7 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   });
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
   emitter.on('recipe.saved', (e) => info(`recipe written to ${e.path}`));
+  emitter.on('download.saved', (e) => info(`saved ${e.file}`));
 }
 
 /** Logger for informational and warning lines: a no-op under `--quiet`. Errors and prompts to act use `log`. */
@@ -460,16 +475,16 @@ export async function e2ePort(io: CliIo): Promise<number | undefined> {
 
 /** `webscoop run`: submit the job to the daemon and relay its output. */
 export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandOptions): Promise<Code> {
-  const options: TestCommandOptions | RunCommandOptions = { ...opts, resolvedVars: await clientVars(io, recipeRef, opts) };
+  const options: TestCommandOptions | RunCommandOptions = { ...opts, ...(await clientOptions(io, recipeRef, opts)) };
   return submitJob(io, 'run', recipeRef, options);
 }
 
-/** Variable values read in the submitting command, before the job reaches the daemon or a browser opens. */
-export async function clientVars(io: CliIo, recipeRef: string, opts: VarSources): Promise<ResolvedVars> {
+/** Variable values and the download directory, read in the submitting command before the job reaches the daemon or a browser opens. */
+export async function clientOptions(io: CliIo, recipeRef: string, opts: VarSources & { downloadDir?: string }): Promise<{ resolvedVars: ResolvedVars; downloadDir: string }> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths);
   const recipe = await new FsStorage(paths.recipesDir, io.cwd).load(recipeRef);
-  return resolveVars(recipe, opts, config, io.cwd);
+  return { resolvedVars: await resolveVars(recipe, opts, config, io.cwd), downloadDir: resolveDownloadDir(opts.downloadDir, config, io.cwd, io.homedir) };
 }
 
 /** A run job, inside the daemon. */
@@ -481,7 +496,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
     log(io, 'interrupted, closing the tab');
     controller.abort();
   });
-  const tables = tablesOf(recipe).map((t) => t.name);
+  const tables = outputTables(recipe);
   const out = opts.out ? resolve(io.cwd, opts.out) : undefined;
   const dir = opts.out && out && (await isOutDir(opts.out, out)) ? out : undefined;
   const sink = new RowSink(io.stdout, {
@@ -497,6 +512,14 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
     hooks.attach(emitter, { run: true, browser: false });
     job.watch?.(emitter);
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
+    // Files `download` steps took are rows of the downloads table, indexed per page.
+    const perPage = new Map<number, number>();
+    emitter.on('download.saved', (e) => {
+      if (!e.step) return;
+      const index = perPage.get(e.page) ?? 0;
+      perPage.set(e.page, index + 1);
+      sink.row(DOWNLOADS_TABLE, { file: e.file, name: e.name, url: e.url, bytes: e.bytes, _page: e.page, _index: index });
+    });
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
     const { banner, repick, bypassCSP } = await pageHelpers(io, prepared, opts);
@@ -516,7 +539,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner, prepared.config.notify),
       flows: flowsFromFlags(opts),
       saveRecipe: (promoted) => (job.saveRecipe ? job.saveRecipe(prepared.recipePath, () => save(promoted)) : save(promoted)),
-      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
+      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },
       ...(repick ? { repick } : {}),
       ...(job.attention ? { attention: job.attention } : {}),
     });
@@ -570,6 +593,8 @@ export interface TestCommandOptions {
   notify?: boolean;
   /** `--skip-flows`: run no flow, called or reactive. */
   skipFlows?: boolean;
+  /** `--download-dir`; absolute once the submitting command resolved it. */
+  downloadDir?: string;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -639,7 +664,7 @@ export function formatTable(rows: readonly TestRow[]): string {
  * resolved on at least one row, 3 when one did not.
  */
 export async function testCommand(io: CliIo, recipeRef: string, opts: TestCommandOptions): Promise<Code> {
-  const options: TestCommandOptions | RunCommandOptions = { ...opts, resolvedVars: await clientVars(io, recipeRef, opts) };
+  const options: TestCommandOptions | RunCommandOptions = { ...opts, ...(await clientOptions(io, recipeRef, opts)) };
   return submitJob(io, 'test', recipeRef, options);
 }
 
@@ -670,7 +695,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       guards: guardsFromFlags(io, opts, 0, banner, config.notify),
       flows: flowsFromFlags(opts),
-      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}) },
+      openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },
       ...(job.attention ? { attention: job.attention } : {}),
     });
     const result = await runner.run();

@@ -133,6 +133,12 @@ describe('Runner', () => {
           setTitle: async () => {},
           pageText: async () => '',
           onPopup: () => () => {},
+          downloadMark: () => 0,
+          nextDownload: async () => {
+            throw new Error('no download');
+          },
+          onDownload: () => () => {},
+          settleDownloads: async () => {},
           isClosed: () => false,
           close: async () => {
             closed = true;
@@ -164,6 +170,24 @@ describe('Runner abort while opening', () => {
     const result = await runRecipe({ recipe: loadRecipe(recipe()), browser, profileDir: '/p', signal: controller.signal });
     expect(result).toMatchObject({ ok: false, reason: 'aborted' });
     expect(browser.openSessions).toBe(0);
+  });
+});
+
+describe('Runner downloads', () => {
+  it('saves a download from a plain click, reports it once, and waits for it before closing', async () => {
+    const dom = catalog(cards(2));
+    dom.children.push(h('a', { id: 'csv' }, 'CSV'));
+    const browser = new FakeBrowser({
+      [PAGE]: { dom, on: { click: (el) => (el?.attrs.id === 'csv' ? { download: { url: '/a.csv', name: 'a.csv', bytes: 5, delayMs: 30 } } : undefined) } },
+    });
+    const emitter = new RunEmitter();
+    const log = recordEvents(emitter);
+    const input = recipe({ url: PAGE, vars: [], flows: [{ name: 'get', steps: [{ kind: 'click', target: { selectors: [css('#csv')] } }] }], sequence: [{ flow: 'get' }, { extract: 'items' }] });
+    const result = await runRecipe({ recipe: loadRecipe(input), browser, profileDir: '/p', emitter, openOptions: { downloadDir: '/dl' } });
+    expect(result.ok).toBe(true);
+    expect(log.of('download.saved')).toEqual([{ page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'https://shop.test/a.csv', bytes: 5, step: null }]);
+    expect(result.report.downloads).toEqual(log.of('download.saved'));
+    expect(log.names().indexOf('download.saved')).toBeLessThan(log.names().indexOf('run.done'));
   });
 });
 

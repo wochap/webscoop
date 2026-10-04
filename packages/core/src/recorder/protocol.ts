@@ -30,6 +30,8 @@ export function descriptionKey(target: DescriptionTarget): string {
 
 export const HOST_BINDING = '__webscoopHost';
 export const PAGE_GLOBAL = '__webscoopPage';
+/** Set by the host before it evaluates the bundle in a blank page, where the recorder boots too. */
+export const BLANK_GLOBAL = '__webscoopBlank';
 
 const count = () => z.int().check(z.nonnegative());
 const index = () => z.int().check(z.nonnegative());
@@ -580,6 +582,8 @@ export const RecorderStateSchema = z.object({
   error: z.nullable(z.string()),
   /** A one-shot message for the Pick section, cleared by the next pick. */
   notice: z._default(z.nullable(z.string()), null),
+  /** Set when the start URL or a Reopen downloaded a file instead of loading a page; the window shows a blank page with the panel. */
+  startDownload: z._default(z.nullable(z.object({ name: z.string(), file: z.string() })), null),
   /** While the active table is a list: the containers of every other list table, for muted outlines. */
   otherLists: z._default(z.array(z.object({ table: index(), paths: z.array(PathSchema) })), []),
   /**
@@ -783,6 +787,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.setHumanize', { on: z.boolean() }),
   msg('draft.setVar', { name: z.string(), value: z.string() }),
   msg('draft.reopen', {}),
+  /** Add a targetless download step to the first flow, creating one when there is none. */
+  msg('draft.addDownloadStep', {}),
   /** Replace the URL template; an invalid template is refused into `urlError`. */
   msg('draft.setUrl', { url: z.string() }),
   /** Add a variable that nothing uses yet; a bad or taken name is refused into `varError`. */
@@ -825,6 +831,8 @@ export const HostMessageSchema = z.discriminatedUnion('kind', [
   msg('panel.mode', { mode: z.enum(['owner', 'rail', 'strip']), popup: z.boolean() }),
   /** Remove the recorder from the page; the host keeps the session. */
   msg('session.detach', {}),
+  /** A window of the session saved a download, for a short notice. */
+  msg('download.saved', { name: z.string(), file: z.string() }),
 ]);
 
 export const MessageSchema = z.union([PageMessageSchema, HostMessageSchema]);

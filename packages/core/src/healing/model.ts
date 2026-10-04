@@ -175,6 +175,7 @@ const STEP_TARGETS: Record<StepKind, string> = {
   press: 'element the user presses a key in',
   wait: 'element the page shows once it is ready',
   'await-user': 'element that appears or disappears once the user is done',
+  download: 'button or link the user clicks to download a file',
 };
 
 function describeTarget(target: HealTarget): string[] {

@@ -13,7 +13,7 @@ import { accessSync, appendFileSync, constants, mkdirSync, mkdtempSync, readFile
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
-import { chromium, errors, type BrowserContext, type FrameLocator, type Locator, type Page } from 'playwright';
+import { chromium, errors, type BrowserContext, type Download, type FrameLocator, type Locator, type Page } from 'playwright';
 
 // ---------------------------------------------------------------------------
 // Recipe shapes (the constants at the end of the file)
@@ -42,7 +42,8 @@ type Action =
   | { kind: 'press'; key: string }
   | { kind: 'wait-for' }
   | { kind: 'sleep'; ms: number }
-  | { kind: 'await-user'; until: 'appears' | 'disappears'; timeoutMs: number | null; label: string };
+  | { kind: 'await-user'; until: 'appears' | 'disappears'; timeoutMs: number | null; label: string }
+  | { kind: 'download'; name: string | null; vars: string[] };
 interface Step {
   flow: string;
   index: number;
@@ -527,6 +528,33 @@ function isTimeout(error: unknown): boolean {
 /** A step's element showed no option or opened no file chooser: the step found no element. */
 class Unresolved extends Error {}
 
+/** A name in the download directory that no file has yet: name (1).ext, name (2).ext, and so on. */
+function freeName(name: string): string {
+  const taken = (candidate: string) => {
+    try {
+      statSync(join(DOWNLOAD_DIR, candidate));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!taken(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) if (!taken(stem + ' (' + n + ')' + ext)) return stem + ' (' + n + ')' + ext;
+}
+
+/** Save a download in the download directory under the name, else the name the server suggests; returns the path. */
+async function saveDownload(download: Download, name: string | null): Promise<string> {
+  mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  const file = join(DOWNLOAD_DIR, freeName(name ?? download.suggestedFilename()));
+  await download.saveAs(file);
+  const failure = await download.failure();
+  if (failure) throw new Error(failure);
+  return file;
+}
+
 /** One browser window: navigation, settling, and the actions steps take. */
 class Session {
   /** Main frame navigations so far, so settling can tell whether an action navigated. */
@@ -552,6 +580,8 @@ class Session {
       await this.page.waitForLoadState('networkidle', { timeout: Math.max(1, Math.min(SETTLE_IDLE_MS, deadline - Date.now())) }).catch(() => {});
       return this.page.url();
     } catch (error) {
+      // A URL that downloads leaves the window on its previous document; a download step takes the file.
+      if (error instanceof Error && error.message.includes('Download is starting')) return this.page.url();
       if (isTimeout(error)) throw new Failure('navigation to ' + url + ' timed out after ' + NAVIGATION_TIMEOUT_MS + ' ms', EXIT_ERROR);
       throw error;
     }
@@ -701,14 +731,39 @@ class Session {
 class Windows {
   private readonly popups: { session: Session; seq: number }[] = [];
   private seq = 0;
+  /** Every download any window started, in order; a download step takes each at most once. */
+  private readonly downloads: { download: Download; taken: boolean }[] = [];
 
   constructor(
     context: BrowserContext,
     readonly main: Session,
   ) {
+    const watch = (page: Page) => page.on('download', (download) => this.downloads.push({ download, taken: false }));
+    watch(main.page);
     context.on('page', (page) => {
-      if (page !== main.page) this.popups.push({ session: new Session(page), seq: ++this.seq });
+      if (page === main.page) return;
+      watch(page);
+      this.popups.push({ session: new Session(page), seq: ++this.seq });
     });
+  }
+
+  /** A mark for nextDownload: downloads started after it are newer. */
+  downloadMark(): number {
+    return this.downloads.length;
+  }
+
+  /** The oldest download started at or after the mark that no step took, waiting up to the navigation timeout; null when none starts. */
+  async nextDownload(since: number): Promise<Download | null> {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    for (;;) {
+      const entry = this.downloads.find((d, i) => i >= since && !d.taken);
+      if (entry) {
+        entry.taken = true;
+        return entry.download;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(50);
+    }
   }
 
   /** A mark for newestSince: popups opened after it are newer. */
@@ -1402,6 +1457,11 @@ class Run {
           log(label + ': ok');
           continue;
         }
+        if (action.kind === 'download' && !step.target) {
+          await this.takeDownload(action, 0, fail);
+          log(label + ': ok');
+          continue;
+        }
         let target: Locator | null = null;
         if (step.target) {
           const found = await findStepTarget(session, step, this.cache);
@@ -1410,8 +1470,9 @@ class Run {
         }
         const files = action.kind === 'fill' ? pathFiles(action, this.values) : null;
         const previousUrl = session.page.url();
+        const downloadMark = this.windows.downloadMark();
         try {
-          if (action.kind === 'click') await session.click(target!);
+          if (action.kind === 'click' || action.kind === 'download') await session.click(target!);
           else if (action.kind === 'fill') await session.fill(target!, fillText(action.text, this.values), files);
           else if (action.kind === 'press') await session.press(action.key, target);
         } catch (error) {
@@ -1427,6 +1488,7 @@ class Run {
           });
           if (settled !== null && session === this.main) this.pageUrl = settled;
         }
+        if (action.kind === 'download') await this.takeDownload(action, downloadMark, fail);
         log(label + ': ok');
       } catch (error) {
         if (error === SKIPPED) continue;
@@ -1461,6 +1523,22 @@ class Run {
         if (flow.recover) await this.recover();
         return;
       }
+    }
+  }
+
+  /** Take the next download started at or after the mark and save it under the step's file name, else the suggested one. */
+  private async takeDownload(action: Extract<Action, { kind: 'download' }>, since: number, fail: (why: string) => never): Promise<void> {
+    let name: string | null = null;
+    if (action.name !== null) {
+      name = fillText(action.name, this.values);
+      if (name.trim() === '' || /[\\/]/.test(name)) fail('cannot save its download: value ' + JSON.stringify(action.name) + ' is not a file name');
+    }
+    const download = await this.windows.nextDownload(since);
+    if (!download) fail('saw no download: no download started within ' + NAVIGATION_TIMEOUT_MS + ' ms');
+    try {
+      log('saved ' + (await saveDownload(download!, name)));
+    } catch (error) {
+      fail('saw its download fail: ' + errorText(error));
     }
   }
 

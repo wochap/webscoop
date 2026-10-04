@@ -1,4 +1,5 @@
 import { classifyFillElement } from '../fill-kind';
+import { DownloadQueue, type DownloadOutcome } from '../downloads';
 import type {
   BrowserPort,
   ElementRef,
@@ -7,15 +8,17 @@ import type {
   GotoOptions,
   InteractiveSession,
   OpenOptions,
+  NextDownloadOptions,
   PageInfo,
   ReadOptions,
+  SavedDownload,
   RecorderWindow,
   SerializedElement,
   SerializedNode,
   Session,
   SettleOptions,
 } from '../ports';
-import { FillUnresolvedError, MAIN_WINDOW, PAGE_TEXT_LIMIT, TimeoutError } from '../ports';
+import { FillUnresolvedError, MAIN_WINDOW, PAGE_TEXT_LIMIT, TimeoutError, uniqueFileName } from '../ports';
 import type { SelectorCandidate } from '../recipe/schema';
 import { compileCss } from './css';
 import { accessibleName, indexTree, innerHtml, normalize, roleOf, textContent, type DomNode } from './dom';
@@ -57,6 +60,8 @@ export interface FakePage {
   scroll?: number[];
   /** Serve this URL's page instead, as an HTTP redirect would; `dom` is ignored. */
   redirect?: string;
+  /** Navigating here starts this download instead of loading a document; `dom` is ignored. */
+  download?: FakeDownload;
   /**
    * What the page does when the user acts on an element, for steps: return a
    * new DOM for the same URL, a `redirect` to navigate (loaded by the next
@@ -85,7 +90,18 @@ export type FakeAction = (
   el: SerializedElement | null,
   value: string,
   url: string,
-) => SerializedElement | { redirect: string } | { popup: string } | { close: true } | void;
+) => SerializedElement | { redirect: string } | { popup: string } | { close: true } | { download: FakeDownload & { url: string } } | void;
+
+/** A download a fake page starts. */
+export interface FakeDownload {
+  /** Suggested file name. */
+  name: string;
+  bytes?: number;
+  /** Milliseconds until the download finishes. */
+  delayMs?: number;
+  /** Fail the download with this reason. */
+  fail?: string;
+}
 
 /** One action a fake session performed, for assertions. */
 export interface FakeActionRecord {
@@ -127,6 +143,8 @@ export class FakeSession implements Session {
   readonly popups: FakeInteractiveSession[] = [];
   /** `MAIN_WINDOW` for a window the browser opened, `popup-N` for a popup. */
   readonly windowId: string;
+  /** Download queue shared with the popups of the window at the top of the opener chain. */
+  private readonly downloads: DownloadQueue;
 
   constructor(
     protected readonly browser: FakeBrowser,
@@ -134,6 +152,35 @@ export class FakeSession implements Session {
     readonly opener: FakeSession | null = null,
   ) {
     this.windowId = opener ? `popup-${browser.popups.length + 1}` : MAIN_WINDOW;
+    this.downloads = opener ? opener.downloads : new DownloadQueue(async (d, name) => browser.renameFile(d, name));
+  }
+
+  /** Start a download in this window, as a page would. */
+  startDownload(url: string, download: FakeDownload): void {
+    this.downloads.add(this, this.browser.saveDownload(url, download, this.downloadDir()));
+  }
+
+  private downloadDir(): string {
+    return this.top().dir ?? '/downloads';
+  }
+
+  /** The download directory of a window the browser opened. */
+  dir: string | undefined;
+
+  downloadMark(): number {
+    return this.downloads.mark();
+  }
+
+  nextDownload(opts: NextDownloadOptions): Promise<SavedDownload> {
+    return this.downloads.next(opts);
+  }
+
+  onDownload(cb: (download: SavedDownload) => void): () => void {
+    return this.downloads.onSaved(cb);
+  }
+
+  settleDownloads(timeoutMs: number): Promise<void> {
+    return this.downloads.settle(timeoutMs);
   }
 
   /** The window at the top of the opener chain. */
@@ -178,6 +225,7 @@ export class FakeSession implements Session {
   }
 
   private page(url: string): FakePage {
+    if (url === 'about:blank' && !this.browser.pages.has(url)) return { dom: { type: 'element', tag: 'html', attrs: {}, children: [] } };
     const page = this.browser.pages.get(url);
     if (!page) throw new Error(`net::ERR_NAME_NOT_RESOLVED at ${url}`);
     return page;
@@ -192,6 +240,13 @@ export class FakeSession implements Session {
       page = this.page(url);
     }
     return { url, page };
+  }
+
+  /** A navigation that started a download: the window keeps its document. */
+  private downloaded(url: string, download: FakeDownload): PageInfo {
+    this.startDownload(url, download);
+    const page = this.browser.pages.get(this.currentUrl);
+    return { url: this.currentUrl, title: page?.title ?? '', status: null, download: true };
   }
 
   private info(url: string, page: FakePage): PageInfo {
@@ -218,6 +273,7 @@ export class FakeSession implements Session {
     if ('redirect' in result) this.pendingUrl = new URL(result.redirect, this.currentUrl).href;
     else if ('popup' in result) this.openPopup(new URL(result.popup, this.currentUrl).href);
     else if ('close' in result) void this.userClose();
+    else if ('download' in result) this.startDownload(new URL(result.download.url, this.currentUrl).href, result.download);
     else this.load(this.currentUrl, result);
     return true;
   }
@@ -258,6 +314,7 @@ export class FakeSession implements Session {
     if (this.closed) throw new Error('session is closed');
     this.browser.visited.push(url);
     const { url: final, page } = this.follow(url);
+    if (page.download) return this.downloaded(final, page.download);
     if ((page.delayMs ?? 0) > opts.timeoutMs) {
       throw new TimeoutError(`navigation to ${url} timed out after ${opts.timeoutMs} ms`);
     }
@@ -406,6 +463,7 @@ export class FakeSession implements Session {
     this.pendingUrl = null;
     this.browser.visited.push(url);
     const { url: final, page } = this.follow(url);
+    if (page.download) return this.downloaded(final, page.download);
     if ((page.delayMs ?? 0) > opts.timeoutMs) {
       throw new TimeoutError(`waiting for ${url} to load timed out after ${opts.timeoutMs} ms`);
     }
@@ -551,6 +609,13 @@ export class FakeInteractiveSession extends FakeSession implements InteractiveSe
     this.injected.push(source);
   }
 
+  /** Scripts run in one document with `evaluate`, with the URL they ran on. */
+  readonly evaluated: { url: string; source: string }[] = [];
+
+  async evaluate(source: string): Promise<void> {
+    this.evaluated.push({ url: this.currentUrl, source });
+  }
+
   async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {
     this.exposed.set(name, fn);
   }
@@ -613,6 +678,28 @@ export class FakeBrowser implements BrowserPort {
     return this;
   }
 
+  /** Files saved in download directories, by absolute path, with their sizes. Tests may add files that already exist. */
+  readonly files = new Map<string, number>();
+
+  /** Save a download under its suggested name with the collision rule, after its delay. */
+  async saveDownload(url: string, download: FakeDownload, dir: string): Promise<DownloadOutcome> {
+    if (download.delayMs) await new Promise((r) => setTimeout(r, download.delayMs));
+    if (download.fail !== undefined) throw new Error(download.fail);
+    const name = uniqueFileName(download.name, (n) => this.files.has(`${dir}/${n}`));
+    const bytes = download.bytes ?? 0;
+    this.files.set(`${dir}/${name}`, bytes);
+    return { file: `${dir}/${name}`, name, url, bytes };
+  }
+
+  /** Rename a saved file in its directory with the collision rule. */
+  renameFile(download: SavedDownload, name: string): DownloadOutcome {
+    const dir = download.file.slice(0, download.file.length - download.name.length - 1);
+    this.files.delete(download.file);
+    const unique = uniqueFileName(name, (n) => this.files.has(`${dir}/${n}`));
+    this.files.set(`${dir}/${unique}`, download.bytes);
+    return { file: `${dir}/${unique}`, name: unique, url: download.url, bytes: download.bytes };
+  }
+
   readonly openOptions: (OpenOptions | undefined)[] = [];
   /** Every session opened, most recent last. */
   readonly sessions: FakeInteractiveSession[] = [];
@@ -622,6 +709,7 @@ export class FakeBrowser implements BrowserPort {
     this.openOptions.push(opts);
     this.openSessions++;
     const session = new FakeInteractiveSession(this);
+    session.dir = opts?.downloadDir;
     this.sessions.push(session);
     return session;
   }

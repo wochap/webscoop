@@ -49,7 +49,9 @@ export type PlanAction =
   /** A `wait` without a target: sleep. */
   | { kind: 'sleep'; ms: number }
   /** Wait for the user until the target appears or disappears in any open window. */
-  | { kind: 'await-user'; until: StepUntil; timeoutMs: number | null; label: string };
+  | { kind: 'await-user'; until: StepUntil; timeoutMs: number | null; label: string }
+  /** Wait for a download (clicking the target first when there is one) and save it as `name`, else the suggested name. */
+  | { kind: 'download'; name: string | null; vars: string[] };
 
 export interface PlanStep {
   /** The flow the step belongs to, and its index there. */
@@ -208,6 +210,8 @@ function action(recipe: Recipe, flow: string, step: Step, index: number): PlanAc
       return step.target ? { kind: 'wait-for' } : { kind: 'sleep', ms: Number(step.value ?? 0) };
     case 'await-user':
       return { kind: 'await-user', until: step.until ?? 'appears', timeoutMs: step.timeoutMs ?? null, label: awaitUserLabel(flow, step, index) };
+    case 'download':
+      return { kind: 'download', name: step.value ?? null, vars: step.value ? templateVariables(step.value) : [] };
   }
 }
 
@@ -231,7 +235,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
 
   // Variables the run needs before the browser opens; the page variable has its own start value.
   const needed = new Set(templateVariables(recipe.url));
-  for (const flow of recipe.flows) for (const step of flow.steps) if (step.kind === 'fill' && step.value) for (const name of templateVariables(step.value)) needed.add(name);
+  for (const flow of recipe.flows) for (const step of flow.steps) if ((step.kind === 'fill' || step.kind === 'download') && step.value) for (const name of templateVariables(step.value)) needed.add(name);
   if (pageParam) needed.delete(pageParam.name);
   const vars: PlanVar[] = recipe.vars.map((v) => ({ name: v.name, default: v.default ?? null, required: needed.has(v.name), secret: v.secret === true, path: v.type === 'path' }));
   for (const name of needed) if (!recipe.vars.some((v) => v.name === name)) vars.push({ name, default: null, required: true, secret: false, path: false });

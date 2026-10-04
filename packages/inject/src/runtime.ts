@@ -240,6 +240,9 @@ export class Runtime implements Actions {
         this.setHost(msg.state);
         this.toast(msg.ok ? 'ok' : 'danger', msg.message);
         return;
+      case 'download.saved':
+        this.toast('ok', `Saved ${msg.name}`);
+        return;
       case 'session.detach':
         this.dispose();
         this.opts.onDetach?.();

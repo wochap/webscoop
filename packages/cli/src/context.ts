@@ -46,6 +46,8 @@ export interface CliIo {
 export interface TabOptions {
   humanize?: boolean;
   bypassCSP?: boolean;
+  /** Absolute directory for the tab's downloads. */
+  downloadDir?: string;
 }
 
 /** One browser shared by the jobs of a profile. */

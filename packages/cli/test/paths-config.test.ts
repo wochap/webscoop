@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CliError, hookCommands, loadConfig, resolvePaths, WINDOW_CONFIG_WARNING } from '../src';
+import { CliError, ConfigSchema, hookCommands, loadConfig, resolveDownloadDir, resolvePaths, WINDOW_CONFIG_WARNING } from '../src';
 import { tempDir } from './helpers';
 
 describe('resolvePaths', () => {
@@ -149,5 +149,27 @@ describe('loadConfig', () => {
   it('rejects a vars binding without exactly one source, naming the recipe and variable', async () => {
     expect(await configError({ vars: { 'sunat-menu': { pass: {} } } })).toContain('$.vars.sunat-menu.pass');
     expect(await configError({ vars: { 'sunat-menu': { pass: { value: 'a', command: 'b' } } } })).toContain('$.vars.sunat-menu.pass');
+  });
+});
+
+describe('resolveDownloadDir', () => {
+  it('uses the flag against the working directory, over the config', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ downloads: { dir: '~/files' } }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(resolveDownloadDir('./out', config, '/tmp/w', '/home/u')).toBe('/tmp/w/out');
+    expect(resolveDownloadDir('~/dl', config, '/tmp/w', '/home/u')).toBe('/home/u/dl');
+    expect(resolveDownloadDir('/abs', config, '/tmp/w', '/home/u')).toBe('/abs');
+  });
+
+  it('resolves a relative config directory against the config file directory', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ downloads: { dir: 'files' } }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(resolveDownloadDir(undefined, config, '/tmp/w', '/home/u')).toBe(join(home, 'files'));
+  });
+
+  it('defaults to ~/Downloads/webscoop', () => {
+    expect(resolveDownloadDir(undefined, ConfigSchema.parse({}), '/tmp/w', '/home/u')).toBe('/home/u/Downloads/webscoop');
   });
 });

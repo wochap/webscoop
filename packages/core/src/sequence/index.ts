@@ -11,7 +11,7 @@ import { Recheck, waitForClear, type WaitResult } from '../guards/wait';
 import { defaultLadder } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type Resolver } from '../healing/types';
-import { NoopNotify, type FilePort, type NotifyPort, type PageInfo, type Session } from '../ports';
+import { NoopNotify, type FilePort, type NotifyPort, type PageInfo, type SavedDownload, type Session } from '../ports';
 import { Dedup, evaluateStop, type PageSummary } from '../pagination/dedup';
 import type { PagerContext, PageStrategy, StopReason } from '../pagination/types';
 import type { Block, Flow, InnerBlock, Paginate, Recipe, RecipeTable, SelectorCandidate } from '../recipe/schema';
@@ -51,6 +51,8 @@ export interface SequenceHost {
   needAttention(payload: RunEvents['attention.needed']): void;
   resolveAttention(outcome: AttentionOutcome): void;
   sleep(ms: number): Promise<void>;
+  /** A `download` step took a saved file on the given page. */
+  onDownloadTaken?(page: number, download: SavedDownload, step: { flow: string; index: number; label?: string }): void;
 }
 
 export type RunStateName = 'idle' | 'opening' | 'navigating' | 'stepping' | 'extracting' | 'guarded' | 'repicking' | 'paginating' | 'done' | 'failed';
@@ -145,7 +147,8 @@ export class SequenceRun {
     this.info = info;
     host.report.finalUrl = info.url;
     host.emitter.emit('page.loaded', { page: this.page, url: info.url, title: info.title, status: info.status });
-    await this.guardLoad();
+    // A navigation that downloaded leaves the window on its previous document: no guard check.
+    if (!info.download) await this.guardLoad();
     await this.checkpoint();
   }
 
@@ -232,6 +235,7 @@ export class SequenceRun {
         sleep: (ms) => host.sleep(ms),
         checkpoint: () => this.checkpoint(),
         awaitUser: (request) => this.awaitUser(request),
+        ...(host.onDownloadTaken ? { onDownloadTaken: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => host.onDownloadTaken!(page, download, step) } : {}),
         onEvent: (step) => {
           entry.steps.push(step);
           host.report.steps.push(step);

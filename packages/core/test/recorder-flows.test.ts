@@ -407,6 +407,41 @@ describe('RecorderController flows', () => {
   });
 });
 
+describe('RecorderController downloads', () => {
+  it('turns a browse-recorded click into a download step when a download follows, and tells the panel', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'search', url: SEARCH, vars: [] }), SEARCH);
+    const button = descendantsOf(t.page).find((n) => n.tag === 'button')!;
+    await t.send({ kind: 'draft.addStep', step: { kind: 'click' }, selection: { ...selectionOf(button), candidates: [{ strategy: 'css', value: 'button', stability: 'medium', count: 1 }] } });
+    t.session.startDownload('http://127.0.0.1:4777/report.csv', { name: 'report.csv', bytes: 4 });
+    await expect.poll(() => steps(t.controller.draft)[0]!.kind).toBe('download');
+    expect(steps(t.controller.draft)[0]!.target!.selectors[0]!.value).toBe('button');
+    expect(t.events.find((e) => e.name === 'recorder.download')?.payload).toEqual({ file: '/downloads/report.csv', name: 'report.csv', url: 'http://127.0.0.1:4777/report.csv', bytes: 4 });
+    expect(t.session.dispatchedOf('download.saved')).toEqual([{ kind: 'download.saved', name: 'report.csv', file: '/downloads/report.csv' }]);
+  });
+
+  it('keeps a picked click step a click when a download follows', async () => {
+    const t = await harness(tier0Snapshot(), withFields());
+    await t.pick(descendantsOf(t.page).find((n) => n.tag === 'a')!);
+    await t.send({ kind: 'draft.addStep', step: { kind: 'click' } });
+    t.session.startDownload('http://127.0.0.1:4777/a.csv', { name: 'a.csv' });
+    await expect.poll(() => t.session.dispatchedOf('download.saved').length).toBe(1);
+    expect(steps(t.controller.draft)[0]!.kind).toBe('click');
+  });
+
+  it('shows the panel on a blank page when the start URL downloads, and adds a targetless download step', async () => {
+    const t = await harness(searchPage(), emptyDraft({ name: 'deck', url: SEARCH, vars: [] }), SEARCH, { download: { name: 'deck.pdf', bytes: 9 } });
+    expect(t.session.currentUrl).toBe('about:blank');
+    expect(t.session.evaluated).toHaveLength(1);
+    expect(t.session.evaluated[0]!.url).toBe('about:blank');
+    expect(t.session.evaluated[0]!.source).toContain('__webscoopBlank = true');
+    await expect.poll(() => t.controller.state.startDownload).toEqual({ name: 'deck.pdf', file: '/downloads/deck.pdf' });
+    await t.send({ kind: 'draft.addDownloadStep' });
+    expect(t.controller.draft.flows).toHaveLength(1);
+    expect(steps(t.controller.draft)).toEqual([expect.objectContaining({ kind: 'download', window: 'same' })]);
+    expect(steps(t.controller.draft)[0]!.target).toBeUndefined();
+  });
+});
+
 describe('RecorderController windows', () => {
   const MAIN = 'http://127.0.0.1:4777/catalog?tier=0';
   const LOGIN = 'http://127.0.0.1:4777/spa/login';

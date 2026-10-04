@@ -1,6 +1,9 @@
 import { convertValue, defaultAttr } from '../convert';
 import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
-import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type SerializedElement, type StoragePort } from '../ports';
+import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type SavedDownload, type SerializedElement, type StoragePort } from '../ports';
+
+/** Longest gap between a browse-recorded click and the download it started. */
+export const DOWNLOAD_CLICK_MS = 1000;
 import { scoreFingerprint } from '../healing/score';
 import type { FieldScope, FieldType, Fingerprint, Flow, SelectorCandidate } from '../recipe/schema';
 import { DESCRIPTION_MAX } from '../recipe/constants';
@@ -84,6 +87,7 @@ import {
   type TargetEdit,
   type TargetRef,
   popupClosedReason,
+  BLANK_GLOBAL,
   type TestResults,
   type TestTable,
 } from './protocol';
@@ -285,6 +289,12 @@ export class RecorderController {
   private readonly windows = new Map<string, { session: InteractiveSession; opener: string }>();
   /** The window that owns the panel: picks, browse recording, and lookups happen there. */
   private owner = MAIN_WINDOW;
+  /** The last `click` step browse mode recorded, so a download that follows within a second turns it into a `download` step. */
+  private lastBrowseClick: { flow: number; index: number; window: string; at: number } | null = null;
+  /** The start URL or a Reopen downloaded; the next saved file is the one it downloaded. */
+  private awaitingStartDownload = false;
+  /** Files saved so far, and the last one, so a file saved while the start URL was still loading is found. */
+  private downloads: { count: number; last: { name: string; file: string } | null } = { count: 0, last: null };
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
@@ -356,6 +366,7 @@ export class RecorderController {
       repickContext,
       guardContext: null,
       notice: null,
+      startDownload: null,
       otherLists: [],
       frame: null,
       test: null,
@@ -556,11 +567,56 @@ export class RecorderController {
   /** Expose the bridge, inject the bundle, and open the target URL. */
   async start(): Promise<PageInfo> {
     await this.attach();
+    return this.open();
+  }
+
+  /** Open the target URL; one that downloads leaves the window on a blank page with the panel. */
+  private async open(): Promise<PageInfo> {
     const target = this.targetUrl();
-    this.current = { ...this.current, openedUrl: target };
+    this.current = { ...this.current, openedUrl: target, startDownload: null };
+    const before = this.downloads.count;
     const info = await this.session.goto(target, { timeoutMs: this.opts.timeoutMs ?? 30_000 });
-    this.current = { ...this.current, url: info.url };
+    if (info.download) {
+      if (this.downloads.count > before) this.current = { ...this.current, startDownload: this.downloads.last };
+      else this.awaitingStartDownload = true;
+      await this.blankPanel();
+    }
+    this.current = { ...this.current, url: info.download ? 'about:blank' : info.url };
     return info;
+  }
+
+  /** Show the panel on a blank page: the init script does not run for it, so the bundle is evaluated there. */
+  private async blankPanel(): Promise<void> {
+    const main = this.opts.session;
+    await main.goto('about:blank', { timeoutMs: this.opts.timeoutMs ?? 30_000 });
+    await main.evaluate(`window.${BLANK_GLOBAL} = true;\n${this.opts.bundle}`);
+  }
+
+  /**
+   * A window saved a download: tell the host and the panel, take it as the
+   * start URL's file when that downloaded, and turn a browse-recorded click
+   * right before it, in the same window, into a `download` step.
+   */
+  private async downloaded(download: SavedDownload): Promise<void> {
+    const { file, name, url, bytes } = download;
+    this.emitter.emit('recorder.download', { file, name, url, bytes });
+    this.downloads = { count: this.downloads.count + 1, last: { name, file } };
+    if (this.awaitingStartDownload) {
+      this.awaitingStartDownload = false;
+      this.current = { ...this.current, startDownload: { name, file } };
+    }
+    const window = [...this.windows].find(([, w]) => w.session === download.origin)?.[0] ?? MAIN_WINDOW;
+    const click = this.lastBrowseClick;
+    this.lastBrowseClick = null;
+    if (click && click.window === window && this.now().getTime() - click.at <= DOWNLOAD_CLICK_MS && this.draft.flows[click.flow]?.steps[click.index]?.kind === 'click') {
+      this.apply({ type: 'updateStep', flow: click.flow, index: click.index, patch: { kind: 'download' } });
+    }
+    try {
+      await this.raw.dispatch({ kind: 'download.saved', name, file } satisfies HostMessage);
+    } catch {
+      // The page is navigating; the state push below still reaches it once ready.
+    }
+    await this.push();
   }
 
   /**
@@ -572,6 +628,7 @@ export class RecorderController {
     await main.expose(HOST_BINDING, (msg, windowId) => this.handle(msg, windowId));
     await main.inject(this.opts.bundle);
     this.unsubscribe.push(
+      main.onDownload((download) => void this.handleInternal(() => this.downloaded(download))),
       main.onWindow((win) => this.addWindow(win)),
       main.onNavigated((url) => {
         if (this.owner !== MAIN_WINDOW) return;
@@ -1068,7 +1125,13 @@ export class RecorderController {
         const target = this.targetUrl();
         this.current = { ...this.current, openedUrl: target };
         // Navigating tears down the page that sent this message; do not wait for it.
-        void this.handleInternal(() => this.session.goto(target, { timeoutMs: this.opts.timeoutMs ?? 30_000 }));
+        void this.handleInternal(() => this.open());
+        return;
+      }
+      case 'draft.addDownloadStep': {
+        this.apply({ type: 'addStep', ...(this.draft.flows.length > 0 ? { flow: 0 } : {}), step: { kind: 'download', window: 'same', count: null } });
+        const flow = this.draft.flows[0]!;
+        this.emitter.emit('recorder.stepAdded', { flow: flow.name, index: flow.steps.length - 1, kind: 'download', target: null });
         return;
       }
       case 'draft.setUrl':
@@ -2660,6 +2723,9 @@ export class RecorderController {
     });
     const into = flow ?? this.draft.activeFlow ?? this.draft.flows.length - 1;
     const primary = target?.selectors[0];
+    if (selection && step.kind === 'click') {
+      this.lastBrowseClick = { flow: into, index: (this.draft.flows[into]?.steps.length ?? 1) - 1, window: this.owner, at: this.now().getTime() };
+    }
     this.emitter.emit('recorder.stepAdded', {
       flow: this.draft.flows[into]?.name ?? '',
       index: (this.draft.flows[into]?.steps.length ?? 1) - 1,

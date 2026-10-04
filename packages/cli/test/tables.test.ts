@@ -200,9 +200,35 @@ describe('webscoop run with tables', () => {
   });
 });
 
+describe('webscoop run with a download step', () => {
+  const EXPORT = 'https://docs.test/d/1Qi/export/pdf';
+  const step = { name: 'fetch', steps: [{ kind: 'download' as const, value: '{id}.pdf' }] };
+  const deck: RecipeInput = { schemaVersion: 2, name: 'gslides', url: 'https://docs.test/d/{id}/export/pdf', vars: [{ name: 'id', type: 'string' }], flows: [step], sequence: [{ flow: 'fetch' }] };
+  const browser = () => new FakeBrowser({ [EXPORT]: { dom: h('html', {}), download: { name: 'deck.pdf', bytes: 7 } }, [PAGE]: shopPage(1) });
+
+  it('prints a download-only recipe as an array of download rows', async () => {
+    const dir = await home([deck]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'gslides', '--var', 'id=1Qi', '--download-dir', 'out'], io)).toBe(ExitCode.Ok);
+    expect(JSON.parse(io.out())).toEqual([{ file: join(dir, 'out', '1Qi.pdf'), name: '1Qi.pdf', url: EXPORT, bytes: 7, _page: 1, _index: 0 }]);
+    expect(io.err()).toContain('1 file saved');
+  });
+
+  it('prints a recipe with a table and a download as an object with both', async () => {
+    const page = { name: 'page', fields: [{ name: 'heading', type: 'text' as const, selectors: [css('h1')] }] };
+    const recipe: RecipeInput = { ...results([page]), flows: [{ name: 'fetch', steps: [{ kind: 'download', optional: true }] }], sequence: [{ extract: 'page' }, { flow: 'fetch' }] };
+    const dir = await home([recipe]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'results', '--timeout', '50'], io)).toBe(ExitCode.Ok);
+    const out = JSON.parse(io.out());
+    expect(Object.keys(out)).toEqual(['page', 'downloads']);
+    expect(out.downloads).toEqual([]);
+  });
+});
+
 describe('summary with tables', () => {
   const report = (tables: RunReport['tables'], rowCount: number) =>
-    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [], flows: [] }) as unknown as RunReport;
+    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [], flows: [], downloads: [] }) as unknown as RunReport;
   const table = (name: string, rowCount: number) => ({ name, rowCount, duplicateCount: 0, droppedCount: 0, item: null, fields: [] });
 
   it('lists the count of every table in place of the total', () => {

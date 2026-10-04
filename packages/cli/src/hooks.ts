@@ -26,6 +26,8 @@ export interface HookContext {
 export interface HookDetails {
   url?: string;
   reason?: string;
+  /** Absolute path of a saved file, for `download.saved`. */
+  file?: string;
   [detail: string]: unknown;
 }
 
@@ -54,6 +56,7 @@ const HOOK_VARS = [
   'WEBSCOOP_RUN_ID',
   'WEBSCOOP_URL',
   'WEBSCOOP_REASON',
+  'WEBSCOOP_FILE',
 ] as const;
 
 /**
@@ -100,7 +103,7 @@ export class HookRunner {
   fire(event: HookEvent, details: HookDetails = {}): Promise<void> {
     const commands = hookCommands(this.config, event);
     if (commands.length === 0) return this.last;
-    const { url, reason, ...rest } = details;
+    const { url, reason, file, ...rest } = details;
     const pid = this.pid;
     const env: Record<string, string | undefined> = { ...this.opts.env };
     for (const name of HOOK_VARS) delete env[name];
@@ -114,6 +117,7 @@ export class HookRunner {
       ...(this.context.recipe !== undefined ? { WEBSCOOP_RECIPE: this.context.recipe } : {}),
       ...(url ? { WEBSCOOP_URL: this.redactor.redact(url) } : {}),
       ...(reason !== undefined ? { WEBSCOOP_REASON: this.redactor.redact(reason) } : {}),
+      ...(file !== undefined ? { WEBSCOOP_FILE: file } : {}),
     });
     const secrets = new Set(this.context.secrets ?? []);
     const vars = Object.fromEntries(Object.entries(this.context.vars ?? {}).filter(([name]) => !secrets.has(name)));
@@ -128,6 +132,7 @@ export class HookRunner {
       ...(this.context.recipe !== undefined ? { recipe: this.context.recipe } : {}),
       ...(url ? { url } : {}),
       ...(reason !== undefined ? { reason } : {}),
+      ...(file !== undefined ? { file } : {}),
       vars,
       ...rest,
     }));
@@ -161,6 +166,7 @@ export class HookRunner {
       const { reason, url, ...rest } = e;
       void this.fire('attention.needed', { url, reason, ...rest });
     });
+    emitter.on('download.saved', (e) => void this.fire('download.saved', { file: e.file, name: e.name, url: e.url, bytes: e.bytes }));
     emitter.on('attention.resolved', (e) => void this.fire('attention.resolved', { reason: e.reason, outcome: e.outcome }));
     emitter.on('run.done', ({ report }) =>
       void this.fire('run.done', { ...(report.finalUrl ? { url: report.finalUrl } : {}), rows: report.rowCount, pages: report.pageCount }),

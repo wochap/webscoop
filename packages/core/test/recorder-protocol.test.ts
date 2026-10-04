@@ -31,6 +31,7 @@ const sampleState: RecorderState = {
   repickContext: null,
   guardContext: null,
   notice: null,
+  startDownload: null,
   otherLists: [],
   frame: { path: [2, 1], selectors: [{ strategy: 'id', value: 'app', stability: 'stable' }] },
   test: null,
@@ -147,6 +148,7 @@ describe('protocol', () => {
     { kind: 'draft.setHumanize', on: true },
     { kind: 'draft.setVar', name: 'tier', value: '1' },
     { kind: 'draft.reopen' },
+    { kind: 'draft.addDownloadStep' },
     { kind: 'draft.setUrl', url: 'http://127.0.0.1:4777/catalog?tier={tier}' },
     { kind: 'draft.addVar', name: 'email' },
     { kind: 'draft.renameVar', from: 'tier', to: 'level' },
@@ -175,6 +177,7 @@ describe('protocol', () => {
     { kind: 'session.error', message: 'boom' },
     { kind: 'step.replayResult', index: 0, ok: true, message: 'replayed step 1 (click)', state: sampleState },
     { kind: 'session.detach' },
+    { kind: 'download.saved', name: 'report.csv', file: '/dl/report.csv' },
     { kind: 'panel.mode', mode: 'strip', popup: true },
     {
       kind: 'draft.state',

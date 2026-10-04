@@ -1,5 +1,14 @@
+import { access, mkdir, rename, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   classifyFillElement,
+  DEFAULT_DOWNLOAD_SUBDIR,
+  DownloadQueue,
+  type DownloadOutcome,
+  type NextDownloadOptions,
+  type SavedDownload,
+  uniqueFileName,
   FILE_CHOOSER_TIMEOUT_MS,
   FillUnresolvedError,
   type FillKind,
@@ -23,7 +32,7 @@ import {
   type Session,
 } from '@webscoop/core';
 import { HOVER_INSET, HOVER_TIMEOUT_MS, Humanizer, type HoverOptions } from './humanize';
-import { chromium, errors, type BrowserContext, type Frame, type FrameLocator, type Locator, type Page } from 'playwright';
+import { chromium, errors, type BrowserContext, type Download, type Frame, type FrameLocator, type Locator, type Page } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
@@ -119,6 +128,93 @@ const FRAME_LOAD_MS = 30_000;
 /** How long `settle` waits for network idle when the action did not navigate. */
 const SETTLE_IDLE_MS = 2000;
 
+/** Whether a navigation error is Chromium turning the navigation into a download. */
+export function isDownloadStarting(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Download is starting');
+}
+
+/**
+ * Saves the downloads of one tab and its popups in a directory: under the
+ * suggested name with the ` (n)` collision rule, and renamed on request. Names
+ * being written are reserved, so two downloads of one name never collide.
+ */
+export class DownloadSaver {
+  private readonly reserved = new Set<string>();
+  readonly queue: DownloadQueue;
+
+  constructor(readonly dir: string = join(homedir(), ...DEFAULT_DOWNLOAD_SUBDIR)) {
+    this.queue = new DownloadQueue((download, name) => this.rename(download, name));
+  }
+
+  /** Sessions by page, so a page and each popup has one session and one download listener. */
+  private readonly sessions = new WeakMap<Page, Session>();
+
+  /** The session of a page, when one was made. */
+  sessionOf(page: Page): Session | undefined {
+    return this.sessions.get(page);
+  }
+
+  /** Save the page's downloads, and make a session for each popup it opens so their downloads are saved too. */
+  attach(page: Page, session: Session, popupSession: (popup: Page) => Session): void {
+    if (this.sessions.has(page)) return;
+    this.sessions.set(page, session);
+    page.on('download', (download) => this.queue.add(session, this.save(download)));
+    page.on('popup', (popup) => void popupSession(popup));
+  }
+
+  private async save(download: Download): Promise<DownloadOutcome> {
+    await mkdir(this.dir, { recursive: true });
+    const name = await this.reserve(download.suggestedFilename() || 'download');
+    const file = join(this.dir, name);
+    try {
+      await download.saveAs(file);
+      const failure = await download.failure();
+      if (failure) throw new Error(failure);
+      return { file, name, url: download.url(), bytes: (await stat(file)).size };
+    } catch (error) {
+      const failure = await download.failure().catch(() => null);
+      throw failure ? new Error(failure) : error;
+    } finally {
+      this.reserved.delete(name);
+    }
+  }
+
+  private async rename(download: SavedDownload, wanted: string): Promise<DownloadOutcome> {
+    const name = await this.reserve(wanted);
+    const file = join(this.dir, name);
+    try {
+      await rename(download.file, file);
+      return { file, name, url: download.url, bytes: download.bytes };
+    } finally {
+      this.reserved.delete(name);
+    }
+  }
+
+  /** A free name in the directory, reserved until the caller releases it. */
+  private async reserve(wanted: string): Promise<string> {
+    const existing = new Set<string>();
+    let candidate = wanted;
+    for (;;) {
+      const name = uniqueFileName(candidate, (n) => this.reserved.has(n) || existing.has(n));
+      if (!(await exists(join(this.dir, name)))) {
+        this.reserved.add(name);
+        return name;
+      }
+      existing.add(name);
+      candidate = wanted;
+    }
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 class PwRef implements ElementRef {
   constructor(
     readonly locator: Locator,
@@ -204,6 +300,10 @@ export class PlaywrightSession implements InteractiveSession {
   private navigationsBefore = 0;
   /** HTTP status of the last main frame document response. */
   private lastStatus: number | null = null;
+  /** Downloads this page started so far, so `settle` can tell whether an action downloaded. */
+  private downloadCount = 0;
+  /** Downloads counted when the last action started. */
+  private downloadsBefore = 0;
 
   constructor(
     private readonly context: BrowserContext,
@@ -213,7 +313,11 @@ export class PlaywrightSession implements InteractiveSession {
     private readonly humanizer?: Humanizer,
     /** Set for a tab of a shared browser: closing ends only the tab, and scripts and bindings stay on its page. */
     private readonly tab?: { close(): Promise<void> },
+    /** Saves the downloads of this page and of the popups opened from it. */
+    private readonly downloads: DownloadSaver = new DownloadSaver(),
   ) {
+    page.on('download', () => this.downloadCount++);
+    downloads.attach(page, this, (popup) => this.popupSession(popup));
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) this.navigations++;
     });
@@ -233,11 +337,17 @@ export class PlaywrightSession implements InteractiveSession {
       await this.humanizer?.dwell();
       return { url: this.page.url(), title: await this.page.title(), status: response?.status() ?? null };
     } catch (error) {
+      if (isDownloadStarting(error)) return this.downloadInfo();
       if (isDriverTimeout(error)) {
         throw new TimeoutError(`navigation to ${url} timed out after ${opts.timeoutMs} ms`);
       }
       throw error;
     }
+  }
+
+  /** Page info after a navigation that downloaded: the page keeps its previous document. */
+  private async downloadInfo(): Promise<PageInfo> {
+    return { url: this.page.url(), title: await this.page.title().catch(() => ''), status: null, download: true };
   }
 
   async resolve(candidate: SelectorCandidate, within?: ElementRef): Promise<ElementRef[]> {
@@ -327,6 +437,7 @@ export class PlaywrightSession implements InteractiveSession {
   async click(ref: ElementRef): Promise<void> {
     const { locator } = ref as PwRef;
     this.navigationsBefore = this.navigations;
+    this.downloadsBefore = this.downloadCount;
     if (this.humanizer) return this.humanizer.click(locator);
     await locator.scrollIntoViewIfNeeded();
     await locator.click();
@@ -342,6 +453,7 @@ export class PlaywrightSession implements InteractiveSession {
     const { locator: all } = ref as PwRef;
     const locator = all.first();
     this.navigationsBefore = this.navigations;
+    this.downloadsBefore = this.downloadCount;
     const kind = (await locator.evaluate(classifyFillElement)) as FillKind;
     if (kind === 'file') return locator.setInputFiles(opts.files ? [...opts.files] : value.split(':').filter(Boolean));
     if (opts.files) return this.chooseFiles(ref, opts.files);
@@ -478,8 +590,10 @@ export class PlaywrightSession implements InteractiveSession {
         // Same document: wait for requests the action started, but never long.
         await this.page.waitForLoadState('networkidle', { timeout: Math.min(SETTLE_IDLE_MS, left()) }).catch(() => {});
       }
+      if (!navigated() && this.downloadCount > this.downloadsBefore) return this.downloadInfo();
       return { url: this.page.url(), title: await this.page.title(), status: this.lastStatus };
     } catch (error) {
+      if (isDownloadStarting(error)) return this.downloadInfo();
       if (isDriverTimeout(error)) {
         throw new TimeoutError(`waiting for ${this.page.url()} to load timed out after ${opts.timeoutMs} ms`);
       }
@@ -515,9 +629,27 @@ export class PlaywrightSession implements InteractiveSession {
     return this.page.isClosed();
   }
 
+  downloadMark(): number {
+    return this.downloads.queue.mark();
+  }
+
+  nextDownload(opts: NextDownloadOptions): Promise<SavedDownload> {
+    return this.downloads.queue.next(opts);
+  }
+
+  onDownload(cb: (download: SavedDownload) => void): () => void {
+    return this.downloads.queue.onSaved(cb);
+  }
+
+  settleDownloads(timeoutMs: number): Promise<void> {
+    return this.downloads.queue.settle(timeoutMs);
+  }
+
   /** The session over a popup of this page: same context and humanizer settings; closing it closes only the popup. */
   private popupSession(popup: Page): PlaywrightSession {
-    return new PlaywrightSession(this.context, popup, this.driver, this.humanizer ? new Humanizer(popup) : undefined, { close: () => popup.close().catch(() => {}) });
+    const known = this.downloads.sessionOf(popup);
+    if (known) return known as PlaywrightSession;
+    return new PlaywrightSession(this.context, popup, this.driver, this.humanizer ? new Humanizer(popup) : undefined, { close: () => popup.close().catch(() => {}) }, this.downloads);
   }
 
   onPopup(cb: (popup: Session) => void): () => void {
@@ -595,6 +727,10 @@ export class PlaywrightSession implements InteractiveSession {
     }
   }
 
+  async evaluate(source: string): Promise<void> {
+    await this.mainWorldEvaluate(source);
+  }
+
   async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {
     const known = this.bindings.has(name);
     this.bindings.set(name, fn);
@@ -659,7 +795,7 @@ export class PlaywrightBrowser implements BrowserPort {
     try {
       context.setDefaultTimeout(this.options.actionTimeoutMs ?? 5000);
       const page = context.pages()[0] ?? (await context.newPage());
-      return new PlaywrightSession(context, page, driver, opts.humanize ? new Humanizer(page) : undefined);
+      return new PlaywrightSession(context, page, driver, opts.humanize ? new Humanizer(page) : undefined, undefined, new DownloadSaver(opts.downloadDir));
     } catch (error) {
       await context.close().catch(() => {});
       throw error;
@@ -678,6 +814,8 @@ export interface TabOptions {
   humanize?: boolean;
   /** Ignore the tab's Content-Security-Policy from its next navigation on, so the banner and re-pick can be injected. */
   bypassCSP?: boolean;
+  /** Absolute directory for the tab's downloads. */
+  downloadDir?: string;
 }
 
 /**
@@ -749,7 +887,7 @@ export class SharedBrowser {
           await page.close().catch(() => {});
         })()),
     };
-    return new PlaywrightSession(this.context, page, this.driver, opts.humanize ? new Humanizer(page) : undefined, tab);
+    return new PlaywrightSession(this.context, page, this.driver, opts.humanize ? new Humanizer(page) : undefined, tab, new DownloadSaver(opts.downloadDir));
   }
 
   /** Called once when the browser closes, by `close()` or by the user. Returns an unsubscribe function. */

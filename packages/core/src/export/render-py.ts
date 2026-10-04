@@ -44,6 +44,8 @@ function constants(plan: ExportPlan, opts: RenderOptions): string {
     `FILE_CHOOSER_TIMEOUT_MS = ${t.fileChooserMs}`,
     '# Most pages --pages all walks.',
     `DEFAULT_PAGE_CAP = ${plan.pagination.cap}`,
+    '# Where download steps save files.',
+    opts.downloadDir !== undefined ? `DOWNLOAD_DIR = ${pyLiteral(opts.downloadDir)}` : 'DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "webscoop")',
     '',
     '# Page URL; {name} marks a variable.',
     `URL_TEMPLATE = ${pyLiteral(plan.url)}`,

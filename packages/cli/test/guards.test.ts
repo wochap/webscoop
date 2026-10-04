@@ -275,7 +275,7 @@ describe('guard banner', () => {
 
 describe('summary', () => {
   it('mentions cleared guards', () => {
-    const report = { recipe: 'shop', durationMs: 1500, pageCount: 1, rowCount: 3, tables: [], healed: 0, duplicateCount: 0, guards: [{ kind: 'login', page: 1, url: PAGE, waitedMs: 12_000, cleared: true }], steps: [], flows: [] };
+    const report = { recipe: 'shop', durationMs: 1500, pageCount: 1, rowCount: 3, tables: [], healed: 0, duplicateCount: 0, guards: [{ kind: 'login', page: 1, url: PAGE, waitedMs: 12_000, cleared: true }], steps: [], flows: [], downloads: [] };
     expect(summary(report as never)).toBe('3 rows from 1 page, 1 guard cleared in 1.50s (shop)');
   });
 });

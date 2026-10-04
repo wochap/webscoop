@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { buildPlan, renderPy, renderTs } from '@webscoop/core';
+import { loadConfig } from '../config';
 import { log, type CliIo } from '../context';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
 import { resolvePaths } from '../paths';
@@ -30,7 +31,9 @@ export async function exportCommand(io: CliIo, recipeRef: string, opts: ExportCo
   const paths = resolvePaths(io.env, io.homedir);
   const recipe = await new FsStorage(paths.recipesDir, io.cwd).load(recipeRef);
   const render = format === 'py' ? renderPy : renderTs;
-  const script = render(buildPlan(recipe), { version, now: new Date(), headless: opts.headless === true });
+  // A configured download directory is kept; without one the script uses ~/Downloads/webscoop where it runs.
+  const dir = (await loadConfig(paths)).downloads?.dir;
+  const script = render(buildPlan(recipe), { version, now: new Date(), headless: opts.headless === true, ...(dir !== undefined ? { downloadDir: dir } : {}) });
   if (!opts.out) {
     io.stdout.write(script);
     return ExitCode.Ok;

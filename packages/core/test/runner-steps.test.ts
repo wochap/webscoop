@@ -195,6 +195,60 @@ function recipeInput(steps: StepInput[], extra: Partial<RecipeInput> = {}): Reci
   return recipe({ url: PAGE, vars: [], flows: [{ name: 'setup', steps }], sequence: [{ flow: 'setup' }, { extract: 'items' }], ...extra });
 }
 
+describe('runner download steps', () => {
+  const EXPORT = 'https://docs.test/d/1Qi/export/pdf';
+  const deck = (steps: StepInput[], extra: Partial<RecipeInput> = {}): Recipe =>
+    loadRecipe({ schemaVersion: 2, name: 'deck', url: 'https://docs.test/d/{id}/export/pdf', vars: [{ name: 'id', type: 'string' }], flows: [{ name: 'fetch', steps }], sequence: [{ flow: 'fetch' }], ...extra });
+  const exportPage: FakePage = { dom: h('html', {}), download: { name: 'deck.pdf', bytes: 2048 } };
+
+  it('takes the download the recipe URL started with a targetless step, saved under the step value', async () => {
+    const t = setup({ [EXPORT]: exportPage }, deck([{ kind: 'download', value: '{id}.pdf' }]), { vars: { id: '1Qi' }, openOptions: { downloadDir: '/dl' }, guards: { enabled: true, timeoutMs: 0 } });
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(t.log.of('guard.raised')).toEqual([]);
+    expect(t.log.of('download.saved')).toEqual([{ page: 1, file: '/dl/1Qi.pdf', name: '1Qi.pdf', url: EXPORT, bytes: 2048, step: { flow: 'fetch', index: 0 } }]);
+    expect(result.report.steps[0]).toMatchObject({ kind: 'download', outcome: 'ok', download: { file: '/dl/1Qi.pdf' } });
+    expect(result.report.downloads).toHaveLength(1);
+    expect([...t.browser.files.keys()]).toEqual(['/dl/1Qi.pdf']);
+  });
+
+  it('clicks a download target and takes the download the click started, keeping an existing file', async () => {
+    const page: FakePage = {
+      dom: catalog(cards(2)),
+      on: { click: (el) => (el?.attrs.id === 'export' ? { download: { url: '/report.pdf', name: 'report.pdf', bytes: 10 } } : undefined) },
+    };
+    page.dom.children.push(h('button', { id: 'export' }, 'Export PDF'));
+    const t = setup({ [PAGE]: page }, withSteps([{ kind: 'download', target: { selectors: [css('#export')] } }]), { openOptions: { downloadDir: '/dl' } });
+    t.browser.files.set('/dl/report.pdf', 1);
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.rows).toHaveLength(2);
+    expect(t.log.of('download.saved')).toEqual([expect.objectContaining({ file: '/dl/report (1).pdf', url: 'https://shop.test/report.pdf', step: { flow: 'setup', index: 0 } })]);
+    expect(t.browser.files.get('/dl/report.pdf')).toBe(1);
+  });
+
+  it('fails a required download step that sees no download, naming the step', async () => {
+    const t = setup({ [PAGE]: { dom: catalog(cards(1)) } }, withSteps([{ kind: 'download' }]), { timeoutMs: 50 });
+    const result = await t.runner.run();
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required', fields: ['setup:0'] });
+    if (!result.ok) expect(result.message).toMatch(/step 0 \(download\) of flow "setup" saw no download/);
+  });
+
+  it('skips an optional download step that sees no download', async () => {
+    const t = setup({ [PAGE]: { dom: catalog(cards(1)) } }, withSteps([{ kind: 'download', optional: true }]), { timeoutMs: 50 });
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(result.report.steps[0]).toMatchObject({ outcome: 'skipped' });
+  });
+
+  it('fails a download whose value resolves to a name with a slash', async () => {
+    const t = setup({ [EXPORT]: exportPage }, deck([{ kind: 'download', value: 'a/{id}.pdf' }]), { vars: { id: '1Qi' } });
+    const result = await t.runner.run();
+    expect(result).toMatchObject({ ok: false, reason: 'missing-required' });
+    if (!result.ok) expect(result.message).toContain('"a/{id}.pdf"');
+  });
+});
+
 describe('runner steps inside an iframe', () => {
   /** A catalog shown once a button inside `iframe#app` is clicked. */
   const framedGate = (): FakePage => ({

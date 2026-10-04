@@ -15,7 +15,7 @@ import {
   type StoragePort,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, settingsOptions } from '../browser';
-import { loadConfig, type Config } from '../config';
+import { loadConfig, resolveDownloadDir, type Config } from '../config';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
@@ -44,6 +44,8 @@ export interface RecordCommandOptions {
   edit?: string;
   /** With `--edit`: re-pick only this field, then save and end. */
   repick?: string;
+  /** `--download-dir`. */
+  downloadDir?: string;
 }
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -152,6 +154,7 @@ function logEvents(io: CliIo, emitter: RecorderEmitter): void {
   emitter.on('recorder.testRun', (e) => log(io, e.error ? `test run failed: ${e.error}` : `test run: ${e.rows} rows in ${e.durationMs} ms`));
   emitter.on('recorder.saved', (e) => log(io, `saved ${e.name}${e.path ? ` to ${e.path}` : ''}`));
   emitter.on('recorder.error', (e) => log(io, `error: ${e.message}`));
+  emitter.on('recorder.download', (e) => log(io, `saved ${e.file}`));
 }
 
 export async function recordCommand(outer: CliIo, template: string | undefined, opts: RecordCommandOptions): Promise<Code> {
@@ -213,7 +216,7 @@ export async function recordCommand(outer: CliIo, template: string | undefined, 
     const bundle = await io.recorderBundle(e2e ? 'e2e' : 'default');
     const browser = await createBrowser();
     await hooks.fire('browser.starting');
-    session = await browser.open(profileDir, { ...settingsOptions(settings), bypassCSP: true, ...(e2e ? { remoteDebuggingPort: Number(cdpPort) } : {}) });
+    session = await browser.open(profileDir, { ...settingsOptions(settings), bypassCSP: true, downloadDir: resolveDownloadDir(opts.downloadDir, config, io.cwd, io.homedir), ...(e2e ? { remoteDebuggingPort: Number(cdpPort) } : {}) });
     hooks.setPid((await io.findBrowserPid(resolve(profileDir), BROWSER_PID_DEADLINE_MS)) ?? undefined);
     void hooks.fire('browser.started');
     if (!isInteractiveSession(session)) throw new CliError('this browser adapter cannot run a recording session');
@@ -223,6 +226,7 @@ export async function recordCommand(outer: CliIo, template: string | undefined, 
       : emptyDraft({ name, url: template, vars: templateVariables(template).map((v) => ({ name: v, value: values[v]! })) });
     const emitter = new RecorderEmitter();
     logEvents(io, emitter);
+    emitter.on('recorder.download', (e) => void hooks.fire('download.saved', { file: e.file, name: e.name, url: e.url, bytes: e.bytes }));
     // A re-pick writes the recipe back where it was loaded from, even when that is a path.
     const target = mode.kind === 'repick' ? storage.pathFor(opts.edit!) : null;
     const write = (r: Recipe) => (target ? storage.saveTo(target, r).then(() => {}) : storage.save(r));

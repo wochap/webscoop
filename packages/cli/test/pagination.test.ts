@@ -149,7 +149,13 @@ describe('summary', () => {
     guards: [],
     steps: [],
     flows: [],
+    downloads: [],
     ...extra,
+  });
+
+  it('counts saved files when there are any', () => {
+    const file = { page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'http://x/a.csv', bytes: 3, step: null };
+    expect(summary(report({ downloads: [file, { ...file, name: 'b.csv' }] }))).toBe('24 rows from 1 page, 2 files saved in 1.50s (shop)');
   });
 
   it('counts pages, healed targets, and dropped duplicates', () => {

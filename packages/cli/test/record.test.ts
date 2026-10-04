@@ -110,7 +110,7 @@ describe('webscoop record', () => {
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     const run = main(['record', 'http://127.0.0.1:4777/catalog?tier={tier}', '--var', 'tier=0'], io);
     const session = await sessionOf(browser);
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true });
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
     expect(session.injected).toEqual(['/* recorder default */']);
 
     const page = annotate(tier0());
@@ -232,7 +232,7 @@ describe('webscoop record', () => {
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_E2E_CDP_PORT: '9333' }, browser });
     const run = main(['record', PAGE, '--name', 'shop'], io);
     const session = await sessionOf(browser);
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333, downloadDir: '/home/test/Downloads/webscoop' });
     expect(session.injected).toEqual(['/* recorder e2e */']);
     await session.userClose();
     expect(await run).toBe(ExitCode.Ok);

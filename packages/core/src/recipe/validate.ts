@@ -208,14 +208,30 @@ function flowErrors(input: Record<string, unknown>, declared: ReadonlySet<string
           if (step[key] !== undefined) errors.push({ path: at(key), message: `${what} sets ${key}, which only await-user steps take` });
         }
       }
-      if (kind === 'fill' && typeof step.value === 'string') {
+      if ((kind === 'fill' || kind === 'download') && typeof step.value === 'string') {
         for (const variable of templateVariables(step.value)) {
           if (!declared.has(variable)) errors.push({ path: at('value'), message: `template variable "${variable}" is not declared under vars` });
         }
       }
     });
   });
+  if (hasDownloadStep(input) && Array.isArray(input.tables)) {
+    input.tables.forEach((table, index) => {
+      if (isRecord(table) && table.name === DOWNLOADS_TABLE) {
+        errors.push({ path: jsonPath(['tables', index, 'name']), message: `table name "${DOWNLOADS_TABLE}" is reserved in a recipe with a download step` });
+      }
+    });
+  }
   return errors;
+}
+
+/** The output table that lists files saved by `download` steps. */
+export const DOWNLOADS_TABLE = 'downloads';
+
+/** Whether any flow of a recipe document has a `download` step. */
+export function hasDownloadStep(input: unknown): boolean {
+  if (!isRecord(input) || !Array.isArray(input.flows)) return false;
+  return input.flows.some((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.some((step) => isRecord(step) && step.kind === 'download'));
 }
 
 /** Sequence checks: blocks name known called flows and tables, each table once, one paginate block at the top level, everything used. */

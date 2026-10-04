@@ -6,6 +6,7 @@ export * from './recipe/sequence';
 export * from './template';
 export * from './fill-kind';
 export * from './ports';
+export * from './downloads';
 export * from './events';
 export * from './convert';
 export * from './extract';

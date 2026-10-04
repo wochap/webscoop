@@ -141,6 +141,22 @@ export interface RunReport {
   steps: StepReport[];
   /** Every flow run, in the order it started, each with its steps. */
   flows: FlowRunReport[];
+  /** Every file the run saved, in the order it was settled. */
+  downloads: DownloadReport[];
+}
+
+/** A file a run saved in the download directory. */
+export interface DownloadReport {
+  /** Page the file was saved on. */
+  page: number;
+  /** Absolute path. */
+  file: string;
+  name: string;
+  /** Source URL. */
+  url: string;
+  bytes: number;
+  /** The `download` step that took the file, or null for a download no step waited for. */
+  step: { flow: string; index: number; label?: string } | null;
 }
 
 export interface PageReport {
@@ -204,6 +220,8 @@ export interface RunEvents {
   /** Emitted once, when the page loop ends; `page` is the last page extracted. */
   'pagination.stopped': { page: number; reason: StopReason };
   'recipe.saved': { path: string };
+  /** A file was saved under its final name: once a `download` step took it, or at the end of the run for one no step took. */
+  'download.saved': DownloadReport;
   /** A flow started: called from the sequence or fired by its trigger; `window` is the trigger's window URL for a reactive flow. */
   'flow.started': { flow: string; kind: FlowKind; page: number; window?: string };
   'flow.done': { flow: string; kind: FlowKind; page: number; outcome: FlowOutcome };
@@ -239,6 +257,7 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'page.advanced',
   'pagination.stopped',
   'recipe.saved',
+  'download.saved',
   'attention.needed',
   'attention.resolved',
   'run.done',

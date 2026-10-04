@@ -168,7 +168,7 @@ export class DaemonJob implements Job {
   async execute(ctx: { browser: SharedBrowserHandle; attention: AttentionGate }): Promise<number> {
     const browser: BrowserPort = {
       open: (_profileDir, opts): Promise<Session> =>
-        ctx.browser.newSession({ ...(opts?.humanize ? { humanize: true } : {}), ...(opts?.bypassCSP ? { bypassCSP: true } : {}) }),
+        ctx.browser.newSession({ ...(opts?.humanize ? { humanize: true } : {}), ...(opts?.bypassCSP ? { bypassCSP: true } : {}), ...(opts?.downloadDir ? { downloadDir: opts.downloadDir } : {}) }),
     };
     const job = { browser, attention: this.attentionPort(ctx.attention), saveRecipe: this.saveRecipe, watch: (emitter: RunEmitter) => this.watch(emitter) };
     try {

@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { recordEvents, RUN_EVENT_NAMES, RunEmitter, type FailureReason, type GuardEntry, type Row, type RunEvents, type RunReport } from '../src';
+import { recordEvents, RUN_EVENT_NAMES, RunEmitter, type DownloadReport, type FailureReason, type GuardEntry, type Row, type RunEvents, type RunReport } from '../src';
 
 describe('RunEmitter', () => {
   it('delivers typed payloads to named and catch-all listeners', () => {
@@ -65,5 +65,15 @@ describe('RunEmitter', () => {
     emitter.emit('guard.raised', { kind: 'login', page: 1, url: 'http://x/login', reason: 'redirected to a login page' });
     emitter.emit('guard.cleared', { kind: 'login', page: 1, url: 'http://x/login', waitedMs: 1200 });
     expect(log.of('guard.cleared')[0]!.waitedMs).toBe(1200);
+  });
+
+  it('types the download.saved event and the report download list', () => {
+    expect(RUN_EVENT_NAMES).toContain('download.saved');
+    expectTypeOf<RunEvents['download.saved']>().toEqualTypeOf<DownloadReport>();
+    expectTypeOf<RunReport['downloads']>().toEqualTypeOf<DownloadReport[]>();
+    const emitter = new RunEmitter();
+    const log = recordEvents(emitter);
+    emitter.emit('download.saved', { page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'http://x/a.csv', bytes: 3, step: null });
+    expect(log.of('download.saved')).toEqual([{ page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'http://x/a.csv', bytes: 3, step: null }]);
   });
 });

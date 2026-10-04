@@ -567,6 +567,26 @@ describe('flows', () => {
     expect(errors[0]!.message).toContain('query');
   });
 
+  it('accepts a download step with a variable in its value and no target', () => {
+    const recipe = loadRecipe(withFlows([{ name: 'fetch', steps: [{ kind: 'download', value: '{category}.pdf' }] }], [{ flow: 'fetch' }, { extract: 'items' }]));
+    expect(recipe.flows[0]!.steps[0]).toEqual({ kind: 'download', value: '{category}.pdf', window: 'same', optional: false });
+  });
+
+  it('rejects an undeclared variable in a download value', () => {
+    const errors = errorsOf(withFlows([{ name: 'fetch', steps: [{ kind: 'download', value: '{id}.pdf' }] }], [{ flow: 'fetch' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].value']);
+    expect(errors[0]!.message).toContain('id');
+  });
+
+  it('reserves the downloads table name in a recipe with a download step', () => {
+    const field = { name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h1', stability: 'medium' as const }] };
+    const input = { ...base(), fields: undefined, tables: [{ name: 'downloads', fields: [field] }], flows: [{ name: 'fetch', steps: [{ kind: 'download' }] }], sequence: [{ flow: 'fetch' }, { extract: 'downloads' }] };
+    const errors = errorsOf(input);
+    expect(errors.map((e) => e.path)).toEqual(['$.tables[0].name']);
+    expect(errors[0]!.message).toContain('downloads');
+    expect(validateRecipe({ ...input, flows: [{ name: 'fetch', steps: [{ kind: 'click', target: accept }] }] }).ok).toBe(true);
+  });
+
   it('leaves an empty flows list out on save and round-trips flows', () => {
     expect(JSON.parse(saveRecipe(loadRecipe(base()))).flows).toBeUndefined();
     const input = withFlows([{ name: 'search', steps: [{ kind: 'fill', target: accept, value: '{q}', label: 'search' }] }], [{ flow: 'search' }, { extract: 'items' }], {

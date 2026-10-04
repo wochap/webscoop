@@ -33,6 +33,7 @@ export {
   PAGE_COOKIE,
   PAGE_SIZE,
   productDescription,
+  REPORT_CSV,
   startPlayground,
   VISITOR_COOKIE,
   type ControlState,

@@ -549,9 +549,9 @@ export function varNameError(draft: Pick<Draft, 'vars'>, name: string, except?: 
   return null;
 }
 
-/** The draft's flows with `rewrite` applied to every `fill` step value. */
+/** The draft's flows with `rewrite` applied to every `fill` and `download` step value. */
 function rewriteSteps(flows: readonly DraftFlow[], rewrite: (value: string) => string): DraftFlow[] {
-  return flows.map((f) => ({ ...f, steps: f.steps.map((s) => (s.kind === 'fill' && s.value ? { ...s, value: rewrite(s.value) } : s)) }));
+  return flows.map((f) => ({ ...f, steps: f.steps.map((s) => ((s.kind === 'fill' || s.kind === 'download') && s.value ? { ...s, value: rewrite(s.value) } : s)) }));
 }
 
 const FLOW_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

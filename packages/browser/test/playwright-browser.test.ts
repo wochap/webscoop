@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -552,6 +552,62 @@ describe.skipIf(!hasDisplay)('PlaywrightSession popups (integration)', () => {
     } finally {
       await shared.close();
       await rm(profileDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.skipIf(!hasDisplay)('PlaywrightSession downloads (integration)', () => {
+  let server: Server;
+  let base: string;
+  const body = 'a,b\n1,2\n';
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      if (req.url === '/file.csv') {
+        res.setHeader('content-type', 'text/csv');
+        res.setHeader('content-disposition', 'attachment; filename="report.csv"');
+        res.end(body);
+        return;
+      }
+      res.setHeader('content-type', 'text/html');
+      res.end('<title>main</title><a id="get" href="/file.csv">get</a>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  it('saves clicked downloads with the collision rule, and treats a downloading goto as a download', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const downloadDir = await mkdtemp(join(tmpdir(), 'webscoop-downloads-'));
+    const session = await new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }).open(profileDir, { downloadDir });
+    try {
+      await session.goto(`${base}/`, { timeoutMs: 10_000 });
+      const saved: string[] = [];
+      session.onDownload((d) => saved.push(d.name));
+      let mark = session.downloadMark();
+      await session.click((await session.resolve(c('id', 'get')))[0]!);
+      const settled = await session.settle({ timeoutMs: 10_000 });
+      expect(settled.download).toBe(true);
+      const first = await session.nextDownload({ since: mark, timeoutMs: 10_000 });
+      expect(first).toMatchObject({ name: 'report.csv', file: join(downloadDir, 'report.csv'), url: `${base}/file.csv`, bytes: body.length });
+      expect(await readFile(first.file, 'utf8')).toBe(body);
+
+      mark = session.downloadMark();
+      await session.click((await session.resolve(c('id', 'get')))[0]!);
+      const second = await session.nextDownload({ since: mark, timeoutMs: 10_000 });
+      expect(second.name).toBe('report (1).csv');
+
+      const info = await session.goto(`${base}/file.csv`, { timeoutMs: 10_000 });
+      expect(info).toMatchObject({ url: `${base}/`, download: true });
+      const third = await session.nextDownload({ since: 0, timeoutMs: 10_000, name: 'named.csv' });
+      expect(third.file).toBe(join(downloadDir, 'named.csv'));
+      expect(await readFile(third.file, 'utf8')).toBe(body);
+      expect(saved).toEqual(['report.csv', 'report (1).csv', 'report (2).csv']);
+      expect((await readdir(downloadDir)).sort()).toEqual(['named.csv', 'report (1).csv', 'report.csv']);
+    } finally {
+      await session.close();
+      await rm(profileDir, { recursive: true, force: true });
+      await rm(downloadDir, { recursive: true, force: true });
     }
   });
 });

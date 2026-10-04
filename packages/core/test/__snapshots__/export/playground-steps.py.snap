@@ -441,6 +441,29 @@ class Unresolved(Exception):
     """A step's element showed no option or opened no file chooser: the step found no element."""
 
 
+def free_name(name):
+    """A name in the download directory that no file has yet: name (1).ext, name (2).ext, and so on."""
+    if not os.path.exists(os.path.join(DOWNLOAD_DIR, name)):
+        return name
+    dot = name.rfind(".")
+    stem, ext = (name[:dot], name[dot:]) if dot > 0 else (name, "")
+    n = 1
+    while os.path.exists(os.path.join(DOWNLOAD_DIR, stem + " (" + str(n) + ")" + ext)):
+        n += 1
+    return stem + " (" + str(n) + ")" + ext
+
+
+def save_download(download, name):
+    """Save a download in the download directory under the name, else the name the server suggests; returns the path."""
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    path = os.path.join(DOWNLOAD_DIR, free_name(name if name is not None else download.suggested_filename))
+    download.save_as(path)
+    failure = download.failure()
+    if failure:
+        raise Exception(failure)
+    return path
+
+
 class Session:
     """One browser window: navigation, settling, and the actions steps take."""
 
@@ -466,6 +489,11 @@ class Session:
             self.page.goto(url, wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             raise Failure("navigation to " + url + " timed out after " + str(NAVIGATION_TIMEOUT_MS) + " ms", EXIT_ERROR)
+        except PlaywrightError as error:
+            # A URL that downloads leaves the window on its previous document; a download step takes the file.
+            if "Download is starting" in str(error):
+                return self.page.url
+            raise
         try:
             self.page.wait_for_load_state("networkidle", timeout=max(1, min(SETTLE_IDLE_MS, deadline - now_ms())))
         except PlaywrightError:
@@ -616,12 +644,36 @@ class Windows:
         self.main = main
         self.popups = []
         self.seq = 0
+        # Every download any window started, in order, as [download, taken]; a download step takes each at most once.
+        self.downloads = []
+        main.page.on("download", self._on_download)
         context.on("page", self._on_page)
 
     def _on_page(self, page):
         if page != self.main.page:
+            page.on("download", self._on_download)
             self.seq += 1
             self.popups.append((self.seq, Session(page)))
+
+    def _on_download(self, download):
+        self.downloads.append([download, False])
+
+    def download_mark(self):
+        """A mark for next_download: downloads started after it are newer."""
+        return len(self.downloads)
+
+    def next_download(self, since):
+        """The oldest download started at or after the mark that no step took, waiting up to the navigation timeout; None when none starts."""
+        deadline = now_ms() + NAVIGATION_TIMEOUT_MS
+        while True:
+            for i, entry in enumerate(self.downloads):
+                if i >= since and not entry[1]:
+                    entry[1] = True
+                    return entry[0]
+            if now_ms() >= deadline:
+                return None
+            # A Playwright call lets the page events in.
+            self.main.page.wait_for_timeout(50)
 
     def mark(self):
         """A mark for newest_since: popups opened after it are newer."""
@@ -1280,6 +1332,10 @@ class Run:
                     self.await_user(step, action, window)
                     log(label + ": ok")
                     continue
+                if action["kind"] == "download" and not step["target"]:
+                    self.take_download(action, 0, fail)
+                    log(label + ": ok")
+                    continue
                 target = None
                 if step["target"]:
                     target, why = find_step_target(window, step, self.cache)
@@ -1287,8 +1343,9 @@ class Run:
                         fail(why)
                 files = path_files(action, self.values) if action["kind"] == "fill" else None
                 previous_url = window.page.url
+                download_mark = self.windows.download_mark()
                 try:
-                    if action["kind"] == "click":
+                    if action["kind"] in ("click", "download"):
                         window.click(target)
                     elif action["kind"] == "fill":
                         window.fill(target, fill_text(action["text"], self.values), files)
@@ -1310,6 +1367,8 @@ class Run:
                         settled = None
                     if settled is not None and window is self.main:
                         self.page_url = settled
+                if action["kind"] == "download":
+                    self.take_download(action, download_mark, fail)
                 log(label + ": ok")
             except Skipped:
                 continue
@@ -1341,6 +1400,21 @@ class Run:
                 if flow["recover"]:
                     self.recover()
                 return
+
+    def take_download(self, action, since, fail):
+        """Take the next download started at or after the mark and save it under the step's file name, else the suggested one."""
+        name = None
+        if action["name"] is not None:
+            name = fill_text(action["name"], self.values)
+            if name.strip() == "" or "/" in name or "\\" in name:
+                fail("cannot save its download: value " + json.dumps(action["name"]) + " is not a file name")
+        download = self.windows.next_download(since)
+        if download is None:
+            fail("saw no download: no download started within " + str(NAVIGATION_TIMEOUT_MS) + " ms")
+        try:
+            log("saved " + save_download(download, name))
+        except Exception as error:
+            fail("saw its download fail: " + str(error))
 
     def await_holds(self, target, until):
         """Whether an await-user condition holds: the target resolves (appears) or resolves nowhere (disappears), in any open window."""
@@ -1682,6 +1756,8 @@ VAR_COMMAND_TIMEOUT_MS = 30000
 FILE_CHOOSER_TIMEOUT_MS = 5000
 # Most pages --pages all walks.
 DEFAULT_PAGE_CAP = 500
+# Where download steps save files.
+DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "webscoop")
 
 # Page URL; {name} marks a variable.
 URL_TEMPLATE = "http://127.0.0.1:{port}/catalog?tier={tier}&gate=cookie"

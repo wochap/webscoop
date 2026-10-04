@@ -21,6 +21,7 @@ export const HOOK_EVENTS = [
   'attention.resolved',
   'browser.show',
   'browser.hide',
+  'download.saved',
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -130,6 +131,12 @@ export const ConfigSchema = z.object({
   hookTimeoutMs: z.number().int().positive().optional(),
   /** No longer supported; loaded with a warning and ignored. */
   window: z.unknown().optional(),
+  downloads: z
+    .object({
+      /** Where downloads are saved. Relative to the config file directory; `~/` is the home directory. Default `~/Downloads/webscoop`. */
+      dir: z.string().min(1).optional(),
+    })
+    .optional(),
   profiles: z
     .object({
       /** Profile used when no rule matches; without it, the recipe name. */
@@ -154,6 +161,18 @@ export function expandPath(path: string, base: string, home: string): string {
   if (path === '~') return home;
   if (path.startsWith('~/')) return join(home, path.slice(2));
   return isAbsolute(path) ? path : resolve(base, path);
+}
+
+/**
+ * The download directory of a command: `--download-dir` against the working
+ * directory, then config `downloads.dir` (already absolute once loaded), then
+ * `~/Downloads/webscoop`.
+ */
+export function resolveDownloadDir(flag: string | undefined, config: Config, cwd: string, home: string): string {
+  if (flag !== undefined) return expandPath(flag, cwd, home);
+  const dir = config.downloads?.dir;
+  if (dir !== undefined) return expandPath(dir, configDirOf(config) ?? cwd, home);
+  return join(home, 'Downloads', 'webscoop');
 }
 
 export interface CompiledProfileRule {
@@ -214,6 +233,7 @@ export async function loadConfig(paths: Paths, warn?: (message: string) => void)
   profileRules(parsed.data);
   const configDir = dirname(paths.configFile);
   if (parsed.data.llm.apiKeyFile) parsed.data.llm.apiKeyFile = expandPath(parsed.data.llm.apiKeyFile, configDir, homedir());
+  if (parsed.data.downloads?.dir !== undefined) parsed.data.downloads.dir = expandPath(parsed.data.downloads.dir, configDir, homedir());
   for (const bindings of Object.values(parsed.data.vars ?? {})) {
     for (const binding of Object.values(bindings)) {
       if (binding.file !== undefined) binding.file = expandPath(binding.file, configDir, homedir());

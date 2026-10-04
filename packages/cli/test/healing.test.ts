@@ -110,12 +110,12 @@ describe('run healing flags', () => {
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_E2E_CDP_PORT: '9333' }, browser });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
     // The DevTools port is a launch setting of every run; CSP is bypassed per tab, for the banner.
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333, downloadDir: '/home/test/Downloads/webscoop' });
     await writeFile(join(dir, 'config.json'), JSON.stringify({ guards: { banner: false } }));
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[1]).toEqual({ remoteDebuggingPort: 9333 });
+    expect(browser.openOptions[1]).toEqual({ remoteDebuggingPort: 9333, downloadDir: '/home/test/Downloads/webscoop' });
     expect(await main(['run', 'shop', '--interactive'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[2]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333 });
+    expect(browser.openOptions[2]).toEqual({ bypassCSP: true, remoteDebuggingPort: 9333, downloadDir: '/home/test/Downloads/webscoop' });
   });
 });
 

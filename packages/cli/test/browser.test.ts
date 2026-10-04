@@ -157,7 +157,7 @@ describe('humanize flags', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--humanize'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ humanize: true, bypassCSP: true });
+    expect(browser.openOptions[0]).toEqual({ humanize: true, bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
     expect(t.err()).toContain('(no proxy, humanized input)');
     const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page() });
     expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
@@ -169,7 +169,7 @@ describe('humanize flags', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--no-humanize'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true });
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
     const test = page();
     expect(await main(['test', 'shop'], testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: test }))).toBe(ExitCode.Ok);
     expect(test.openOptions[0]).toMatchObject({ humanize: true });
@@ -202,7 +202,7 @@ describe('run with browser settings', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ proxy: { server: 'http://proxy-a:8080', username: 'user', password: 'secret' }, timezone: 'Europe/Madrid', bypassCSP: true });
+    expect(browser.openOptions[0]).toEqual({ proxy: { server: 'http://proxy-a:8080', username: 'user', password: 'secret' }, timezone: 'Europe/Madrid', bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
     expect(t.err()).toContain('(proxy http://***@proxy-a:8080)');
     expect(t.err()).not.toContain('secret');
   });

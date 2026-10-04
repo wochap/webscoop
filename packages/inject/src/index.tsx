@@ -1,4 +1,4 @@
-import { PAGE_GLOBAL } from '@webscoop/core/page';
+import { BLANK_GLOBAL, PAGE_GLOBAL } from '@webscoop/core/page';
 import { createRoot } from 'react-dom/client';
 import { loadFonts } from './fonts';
 import { FrameWatcher } from './frames';
@@ -13,10 +13,11 @@ import { ScoopRoot } from './ui/App';
 
 type PageGlobal = { dispatch(msg: unknown): void };
 
-/** Boot the recorder in the top frame of an http(s) page, once per document. */
+/** Boot the recorder in the top frame of an http(s) page, or of a blank page the host asked for, once per document. */
 function boot(win: Window & typeof globalThis): void {
   const globals = win as unknown as Record<string, PageGlobal | undefined>;
-  if (globals[PAGE_GLOBAL] || win.top !== win || !/^https?:$/.test(win.location.protocol)) return;
+  const blank = win.location.href === 'about:blank' && (win as unknown as Record<string, unknown>)[BLANK_GLOBAL] === true;
+  if (globals[PAGE_GLOBAL] || win.top !== win || !(blank || /^https?:$/.test(win.location.protocol))) return;
 
   let runtime: Runtime | null = null;
   const pending: unknown[] = [];

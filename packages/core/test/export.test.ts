@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { startPlayground, type Playground } from '@webscoop/playground';
+import { REPORT_CSV, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   buildPlan,
@@ -295,6 +295,24 @@ describe('buildPlan', () => {
         ],
       },
     ]);
+  });
+
+  it('carries download steps with and without a target, and requires the variables of their file names', () => {
+    const plan = buildPlan(
+      loadRecipe({
+        schemaVersion: 2,
+        name: 'deck',
+        url: 'https://docs.test/d/{id}/export/pdf',
+        vars: [{ name: 'id', type: 'string' }, { name: 'stem', type: 'string', default: 'deck' }],
+        flows: [{ name: 'fetch', steps: [{ kind: 'download', value: '{stem}.pdf' }, { kind: 'download', target: { selectors: [{ strategy: 'id', value: 'export', stability: 'stable' }] } }] }],
+        sequence: [{ flow: 'fetch' }],
+      }),
+    );
+    expect(plan.flows[0]!.steps.map((s) => [s.kind, s.target ? 'target' : 'none', s.action])).toEqual([
+      ['download', 'none', { kind: 'download', name: '{stem}.pdf', vars: ['stem'] }],
+      ['download', 'target', { kind: 'download', name: null, vars: [] }],
+    ]);
+    expect(plan.vars.find((v) => v.name === 'stem')!.required).toBe(true);
   });
 
   it('defaults press to Enter, keeps fill values raw, and requires their variables', () => {
@@ -796,10 +814,10 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
   });
 
   /** Render the recipe, run it headless against the playground, and collect what it printed. */
-  async function runScript(format: Format, recipe: Recipe, args: string[] = []): Promise<{ code: number; stdout: string; stderr: string }> {
+  async function runScript(format: Format, recipe: Recipe, args: string[] = [], render: { downloadDir?: string } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
     const dir = await scratchDir();
     const file = join(dir, `${recipe.name.replace(/-/g, '_')}.${format}`);
-    await writeFile(file, (format === 'ts' ? renderTs : renderPy)(buildPlan(recipe), { ...OPTS, headless: true }));
+    await writeFile(file, (format === 'ts' ? renderTs : renderPy)(buildPlan(recipe), { ...OPTS, headless: true, ...render }));
     const [command, first] = format === 'ts' ? [join(ROOT, 'node_modules/.bin/tsx'), file] : [PYTHON, file];
     try {
       const { stdout, stderr } = await run(command, [first, '--var', `port=${playground.port}`, ...args], { cwd: ROOT, maxBuffer: 1 << 24 });
@@ -812,6 +830,27 @@ describe.skipIf(!hasDisplay)('exported scripts on the playground (integration)',
 
   for (const format of ['ts', 'py'] as const) {
     describe.skipIf(format === 'py' && !hasPythonPlaywright)(format === 'ts' ? 'TypeScript' : 'Python', () => {
+      it('saves the download a recipe URL starts and the one a link starts, keeping an existing file', async () => {
+        const downloadDir = await scratchDir();
+        const base = { schemaVersion: 2 as const, vars: [{ name: 'port', type: 'string' as const }] };
+        const exportUrl = loadRecipe({ ...base, name: 'export-url', url: 'http://127.0.0.1:{port}/files/report.csv', flows: [{ name: 'fetch', steps: [{ kind: 'download', value: 'r{port}.csv' }] }], sequence: [{ flow: 'fetch' }] });
+        const first = await runScript(format, exportUrl, [], { downloadDir });
+        expect(first.code, first.stderr).toBe(0);
+        expect(first.stderr).toContain('saved ' + join(downloadDir, `r${playground.port}.csv`));
+        expect(await readFile(join(downloadDir, `r${playground.port}.csv`), 'utf8')).toBe(REPORT_CSV);
+
+        const link = loadRecipe({ ...base, name: 'download-link', url: 'http://127.0.0.1:{port}/files', flows: [{ name: 'fetch', steps: [{ kind: 'download', target: { selectors: [{ strategy: 'id', value: 'download-report', stability: 'stable' }] } }] }], sequence: [{ flow: 'fetch' }] });
+        await writeFile(join(downloadDir, 'report.csv'), 'old');
+        const second = await runScript(format, link, [], { downloadDir });
+        expect(second.code, second.stderr).toBe(0);
+        expect(await readFile(join(downloadDir, 'report (1).csv'), 'utf8')).toBe(REPORT_CSV);
+        expect(await readFile(join(downloadDir, 'report.csv'), 'utf8')).toBe('old');
+
+        const none = await runScript(format, loadRecipe({ ...base, name: 'no-download', url: 'http://127.0.0.1:{port}/files', flows: [{ name: 'fetch', steps: [{ kind: 'download' }] }], sequence: [{ flow: 'fetch' }] }), [], { downloadDir });
+        expect(none.code).toBe(3);
+        expect(none.stderr).toMatch(/step 0 \(download\) of flow "fetch" saw no download/);
+      }, 120_000);
+
       it('keeps the single table shapes for a shorthand recipe', async () => {
         const out = await runScript(format, fixture('playground-catalog'));
         expect(out.code, out.stderr).toBe(0);

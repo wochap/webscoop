@@ -15,7 +15,7 @@ import { FrameEditor } from './frame';
 import { Icon } from './icons';
 import { SelectionPanel } from './selection';
 import { PanelFooter, PanelHeader, PanelShell, ToastStack } from './shell';
-import { FlowsSection, switcherOrder } from './flows';
+import { FlowsSection, StartDownloadNotice, switcherOrder } from './flows';
 import { SequenceSection, sequenceBlocker } from './sequence';
 import { TabBar, TableDescription, TableHeader } from './tables';
 import { CompactBar, PanelRail, PanelStrip } from './windows';
@@ -340,6 +340,7 @@ export function ScoopRoot() {
               collapsed={collapsed.recipe}
               onCollapse={collapse('recipe')}
             />
+            <StartDownloadNotice host={host} />
             <FlowsSection draft={draft} collapsed={collapsed.flows} onCollapse={collapse('flows')} />
             <SequenceSection draft={draft} collapsed={collapsed.sequence} onCollapse={collapse('sequence')} />
             {noTables ? (

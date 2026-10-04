@@ -125,6 +125,23 @@ describe('HookRunner', () => {
     await t.hookRunner.drain();
     expect((await readFile(log, 'utf8')).trim().split('\n')).toEqual(['browser.started 7', 'browser.closed 7']);
   });
+
+  it('fires download.saved with WEBSCOOP_FILE and the file details', async () => {
+    const dir = await tempDir();
+    const log = join(dir, 'log');
+    const t = runner({ 'download.saved': `{ echo "$WEBSCOOP_FILE"; cat; } >> ${log}` });
+    const emitter = new RunEmitter();
+    t.hookRunner.attach(emitter, { run: true });
+    emitter.emit('download.saved', { page: 1, file: '/dl/deck.pdf', name: 'deck.pdf', url: 'https://docs.test/x', bytes: 12, step: null });
+    await t.hookRunner.drain();
+    const [file, payload] = (await readFile(log, 'utf8')).split('\n');
+    expect(file).toBe('/dl/deck.pdf');
+    expect(JSON.parse(payload!)).toMatchObject({ event: 'download.saved', file: '/dl/deck.pdf', name: 'deck.pdf', url: 'https://docs.test/x', bytes: 12 });
+  });
+
+  it('rejects a downloads.saved hook as an unknown event', () => {
+    expect(ConfigSchema.safeParse({ hooks: { 'downloads.saved': 'true' } }).success).toBe(false);
+  });
 });
 
 function recipe(): RecipeInput {
