@@ -2,11 +2,12 @@
 import { act, cleanup, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { validateDraft, type Draft, type DraftFlow, type DraftStep, type RecorderState, type TargetEdit } from '@webscoop/core';
-import { baseState, newDraft, renderPanel, withTable } from './panel';
+import { baseState, newDraft, placeCard, renderPanel, withTable } from './panel';
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const field = { name: 'title', type: 'text' as const, scope: 'page' as const, selectors: [{ strategy: 'css' as const, value: 'h1', stability: 'medium' as const, count: 1 }], optional: false, key: false, count: 1, sample: 'x' };
@@ -129,6 +130,18 @@ describe('target editor', () => {
     expect(p.q('pick-target-use')!.textContent).toBe('Use for step');
     fireEvent.click(p.q('pick-target-use')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.apply', ref: stepRef, by: 'selection' });
+  });
+
+  it('scrolls the panel body to the pick panel after a page pick, not after a breadcrumb click', () => {
+    const p = renderPanel(state([{ name: 'flow-2', steps: [step('click')] }], { targetEdit: edit({ phase: 'picked', selection: picked() }) }), { trail: picked().ancestors });
+    const body = p.q('panel-body')!;
+    placeCard('pick-target', 200);
+    body.scrollTop = 500;
+    fireEvent.click(p.qa('pick-crumb')[0]!);
+    expect(p.selected).toHaveLength(1);
+    expect(body.scrollTop).toBe(500);
+    act(() => p.store.setUi({ pickSeq: 1 }));
+    expect(body.scrollTop).toBe(200);
   });
 
   it('shows the iframe card for a pick inside an iframe', () => {

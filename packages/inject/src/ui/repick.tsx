@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import type { RepickContext } from '@webscoop/core/page';
+import { useRevealOnPick } from './reveal';
 import { Kbd } from './shell';
 import { SelectorChip } from './selector-chip';
 
@@ -91,8 +93,10 @@ export function RepickPanel({
   onCancel: () => void;
 }) {
   const picked = context.picked;
+  const ref = useRef<HTMLDivElement>(null);
+  useRevealOnPick(ref);
   return (
-    <div className="ws-col" data-ws="repick" data-reason={context.reason}>
+    <div className="ws-col" ref={ref} data-ws="repick" data-reason={context.reason}>
       <div className={`ws-strip${picking ? ' ws-strip-active' : ''}`} data-ws="repick-prompt" data-picking={String(picking)}>
         <div className="ws-col ws-spacer">
           <span className="ws-title">

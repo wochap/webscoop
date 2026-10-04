@@ -264,3 +264,26 @@ test('strategy menu: choosing role in the panel menu and submitting sends role=l
   expect(proposal.proposed.selectors[0]).toMatchObject({ strategy: 'role', value: 'listitem' });
   expect((await r.closeWindow()).code).toBe(0);
 });
+
+test('a page pick scrolls the panel body to the inspector without scrolling the page', async ({ scoop }) => {
+  const r = await scoop.record([template(scoop.playground.port), '--var', 'tier=0', '--name', 'reveal']);
+  const panel = sidebar(r);
+  await panel.titlesAsList();
+  // Enough field rows below the Pick section that the body scrolls it out of view.
+  const selectors = ['[data-testid="price"]', 'a.product-link', 'img.product-image', '[data-testid="rating"]'];
+  for (let i = 0; i < 12; i++) await panel.addField(`f${i}`, { selector: selectors[i % 4]!, index: Math.floor(i / 4) });
+  type Hook = { scrollTo(selector: string, top: number): number; query(selector: string): { rect: { y: number; h: number } } | null };
+  const scrolled = await r.page.evaluate((body) => (window as unknown as { __webscoopTest: Hook }).__webscoopTest.scrollTo(body, 1e6), ws('panel-body'));
+  expect(scrolled).toBeGreaterThan(0);
+  const scrollY = await r.page.evaluate(() => window.scrollY);
+  await r.pick('[data-testid="price"]', 0);
+  await expect
+    .poll(async () => {
+      const body = (await r.query(ws('panel-body')))!.rect;
+      const card = (await r.query(ws('pick-result')))!.rect;
+      return card.y >= body.y - 1 && card.y + Math.min(card.h, body.h) <= body.y + body.h + 1;
+    })
+    .toBe(true);
+  expect(await r.page.evaluate(() => window.scrollY)).toBe(scrollY);
+  expect((await r.closeWindow()).code).toBe(0);
+});

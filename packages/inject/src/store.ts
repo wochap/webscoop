@@ -52,6 +52,8 @@ export interface UiState {
   hover: HoverInfo | null;
   /** The frame target open in the frame editor, by its primary candidate (`strategy=value`). */
   frameEdit: string | null;
+  /** Counts page picks whose host reply has landed; panel-driven selection changes leave it alone. */
+  pickSeq: number;
   toasts: Toast[];
 }
 
@@ -92,6 +94,7 @@ export const initialUi: UiState = {
   hoverScore: null,
   hover: null,
   frameEdit: null,
+  pickSeq: 0,
   toasts: [],
 };
 

@@ -55,6 +55,12 @@ export function installTestHook(win: Window, runtime: Runtime, mounted: Mounted,
       const r = el.getBoundingClientRect();
       return { x: r.x, y: r.y, w: r.width, h: r.height };
     },
+    /** Set a panel element's scrollTop and return what it settled at. */
+    scrollTo: (selector: string, top: number) => {
+      const el = one(selector);
+      el.scrollTop = top;
+      return el.scrollTop;
+    },
     focus: (selector: string, index = 0) => one(selector, index).focus(),
     fill: (selector: string, value: string, index = 0) => {
       const el = one(selector, index);

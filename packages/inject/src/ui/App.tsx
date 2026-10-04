@@ -1,4 +1,5 @@
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { Crumb, RecorderState } from '@webscoop/core/page';
 import { currentTable, tableMode } from '@webscoop/core/page';
 import { isMenuTarget, isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
 import { modeOf, type Actions, type Snapshot } from '../store';
@@ -9,6 +10,7 @@ import { ItemActions, ItemSummary, ListSetup, ListSetupActions } from './items';
 import { PickModeStrip } from './picking';
 import { RecipeBar } from './recipe';
 import { RepickFooter, RepickPanel } from './repick';
+import { useRevealOnPick } from './reveal';
 import { ResultsDrawer } from './results';
 import { Section } from './section';
 import { FrameEditor } from './frame';
@@ -357,7 +359,7 @@ export function ScoopRoot() {
                   <span className="ws-meta">to extract data too</span>
                 </span>
                 <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} hover={ui.hover} />
-                <SelectionPanel host={host} trail={ui.trail} />
+                <PickResult host={host} trail={ui.trail} />
               </section>
             ) : (
               <>
@@ -373,7 +375,7 @@ export function ScoopRoot() {
               <Section id="pick" title="Pick">
                 {ui.frameEdit && <FrameEditor host={host} frameKey={ui.frameEdit} />}
                 <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} hover={ui.hover} />
-                <SelectionPanel host={host} trail={ui.trail} />
+                <PickResult host={host} trail={ui.trail} />
               </Section>
               <Section id="fields" title="Fields" count={table.fields.length > 0 ? table.fields.length : null}>
                 <div className="ws-col" data-ws="fields">
@@ -415,6 +417,17 @@ export function ScoopRoot() {
           onClose={() => actions.setUi({ drawerOpen: false })}
         />
       )}
+    </div>
+  );
+}
+
+/** The selection panel of the Pick section, brought into view after a page pick; a target edit's pick panel reveals itself. */
+function PickResult({ host, trail }: { host: RecorderState; trail: Crumb[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useRevealOnPick(ref, !host.targetEdit);
+  return (
+    <div className="ws-col" ref={ref} data-ws="pick-result">
+      <SelectionPanel host={host} trail={trail} />
     </div>
   );
 }

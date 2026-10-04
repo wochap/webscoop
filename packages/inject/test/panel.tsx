@@ -1,5 +1,6 @@
 import './drag-event';
 import { fireEvent, render } from '@testing-library/react';
+import { vi } from 'vitest';
 import { emptyDraft, type Draft, type DraftTable, type PageMessage, type Path, type RecorderState } from '@webscoop/core';
 import { byClass, harness } from '../../core/test/recorder-helpers';
 import { tier0Snapshot } from '../../core/test/snapshot';
@@ -73,4 +74,16 @@ export function chooseOption(trigger: Element, value: string) {
   const option = root.querySelector(`[role="option"][data-value="${value}"]`);
   if (!option) throw new Error(`no option ${value}`);
   fireEvent.click(option);
+}
+
+/** Give the panel body and the element with the `hook` data-ws fixed rects: the body spans 0 to 400, the card starts at `cardTop` relative to it. */
+export function placeCard(hook: string, cardTop: number, cardHeight = 100) {
+  const proto = Element.prototype as Element & { getBoundingClientRect(): DOMRect };
+  const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 300, width: 300, x: 0, y: top, toJSON() {} }) as DOMRect;
+  return vi.spyOn(proto, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const body = this.closest('.ws-body');
+    if (this.matches('.ws-body')) return rect(0, 400);
+    if (this.matches(`[data-ws="${hook}"]`)) return rect(cardTop - (body?.scrollTop ?? 0), cardHeight);
+    return rect(0, 0);
+  });
 }

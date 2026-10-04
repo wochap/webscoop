@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AncestorBreadcrumb, AttrTable, attrSelector, shownCrumbs } from '../src/ui/picking';
-import { hostStates, renderPanel } from './panel';
+import { hostStates, placeCard, renderPanel } from './panel';
 import type { Crumb } from '@webscoop/core';
 
 afterEach(() => {
@@ -70,6 +70,27 @@ describe('picking from a selection', () => {
     expect(p.sent.some((m) => m.kind === 'selection.clear')).toBe(false);
     expect(p.q('pick-inspector')).not.toBeNull();
     expect(p.q('panel-mode')!.dataset.mode).toBe('selected');
+  });
+});
+
+describe('pick reveal', () => {
+  it('scrolls the panel body to the inspector after a page pick, not after a breadcrumb click', async () => {
+    const { suggested } = await hostStates();
+    const p = renderPanel({ ...suggested, proposal: null }, { trail: suggested.selected!.selection.ancestors });
+    const body = p.q('panel-body')!;
+    const rects = placeCard('pick-result', 300, 200);
+    body.scrollTop = 0;
+    fireEvent.click(p.qa('pick-crumb')[0]!);
+    expect(p.selected).toHaveLength(1);
+    expect(body.scrollTop).toBe(0);
+    act(() => p.store.setUi({ pickSeq: 1 }));
+    expect(body.scrollTop).toBe(100);
+
+    // Already visible: the next pick leaves the body where it is.
+    rects.mockRestore();
+    placeCard('pick-result', 150, 200);
+    act(() => p.store.setUi({ pickSeq: 2 }));
+    expect(body.scrollTop).toBe(100);
   });
 });
 

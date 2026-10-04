@@ -547,6 +547,7 @@ export class Runtime implements Actions {
       if (newTrail) this.store.setUi({ trail: selection.ancestors });
       this.opts.overlay.setSelected(el);
       await this.send({ kind: 'picker.select', url: this.win.location.href, selection: { ...selection, ...this.frameOf(el) }, snapshot });
+      if (newTrail) this.store.setUi((ui) => ({ pickSeq: ui.pickSeq + 1 }));
     });
     this.selecting = run.catch(() => {});
     return run;

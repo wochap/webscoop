@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Crumb, DraftStep, TargetEdit, TargetRef } from '@webscoop/core/page';
 import { SelectorCandidateList } from './candidates';
 import { useActions } from './context';
@@ -7,6 +7,7 @@ import { ElementInspector } from './picking';
 import { SelectorChip } from './selector-chip';
 import { SelectorInput } from './selector-input';
 import type { Actions } from '../store';
+import { useRevealOnPick } from './reveal';
 import { Kbd } from './shell';
 
 type Target = NonNullable<DraftStep['target']>;
@@ -142,8 +143,10 @@ export function TargetPickPanel({ edit, trail, onBack }: { edit: TargetEdit; tra
   const actions = useActions();
   const selection = edit.selection;
   const cancel = () => void actions.send({ kind: 'target.edit.cancel' });
+  const ref = useRef<HTMLDivElement>(null);
+  useRevealOnPick(ref);
   return (
-    <div className="ws-col" data-ws="pick-target" data-phase={edit.phase}>
+    <div className="ws-col" ref={ref} data-ws="pick-target" data-phase={edit.phase}>
       <div className="ws-row">
         <span className="ws-title ws-spacer" data-ws="pick-target-title">
           Target for {edit.title}

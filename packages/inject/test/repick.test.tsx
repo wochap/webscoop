@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent } from '@testing-library/react';
+import { act, cleanup, fireEvent } from '@testing-library/react';
 import { dataset, render } from '@webscoop/playground';
 import { draftFromRecipe, fingerprint, type RecorderState, type RepickContext } from '@webscoop/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fingerprintedRecipe, tier0Nodes } from '../../core/test/healing-helpers';
 import { shortcutFor } from '../src/keyboard';
 import { Overlay } from '../src/overlay';
 import { Runtime } from '../src/runtime';
-import { baseState, renderPanel } from './panel';
+import { baseState, placeCard, renderPanel } from './panel';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function repickState(extra: Partial<RepickContext> = {}): RecorderState {
   const draft = draftFromRecipe(fingerprintedRecipe());
@@ -89,6 +92,16 @@ describe('re-pick panel', () => {
     expect(shortcutFor(key('s'), base)).toBeNull();
     expect(shortcutFor(key('Escape'), base)).toBeNull();
     expect(shortcutFor(key('s'), { ...base, repicking: true, typing: true })).toBeNull();
+  });
+});
+
+describe('re-pick reveal', () => {
+  it('scrolls the panel body to the re-pick panel after a page pick', () => {
+    const p = renderPanel(repickState());
+    const body = p.q('panel-body')!;
+    placeCard('repick', 900);
+    act(() => p.store.setUi({ pickSeq: 1 }));
+    expect(body.scrollTop).toBe(600);
   });
 });
 
