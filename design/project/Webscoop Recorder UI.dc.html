@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-53929d40-05df-499c-bc14-17884e999fc5/styles.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<script src="_ds/nocturne-53929d40-05df-499c-bc14-17884e999fc5/_ds_bundle.js"></script>
+<style>body{margin:0;background:#0f101a;font-family:var(--font-body);color:var(--color-text)}a{color:var(--color-accent)}a:hover{color:var(--color-accent-400)}.dv-turn{padding:40px 44px 32px;scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:var(--color-accent-300);color:#161826;border-radius:4px;text-decoration:none}.dv-tname{font:500 14px/1.2 var(--font-body);color:var(--color-text)}.dv-opts{display:flex;flex-wrap:wrap;gap:40px 36px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:var(--color-neutral-800);color:var(--color-neutral-100);border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 12px/1.3 var(--font-body);color:var(--color-neutral-400)}.dv-card{max-width:100%;background:var(--color-bg);border-radius:8px;box-shadow:0 0 0 1px var(--color-neutral-800),0 12px 40px rgba(0,0,0,.5);overflow:hidden}.dv-opt:target .dv-oid{background:var(--color-accent);color:#161826}.dv-next{margin:28px 0 0;font:12px/1.5 var(--font-body);color:var(--color-neutral-500)}</style>
+</helmet>
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">webscoop · injected recorder panel · tokens, inventory and every state at 1440 × 900 (panel 400)</span></div>
+  <div class="dv-opts">
+
+    <!-- 1a TOKENS -->
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Token sheet · Nocturne mapped to --ws-* (dark primary, light secondary)</div>
+      <div class="dv-card" style="width:1440px;padding:32px 36px;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:36px">
+        <div style="display:flex;flex-direction:column;gap:26px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent-300)">Assumptions</span>
+            <p style="margin:0;font-size:13px;color:var(--color-neutral-300);max-width:640px;text-wrap:pretty">Nocturne supplies the ground, ramps, type and spacing. The panel is dense (12px base, 28px rows) because it sits next to live content. Status hues (ok / warn / danger) are not in Nocturne; they're derived at the ramp's 400-step lightness with low chroma so they read as signals, never floods. Every value is a literal inside the shadow root — nothing is read from the host.</p>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Color roles</span>
+            <div style="display:grid;grid-template-columns:170px 1fr 1fr minmax(0,1.3fr);gap:0 14px;font-size:12px">
+              <span style="padding:6px 0;color:var(--color-neutral-500);font-size:11px">token</span><span style="padding:6px 0;color:var(--color-neutral-500);font-size:11px">dark (primary)</span><span style="padding:6px 0;color:var(--color-neutral-500);font-size:11px">light</span><span style="padding:6px 0;color:var(--color-neutral-500);font-size:11px">use</span>
+              <sc-for list="{{ colors }}" as="c" hint-placeholder-count="16">
+                <span style="padding:5px 0;font:11.5px 'JetBrains Mono',monospace;border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)">{{ c.t }}</span>
+                <span style="padding:5px 0;display:flex;gap:8px;align-items:center;border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="width:22px;height:16px;border-radius:4px;background:{{ c.d }};box-shadow:0 0 0 1px var(--color-neutral-700)"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">{{ c.dl }}</span></span>
+                <span style="padding:5px 0;display:flex;gap:8px;align-items:center;border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)"><span style="width:22px;height:16px;border-radius:4px;background:{{ c.l }};box-shadow:0 0 0 1px var(--color-neutral-700)"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">{{ c.ll }}</span></span>
+                <span style="padding:5px 0;color:var(--color-neutral-300);border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)">{{ c.u }}</span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Overlay on any host · dual halo (1px ground-colored ring around the accent stroke)</span>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+              <sc-for list="{{ grounds }}" as="g" hint-placeholder-count="4">
+                <div style="height:132px;border-radius:8px;background:{{ g.bg }};position:relative;padding:12px;display:flex;flex-direction:column;justify-content:flex-end;gap:14px">
+                  <span style="position:absolute;top:8px;left:10px;font:10px 'JetBrains Mono',monospace;color:{{ g.fg }}">{{ g.name }}</span>
+                  <div style="position:relative;height:22px;border:2px solid var(--color-accent-400);border-radius:3px;background:color-mix(in srgb,var(--color-accent-500) 16%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9),inset 0 0 0 1px rgba(14,15,24,.6)"><span style="position:absolute;left:-2px;bottom:calc(100% + 5px);padding:2px 6px;border-radius:4px;background:var(--color-bg);color:var(--color-text);font:500 10px/14px 'JetBrains Mono',monospace;box-shadow:0 0 0 1px var(--color-accent-400);white-space:nowrap"><span style="color:var(--color-accent-300)">h3</span> heading</span></div>
+                  <div style="display:flex;gap:6px"><span style="flex:1;height:22px;border-radius:5px;border:1px dashed var(--color-accent-400);background:color-mix(in srgb,var(--color-accent-500) 13%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.7)"></span><span style="flex:1;height:22px;border-radius:3px;border:2px solid var(--color-accent-300);background:color-mix(in srgb,var(--color-accent-500) 26%,transparent);box-shadow:0 0 0 1px rgba(14,15,24,.9),0 0 0 4px color-mix(in srgb,var(--color-accent-400) 25%,transparent)"></span><span style="flex:1;height:22px;border-radius:5px;border:1px dashed var(--color-neutral-300);box-shadow:0 0 0 1px rgba(14,15,24,.8),inset 0 0 0 1px rgba(14,15,24,.8)"></span></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:24px;font-size:11px;color:var(--color-neutral-400)"><span>hover · 2px accent-400 + 16% fill + tag</span><span>sibling · 1px dashed + 13% fill + index</span><span>selected · 2px accent-300 + 4px glow</span><span>container · 1px dashed neutral-300</span></div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:26px">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Type · Inter 400/500 · JetBrains Mono for selectors, values, URLs</span>
+            <sc-for list="{{ type }}" as="t" hint-placeholder-count="8">
+              <div style="display:grid;grid-template-columns:120px minmax(0,1fr) 96px;gap:12px;align-items:baseline;padding:4px 0;border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)">
+                <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">{{ t.t }}</span>
+                <span style="font-family:{{ t.f }};font-size:{{ t.s }}px;font-weight:{{ t.w }};letter-spacing:{{ t.ls }};text-transform:{{ t.tt }};line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.ex }}</span>
+                <span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500);text-align:right">{{ t.spec }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Spacing · Nocturne 0.7×</span>
+              <sc-for list="{{ space }}" as="s" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:10px;height:20px"><span style="font:11px 'JetBrains Mono',monospace;width:78px;color:var(--color-neutral-300)">{{ s.t }}</span><span style="height:8px;width:{{ s.v }}px;background:var(--color-accent-600);border-radius:2px"></span><span style="font:11px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">{{ s.v }}</span></div>
+              </sc-for>
+              <span style="font-size:11px;color:var(--color-neutral-500);margin-top:4px">Controls 22 / 28 / 30 px · list row 28 · header 44 · footer 50</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Radius</span>
+              <div style="display:flex;gap:10px">
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:center"><span style="width:44px;height:32px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--color-neutral-500)"></span><span style="font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">sm 4 · badge</span></div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:center"><span style="width:44px;height:32px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--color-neutral-500)"></span><span style="font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">md 8 · card</span></div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:center"><span style="width:44px;height:32px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--color-neutral-500)"></span><span style="font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">lg 14 · dialog</span></div>
+              </div>
+              <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400);margin-top:12px">Elevation</span>
+              <div style="display:flex;gap:12px">
+                <div style="width:62px;height:40px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);display:flex;align-items:center;justify-content:center;font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">sm</div>
+                <div style="width:62px;height:40px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-md);display:flex;align-items:center;justify-content:center;font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">md</div>
+                <div style="width:62px;height:40px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-lg);display:flex;align-items:center;justify-content:center;font:10px 'JetBrains Mono',monospace;color:var(--color-neutral-400)">lg</div>
+              </div>
+              <span style="font-size:11px;color:var(--color-neutral-500)">sm cards · md toasts, menus · lg dialogs</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Isolation from the host</span>
+            <pre style="margin:0;padding:12px 14px;border-radius:8px;background:var(--color-surface);box-shadow:var(--shadow-sm);font:11.5px/1.6 'JetBrains Mono',monospace;color:var(--color-neutral-300);white-space:pre-wrap">:host { all: initial; }          /* nothing inherits */
+#ws-root { position: fixed; z-index: 2147483647;
+  isolation: isolate; contain: layout style;
+  color-scheme: dark; font: 400 12px/1.45 Inter; }
+#ws-overlay { z-index: 2147483646; pointer-events: none; }
+html { margin-right: 400px !important; }   /* page pushed */
+/* fonts embedded as data: URIs — host CSP / blockers can't strip them */</pre>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-400)">Same FieldRow, both themes</span>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div style="padding:8px;border-radius:8px;background:#161826;box-shadow:0 0 0 1px #3f424d;display:flex;align-items:center;gap:6px"><i class="ph ph-dots-six-vertical" style="color:#75798c"></i><span style="font:500 12px 'JetBrains Mono',monospace;color:#e9e9ed">price</span><span style="flex:1"></span><span style="padding:2px 6px;border-radius:4px;background:#232532;box-shadow:inset 0 0 0 1px rgba(233,233,237,.16);font-size:11px;color:#e4e7f5">number</span><span style="padding:1px 6px;border-radius:4px;background:#2b2741;color:#e7e5fe;font-size:10px;font-weight:500">per item</span></div>
+              <div style="padding:8px;border-radius:8px;background:#e4e7f5;box-shadow:0 0 0 1px #b2b6ca;display:flex;align-items:center;gap:6px"><i class="ph ph-dots-six-vertical" style="color:#75798c"></i><span style="font:500 12px 'JetBrains Mono',monospace;color:#292b31">price</span><span style="flex:1"></span><span style="padding:2px 6px;border-radius:4px;background:#f3f5fe;box-shadow:inset 0 0 0 1px #b2b6ca;font-size:11px;color:#292b31">number</span><span style="padding:1px 6px;border-radius:4px;background:#e7e5fe;color:#5d5294;font-size:10px;font-weight:500">per item</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1b INVENTORY -->
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Component inventory · React, mounted in one shadow root</div>
+      <div class="dv-card" style="width:1440px;padding:32px 36px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:26px 28px">
+        <sc-for list="{{ inventory }}" as="g" hint-placeholder-count="8">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <span style="display:flex;align-items:baseline;gap:8px;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent-300)">{{ g.group }}<span style="letter-spacing:0;text-transform:none;font-weight:400;color:var(--color-neutral-500)">{{ g.where }}</span></span>
+            <sc-for list="{{ g.items }}" as="c" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;gap:2px;padding:6px 0;border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)">
+                <span style="font:500 12px 'JetBrains Mono',monospace;color:var(--color-text)">&lt;{{ c.n }}&gt;</span>
+                <span style="font-size:11.5px;color:var(--color-neutral-400);text-wrap:pretty">{{ c.d }}</span>
+                <span style="font:10.5px 'JetBrains Mono',monospace;color:var(--color-neutral-500)">{{ c.p }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1c"><div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>2a · Idle — URL template with variable chips, recipe name, empty fields</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="idle" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1d"><div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>2b · Picking — hover highlight + tag on page, live inspector in panel</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="picking" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1e"><div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>2c · Element selected — ancestor breadcrumb, ranked selectors, “use as” actions</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="selected" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1f"><div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>2d · Item detected — 24 siblings dimmed, container outlined, confirm / adjust</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="items" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1g"><div class="dv-olabel"><a class="dv-oid" href="#1g">1g</a>2e · Fields — drag in progress (url), type menu open, 0-match warning, dedup key</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="fields" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1h"><div class="dv-olabel"><a class="dv-oid" href="#1h">1h</a>2f · Pagination — detected kind, scope, N stepper, next link selected on page</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="pagination" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1i"><div class="dv-olabel"><a class="dv-oid" href="#1i">1i</a>6 + 7 · Test run — results drawer pushes page up, per-field status, toasts</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="testrun" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1j"><div class="dv-olabel"><a class="dv-oid" href="#1j">1j</a>4 · Guard banner — login, over the host's fixed header, countdown line</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="guard-login" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1k"><div class="dv-olabel"><a class="dv-oid" href="#1k">1k</a>4 · Guard banner — captcha variant on a light host, under 90 s turns red</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="guard-captcha" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1l"><div class="dv-olabel"><a class="dv-oid" href="#1l">1l</a>5 · Re-pick — one field, old sample + fingerprint, live fingerprint score on hover</div><div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="repick" hint-size="1440px,900px"></dc-import></div></div>
+    <div class="dv-opt" id="1m">
+      <div class="dv-olabel"><a class="dv-oid" href="#1m">1m</a>3 · Hostile host — light theme, fixed header z 99, promo bar, cookie modal at z 2147483000</div>
+      <div style="display:flex;gap:24px;align-items:flex-start">
+        <div class="dv-card" style="width:1440px"><dc-import name="WebscoopScreen" state="hostile" hint-size="1440px,900px"></dc-import></div>
+        <div style="width:300px;display:flex;flex-direction:column;gap:14px;font-size:12px;color:var(--color-neutral-300)">
+          <sc-for list="{{ pins }}" as="p" hint-placeholder-count="5">
+            <div style="display:flex;gap:10px"><span style="flex:none;width:22px;height:22px;border-radius:50%;background:#ffe14d;color:#151515;display:flex;align-items:center;justify-content:center;font:700 12px/1 'JetBrains Mono',monospace">{{ p.n }}</span><div style="display:flex;flex-direction:column;gap:2px"><span style="font-weight:500;color:var(--color-text)">{{ p.t }}</span><span style="text-wrap:pretty">{{ p.d }}</span></div></div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="dv-next">Try next: “collapsed 44px rail variant of the panel” · “light-theme versions of <a class="dv-oid" href="#1e">1e</a> and <a class="dv-oid" href="#1g">1g</a>” · “show the steps recorder (click / type / wait) in the fields list”</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const colors = [
+      ['--ws-bg', '#161826', '#e4e7f5', 'panel ground · banner ground'],
+      ['--ws-surface', '#232532', '#f3f5fe', 'inputs, cards, menus'],
+      ['--ws-surface-2', '#292b31', '#cfd3e5', 'hint wells, kbd, tracks (n-900 / n-300)'],
+      ['--ws-border', 'rgba(233,233,237,.16)', '#b2b6ca', 'row rules, control outlines'],
+      ['--ws-edge', '#595d6c', '#9397ab', 'panel left edge, halo in md shadow'],
+      ['--ws-text', '#e9e9ed', '#292b31', 'primary text  ·  14.6 : 1'],
+      ['--ws-text-muted', '#b2b6ca', '#595d6c', 'labels, descriptions  ·  8.9 : 1'],
+      ['--ws-text-faint', '#9397ab', '#75798c', 'meta, counts, hints  ·  5.9 : 1'],
+      ['--ws-accent', '#9184d9', '#796cbf', 'outlines, focus ring, marks — never fills'],
+      ['--ws-accent-text', '#d2cefd', '#5d5294', 'accent text on tint (a-300 / a-700)'],
+      ['--ws-accent-tint', '#2b2741', '#e7e5fe', 'selected rows, chips, pills'],
+      ['--ws-ok', '#9fdcbc', '#2f7d5a', 'stable, ok · tint #1e3830'],
+      ['--ws-warn', '#e6c98f', '#8a6420', 'paused, medium, guard · tint #3b3222'],
+      ['--ws-danger', '#f0a9a9', '#b0474d', 'missing, fragile, 0 matches · tint #42262b'],
+      ['--ws-ov-halo', 'rgba(14,15,24,.9)', 'rgba(243,245,254,.95)', 'overlay outer ring (swaps on host luminance)'],
+      ['--ws-ov-stroke', '#b5abfc', '#796cbf', 'hover / sibling stroke (a-400 / a-600)'],
+    ].map(([t, d, l, u]) => ({ t, d, l, u, dl: d, ll: l }));
+
+    const grounds = [
+      { name: 'host #0e0e0e', bg: '#0e0e0e', fg: '#777' },
+      { name: 'host #ffffff', bg: '#ffffff', fg: '#888' },
+      { name: 'host #1747d1', bg: '#1747d1', fg: '#c9d6ff' },
+      { name: 'host photo', bg: 'linear-gradient(135deg,#d9c3a0,#3a2f25 55%,#b7b9c9)', fg: '#fff' },
+    ];
+
+    const M = "'JetBrains Mono',monospace", I = 'Inter,system-ui,sans-serif';
+    const type = [
+      ['count', I, 30, 500, '-.02em', 'none', '24 similar items', '30 / 1.0 · 500'],
+      ['prompt', I, 18, 500, '-.01em', 'none', 'Click the new location of price', '18 / 1.25 · 500'],
+      ['title', I, 13, 500, '0', 'none', 'Field healed via fuzzy match', '13 / 1.4 · 500'],
+      ['body', I, 12, 400, '0', 'none', 'Same structure as 23 other elements', '12 / 1.45 · 400'],
+      ['meta', I, 11, 400, '0', 'none', 'ranked by stability · matches', '11 / 1.4 · 400'],
+      ['caps', I, 10, 500, '.08em', 'uppercase', 'Selector candidates', '10 · +0.08em'],
+      ['mono', M, 12, 500, '0', 'none', 'article[data-testid="product-card"]', '12 · 500'],
+      ['mono-sm', M, 11, 400, '0', 'none', 'https://shop.voltmart.io/c/{category}?page={n}', '11 / 11.5 · 400'],
+    ].map(([t, f, s, w, ls, tt, ex, spec]) => ({ t, f, s, w, ls, tt, ex, spec }));
+
+    const space = [['--space-1', 2.8], ['--space-2', 5.6], ['--space-3', 8.4], ['--space-4', 11.2], ['--space-6', 16.8], ['--space-8', 22.4]]
+      .map(([t, v]) => ({ t, v }));
+
+    const inv = [
+      ['Shell', 'all states', [
+        ['ScoopRoot', 'Creates the shadow root, injects reset + fonts, pushes html margin, owns z-layers.', 'theme · side · width=400'],
+        ['PanelShell', 'Fixed 400px column: header, scroll body, footer slot.', 'mode · children · footer'],
+        ['PanelHeader', 'Rec dot, wordmark, ModePill, shortcuts / settings / collapse.', 'mode · onCollapse'],
+        ['ModePill', 'Idle · Picking · Selected · Items found · Editing · Test run · Paused · Re-pick.', 'mode · tone=neutral|accent|ok|warn'],
+        ['PanelFooter', 'Field/item counts, note, Test run, Save recipe.', 'fieldCount · itemCount · note · onTest · onSave'],
+        ['Kbd', 'Keycap hint.', 'keys · tone'],
+      ]],
+      ['Recipe', '2a', [
+        ['RecipeBar', 'Full (idle) or compact one-line recipe summary.', 'compact · recipe'],
+        ['UrlTemplateInput', 'Mono URL editor; {var} spans render as VarChip.', 'value · onChange · vars'],
+        ['VarChip', 'Accent-tint {name} token.', 'name · value?'],
+        ['VarRow', 'Chip + value input + inferred type.', 'name · value · type'],
+      ]],
+      ['Picking', '2b · 2c', [
+        ['PickModeStrip', 'Picking indicator with Esc hint.', 'onCancel'],
+        ['ElementInspector', 'Tag, classes, size, role, name, text excerpt.', 'node: NodeInfo'],
+        ['AttrTable', 'id / data-testid / class / aria-* with stable & hashed flags.', 'attrs · flags'],
+        ['AncestorBreadcrumb', 'CrumbChip row; ← → walk, ⏎ confirm.', 'path · activeIndex · onWalk'],
+        ['CrumbChip', 'Role chip (role + name) or tag chip (grey).', 'role? · tag · name? · active'],
+        ['SelectorCandidateList', 'Ranked radio list of SelectorRow.', 'candidates · value · onChange'],
+        ['SelectorRow', 'Strategy, mono selector, StabilityBadge, match count.', 'strategy · selector · stability · matches'],
+        ['StabilityBadge', 'Stable / Medium / Fragile / n/a.', 'level'],
+        ['PickActionGrid', 'Field · Container · Pagination (next/load more/scroll) · Step.', 'onAction · shortcuts'],
+      ]],
+      ['Items', '2d', [
+        ['ItemDetectCard', 'Count, container selector, match stats.', 'count · container · excluded'],
+        ['SampleRowList', 'First N items as mono rows.', 'rows · total'],
+        ['ContainerLadder', 'Broader / current / narrower container with counts.', 'levels · value · onChange'],
+        ['Toggle', 'Switch for exclusions & options.', 'checked · label'],
+      ]],
+      ['Fields', '2e', [
+        ['FieldList', 'Sortable list; keyboard reorder with Alt+↑↓.', 'fields · onReorder'],
+        ['FieldRow', 'Handle, name, TypeSelect, ScopeBadge, KeyToggle, sample, count.', 'field · dragging · warning'],
+        ['TypeSelect', 'text · number · url · image · date · html, letter shortcuts.', 'value · onChange'],
+        ['ScopeBadge', 'per item / page.', 'scope'],
+        ['DedupKeyToggle', 'Key icon; exactly one field.', 'active · onToggle'],
+        ['ZeroMatchWarning', 'Red row state with Re-pick / Make optional.', 'selector · onRepick'],
+      ]],
+      ['Pagination', '2f', [
+        ['PaginationEditor', 'Target, kind, scope, stop rules.', 'config · onChange'],
+        ['TargetSummary', 'Picked element, selector, what it drives.', 'target · onRepick'],
+        ['KindOption', 'URL param · next link · load more · infinite scroll; detected tag.', 'kind · detected · selected'],
+        ['SegmentedControl', 'First page / First N / All.', 'options · value'],
+        ['NumberStepper', '− N + with arrow-key support.', 'value · min · max'],
+      ]],
+      ['Run', '4 · 5 · 6', [
+        ['GuardBanner', 'Top bar over the page: reason, context, Countdown, Continue / Abort.', 'kind=login|captcha · deadline'],
+        ['Countdown', 'mm:ss + depleting 2px line; warn → danger under 90 s.', 'deadline'],
+        ['RunLog', 'Timestamped mono step log.', 'entries'],
+        ['RepickPanel', 'Focused single-field state; replaces body + footer.', 'field · attempts · onSkip · onAbort'],
+        ['FingerprintCard', 'Old selector, last sample, tag/text/position fingerprint.', 'fingerprint'],
+        ['TestRunSummary', 'Pages, items, duration.', 'result'],
+        ['FieldStatusList', 'ok / healed / missing per field.', 'statuses'],
+        ['ResultsDrawer', 'Bottom drawer in page area; pushes page, Table/JSON/CSV.', 'rows · columns · onClose'],
+      ]],
+      ['Overlay & feedback', '3 · 7', [
+        ['OverlayRoot', 'Separate fixed layer, pointer-events none, rAF-synced to getBoundingClientRect.', 'mode · targets'],
+        ['HighlightBox', 'hover / selected / sibling / container variants; halo flips on host luminance.', 'rect · variant · index?'],
+        ['ElementTag', 'Mono tag above the box: tag · role · name · size; flips below at viewport top.', 'node · placement'],
+        ['Toast', 'Icon, title, mono detail, actions, auto-dismiss line.', 'tone · title · detail · actions'],
+        ['ToastStack', 'Bottom of panel above footer, max 3.', 'toasts'],
+      ]],
+    ];
+    const inventory = inv.map(([group, where, items]) => ({ group, where, items: items.map(([n, d, p]) => ({ n, d, p })) }));
+
+    const pins = [
+      { n: '1', t: 'Fixed header z 99, width 100vw', d: 'Extends under the panel; the panel is its own stacking context at max z, so it never shows through.' },
+      { n: '2', t: 'Promo bar stacked under header', d: 'Tag placement flips below the box when a fixed header would cover it.' },
+      { n: '3', t: 'Cookie modal at z 2147483000', d: 'Overlay layer sits at 2147483646 and paints above it; Alt+click picks through the backdrop.' },
+      { n: '4', t: 'Light host, serif fonts, !important rules', d: 'Overlay halo swaps to a light ring on bright grounds; panel type is unaffected (shadow root, all: initial).' },
+      { n: '·', t: 'Panel stays dark', d: 'color-scheme is forced per root, not read from prefers-color-scheme of the page.' },
+    ];
+    return { colors, grounds, type, space, inventory, pins };
+  }
+}
+</script>
+</body>
+</html>
