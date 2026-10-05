@@ -17,6 +17,6 @@ result
 
 _webscoop-recorder-ui
 webscoop-recorder-ui_*
-*.webp
-*.png
+design/**/*.webp
+design/**/*.png
 .thumbnail
