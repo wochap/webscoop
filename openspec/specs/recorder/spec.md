@@ -808,7 +808,7 @@ Field editing SHALL be unavailable while the list setup is open.
 - **THEN** the Rows section offers Edit and no Remove
 
 ### Requirement: Table tab bar
-The panel SHALL show a table tab bar with one tab per table of the draft, in recipe order, each with the table's name, its row count on the current page when known, an icon for its mode (a list icon for a list, a page icon for a page table, and a neutral icon for a table with no mode yet), and an error dot when the table has a validation error. One tab SHALL be active. A new draft SHALL start with one table named `items`. A pinned `+` tab at the end SHALL add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`) and activate it. When the tabs do not fit, the bar SHALL scroll horizontally and end with a "N more" control listing the hidden tables. Double-clicking a tab, pressing F2 on a focused tab, or choosing Rename in the table's "…" menu SHALL rename the table inline; a name that is not kebab-case or not unique SHALL be refused with an error and the previous name kept. The table's "…" menu SHALL offer Rename, Move left, Move right, Use for pagination, Clear table, and Remove table, and SHALL show the mode lock as defined in "Clear table". Remove table SHALL be offered only when the draft has more than one table and SHALL remove the table's item container and fields. Tabs SHALL be reorderable by dragging a tab, by Alt+Left and Alt+Right on a focused tab, and by Move left and Move right; the `+` tab SHALL NOT move and SHALL NOT be a drop target. The order of the tabs SHALL be the order of the recipe's tables. Use for pagination SHALL move the table in front of every other table with an item container; it SHALL be unavailable for a table without an item container and for the table that already drives pagination. When the draft's pagination kind is not `none`, the tab of the primary table (the first table with an item container) SHALL carry a "drives pagination" badge, and when a reorder changes the primary table, the panel SHALL show a toast naming the new primary table. Reordering SHALL NOT offer undo. The active table SHALL receive picks, list suggestions, list setups, added fields, field edits, and item edits. Switching and reordering tabs SHALL be unavailable while the list setup is open.
+The panel SHALL show a table tab bar with one tab per table of the draft, in recipe order, each with the table's name, its row count on the current page when known, an icon for its mode (a list icon for a list, a page icon for a page table, and a neutral icon for a table with no mode yet), and an error dot when the table has a validation error. One tab SHALL be active. A new draft SHALL start with one table named `items`. A pinned `+` tab at the end SHALL add a table (with a name unique among the draft's tables, kebab-case, defaulting to `page` when no table without an item container exists, else `table-N`) and activate it. When the tabs do not fit, the bar SHALL scroll horizontally and end with a "N more" control listing the hidden tables. Double-clicking a tab, pressing F2 on a focused tab, or choosing Rename in the table's "…" menu SHALL rename the table inline; a name that is not kebab-case or not unique SHALL be refused with an error and the previous name kept. The table's "…" menu SHALL offer Rename, Move left, Move right, Use for pagination, Clear table, and Remove table, and SHALL show the mode lock as defined in "Clear table". Remove table SHALL be offered only when the draft has more than one table and SHALL remove the table's item container and fields. Tabs SHALL be reorderable by dragging a tab, by Alt+Left and Alt+Right on a focused tab, and by Move left and Move right; the `+` tab SHALL NOT move and SHALL NOT be a drop target. The order of the tabs SHALL be the order of the recipe's tables. Use for pagination SHALL make the table the paginate block's driving table without moving any tab; it SHALL be unavailable, with the hint "list tables only", for a table without an item container, unavailable, with the hint "already drives it", for the table that already drives pagination, and unavailable, with the tooltip "Mark a pagination target first", while the draft has no paginate block. The driving table SHALL be the paginate block's chosen table, or, when none is chosen, the first table with an item container that the paginate block extracts. While the draft has a paginate block, the driving table's tab SHALL carry a "pages" badge with the tooltip "The runner follows pagination with this table", and, when it is the active table, its header SHALL carry a "pages" badge with the tooltip "This table drives the paginate block". Reordering SHALL NOT change the driving table and SHALL NOT offer undo. The active table SHALL receive picks, list suggestions, list setups, added fields, field edits, and item edits. Switching and reordering tabs SHALL be unavailable while the list setup is open.
 
 #### Scenario: Add a page table
 - **WHEN** the draft has the table `products` with 24 containers and the user clicks the `+` tab
@@ -827,12 +827,12 @@ The panel SHALL show a table tab bar with one tab per table of the draft, in rec
 - **THEN** the tabs read `ads`, `results`, `summary` and a saved recipe lists the tables in that order
 
 #### Scenario: Primary table changes
-- **WHEN** pagination is `next`, `results` and `ads` both have item containers, `results` is first, and the user chooses Use for pagination on `ads`
-- **THEN** `ads` moves in front of `results`, the drives pagination badge moves to `ads`, and a toast says that `ads` now drives pagination
+- **WHEN** pagination is `next`, `results` and `ads` both have item containers, `results` drives pagination, and the user chooses Use for pagination on `ads`
+- **THEN** the tabs keep their order, the "pages" badge moves to `ads`, and no toast is shown
 
 #### Scenario: No badge without pagination
-- **WHEN** the draft's pagination kind is `none`
-- **THEN** no tab carries the drives pagination badge
+- **WHEN** the draft has no paginate block
+- **THEN** no tab carries the "pages" badge, and Use for pagination is unavailable with the tooltip "Mark a pagination target first"
 
 #### Scenario: Use for pagination on a page table
 - **WHEN** the user opens the "…" menu of a table without an item container
@@ -916,7 +916,7 @@ A draft loaded from a saved recipe whose list holds `page` scoped fields SHALL k
 - **THEN** a table `page` is created holding `category` with its selectors and options, and `products` keeps only its item fields
 
 ### Requirement: List setup
-The panel SHALL offer a list setup screen in the Pick section of the active table. It SHALL open from the list suggestion ("Set up list" or the `L` key), from "Set up list manually…", from "Repeats N× — start a list table" and "New list table" (in the new table), and from Edit in the Rows section. It SHALL show, top to bottom: a header naming the table with a back control; the number of items on the page and where they come from; a selector stack with the list parent, the item container, and, when opened from a pick, the pick as a greyed "your pick" row with its coverage; the text of the first three items as samples, with a separator between the text parts of each item and a "+ N more · show all on page" line; the exclusions with their counts and an input to add one; two collapsed controls, "Adjust item level" and "Adjust list parent", each with a one-line summary; and the actions Accept and Cancel. While the screen is open every item container SHALL be highlighted on the page and the list parent outlined.
+The panel SHALL offer a list setup screen in the Pick section of the active table. It SHALL open from the list suggestion ("Set up list" or the `L` key), from "Set up list manually…", from "Repeats N× — start a list table" and "New list table" (in the new table), and from Edit in the Rows section. It SHALL show, top to bottom: a header naming the table with a back control; the number of items on the page and where they come from; a selector stack with the list parent, the item container, and, when opened from a pick, the pick as a greyed "your pick" row with its coverage; the text of the first three items as samples, with a separator between the text parts of each item and a "+ N more · all highlighted on the page" line; the exclusions with their counts and an input to add one; two collapsed controls, "Adjust item level" and "Adjust list parent", each with a one-line summary; and the actions Accept and Cancel. While the screen is open every item container SHALL be highlighted on the page and the list parent outlined.
 
 Clicking the list parent or item row of the stack SHALL turn it into a selector input with a strategy choice, the value, the live match count, a pick control, and the candidate list, as defined for the selector input; a typed or picked value SHALL be applied as defined in "Editing the proposal fields".
 
@@ -926,7 +926,7 @@ When the list parent or the item container resolves nothing, the screen SHALL sh
 
 #### Scenario: Open the setup from the suggestion
 - **WHEN** the user picks a result title in an empty table, the suggestion says it repeats 11 times, and the user presses `L`
-- **THEN** the list setup shows 11 items, the list parent `#rso`, the item container, the title as "your pick" with `11/11`, and three samples, and the 11 items are highlighted on the page
+- **THEN** the list setup shows 11 items, the list parent `#rso`, the item container, the title as "your pick" with `11/11`, three samples, then the exclusions, then "Adjust item level" and "Adjust list parent", and the 11 items are highlighted on the page
 
 #### Scenario: Accept returns to the pick
 - **WHEN** the user accepts the setup
@@ -1303,8 +1303,8 @@ The Flows section SHALL list called flows, then reactive flows, in two labeled g
 The Sequence section SHALL show the sequence as an ordered list of numbered blocks: flow blocks, extract blocks, and a paginate block whose `do` blocks are nested under it.
 - **Default sequence:** while the user has not edited the sequence, the recorder SHALL keep it as the default (called flows in list order, then each table once, with the paginate block if one was marked) and show it as default. Editing any block SHALL make it custom, and "Reset to default" SHALL return to the default. The saved recipe SHALL always contain the sequence as shown.
 - **Editing:** blocks SHALL be reorderable by drag or Alt+Up and Alt+Down. A block dragged into the paginate block runs on every page.
-- **Paginate settings:** the paginate block SHALL expand to its settings: kind, target, limit, stop rules, and driving table.
-- **Errors:** sequence validation errors SHALL be shown on the offending blocks: a table extracted twice, a reactive flow in the sequence, a paginate block inside another, an unused table or called flow. While any error exists, Save and Test run SHALL be disabled with the reason "Fix N sequence errors to save".
+- **Paginate settings:** the paginate block's row SHALL show a summary of its kind and limit, such as "next · 5 pages", "url · 1 page", or "scroll · all pages", and SHALL expand to its settings: kind, target, limit, stop rules, and driving table.
+- **Errors:** sequence validation errors SHALL be shown on the offending blocks: a table extracted twice (shown on every block that extracts it), a reactive flow in the sequence, a paginate block inside another, an unused table or called flow. While any error exists, Save and Test run SHALL be disabled with the reason "Fix N sequence errors to save".
 
 #### Scenario: Default follows the draft
 - **WHEN** the sequence is default and the user adds a table `details`
@@ -1313,6 +1313,10 @@ The Sequence section SHALL show the sequence as an ordered list of numbered bloc
 #### Scenario: Errors block saving
 - **WHEN** the user drags `extract summary` into the paginate block while it is also extracted before it
 - **THEN** both blocks show the duplicate error, and Save and Test run are disabled
+
+#### Scenario: Paginate summary
+- **WHEN** the paginate block has kind `next` and limit 5
+- **THEN** its row reads "next · 5 pages" while collapsed
 
 ### Requirement: Recording across windows
 The recorder SHALL run its panel in every window of the session, including popups opened by the page, but exactly one window SHALL own the panel at a time:
@@ -1377,12 +1381,12 @@ In browse mode the recorder SHALL record:
 ### Requirement: Variable kinds in the panel
 The Recipe section's variables list SHALL show for each variable a "shown as" value:
 - `text`: the value is URL-encoded in the URL
-- `raw`: a text variable whose value is put into the URL unchanged; the row SHALL show the note "raw · only affects URL"
+- `raw`: a text variable whose value is put into the URL unchanged; the row SHALL show the note "not encoded in URL" when the template uses it, and "no effect: fills are never encoded" when it does not
 - `secret`: a flag on a text variable; the value is masked, kept for the session only, and never saved
 - `path`: the default is saved
 - `external`: the value is bound outside the recipe, in the config file or on the command line, and is read-only in the panel, with a hint "from config" or "from CLI"
 
-For a variable bound in the recipe, "shown as" SHALL be a select offering `text`, `raw`, `secret`, and `path`; for an external variable it SHALL be a label. Choosing one of them SHALL make it the variable's only kind: choosing `raw` SHALL clear `secret` and set the type to text, and choosing `secret` or `path` SHALL clear `raw`. Marking a variable secret SHALL remove its default from the draft. Saving SHALL write `raw: true` for a raw variable and SHALL never write a secret variable's value.
+The note of a variable's kind and the note of where it is used SHALL be shown on separate lines. For a variable bound in the recipe, "shown as" SHALL be a select offering `text`, `raw`, `secret`, and `path`; for an external variable it SHALL be a label. Choosing one of them SHALL make it the variable's only kind: choosing `raw` SHALL clear `secret` and set the type to text, and choosing `secret` or `path` SHALL clear `raw`. Marking a variable secret SHALL remove its default from the draft. Saving SHALL write `raw: true` for a raw variable and SHALL never write a secret variable's value.
 
 #### Scenario: Externally bound password
 - **WHEN** the config binds `pass` for this recipe and the user opens the recorder
@@ -1390,12 +1394,15 @@ For a variable bound in the recipe, "shown as" SHALL be a select offering `text`
 
 #### Scenario: Mark a variable raw
 - **WHEN** the user chooses `raw` in the "shown as" select of `q` and saves
-- **THEN** the row shows "raw · only affects URL", and the saved recipe declares `q` with `raw: true`
+- **THEN** the row shows "not encoded in URL" on one line and "used in URL" on another, and the saved recipe declares `q` with `raw: true`
 
 #### Scenario: Secret clears raw
 - **WHEN** `token` is raw and the user chooses `secret`
 - **THEN** `token` is shown as secret, and the saved recipe declares `token` with `secret: true` and without `raw`
 
+#### Scenario: Raw variable used only in steps
+- **WHEN** `code` is raw and only a `fill` step uses `{code}`
+- **THEN** the row shows "no effect: fills are never encoded"
 
 ### Requirement: Target editor for steps, triggers, and the paginate target
 The target of a step, a reactive flow's trigger, and the paginate block's target SHALL be edited with one target editor. The editor SHALL show:
@@ -1410,13 +1417,13 @@ The target of a step, a reactive flow's trigger, and the paginate block's target
 - Invalid text SHALL show an inline error and disable applying.
 - Applying with Enter or "Use" SHALL make the typed selector the target's first candidate, rated for stability like any generated candidate, followed by the previous candidates in their order. Esc SHALL close the input without change.
 
-**Re-pick.** "Re-pick" SHALL put the target's window in picking mode, with the page strip "Picking target for <flow> · step <n>" (or "Picking trigger for <flow>", or "Picking pagination target"). The edited row SHALL show "re-picking…", and the Pick section SHALL show a header naming the target and a link back to it. After a pick, the Pick section SHALL show the selection details used for tables:
+**Re-pick.** "Re-pick" SHALL put the target's window in picking mode, with the page strip "Picking target for <flow> · step <n>" (or "Picking trigger for <flow>", or "Picking pagination target"). The edited row SHALL show "re-picking…", and the Pick section SHALL show a header naming the target ("Target for <flow> · step <n>", "Trigger for <flow>", or "Pagination target") and a link back to it. After a pick, the Pick section SHALL show the selection details used for tables:
 - the element card with tag, accessible name, and attributes rated stable or hashed
 - the breadcrumb with the walk to parent and child
 - the candidates generated for the element in page scope, verified against it and ranked, with match counts and stability, where a candidate whose first match is another element is marked "reads another element"
 - the selector input
 
-"Use for step" (or "Use for trigger", "Use for pagination") SHALL save the ranked candidates, with the highlighted row first, and a fingerprint of the picked element. A candidate marked "reads another element" SHALL stay in the list but SHALL NOT be first unless the user highlights it. Cancel or Esc SHALL end picking and keep the previous target.
+"Use for step" (or "Use for trigger", "Use for pagination") SHALL show the Enter key hint, SHALL also be applied by Enter while focus is not in a panel input, and SHALL save the ranked candidates, with the highlighted row first, and a fingerprint of the picked element. A candidate marked "reads another element" SHALL stay in the list but SHALL NOT be first unless the user highlights it. Cancel or Esc SHALL end picking and keep the previous target.
 
 **Iframes.** An element picked inside an iframe SHALL show the "Inside iframe · Edit" card, and the saved target SHALL carry that frame.
 
@@ -1438,7 +1445,7 @@ Changing a `fill` step's target SHALL keep its value, including a `{var}` refere
 
 #### Scenario: Trigger uses the same editor
 - **WHEN** the user re-picks the trigger of the reactive flow `login-wall`
-- **THEN** the page strip reads "Picking trigger for login-wall", and "Use for trigger" saves the new candidates on the trigger
+- **THEN** the page strip reads "Picking trigger for login-wall", the Pick section header reads "Trigger for login-wall", and "Use for trigger" saves the new candidates on the trigger
 
 #### Scenario: Popup closed
 - **WHEN** step 3 of a flow has `window` `popup` and no popup is open
@@ -1447,6 +1454,14 @@ Changing a `fill` step's target SHALL keep its value, including a `{var}` refere
 #### Scenario: Fill keeps its variable
 - **WHEN** the user re-picks the target of a fill step whose value is `{password}`
 - **THEN** the step keeps the value `{password}`
+
+#### Scenario: Enter uses the picked target
+- **WHEN** the re-pick details for step 1 are shown and focus is not in a panel input
+- **THEN** Enter does what "Use for step" does
+
+#### Scenario: Enter in the typed selector applies the typed text
+- **WHEN** the re-pick details are shown and the user types a selector and presses Enter in its input
+- **THEN** the typed selector is applied, as with its "Use" button, and "Use for step" is not triggered
 
 ### Requirement: Drag feedback in panel lists
 
