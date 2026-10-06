@@ -69,10 +69,10 @@ The Recipe and Flows sections SHALL start expanded. Collapse state SHALL last fo
 - **THEN** the table header reads `results` and "List · 11 rows"
 
 ### Requirement: URL template and variables
-The session SHALL accept a URL template with `{name}` and `{+name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be encoded when substituted into the template by the form of each occurrence, as the runner does: fully URL-encoded for `{name}`, reserved-encoded for `{+name}` (as defined in the recipe-format capability).
+The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be substituted as the runner does: fully URL-encoded, or unchanged for a raw variable (as defined in the recipe-format capability).
 
 The expanded Recipe section SHALL show:
-- the URL template as an editable text input, with each `{name}` and `{+name}` variable highlighted inside it;
+- the URL template as an editable text input, with each `{name}` variable highlighted inside it;
 - below the input, a read-only rendered URL: the exact URL the template opens with the current values;
 - a variables table with one row per variable, holding its name, its value, and a remove control, plus a control to add a variable;
 - a "Use current page URL" control and a "Reopen" control.
@@ -81,18 +81,19 @@ A variable name SHALL be a letter or underscore followed by letters, digits, or 
 
 Template edits:
 - A template edit SHALL be committed on Enter or when the input loses focus.
-- A committed template that has a brace outside a `{name}` or `{+name}` variable, or that does not form an absolute `http` or `https` URL once its variables are filled, SHALL be refused with an inline error, and the previous template SHALL stay in effect. The refusal SHALL use the same rule and message as the command line.
+- A committed template that has a brace outside a `{name}` variable, including `{+name}`, or that does not form an absolute `http` or `https` URL once its variables are filled, SHALL be refused with an inline error, and the previous template SHALL stay in effect. The refusal SHALL use the same rule and message as the command line.
 - A committed template that uses a new variable SHALL add that variable to the table with an empty value.
 
 The variables table:
 - It SHALL list every variable used by the template or by a `type` step value, plus any variable the user added that nothing uses yet.
 - Each row SHALL say where the variable is used: "used in URL", "used in step N" for each `type` step whose value references it, "not in URL" when steps use it but the template does not, or "not used".
 - Editing a value SHALL change the rendered URL at once, without navigating.
-- Renaming a variable SHALL rename every `{old}` reference in the template and in `type` step values to `{new}`, and every `{+old}` reference to `{+new}`. A name that is invalid, or taken by another variable, SHALL be refused with an inline error.
-- Removing a variable that nothing uses SHALL remove it at once. Removing a variable still used by the template or by a step SHALL first ask for confirmation, naming where it is used. Confirming SHALL replace each reference with the variable's current value (in the template encoded by the form of each occurrence, raw in step values), then remove the variable.
+- Changing a variable between text and raw SHALL change the rendered URL at once, without navigating.
+- Renaming a variable SHALL rename every `{old}` reference in the template and in `type` step values to `{new}`. A name that is invalid, or taken by another variable, SHALL be refused with an inline error.
+- Removing a variable that nothing uses SHALL remove it at once. Removing a variable still used by the template or by a step SHALL first ask for confirmation, naming where it is used. Confirming SHALL replace each reference with the variable's current value (in the template URL-encoded, or unchanged for a raw variable; unchanged in step values), then remove the variable.
 - A variable that nothing uses SHALL NOT be saved in the recipe.
 
-"Use current page URL" SHALL set the template to the URL of the page that is open now. Each variable with a non-empty value whose encoded value appears exactly once in that URL SHALL be put back as a placeholder. The URL-encoded form and the form encoding with `+` for spaces SHALL be tried first and put back as `{name}`; when neither matches and the reserved-encoded form differs from the URL-encoded form, the reserved-encoded form SHALL be tried and put back as `{+name}`. Other variables SHALL be left out of the template.
+"Use current page URL" SHALL set the template to the URL of the page that is open now. Each variable with a non-empty value whose value, in one of the forms below, appears exactly once in that URL SHALL be put back as `{name}`. For a raw variable, the unchanged value SHALL be tried. For any other variable, the URL-encoded form and the form encoding with `+` for spaces SHALL be tried first; when neither matches and the unchanged value differs from both, the unchanged value SHALL be tried, and a match SHALL also mark the variable raw. A variable bound outside the recipe SHALL NOT be marked raw this way, and SHALL be left out of the template when only its unchanged value matches. Other variables SHALL be left out of the template.
 
 When the rendered URL differs from the URL the session last opened (at start or on the last Reopen), the panel SHALL:
 - mark the template "edited";
@@ -115,9 +116,17 @@ A collapsed Recipe section SHALL keep showing the recipe name and the current te
 - **WHEN** the user commits `https://shop.test/c/{category`
 - **THEN** an inline error names the unmatched brace, and the previous template stays in effect
 
+#### Scenario: Reserved syntax is refused
+- **WHEN** the user commits `https://h.test/d/{+path}`
+- **THEN** an inline error names the brace, and the previous template stays in effect
+
 #### Scenario: Rendered URL is encoded
 - **WHEN** the template is `https://www.google.com/search?q={query}` and `query` is `top llms`
 - **THEN** the rendered URL is `https://www.google.com/search?q=top%20llms`
+
+#### Scenario: Reserved variable keeps the path
+- **WHEN** the template is `https://www.google.com/search?q={q}`, `q` is `a+sentence+with+plus`, and the user sets `q` to raw
+- **THEN** the rendered URL changes from `https://www.google.com/search?q=a%2Bsentence%2Bwith%2Bplus` to `https://www.google.com/search?q=a+sentence+with+plus` without navigating
 
 #### Scenario: Rename a variable used in a step
 - **WHEN** a `type` step has value `{login_email}` and the user renames `login_email` to `email`
@@ -127,6 +136,14 @@ A collapsed Recipe section SHALL keep showing the recipe name and the current te
 - **WHEN** the template is `https://shop.test/c/{category}` with `category` set to `shoes`, and the user removes `category` and confirms
 - **THEN** the template becomes `https://shop.test/c/shoes` and the `category` row is gone
 
+#### Scenario: Rename keeps the reserved form
+- **WHEN** the template is `https://h.test/{path}?q={path2}` with raw `path` and the user renames `path` to `p`
+- **THEN** the template becomes `https://h.test/{p}?q={path2}` and `p` stays raw
+
+#### Scenario: Remove a used raw variable
+- **WHEN** the template is `https://h.test/d/{path}` with raw `path` set to `ID/edit`, and the user removes `path` and confirms
+- **THEN** the template becomes `https://h.test/d/ID/edit`
+
 #### Scenario: Add a variable for a later step
 - **WHEN** the user adds a variable `email` with value `me@acme.dev` and no step uses it yet
 - **THEN** the row shows "not used", and saving the recipe does not declare `email`
@@ -135,6 +152,14 @@ A collapsed Recipe section SHALL keep showing the recipe name and the current te
 - **WHEN** the template is `https://shop.test/search?q={query}` with `query` set to `red shoes`, and the open page is `https://shop.test/search?q=red+shoes&page=2`
 - **THEN** the template becomes `https://shop.test/search?q={query}&page=2`
 
+#### Scenario: Use the current page URL with a path value
+- **WHEN** the template is `https://h.test/d/{path}` with text variable `path` set to `ID/edit`, and the open page is `https://h.test/d/ID/edit?usp=sharing`
+- **THEN** the template becomes `https://h.test/d/{path}?usp=sharing` and `path` is shown as raw
+
+#### Scenario: Use the current page URL keeps a raw variable
+- **WHEN** the template is `https://h.test/d/{path}` with raw `path` set to `ID/edit`, and the open page is `https://h.test/d/ID/edit#top`
+- **THEN** the template becomes `https://h.test/d/{path}#top` and `path` stays raw
+
 #### Scenario: Changed template flags Reopen
 - **WHEN** the session opened `https://www.google.com/search?q=top%20llms` and the user changes the template to add `&hl=en`
 - **THEN** "Reopen" shows the changed dot, the template is marked "edited", and the panel shows that the open page differs by `&hl=en`
@@ -142,18 +167,6 @@ A collapsed Recipe section SHALL keep showing the recipe name and the current te
 #### Scenario: Navigation in the page does not flag Reopen
 - **WHEN** the user clicks a link on the page and nothing in the template or values changed
 - **THEN** "Reopen" shows no changed dot
-
-#### Scenario: Reserved variable keeps the path
-- **WHEN** the template is `https://docs.google.com/presentation/d/{+path}` and `path` is `ID/edit?usp=drive_link`
-- **THEN** `{+path}` is highlighted as a variable, and the rendered URL is `https://docs.google.com/presentation/d/ID/edit?usp=drive_link`
-
-#### Scenario: Rename keeps the reserved form
-- **WHEN** the template is `https://h.test/{+path}?q={path}` and the user renames `path` to `p`
-- **THEN** the template becomes `https://h.test/{+p}?q={p}`
-
-#### Scenario: Use the current page URL with a path value
-- **WHEN** the template is `https://h.test/d/{+path}` with `path` set to `ID/edit`, and the open page is `https://h.test/d/ID/edit?usp=sharing`
-- **THEN** the template becomes `https://h.test/d/{+path}?usp=sharing`
 
 ### Requirement: Picking mode
 The panel SHALL offer a picking mode. While picking, hovering an element SHALL draw a highlight box around it with a tag showing its tag name, role when present, and a short text excerpt. When the hover target repeats among its siblings, the tag SHALL also say how many similar elements repeat at its level ("N similar siblings", N counting the target, shown when N is at least 2), using the similarity the sibling inference uses. Clicking SHALL select the hover target and leave picking mode. Esc SHALL leave picking mode without selecting. Alt+click SHALL select the element under the cursor even when a host overlay or modal backdrop covers it. Host page click handlers SHALL NOT fire during picking. Key presses aimed at the page SHALL NOT reach the page's own handlers during picking; Esc, the hover walk keys, and the panel's Ctrl+S SHALL keep working. Key presses typed into a panel input SHALL be left alone.
@@ -1316,17 +1329,26 @@ In browse mode the recorder SHALL record:
 - **THEN** one `fill` step with value `Lima` targeting the combobox is recorded, and no separate click on the option
 
 ### Requirement: Variable kinds in the panel
-The Recipe section's variables list SHALL show for each variable a "shown as" label:
-- `text`
+The Recipe section's variables list SHALL show for each variable a "shown as" value:
+- `text`: the value is URL-encoded in the URL
+- `raw`: a text variable whose value is put into the URL unchanged; the row SHALL show the note "raw · only affects URL"
 - `secret`: a flag on a text variable; the value is masked, kept for the session only, and never saved
 - `path`: the default is saved
 - `external`: the value is bound outside the recipe, in the config file or on the command line, and is read-only in the panel, with a hint "from config" or "from CLI"
 
-The user SHALL be able to mark a text variable secret and to change a variable's type between text and path. Marking a variable secret SHALL remove its default from the draft. Saving SHALL never write a secret variable's value.
+For a variable bound in the recipe, "shown as" SHALL be a select offering `text`, `raw`, `secret`, and `path`; for an external variable it SHALL be a label. Choosing one of them SHALL make it the variable's only kind: choosing `raw` SHALL clear `secret` and set the type to text, and choosing `secret` or `path` SHALL clear `raw`. Marking a variable secret SHALL remove its default from the draft. Saving SHALL write `raw: true` for a raw variable and SHALL never write a secret variable's value.
 
 #### Scenario: Externally bound password
 - **WHEN** the config binds `pass` for this recipe and the user opens the recorder
 - **THEN** the variables list shows `pass` as external with "from config", and its value cannot be edited
+
+#### Scenario: Mark a variable raw
+- **WHEN** the user chooses `raw` in the "shown as" select of `q` and saves
+- **THEN** the row shows "raw · only affects URL", and the saved recipe declares `q` with `raw: true`
+
+#### Scenario: Secret clears raw
+- **WHEN** `token` is raw and the user chooses `secret`
+- **THEN** `token` is shown as secret, and the saved recipe declares `token` with `secret: true` and without `raw`
 
 
 ### Requirement: Target editor for steps, triggers, and the paginate target

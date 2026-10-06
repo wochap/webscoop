@@ -27,13 +27,14 @@ A version 2 recipe that declares `steps` or `pagination` at the top level SHALL 
 - **THEN** loading fails with an error naming the file and explaining how steps and pagination map to flows and sequence
 
 ### Requirement: Recipe identity and URL template
-A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a `url` template. The template SHALL support variables written as `{name}` and as `{+name}`. A `{name}` value SHALL be fully URL-encoded: every character except `A-Z a-z 0-9 - _ . ! ~ * ' ( )` is percent-encoded. A `{+name}` value SHALL be reserved-encoded, after RFC 6570 reserved expansion: the characters `: / ? # [ ] @ ! $ & ' ( ) * + , ; =`, the unreserved characters, and each `%` followed by two hexadecimal digits SHALL be kept as is, and every other character SHALL be percent-encoded as UTF-8. One variable MAY appear in both forms; each occurrence SHALL be encoded by its own form. In step values `{+name}` SHALL be accepted and SHALL be substituted raw, like `{name}`. Every variable used in the template or in a step value SHALL be declared under `vars` with:
+A recipe SHALL have a `name` (kebab-case, unique among the user's recipes) and a `url` template. The template SHALL support variables written as `{name}`. A variable's value SHALL be fully URL-encoded when it is substituted into the template: every character except `A-Z a-z 0-9 - _ . ! ~ * ' ( )` is percent-encoded. A variable declared `raw` SHALL be substituted into the template unchanged, with no encoding. In step values every variable SHALL be substituted unchanged, whether raw or not. `{+name}` SHALL NOT be a variable: like any other brace outside a `{name}` variable, it SHALL be a validation error. Every variable used in the template or in a step value SHALL be declared under `vars` with:
 - a `name`
 - a `type` of `string` or `path`
 - an optional `secret` boolean (default false)
+- an optional `raw` boolean (default false)
 - an optional `default`
 
-A template variable without a declaration, in either form, SHALL be a validation error. A `secret` variable SHALL NOT have a `default`, and SHALL NOT be used in the template in either form, as defined by the variables capability.
+A template variable without a declaration SHALL be a validation error. A `secret` variable SHALL NOT have a `default`, and SHALL NOT be used in the template, as defined by the variables capability. A variable that sets `raw: true` SHALL NOT also set `secret: true` or `type: "path"`; such a declaration SHALL be a validation error naming the variable.
 
 #### Scenario: Declared variables validate
 - **WHEN** the url is `https://example.com/c/{category}?page={n}` and `vars` declares `category` and `n`
@@ -48,20 +49,32 @@ A template variable without a declaration, in either form, SHALL be a validation
 - **THEN** validation succeeds
 
 #### Scenario: Reserved variable keeps URL structure
-- **WHEN** the url is `https://docs.google.com/presentation/d/{+path}` and `path` is `ID/edit?usp=drive_link`
+- **WHEN** the url is `https://docs.google.com/presentation/d/{path}`, `path` is declared with `raw: true`, and its value is `ID/edit?usp=drive_link`
 - **THEN** the opened URL is `https://docs.google.com/presentation/d/ID/edit?usp=drive_link`
 
+#### Scenario: Raw variable keeps plus signs
+- **WHEN** the url is `https://www.google.com/search?q={q}`, `q` is declared with `raw: true`, and its value is `a+sentence+with+plus`
+- **THEN** the opened URL is `https://www.google.com/search?q=a+sentence+with+plus`
+
 #### Scenario: Reserved variable still encodes spaces
-- **WHEN** the url is `https://h.test/{+path}` and `path` is `a b/c%20d`
-- **THEN** the opened URL is `https://h.test/a%20b/c%20d`
+- **WHEN** the url is `https://h.test/{p}`, `p` is declared with `raw: true`, and its value is `100%/a`
+- **THEN** the URL handed to the browser is `https://h.test/100%/a`
 
 #### Scenario: Plain variable encodes the slash
 - **WHEN** the url is `https://h.test/d/{path}` and `path` is `ID/edit`
 - **THEN** the opened URL is `https://h.test/d/ID%2Fedit`
 
+#### Scenario: Reserved syntax is rejected
+- **WHEN** the url is `https://h.test/d/{+path}`
+- **THEN** validation fails with the unmatched brace error
+
 #### Scenario: Secret in reserved form is rejected
-- **WHEN** `vars` declares `token` with `secret: true` and the url is `https://h.test/{+token}`
+- **WHEN** `vars` declares `token` with `secret: true` and `raw: true`
 - **THEN** validation fails naming `token`
+
+#### Scenario: Raw path is rejected
+- **WHEN** `vars` declares `video` with `type: "path"` and `raw: true`
+- **THEN** validation fails naming `video`
 
 ### Requirement: Tables
 A recipe MAY declare `tables`: a non-empty list of tables, each with a `name` (kebab-case, unique within the recipe), an optional `item` block, and a non-empty `fields` list. A table with an `item` block yields one row per matched container on each page; a table without one yields exactly one row per page. A recipe SHALL declare either `tables` or the top level `item` and `fields`, not both. The top level form SHALL be the shorthand for a single table named `items` and SHALL validate and run exactly as before. A recipe MAY declare `tables` with a single entry. Within a table, a field `scope` of `item` SHALL require the table's `item` block, and at most one field per table MAY set `key: true`.

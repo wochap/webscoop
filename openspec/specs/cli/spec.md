@@ -334,11 +334,11 @@ Exit code 2 SHALL be used only when a run was paused on a guard and the guard ti
 - **THEN** stdout holds a script that declares both tables and the exit code is 0
 
 ### Requirement: Warning for encoded variable values
-Variable values are URL-encoded when they are substituted into the URL template as `{name}`. When `record`, `run`, or `test` receives a `--var` value that contains a `+`, or a `%` followed by two hexadecimal digits, and the template uses that variable as `{name}`, the command SHALL print one warning line on stderr per such variable and SHALL continue. The warning SHALL name the variable and say that the value is encoded again. For a `+` it SHALL suggest the value with spaces in place of each `+`; for `%XX` escapes it SHALL suggest the decoded value. No warning SHALL be printed for variables that only `type` steps use, because step values are typed as is, nor for variables that the template uses only as `{+name}`, because reserved encoding keeps `+` and `%XX` escapes.
+Variable values are URL-encoded when they are substituted into the URL template, unless the variable is declared `raw`. When `record`, `run`, or `test` receives a `--var` value that contains a `+`, or a `%` followed by two hexadecimal digits, and the template uses that variable and the variable is not raw, the command SHALL print one warning line on stderr per such variable and SHALL continue. The warning SHALL name the variable and say that the value is encoded again. For a `+` it SHALL suggest the value with spaces in place of each `+`; for `%XX` escapes it SHALL suggest the decoded value. At `record`, the warning SHALL also say that the variable can be marked raw in the panel. No warning SHALL be printed for variables that only `type` steps use, because step values are typed as is, nor for raw variables, because their values are not encoded. The command line SHALL offer no option to mark a variable raw.
 
 #### Scenario: Plus sign in a URL variable
 - **WHEN** `webscoop record 'https://www.google.com/search?q={query}' --var query=top+llms` is executed
-- **THEN** stderr warns that `query` is URL-encoded so `+` stays a literal plus, suggests `top llms`, and the session starts
+- **THEN** stderr warns that `query` is URL-encoded so `+` stays a literal plus, suggests `top llms` or marking `query` raw in the panel, and the session starts
 
 #### Scenario: Percent escape in a URL variable
 - **WHEN** `webscoop run shop --var category=red%20shoes` is executed and the template uses `{category}`
@@ -349,8 +349,8 @@ Variable values are URL-encoded when they are substituted into the URL template 
 - **THEN** no warning is printed
 
 #### Scenario: Reserved variable is not flagged
-- **WHEN** `webscoop record 'https://h.test/d/{+path}' --var 'path=ID/edit?q=a+b'` is executed
-- **THEN** no warning is printed and the session opens `https://h.test/d/ID/edit?q=a+b`
+- **WHEN** `webscoop run search --var 'q=a+sentence+with+plus'` is executed and the recipe declares `q` with `raw: true` and uses it as `{q}`
+- **THEN** no warning is printed and the run opens the URL with `q=a+sentence+with+plus`
 
 ### Requirement: Quiet runs print only errors and prompts
 `webscoop run` SHALL accept `--quiet` and its short form `-q`. With it, the run SHALL print on stderr only:
