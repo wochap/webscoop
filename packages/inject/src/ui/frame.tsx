@@ -1,6 +1,6 @@
 import { frameLabel, type FrameTarget, type RecorderState } from '@webscoop/core/page';
 import { SelectorCandidateList } from './candidates';
-import { useActions } from './context';
+import { useActions, usePending } from './context';
 import { Icon } from './icons';
 import { SelectorChip } from './selector-chip';
 import { SelectorInput } from './selector-input';
@@ -80,7 +80,9 @@ export function FrameEditor({ host, frameKey: key }: { host: RecorderState; fram
   // Until the host answers an edit, the frame is still known by the old primary among its candidates.
   const frames = framesOf(host);
   const frame = frames.find((f) => frameKey(f) === key) ?? frames.find((f) => f.selectors.some((c) => `${c.strategy}=${c.value}` === key));
+  const pending = usePending();
   const close = () => actions.setUi({ frameEdit: null });
+  const useFrame = () => pending.applyPending('frame') && close();
   if (!frame) return null;
   const primary = frame.selectors[0]!;
   const edit = (patch: { by: 'primary'; index: number } | { by: 'selector'; selector: string }) => {
@@ -99,7 +101,8 @@ export function FrameEditor({ host, frameKey: key }: { host: RecorderState; fram
         if (e.key === 'Escape' || (e.key === 'Enter' && !(e.target instanceof HTMLInputElement))) {
           e.preventDefault();
           e.stopPropagation();
-          close();
+          if (e.key === 'Escape') close();
+          else useFrame();
         }
       }}
     >
@@ -121,15 +124,18 @@ export function FrameEditor({ host, frameKey: key }: { host: RecorderState; fram
         value={`${primary.strategy}=${primary.value}`}
         count={primary.count ?? null}
         error={host.error}
-        submitLabel="Set"
-        onSubmit={(selector) => edit({ by: 'selector', selector })}
+        pendingGroup="frame"
+        onSubmit={(selector) => {
+          edit({ by: 'selector', selector });
+          close();
+        }}
       />
       <span className="ws-meta">Pick selects the &lt;iframe&gt; element itself, not its content. A change applies to every field and step with this frame.</span>
       <div className="ws-row" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="ws-btn ws-btn-ghost" onClick={close} data-ws="frame-editor-cancel">
           Cancel
         </button>
-        <button type="button" className="ws-btn ws-btn-outline" onClick={close} data-ws="frame-editor-done">
+        <button type="button" className="ws-btn ws-btn-outline" onClick={useFrame} data-ws="frame-editor-done">
           Use frame <Kbd>Enter</Kbd>
         </button>
       </div>

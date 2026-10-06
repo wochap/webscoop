@@ -350,7 +350,7 @@ export class Runtime implements Actions {
 
   /** A key aimed at the page while picking: the picker holds it back, the panel shortcuts (Ctrl+S) may still run. */
   pageKey = (e: KeyboardEvent): void => {
-    if (handleKey(e, e.target, this.store.get(), this)) e.preventDefault();
+    if (handleKey(e, e.target, this.store.get(), this, this.store.pending)) e.preventDefault();
   };
 
   // Browsing -------------------------------------------------------------------
@@ -653,7 +653,7 @@ export class Runtime implements Actions {
   /** Shortcuts pressed while focus is on the page; the panel handles its own keys. */
   private readonly onWindowKey = (e: KeyboardEvent): void => {
     if (isOwn(e.target as Node)) return;
-    if (handleKey(e, e.target, this.store.get(), this)) {
+    if (handleKey(e, e.target, this.store.get(), this, this.store.pending)) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }

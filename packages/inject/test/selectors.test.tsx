@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { type ProtocolCandidate, emptyDraft, pathOf } from '@webscoop/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Store, type Actions } from '../src/store';
-import { RecorderProvider } from '../src/ui/context';
+import { RecorderProvider, usePending } from '../src/ui/context';
+import { selectorSyntaxError } from '../src/pending';
 import { Icon, ICON_NAMES } from '../src/ui/icons';
 import { SelectorChip, selectorDisplay, STRATEGIES } from '../src/ui/selector-chip';
 import { applyTyping, SelectorInput, splitSelector } from '../src/ui/selector-input';
@@ -244,5 +245,77 @@ describe('selector chain', () => {
     const before = panel.sent.length;
     for (const chip of Array.from(panel.q('rows-stack')!.querySelectorAll('[data-ws="chip"]'))) (chip as HTMLElement).click();
     expect(panel.sent.length).toBe(before);
+  });
+});
+
+describe('pending selector text', () => {
+  it('tells syntax errors the panel can find before sending', () => {
+    expect(selectorSyntaxError('css=div[')).not.toBeNull();
+    expect(selectorSyntaxError('xpath=//ul[')).not.toBeNull();
+    expect(selectorSyntaxError('css=.product')).toBeNull();
+    expect(selectorSyntaxError('role=listitem')).toBeNull();
+    expect(selectorSyntaxError('xpath=//ol/li')).toBeNull();
+  });
+
+  it('marks typed text that differs from the value as pending and applies it for a closer', () => {
+    let pending!: ReturnType<typeof usePending>;
+    function Grab() {
+      pending = usePending();
+      return null;
+    }
+    const submitted: string[] = [];
+    const p = withActions(
+      <>
+        <Grab />
+        <SelectorInput label="Item selector" testId="pick-selector" value="css=li.card" pendingGroup="g" onSubmit={(s) => submitted.push(s)} />
+      </>,
+    );
+    const box = p.container.querySelector('.ws-selin-box')!;
+    expect(box.hasAttribute('data-pending')).toBe(false);
+    act(() => fireEvent.change(p.container.querySelector('[data-ws="pick-selector"]')!, { target: { value: '.product' } }));
+    expect(box.hasAttribute('data-pending')).toBe(true);
+    expect(p.container.querySelector('[data-ws="pick-selector-pending"]')).not.toBeNull();
+    let ok = false;
+    act(() => {
+      ok = pending.applyPending('g');
+    });
+    expect(ok).toBe(true);
+    expect(submitted).toEqual(['css=.product']);
+    expect(box.hasAttribute('data-pending')).toBe(false);
+    expect(p.container.querySelector('[data-ws="pick-selector-pending"]')).toBeNull();
+    act(() => {
+      ok = pending.applyPending('g');
+    });
+    expect(submitted).toEqual(['css=.product']);
+  });
+
+  it('keeps invalid pending text with the inline error', () => {
+    let pending!: ReturnType<typeof usePending>;
+    function Grab() {
+      pending = usePending();
+      return null;
+    }
+    const submitted: string[] = [];
+    const p = withActions(
+      <>
+        <Grab />
+        <SelectorInput label="Item selector" testId="pick-selector" value="css=li.card" pendingGroup="g" onSubmit={(s) => submitted.push(s)} />
+      </>,
+    );
+    act(() => fireEvent.change(p.container.querySelector('[data-ws="pick-selector"]')!, { target: { value: 'div[' } }));
+    let ok = true;
+    act(() => {
+      ok = pending.applyPending('g');
+    });
+    expect(ok).toBe(false);
+    expect(submitted).toEqual([]);
+    expect(p.container.querySelector('[data-ws="pick-selector-error"]')!.textContent).toContain('invalid');
+    expect(p.container.querySelector('.ws-selin-box')!.hasAttribute('data-pending')).toBe(true);
+  });
+
+  it('styles the pending state', async () => {
+    const css = (await import('node:fs')).readFileSync(`${import.meta.dirname}/../src/styles.css`, 'utf8');
+    expect(css).toContain('.ws-selin-box[data-pending]');
+    expect(css).toContain('.ws-selin-dot');
   });
 });

@@ -1,3 +1,4 @@
+import { createPendingSelectors } from './pending';
 import type { BlockPath, Crumb, PageMessage, PanelMode, Path, RecorderState, TargetRef } from '@webscoop/core/page';
 
 export type Mode = 'idle' | 'picking' | 'browsing' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
@@ -107,6 +108,8 @@ export interface Snapshot {
 export class Store {
   private snapshot: Snapshot = { host: null, ui: initialUi };
   private readonly listeners = new Set<() => void>();
+  /** Selector inputs with pending text, applied by the closers of their editors. */
+  readonly pending = createPendingSelectors();
 
   get = (): Snapshot => this.snapshot;
 

@@ -266,3 +266,69 @@ describe('editing the confirmed item container in the panel', () => {
     overlay.dispose();
   });
 });
+
+describe('pending selector text in the list setup', () => {
+  const typeIn = (p: ReturnType<typeof renderPanel>, ws: string, value: string) => act(() => fireEvent.change(p.q(ws)!, { target: { value } }));
+  const setLevels = (sent: PageMessage[]) => sent.filter((m) => m.kind === 'draft.setLevel');
+
+  it('Done applies a typed item selector and closes the row', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    fireEvent.click(p.q('list-row-item')!);
+    expect(p.q('list-row-done-item')!.textContent).toContain('Enter');
+    typeIn(p, 'list-input-item', 'css=.product');
+    expect(p.q('list-row-item')!.querySelector('[data-pending]')).not.toBeNull();
+    act(() => fireEvent.click(p.q('list-row-done-item')!));
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.setLevel', level: 'item', by: 'selector', selector: 'css=.product' });
+    expect(p.q('list-input-item')).toBeNull();
+  });
+
+  it('Invalid pending text keeps the row open', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    fireEvent.click(p.q('list-row-item')!);
+    typeIn(p, 'list-input-item', 'css=div[');
+    act(() => fireEvent.click(p.q('list-row-done-item')!));
+    expect(setLevels(p.sent)).toEqual([]);
+    expect(p.q('list-input-item')).not.toBeNull();
+    expect(p.q('list-error-item')!.textContent).toContain('invalid');
+  });
+
+  it('Accept applies a pending list parent before confirming', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    fireEvent.click(p.q('list-row-within')!);
+    typeIn(p, 'list-input-within', 'css=main ol');
+    act(() => fireEvent.click(p.q('list-accept')!));
+    expect(p.sent.slice(-2)).toEqual([{ kind: 'draft.setLevel', level: 'within', by: 'selector', selector: 'css=main ol' }, { kind: 'draft.confirmItems' }]);
+  });
+
+  it('Enter outside the inputs applies a pending exclusion before confirming', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    typeIn(p, 'list-exclude-input', '.sponsored');
+    act(() => fireEvent.keyDown(p.q('panel-body')!, { key: 'Enter' }));
+    expect(p.sent.slice(-2)).toEqual([{ kind: 'draft.addExclusion', selector: 'css=.sponsored' }, { kind: 'draft.confirmItems' }]);
+  });
+
+  it('invalid pending text blocks Accept', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    fireEvent.click(p.q('list-row-item')!);
+    typeIn(p, 'list-input-item', 'css=div[');
+    act(() => fireEvent.click(p.q('list-accept')!));
+    expect(p.sent.filter((m) => m.kind === 'draft.confirmItems' || m.kind === 'draft.setLevel')).toEqual([]);
+  });
+
+  it('Esc drops pending text', async () => {
+    const { proposed } = await hostStates();
+    const p = renderPanel(proposed);
+    fireEvent.click(p.q('list-row-item')!);
+    typeIn(p, 'list-input-item', 'css=.product');
+    act(() => fireEvent.keyDown(p.q('list-input-item')!, { key: 'Escape' }));
+    expect((p.q('list-input-item') as HTMLInputElement).value).toBe('article');
+    expect(p.q('list-row-item')!.querySelector('[data-pending]')).toBeNull();
+    act(() => fireEvent.click(p.q('list-row-done-item')!));
+    expect(setLevels(p.sent)).toEqual([]);
+  });
+});

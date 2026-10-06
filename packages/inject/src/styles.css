@@ -47,6 +47,8 @@
   --ws-ok-tint: #1e3830;
   --ws-warn: #e6c98f;
   --ws-warn-tint: #3b3222;
+  --ws-pending: oklch(0.72 0.11 80);
+  --ws-pending-dot: oklch(0.82 0.13 80);
   --ws-danger: #f0a9a9;
   --ws-danger-tint: #42262b;
   --ws-s1: 2.8px;
@@ -546,6 +548,8 @@
 .ws-selin { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ws-selin-box { display: flex; align-items: stretch; height: 28px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--ws-neutral-800); background: color-mix(in srgb, var(--ws-surface) 55%, var(--ws-bg)); overflow: hidden; min-width: 0; }
 .ws-selin-box:focus-within { box-shadow: inset 0 0 0 1px var(--ws-accent-700); }
+.ws-selin-box[data-pending] { box-shadow: inset 0 0 0 1px var(--ws-pending); }
+.ws-selin-dot { flex: none; align-self: center; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: var(--ws-pending-dot); }
 .ws-selin[data-invalid] .ws-selin-box { box-shadow: inset 0 0 0 1px var(--ws-invalid), 0 0 0 3px color-mix(in srgb, var(--ws-invalid) 16%, transparent); }
 .ws-selin-strategy { position: relative; flex: none; border: 0; border-radius: 0; background: transparent; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-right: 1px solid var(--ws-neutral-800); color: var(--ws-neutral-300); font: 700 10.5px/1 var(--ws-mono); }
 .ws-selin-strategy:hover { background: var(--ws-neutral-900); }

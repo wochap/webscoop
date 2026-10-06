@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { DraftItem, LevelKind, LevelView, Path, ProposalView, ProtocolCandidate } from '@webscoop/core/page';
 import { SelectorRow } from './candidates';
-import { useActions } from './context';
+import { useActions, usePending } from './context';
 import { Icon } from './icons';
 import { SelectorChip } from './selector-chip';
 import { SelectorInput } from './selector-input';
@@ -55,6 +55,8 @@ export function LevelField({
         }}
         onPick={() => void actions.send({ kind: 'draft.pickLevel', level })}
         pickTestId={`list-pick-${level}`}
+        pendingGroup="list-setup"
+        pendingId={`list-${level}`}
         {...(view && view.selectors.length > 1 ? { candidates: view.selectors.length, candidatesOpen: open, onCandidates: () => setOpen(!open), candidatesTestId: `list-more-${level}` } : {})}
         extra={
           onClear && view ? (
@@ -128,6 +130,7 @@ export function ExclusionInput({ exclude, title = 'Exclude' }: { exclude: Protoc
         placeholder="sponsored, or paste strategy=value"
         clearOnSubmit
         submitLabel="Exclude"
+        pendingGroup="list-setup"
         onSubmit={(selector) => void actions.send({ kind: 'draft.addExclusion', selector })}
       />
     </div>
@@ -288,6 +291,7 @@ function StackRow({
   inferred?: boolean;
 }) {
   const actions = useActions();
+  const pending = usePending();
   const primary = view?.selectors[view.primary];
   if (open || !primary) {
     return (
@@ -295,8 +299,8 @@ function StackRow({
         <div className="ws-row">
           <span className={`ws-stack-label ws-spacer ws-label-${level === 'within' ? 'list' : 'item'}`}>{LEVEL_LABEL[level]}</span>
           {primary && (
-            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onClose} data-ws={`list-row-done-${level}`}>
-              Done
+            <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={() => pending.applyPendingId(`list-${level}`) && onClose()} data-ws={`list-row-done-${level}`}>
+              Done <Kbd>Enter</Kbd>
             </button>
           )}
         </div>
@@ -454,10 +458,11 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
 /** Accept (Enter) and Cancel (Esc) of the list setup, fixed above the footer. */
 export function ListSetupActions({ proposal }: { proposal: ProposalView }) {
   const actions = useActions();
+  const pending = usePending();
   const count = proposal.proposed.count ?? 0;
   return (
     <div className="ws-setup-bar" data-ws="list-actions">
-      <button type="button" className="ws-btn ws-btn-outline ws-spacer" disabled={count === 0} onClick={() => void actions.send({ kind: 'draft.confirmItems' })} data-ws="list-accept">
+      <button type="button" className="ws-btn ws-btn-outline ws-spacer" disabled={count === 0} onClick={() => pending.applyPending('list-setup') && void actions.send({ kind: 'draft.confirmItems' })} data-ws="list-accept">
         <Icon name="check" size={12} />
         {proposal.origin === 'edit' ? 'Update list' : `Accept ${count} items`} <Kbd>Enter</Kbd>
       </button>

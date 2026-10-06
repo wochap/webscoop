@@ -2,8 +2,9 @@ import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Crumb, RecorderState } from '@webscoop/core/page';
 import { currentTable, tableMode } from '@webscoop/core/page';
 import { isMenuTarget, isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
+import type { PendingSelectors } from '../pending';
 import { modeOf, type Actions, type Snapshot } from '../store';
-import { useActions, useSnapshot } from './context';
+import { useActions, usePending, useSnapshot } from './context';
 import { FieldList } from './fields';
 import { GuardBanner, GuardPanel } from './guard';
 import { ItemActions, ItemSummary, ListSetup, ListSetupActions } from './items';
@@ -24,7 +25,7 @@ import { CompactBar, PanelRail, PanelStrip } from './windows';
 import { flowsOnly } from './empty';
 
 /** Carry out a shortcut against the current state. */
-export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions): void {
+export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions, pending?: PendingSelectors): void {
   const { host, ui } = snap;
   switch (shortcut) {
     case 'pick':
@@ -43,7 +44,7 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
       actions.setUi({ menu: null });
       return;
     case 'confirm':
-      if (host?.proposal && (host.proposal.proposed.count ?? 0) > 0) void actions.send({ kind: 'draft.confirmItems' });
+      if (host?.proposal && (host.proposal.proposed.count ?? 0) > 0 && (pending?.applyPending('list-setup') ?? true)) void actions.send({ kind: 'draft.confirmItems' });
       return;
     case 'setupList':
       void actions.send({ kind: 'list.open', from: 'suggestion' });
@@ -172,7 +173,7 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
 }
 
 /** Resolve and run the shortcut for a key event; returns whether one ran. */
-export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot, actions: Actions): boolean {
+export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot, actions: Actions, pending?: PendingSelectors): boolean {
   // While a run waits on a guard, every key belongs to the page (the user is logging in).
   if (snap.host?.guardContext) return false;
   // An open dropdown menu owns its keys (Esc closes only the menu).
@@ -200,7 +201,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     tabsLocked: Boolean(snap.host?.proposal),
   });
   if (!shortcut) return false;
-  runShortcut(shortcut, snap, actions);
+  runShortcut(shortcut, snap, actions, pending);
   return true;
 }
 
@@ -210,11 +211,12 @@ export { recordAsStep } from './selection';
 export function ScoopRoot() {
   const snap = useSnapshot();
   const actions = useActions();
+  const pending = usePending();
   const { host, ui } = snap;
   const mode = modeOf(snap);
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (handleKey(e, e.target, snap, actions)) {
+    if (handleKey(e, e.target, snap, actions, pending)) {
       e.preventDefault();
       e.stopPropagation();
     }

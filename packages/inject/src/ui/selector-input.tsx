@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useActions } from './context';
+import { useActions, usePending } from './context';
 import { Dropdown, type DropdownOption } from './dropdown';
 import { Icon } from './icons';
+import { selectorSyntaxError } from '../pending';
 import { STRATEGIES, STRATEGY_TAGS, StrategyTag, type Strategy } from './selector-chip';
 
 const STRATEGY_OPTIONS: DropdownOption<Strategy>[] = STRATEGIES.map((s) => ({
@@ -37,7 +38,9 @@ export function applyTyping(strategy: Strategy, text: string): { strategy: Strat
 /**
  * One selector input for every place the panel takes selector text: a
  * strategy dropdown, the value, the live match count, and optional pick and
- * candidates controls. Submitting sends `strategy=value`.
+ * candidates controls. Submitting sends `strategy=value`. With
+ * `pendingGroup`, typed text that differs from `value` is pending: it shows
+ * as such, and the group's closers apply it.
  */
 export function SelectorInput({
   value = '',
@@ -63,6 +66,8 @@ export function SelectorInput({
   counter,
   onLive,
   onEscape,
+  pendingGroup,
+  pendingId = testId,
 }: {
   /** The current selector as `strategy=value`; the input follows it when it changes. */
   value?: string;
@@ -95,6 +100,10 @@ export function SelectorInput({
   /** The text and its live count after each count; null while counting. */
   onLive?: (selector: string, result: { count: number; error: string | null } | null) => void;
   onEscape?: () => void;
+  /** The closers that apply this input's pending text. */
+  pendingGroup?: string;
+  /** Key of this input's pending entry, for a closer of this input alone. */
+  pendingId?: string;
 }) {
   const actions = useActions();
   const seed = () => (value ? splitSelector(value) : { strategy: 'css' as Strategy, value: '' });
@@ -109,6 +118,9 @@ export function SelectorInput({
   }
   const text = state.value.trim() ? `${state.strategy}=${state.value.trim()}` : '';
   const submitted = text !== '' && text === value;
+  const [applied, setApplied] = useState<string | null>(null);
+  const [syntaxError, setSyntaxError] = useState<{ text: string; message: string } | null>(null);
+  const pending = pendingGroup !== undefined && text !== '' && text !== value && text !== applied;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setLive(null);
@@ -137,18 +149,46 @@ export function SelectorInput({
     // `counter` and `onLive` are fresh closures each render; the text is what counts.
   }, [text, submitted, scope, actions]);
   const shownCount = !text ? null : submitted && !counter ? count : live;
-  const shownError = error ?? liveError;
+  const shownError = error ?? (syntaxError?.text === text ? syntaxError.message : null) ?? liveError;
   const submit = () => {
     if (!text) return;
     onSubmit(text);
+    setApplied(text);
     if (clearOnSubmit) setState({ strategy: state.strategy, value: '' });
   };
+  const apply = () => {
+    const message = selectorSyntaxError(text);
+    if (message) {
+      setSyntaxError({ text, message });
+      return false;
+    }
+    submit();
+    return true;
+  };
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
+  const registry = usePending();
+  useEffect(() => {
+    if (!pending || pendingGroup === undefined) return;
+    let done = false;
+    // A closer may run before React commits the applied state; the entry applies once.
+    return registry.register(pendingId, {
+      group: pendingGroup,
+      apply: () => {
+        if (done) return true;
+        const ok = applyRef.current();
+        done = ok;
+        return ok;
+      },
+    });
+  }, [pending, pendingGroup, pendingId, registry, text]);
   const tag = STRATEGY_TAGS[state.strategy];
   return (
     <div className="ws-selin" data-ws="input" data-invalid={shownError ? true : undefined}>
       <div className="ws-row">
         <form
           className="ws-selin-box ws-spacer"
+          data-pending={pending || undefined}
           onSubmit={(e) => {
             e.preventDefault();
             submit();
@@ -190,11 +230,19 @@ export function SelectorInput({
                 onEscape();
                 return;
               }
+              if (e.key === 'Escape' && pending) {
+                // Esc drops pending text.
+                e.preventDefault();
+                e.stopPropagation();
+                setState(seed());
+                return;
+              }
               if (e.key !== 'Enter') return;
               e.preventDefault();
               submit();
             }}
           />
+          {pending && <span className="ws-selin-dot" title="Pending: Enter or the closing button applies it" data-ws={`${testId}-pending`} />}
           <span
             className="ws-selin-count"
             title="Live match count"

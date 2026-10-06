@@ -88,7 +88,43 @@ describe('frames in the panel', () => {
     expect(p.q('frame-editor')).not.toBeNull();
     const input = p.q('frame-selector') as HTMLInputElement;
     act(() => fireEvent.change(input, { target: { value: 'iframe[name=app]' } }));
-    act(() => fireEvent.click(p.q('frame-selector-go')!));
+    act(() => fireEvent.keyDown(input, { key: 'Enter' }));
     expect(p.sent.at(-1)).toMatchObject({ kind: 'frame.edit', key: { strategy: 'id', value: 'app' }, by: 'selector' });
+  });
+
+  function openEditor() {
+    const p = renderPanel(selectedIn(baseState()));
+    act(() => fireEvent.click(p.q('pick-frame-edit')!));
+    return p;
+  }
+
+  it('Use frame applies the typed frame selector and closes the editor, with no separate Set button', () => {
+    const p = openEditor();
+    expect(Array.from(p.q('frame-editor')!.querySelectorAll('button')).some((b) => b.textContent === 'Set')).toBe(false);
+    const input = p.q('frame-selector') as HTMLInputElement;
+    act(() => fireEvent.change(input, { target: { value: 'css=#checkout-frame' } }));
+    expect(p.q('frame-editor')!.querySelector('[data-pending]')).not.toBeNull();
+    act(() => fireEvent.click(p.q('frame-editor-done')!));
+    expect(p.sent.at(-1)).toMatchObject({ kind: 'frame.edit', by: 'selector', selector: 'css=#checkout-frame' });
+    expect(p.q('frame-editor')).toBeNull();
+  });
+
+  it('Enter in the frame selector input applies the text and closes the editor', () => {
+    const p = openEditor();
+    const input = p.q('frame-selector') as HTMLInputElement;
+    act(() => fireEvent.change(input, { target: { value: 'css=#checkout-frame' } }));
+    act(() => fireEvent.keyDown(input, { key: 'Enter' }));
+    expect(p.sent.at(-1)).toMatchObject({ kind: 'frame.edit', by: 'selector', selector: 'css=#checkout-frame' });
+    expect(p.q('frame-editor')).toBeNull();
+  });
+
+  it('Use frame keeps the editor open on an invalid typed selector', () => {
+    const p = openEditor();
+    const before = p.sent.length;
+    act(() => fireEvent.change(p.q('frame-selector')!, { target: { value: 'css=iframe[' } }));
+    act(() => fireEvent.click(p.q('frame-editor-done')!));
+    expect(p.sent.length).toBe(before);
+    expect(p.q('frame-editor')).not.toBeNull();
+    expect(p.q('frame-selector-error')!.textContent).toContain('invalid');
   });
 });

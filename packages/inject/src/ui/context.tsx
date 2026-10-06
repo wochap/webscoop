@@ -1,4 +1,5 @@
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import type { PendingSelectors } from '../pending';
 import type { Actions, Snapshot, Store } from '../store';
 
 interface RecorderContext {
@@ -23,6 +24,10 @@ function useRecorderContext(): RecorderContext {
 export function useSnapshot(): Snapshot {
   const { store } = useRecorderContext();
   return useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+
+export function usePending(): PendingSelectors {
+  return useRecorderContext().store.pending;
 }
 
 export function useActions(): Actions {
