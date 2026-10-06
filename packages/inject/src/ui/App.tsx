@@ -46,6 +46,11 @@ export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions
     case 'confirm':
       if (host?.proposal && (host.proposal.proposed.count ?? 0) > 0 && (pending?.applyPending('list-setup') ?? true)) void actions.send({ kind: 'draft.confirmItems' });
       return;
+    case 'useTarget': {
+      const edit = host?.targetEdit;
+      if (edit?.selection) void actions.send({ kind: 'target.edit.apply', ref: edit.ref, by: 'selection' });
+      return;
+    }
     case 'setupList':
       void actions.send({ kind: 'list.open', from: 'suggestion' });
       return;
@@ -199,6 +204,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     focusedTab: snap.ui.focusedTab,
     renaming: snap.ui.renamingTab !== null,
     tabsLocked: Boolean(snap.host?.proposal),
+    canUseTarget: Boolean(snap.host?.targetEdit?.selection),
   });
   if (!shortcut) return false;
   runShortcut(shortcut, snap, actions, pending);

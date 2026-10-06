@@ -2777,16 +2777,16 @@ export class RecorderController {
     let use: string;
     if (ref.kind === 'step') {
       const name = this.draft.flows[ref.flow]!.name;
-      title = `${name} · step ${ref.index + 1}`;
-      strip = `Picking target for ${title}`;
+      title = `Target for ${name} · step ${ref.index + 1}`;
+      strip = `Picking target for ${name} · step ${ref.index + 1}`;
       use = 'Use for step';
     } else if (ref.kind === 'trigger') {
       const name = this.draft.flows[ref.flow]!.name;
-      title = `trigger for ${name}`;
+      title = `Trigger for ${name}`;
       strip = `Picking trigger for ${name}`;
       use = 'Use for trigger';
     } else {
-      title = 'pagination target';
+      title = 'Pagination target';
       strip = 'Picking pagination target';
       use = 'Use for pagination';
     }

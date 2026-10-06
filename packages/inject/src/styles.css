@@ -309,7 +309,7 @@
 .ws-var-name { background: transparent; font-weight: 500; color: var(--ws-accent-300); }
 .ws-var-remove { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--ws-r-sm); background: transparent; color: var(--ws-neutral-600); cursor: pointer; }
 .ws-var-remove:hover { background: var(--ws-surface-2); color: var(--ws-text); }
-.ws-var-note { padding: 1px 2px 6px; font-size: 10.5px; }
+.ws-var-note { display: block; padding: 1px 2px 6px; font-size: 10.5px; }
 .ws-var-usage { color: var(--ws-neutral-500); }
 .ws-var-kind { height: 22px; min-width: 0; padding: 0 2px; border: 0; border-radius: var(--ws-r-sm); background: var(--ws-surface-2); color: var(--ws-text); font-size: 10.5px; }
 .ws-var-kind-secret { color: var(--ws-warn); }

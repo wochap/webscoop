@@ -153,7 +153,10 @@ function blockDetail(draft: Draft, block: DraftBlock | DraftInnerBlock): string 
     if (table.item) return table.item.count !== null ? `${table.item.count} rows / page` : 'list';
     return '1 row';
   }
-  return null;
+  const pagination = draft.pagination;
+  if (!pagination) return null;
+  const { limit } = pagination;
+  return `${pagination.kind} · ${limit === 'all' ? 'all pages' : `${limit} page${limit === 1 ? '' : 's'}`}`;
 }
 
 function BlockRow({
@@ -211,7 +214,11 @@ function BlockRow({
         <span className="ws-mono ws-ellipsis" data-ws="block-name">
           {name}
         </span>
-        {detail && <span className="ws-meta ws-ellipsis">{detail}</span>}
+        {detail && (
+          <span className="ws-meta ws-ellipsis" data-ws="block-detail">
+            {detail}
+          </span>
+        )}
         {own.length > 0 && (
           <span className="ws-error ws-ellipsis" data-ws="block-error" title={own.map((e) => e.message).join('\n')}>
             {own[0]!.message}

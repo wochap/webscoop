@@ -51,6 +51,16 @@ describe('list setup', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.cancelItems' });
   });
 
+  it('shows the exclusions before "Adjust item level" and "Adjust list parent"', async () => {
+    const { proposed } = await hostStates({ sponsored: 2 });
+    const p = renderPanel(proposed);
+    const exclude = p.q('list-exclude-input')!;
+    const item = p.q('list-adjust-item-toggle')!;
+    const parent = p.q('list-adjust-parent-toggle')!;
+    expect(exclude.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(item.compareDocumentPosition(parent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('turns a stack row into the selector input, edits it, and shows a refused edit inline (05c)', async () => {
     const { proposed } = await hostStates();
     const p = renderPanel(proposed);

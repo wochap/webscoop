@@ -438,6 +438,7 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
           <span className="ws-meta">Fields keep their selectors; they run inside the new items.</span>
         </div>
       )}
+      <ExclusionInput exclude={proposal.exclude} title="Exclude" />
       <div className="ws-col ws-adjust">
         <Collapsible title="Adjust item level" summary={itemSummary} open={itemOpen} onToggle={toggleItem} testId="list-adjust-item">
           <ItemLadder proposal={proposal} onPreview={onPreview} />
@@ -450,7 +451,6 @@ export function ListSetup({ proposal, table, pick = null, onPreview }: { proposa
           <ParentLadder proposal={proposal} onPreview={onPreview} />
         </Collapsible>
       </div>
-      <ExclusionInput exclude={proposal.exclude} title="Exclude" />
     </section>
   );
 }

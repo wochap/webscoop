@@ -200,6 +200,16 @@ describe('flows section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateFlow', index: 0, patch: { name: 'consent' } });
   });
 
+  it('labels the switcher groups, omitting an empty one', () => {
+    const p = renderPanel(baseState(withFlows([setup(), loginWall])), { switcher: true });
+    const menu = p.q('flow-switcher')!;
+    const order = [...menu.querySelectorAll('[data-ws="flow-switcher-group"], [data-ws="flow-switcher-item"]')].map((e) => (e as HTMLElement).dataset.name ?? e.textContent);
+    expect(order).toEqual(['called', 'setup', 'reactive', 'login-wall']);
+    p.unmount();
+    const q = renderPanel(baseState(withFlows([setup()])), { switcher: true });
+    expect(q.qa('flow-switcher-group').map((g) => g.textContent)).toEqual(['called']);
+  });
+
   it('switches the active flow with Alt+F and a digit, and creates one from the switcher', () => {
     const p = renderPanel(baseState(withFlows([setup(), { name: 'search', steps: [step('click')] }, loginWall])));
     const key = (k: string, alt = false) => {
@@ -209,6 +219,7 @@ describe('flows section', () => {
     };
     expect(key('f', true)).toBe(true);
     expect(p.qa('flow-switcher-item').map((i) => i.dataset.name)).toEqual(['setup', 'search', 'login-wall']);
+    expect(p.qa('flow-switcher-group').map((g) => g.textContent)).toEqual(['called', 'reactive']);
     expect(key('2')).toBe(true);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.selectFlow', index: 1 });
     expect(p.q('flow-switcher')).toBeNull();

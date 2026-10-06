@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { DEFAULT_MAX_RETRIES, STEP_KINDS, popupClosedReason, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
@@ -635,7 +635,7 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
   );
 }
 
-/** The Alt+F switcher: every flow, called then reactive, numbered 1 to 9, and a new flow to record into. */
+/** The Alt+F switcher: every flow, under "called" then "reactive" labels, numbered 1 to 9, and a new flow to record into. */
 export function FlowSwitcher({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const actions = useActions();
   const order = switcherOrder(draft);
@@ -644,24 +644,32 @@ export function FlowSwitcher({ draft, onClose }: { draft: Draft; onClose: () => 
       <span className="ws-meta">Record into</span>
       {order.map((index, n) => {
         const flow = draft.flows[index]!;
+        const prev = n > 0 ? draft.flows[order[n - 1]!]! : null;
+        const label = prev === null || Boolean(prev.trigger) !== Boolean(flow.trigger) ? (flow.trigger ? 'reactive' : 'called') : null;
         return (
-          <button
-            key={flow.name}
-            type="button"
-            role="menuitem"
-            className="ws-menu-item"
-            onClick={() => {
-              void actions.send({ kind: 'draft.selectFlow', index });
-              onClose();
-            }}
-            data-ws="flow-switcher-item"
-            data-name={flow.name}
-          >
-            <span className={`ws-active-dot${draft.activeFlow === index ? ' ws-active-dot-on' : ''}`} />
-            <span className="ws-mono ws-spacer">{flow.name}</span>
-            {flow.trigger && <Icon name="lightning" size={11} />}
-            {n < 9 && <Kbd>{String(n + 1)}</Kbd>}
-          </button>
+          <Fragment key={flow.name}>
+            {label && (
+              <span className="ws-group-label" data-ws="flow-switcher-group">
+                {label}
+              </span>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              className="ws-menu-item"
+              onClick={() => {
+                void actions.send({ kind: 'draft.selectFlow', index });
+                onClose();
+              }}
+              data-ws="flow-switcher-item"
+              data-name={flow.name}
+            >
+              <span className={`ws-active-dot${draft.activeFlow === index ? ' ws-active-dot-on' : ''}`} />
+              <span className="ws-mono ws-spacer">{flow.name}</span>
+              {flow.trigger && <Icon name="lightning" size={11} />}
+              {n < 9 && <Kbd>{String(n + 1)}</Kbd>}
+            </button>
+          </Fragment>
         );
       })}
       <button

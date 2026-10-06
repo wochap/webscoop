@@ -194,7 +194,7 @@ describe('protocol', () => {
           sequence: { custom: true, blocks: [{ flow: 'setup' }, { paginate: { do: [{ extract: 'items' }] } }] },
           sequenceErrors: [{ path: [1, 0], message: 'table "items" is extracted more than once' }, { path: null, message: 'x' }],
         },
-        targetEdit: { ref: { kind: 'step', flow: 0, index: 0 }, phase: 'typing', title: 'setup · step 1', strip: 'Picking target for setup · step 1', use: 'Use for step', frame: null, selection: null, primary: 0 },
+        targetEdit: { ref: { kind: 'step', flow: 0, index: 0 }, phase: 'typing', title: 'Target for setup · step 1', strip: 'Picking target for setup · step 1', use: 'Use for step', frame: null, selection: null, primary: 0 },
         popups: 1,
         pickTrigger: 1,
         panelMode: 'owner',

@@ -84,7 +84,18 @@ describe('recipe bar', () => {
     expect(p.q('recipe-rendered-url')!.getAttribute('title')).toBe('https://www.google.com/search?q=a+sentence+with+plus');
     expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('a+sentence+with+plus');
     expect(p.q('recipe-url-backdrop')!.querySelector('.ws-token')!.textContent).toBe('{q}');
-    expect(p.q('var-kind-note-q')!.textContent).toBe('raw · only affects URL');
+    expect(p.q('var-kind-note-q')!.textContent).toBe('not encoded in URL');
+    expect(p.q('var-usage-q')!.textContent).toBe('used in URL');
+    // The kind note and the usage note are separate line elements.
+    expect(p.q('var-kind-note-q')!.contains(p.q('var-usage-q'))).toBe(false);
+    expect(p.q('var-kind-note-q')!.nextElementSibling).toBe(p.q('var-usage-q'));
+  });
+
+  it('notes a raw variable used only in steps as having no effect', () => {
+    const fill = { kind: 'fill' as const, target: { selectors: [{ strategy: 'css' as const, value: 'input', stability: 'medium' as const, count: 1 }] }, value: '{code}', window: 'same' as const, optional: false, count: 1 };
+    const draft = { ...emptyDraft({ name: 'g', url: 'https://example.com/', vars: [{ name: 'code', value: '1', raw: true }] }), flows: [{ name: 'login', steps: [fill] }] };
+    const p = renderPanel(baseState(draft, 'https://example.com/'));
+    expect(p.q('var-kind-note-code')!.textContent).toBe('no effect: fills are never encoded');
   });
 
 

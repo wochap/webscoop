@@ -159,7 +159,11 @@ describe('draft sequence', () => {
     // A second extract of summary inside the paginate block is a duplicate.
     draft = { ...draft, sequence: { custom: true, blocks: [{ extract: 'summary' }, { paginate: { do: [{ extract: 'items' }, { extract: 'summary' }] } }] } };
     draft = reduceDraft(draft, { type: 'setName', name: draft.name });
-    expect(draft.sequenceErrors).toEqual([{ path: [1, 1], message: expect.stringContaining('"summary" is extracted more than once') }]);
+    // Both blocks carry the duplicate error.
+    expect(draft.sequenceErrors).toEqual([
+      { path: [1, 1], message: expect.stringContaining('"summary" is extracted more than once (first at') },
+      { path: [0], message: expect.stringContaining('"summary" is extracted more than once (again at') },
+    ]);
     draft = reduceDraft(draft, { type: 'resetSequence' });
     expect(draft.sequence.custom).toBe(false);
     expect(draft.sequenceErrors).toEqual([]);
@@ -249,7 +253,7 @@ describe('RecorderController flows', () => {
     expect(steps(t.controller.draft)[0]!.count).toBe(0);
     const ref = { kind: 'step', flow: 0, index: 0 } as const;
     await t.send({ kind: 'target.edit.start', ref, mode: 'pick' });
-    expect(t.controller.state.targetEdit).toMatchObject({ ref, phase: 'picking', strip: 'Picking target for setup · step 1', use: 'Use for step' });
+    expect(t.controller.state.targetEdit).toMatchObject({ ref, phase: 'picking', title: 'Target for setup · step 1', strip: 'Picking target for setup · step 1', use: 'Use for step' });
     const before = JSON.stringify(t.controller.draft.tables);
     await t.pick(descendantsOf(t.page).find((n) => n.tag === 'button')!);
     const edit = t.controller.state.targetEdit!;
@@ -327,7 +331,7 @@ describe('RecorderController flows', () => {
     await t.send({ kind: 'draft.setTrigger', index: 0, selection: selectionOf(descendantsOf(t.page).find((n) => n.tag === 'input')!) });
     const trigger = { kind: 'trigger', flow: 0 } as const;
     await t.send({ kind: 'target.edit.start', ref: trigger, mode: 'pick' });
-    expect(t.controller.state.targetEdit).toMatchObject({ strip: 'Picking trigger for login-wall', use: 'Use for trigger' });
+    expect(t.controller.state.targetEdit).toMatchObject({ title: 'Trigger for login-wall', strip: 'Picking trigger for login-wall', use: 'Use for trigger' });
     await t.pick(descendantsOf(t.page).find((n) => n.tag === 'button')!);
     await t.send({ kind: 'target.edit.apply', ref: trigger, by: 'selection' });
     expect(t.controller.draft.flows[0]!.trigger!.fingerprint?.tag).toBe('button');
@@ -336,7 +340,7 @@ describe('RecorderController flows', () => {
     await t.send({ kind: 'draft.markPagination' });
     const pagination = { kind: 'pagination' } as const;
     await t.send({ kind: 'target.edit.start', ref: pagination, mode: 'type' });
-    expect(t.controller.state.targetEdit).toMatchObject({ strip: 'Picking pagination target', use: 'Use for pagination' });
+    expect(t.controller.state.targetEdit).toMatchObject({ title: 'Pagination target', strip: 'Picking pagination target', use: 'Use for pagination' });
     await t.send({ kind: 'target.edit.apply', ref: pagination, by: 'selector', selector: 'css=form button' });
     expect(t.controller.draft.pagination!.target!.selectors[0]).toMatchObject({ value: 'form button', count: 1 });
   });

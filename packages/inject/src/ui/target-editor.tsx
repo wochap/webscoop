@@ -149,7 +149,7 @@ export function TargetPickPanel({ edit, trail, onBack }: { edit: TargetEdit; tra
     <div className="ws-col" ref={ref} data-ws="pick-target" data-phase={edit.phase}>
       <div className="ws-row">
         <span className="ws-title ws-spacer" data-ws="pick-target-title">
-          Target for {edit.title}
+          {edit.title}
         </span>
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" onClick={onBack} data-ws="pick-target-back">
           ← back
@@ -173,7 +173,7 @@ export function TargetPickPanel({ edit, trail, onBack }: { edit: TargetEdit; tra
           Cancel <Kbd>Esc</Kbd>
         </button>
         <button type="button" className="ws-btn ws-btn-primary" disabled={!selection} onClick={() => void actions.send({ kind: 'target.edit.apply', ref: edit.ref, by: 'selection' })} data-ws="pick-target-use">
-          {edit.use}
+          {edit.use} <Kbd>Enter</Kbd>
         </button>
       </span>
     </div>

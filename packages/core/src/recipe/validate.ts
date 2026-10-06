@@ -249,6 +249,7 @@ function sequenceErrors(input: Record<string, unknown>): ValidationError[] {
     tables.set('items', { name: 'items', ...(input.item !== undefined ? { item: input.item } : {}) });
   }
   const extracted = new Map<string, string>();
+  const flaggedFirst = new Set<string>();
   const usedFlows = new Set<string>();
   let paginates = 0;
 
@@ -263,8 +264,13 @@ function sequenceErrors(input: Record<string, unknown>): ValidationError[] {
     } else if (typeof block.extract === 'string') {
       if (!tables.has(block.extract)) errors.push({ path, message: `block extracts unknown table "${block.extract}"` });
       const first = extracted.get(block.extract);
-      if (first !== undefined) errors.push({ path, message: `table "${block.extract}" is extracted more than once (first at ${first})` });
-      else extracted.set(block.extract, path);
+      if (first !== undefined) {
+        errors.push({ path, message: `table "${block.extract}" is extracted more than once (first at ${first})` });
+        if (!flaggedFirst.has(block.extract)) {
+          flaggedFirst.add(block.extract);
+          errors.push({ path: first, message: `table "${block.extract}" is extracted more than once (again at ${path})` });
+        }
+      } else extracted.set(block.extract, path);
     } else if (isRecord(block.paginate)) {
       if (inside) {
         errors.push({ path, message: 'a paginate block cannot be inside another paginate block' });

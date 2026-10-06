@@ -488,6 +488,18 @@ describe('paginate block', () => {
     expect(errorsOf(input('page', ['page', 'products']))[0]!.message).toContain('no item block');
     expect(errorsOf(input('products', ['page']))[0]!.message).toContain("not extracted in the paginate block's do");
   });
+
+  it('flags a table extracted twice on both blocks', () => {
+    const item = { selectors: [{ strategy: 'css' as const, value: 'li', stability: 'medium' as const }] };
+    const fields = [{ name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h2', stability: 'medium' as const }] }];
+    const { fields: _f, ...rest } = base();
+    const errors = errorsOf({
+      ...rest,
+      tables: [{ name: 'summary', fields }, { name: 'products', item, fields }],
+      sequence: [{ extract: 'summary' }, { paginate: { kind: 'scroll', do: [{ extract: 'products' }, { extract: 'summary' }] } }],
+    });
+    expect(errors.map((e) => e.path).sort()).toEqual(['$.sequence[0]', '$.sequence[1].paginate.do[1]']);
+  });
 });
 
 describe('flows', () => {
@@ -621,7 +633,7 @@ describe('sequence', () => {
 
   it('rejects a table extracted twice, naming it', () => {
     const errors = errorsOf(recipeWith([{ flow: 'reach-report' }, { flow: 'open-detail' }, { extract: 'summary' }, { paginate: { kind: 'scroll', do: [{ extract: 'summary' }, { extract: 'results' }] } }]));
-    expect(errors.map((e) => e.path)).toEqual(['$.sequence[3].paginate.do[0]']);
+    expect(errors.map((e) => e.path)).toEqual(['$.sequence[3].paginate.do[0]', '$.sequence[2]']);
     expect(errors[0]!.message).toContain('"summary"');
   });
 

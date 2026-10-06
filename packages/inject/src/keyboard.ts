@@ -35,7 +35,8 @@ export type Shortcut =
   | 'moveTabLeft'
   | 'moveTabRight'
   | 'renameTab'
-  | 'cancelRename';
+  | 'cancelRename'
+  | 'useTarget';
 
 export interface KeyLike {
   key: string;
@@ -78,6 +79,8 @@ export interface ShortcutContext {
   renaming?: boolean;
   /** The list setup is open: tabs do not switch or move. */
   tabsLocked?: boolean;
+  /** The re-pick details show a selection: Enter applies "Use for …". */
+  canUseTarget?: boolean;
 }
 
 /** Whether the event target is a place the user types into. */
@@ -105,7 +108,7 @@ export function isMenuTarget(target: EventTarget | null): boolean {
  * cancels a tab rename, cancels picking, closes the list setup, leaves browse
  * mode, aborts a re-pick, cancels a field edit, or clears the selection, the
  * first that applies; Enter accepts the list setup while its item matches
- * something, Left and Right walk the breadcrumb, Alt+Up and Alt+Down
+ * something or applies the re-pick selection ("Use for …"), Left and Right walk the breadcrumb, Alt+Up and Alt+Down
  * reorder the focused field, step, or sequence block, Alt+Left and Alt+Right
  * move the focused table tab, F2 renames it, Alt+F opens the flow switcher
  * (digits 1 to 9 choose a flow there), Ctrl+S saves.
@@ -152,6 +155,7 @@ export function shortcutFor(e: KeyLike, ctx: ShortcutContext): Shortcut | null {
   if (e.key === 'p' || e.key === 'P') return 'pick';
   if ((e.key === 'b' || e.key === 'B') && !ctx.repicking) return ctx.browsing ? 'stopBrowse' : 'browse';
   if (e.key === 'Enter' && ctx.hasProposal) return ctx.canConfirm === false ? null : 'confirm';
+  if (e.key === 'Enter' && ctx.canUseTarget) return 'useTarget';
   if ((e.key === 'l' || e.key === 'L') && ctx.canSetupList && !ctx.hasProposal) return 'setupList';
   if (e.key === 'ArrowLeft' && ctx.hasSelection) return 'walkUp';
   if (e.key === 'ArrowRight' && ctx.hasSelection) return 'walkDown';

@@ -57,12 +57,25 @@ describe('sequence section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.clearPagination' });
   });
 
+  it('summarizes the paginate block by kind and limit', () => {
+    const detail = (limit: 5 | 1 | 'all') => {
+      const p = renderPanel(open(draft({ pagination: { ...pagination, limit } })));
+      const text = p.qa('block').find((b) => b.dataset.kind === 'paginate')!.querySelector('[data-ws="block-detail"]')!.textContent;
+      p.unmount();
+      return text;
+    };
+    expect(detail(5)).toBe('next · 5 pages');
+    expect(detail(1)).toBe('next · 1 page');
+    expect(detail('all')).toBe('next · all pages');
+  });
+
   it('shows errors on the offending blocks and disables Save and Test run with the reason', () => {
     const custom = draft({ pagination, sequence: { custom: true, blocks: [{ flow: 'reach-report' }, { extract: 'summary' }, { paginate: { do: [{ extract: 'results' }, { extract: 'summary' }] } }] } });
     const p = renderPanel(open(custom));
-    expect(p.qa('block').filter((b) => b.className.includes('ws-block-error')).map((b) => b.dataset.path)).toEqual(['2.1']);
-    expect(p.q('sequence-error-count')!.textContent).toBe('1 error');
-    expect(p.q('footer-blocker')!.textContent).toBe('Fix 1 sequence error to save');
+    // The duplicate shows on both blocks that extract summary.
+    expect(p.qa('block').filter((b) => b.className.includes('ws-block-error')).map((b) => b.dataset.path)).toEqual(['1', '2.1']);
+    expect(p.q('sequence-error-count')!.textContent).toBe('2 errors');
+    expect(p.q('footer-blocker')!.textContent).toBe('Fix 2 sequence errors to save');
     expect((p.q('footer-save') as HTMLButtonElement).disabled).toBe(true);
     expect((p.q('footer-test') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(p.q('sequence-reset')!);

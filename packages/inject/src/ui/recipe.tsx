@@ -232,7 +232,7 @@ export function VarTableRow({
     if (stale) void actions.send({ kind: 'vars.checkPath', name });
   }, [stale, name, actions]);
   const notes = [
-    ...(kind === 'raw' ? ['raw · only affects URL'] : []),
+    ...(kind === 'raw' ? [usage.url ? 'not encoded in URL' : 'no effect: fills are never encoded'] : []),
     ...(kind === 'secret' ? ['secret · never saved'] : []),
     ...(kind === 'path' ? ['default saved'] : []),
     ...(kind === 'external' ? [`from ${variable.origin === 'config' ? 'config' : 'CLI'} · read-only here`] : []),

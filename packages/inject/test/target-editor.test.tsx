@@ -20,7 +20,7 @@ function withFlows(flows: DraftFlow[], extra: Partial<Draft> = {}): Draft {
 }
 
 const stepRef = { kind: 'step' as const, flow: 0, index: 0 };
-const edit = (patch: Partial<TargetEdit> = {}): TargetEdit => ({ ref: stepRef, phase: 'typing', title: 'flow-2 · step 1', strip: 'Picking target for flow-2 · step 1', use: 'Use for step', frame: null, selection: null, primary: 0, ...patch });
+const edit = (patch: Partial<TargetEdit> = {}): TargetEdit => ({ ref: stepRef, phase: 'typing', title: 'Target for flow-2 · step 1', strip: 'Picking target for flow-2 · step 1', use: 'Use for step', frame: null, selection: null, primary: 0, ...patch });
 const picked = (frame: TargetEdit['frame'] = null): NonNullable<TargetEdit['selection']> => ({
   path: [0, 1],
   tag: 'a',
@@ -127,9 +127,29 @@ describe('target editor', () => {
     expect(p.q('pick-target-typed-selector')).not.toBeNull();
     fireEvent.click(p.qa('pick-candidate')[1]!);
     expect(p.sent.at(-1)).toEqual({ kind: 'inspect.primary', index: 1 });
-    expect(p.q('pick-target-use')!.textContent).toBe('Use for step');
+    expect(p.q('pick-target-use')!.textContent).toBe('Use for step Enter');
     fireEvent.click(p.q('pick-target-use')!);
     expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.apply', ref: stepRef, by: 'selection' });
+  });
+
+  it('applies "Use for step" with Enter on the panel body, but not from the typed selector input', async () => {
+    vi.useFakeTimers();
+    const p = renderPanel(state([{ name: 'flow-2', steps: [step('click')] }], { targetEdit: edit({ phase: 'picked', selection: picked() }) }));
+    p.actions.countTarget = async () => ({ count: 1, error: null });
+    fireEvent.keyDown(p.q('panel-body')!, { key: 'Enter' });
+    expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.apply', ref: stepRef, by: 'selection' });
+    const input = p.q('pick-target-typed-selector') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'nav a.tab' } });
+    await settle();
+    const before = p.sent.length;
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(p.sent.slice(before)).toEqual([{ kind: 'target.edit.apply', ref: stepRef, by: 'selector', selector: 'css=nav a.tab' }]);
+  });
+
+  it('names the trigger in the Pick section header', () => {
+    const trigger: DraftFlow = { name: 'login-wall', trigger: tab, steps: [step('click')] };
+    const p = renderPanel(state([trigger], { targetEdit: edit({ ref: { kind: 'trigger', flow: 0 }, phase: 'picking', title: 'Trigger for login-wall', use: 'Use for trigger' }) }));
+    expect(p.q('pick-target-title')!.textContent).toBe('Trigger for login-wall');
   });
 
   it('scrolls the panel body to the pick panel after a page pick, not after a breadcrumb click', () => {
