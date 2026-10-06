@@ -78,7 +78,7 @@ A run SHALL wait at most the guard timeout (default 600000 milliseconds, configu
 - **THEN** it still has 60 seconds to be cleared
 
 ### Requirement: Interactive banner
-While a run holds attention for a guard or an `await-user` step, the runner SHALL show a banner over the page of the window that needs the user. The banner SHALL show the guard kind or the step's label, a short reason, a countdown to the timeout, and Continue and Abort actions, in every run, interactive or not. Continue SHALL trigger an immediate re-check. Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when attention resolves. When the config sets `guards.banner` to false, no banner SHALL be shown and nothing SHALL be injected into the page of an unattended run. Outside attention, unattended runs SHALL NOT inject anything into the page. In a window narrower than 640 pixels the banner SHALL span the full width at the top.
+While a run holds attention for a guard or an `await-user` step, the runner SHALL show a banner over the page of the window that needs the user. The banner SHALL show the guard kind or the step's label, a short reason, a countdown to the timeout, and Continue and Abort actions, in every run, interactive or not. For an `await-user` step, the hint under the label SHALL name the condition the run waits for: "Continues when <target> appears." or "Continues when <target> disappears.", where <target> is the step target's primary selector written as the panel's selector chip writes it (for example `button "Log in"` for a role selector, `"Next"` for a text selector). When the step has no target, the hint SHALL stay generic. Continue SHALL trigger an immediate re-check. Abort SHALL end the run with failure reason `aborted` and exit 1. The banner SHALL be removed when attention resolves. When the config sets `guards.banner` to false, no banner SHALL be shown and nothing SHALL be injected into the page of an unattended run. Outside attention, unattended runs SHALL NOT inject anything into the page. In a window narrower than 640 pixels the banner SHALL span the full width at the top.
 
 #### Scenario: Continue re-checks
 - **WHEN** the user logs in on another tab and clicks Continue
@@ -95,6 +95,14 @@ While a run holds attention for a guard or an `await-user` step, the runner SHAL
 #### Scenario: Await-user banner in a popup
 - **WHEN** an `await-user` step labeled "Log in to SOL" runs in a 500 pixel wide popup
 - **THEN** the popup shows the banner across its top with that label, and the main window shows none
+
+#### Scenario: Await-user banner names its condition
+- **WHEN** an `await-user` step labeled "Log in to SOL" waits until its target `role=button|Log in` disappears
+- **THEN** the banner shows "Log in to SOL" with the hint `Continues when button "Log in" disappears.`
+
+#### Scenario: Await-user banner for an appearing element
+- **WHEN** an `await-user` step waits until its target `css=#dashboard` appears
+- **THEN** the banner hint reads "Continues when #dashboard appears."
 
 ### Requirement: Guard reporting
 The run report SHALL list every guard occurrence with kind, page number, URL where it was detected, wait time, and whether it cleared or timed out. Events `guard.raised`, `guard.cleared`, and `guard.timeout` SHALL be emitted with kind, page, and URL. The stderr summary SHALL mention the number of guards cleared when non-zero.
