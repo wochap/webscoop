@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { GuardContextView } from '@webscoop/core/page';
 import { useDrawerHost } from './context';
+import { selectorDisplay } from './selector-chip';
 
 /** The countdown switches to the warning tone below this much time left. */
 export const WARN_UNDER_MS = 90_000;
@@ -22,6 +23,19 @@ const KIND_HINT: Record<GuardContextView['kind'], string> = {
 
 /** The banner's headline: the step's label for an await-user step, else the guard kind. */
 const headline = (context: GuardContextView) => (context.kind === 'await-user' ? (context.label ?? KIND_LABEL['await-user']) : KIND_LABEL[context.kind]);
+
+/** The step target as the selector chip writes it, keeping `#` and `.` so ids and classes read as selectors. */
+function targetText(target: NonNullable<GuardContextView['target']>): string {
+  const d = selectorDisplay({ ...target, stability: 'medium' });
+  const main = target.strategy === 'id' ? `#${d.main}` : target.strategy === 'class' ? `.${d.main}` : d.main;
+  return `${main}${d.quoted}`;
+}
+
+/** The hint under the headline: an await-user step names its condition, else the kind's generic hint. */
+export function hint(context: GuardContextView): string {
+  if (context.kind === 'await-user' && context.target && context.until) return `Continues when ${targetText(context.target)} ${context.until}.`;
+  return KIND_HINT[context.kind];
+}
 
 /** `m:ss`, never negative. */
 export function formatCountdown(ms: number): string {
@@ -67,7 +81,9 @@ export function GuardBanner({
         <span className="ws-title ws-ellipsis" data-ws="guard-reason">
           {context.kind === 'await-user' ? headline(context) : `Page ${context.page}: ${context.reason}`}
         </span>
-        <span className="ws-meta ws-ellipsis">{KIND_HINT[context.kind]}</span>
+        <span className="ws-meta ws-ellipsis" data-ws="guard-hint" title={hint(context)}>
+          {hint(context)}
+        </span>
       </span>
       <Countdown deadline={context.deadline} {...(now ? { now } : {})} />
       <button type="button" className="ws-btn ws-btn-ghost" onClick={onAbort} data-ws="guard-abort" title="Stop the run">
@@ -87,7 +103,7 @@ export function GuardPanel({ context }: { context: GuardContextView }) {
     <section className="ws-card ws-col" data-ws="guard-panel">
       <span className="ws-caps">{context.kind === 'await-user' ? 'Waiting for you' : 'Run paused'}</span>
       <span className="ws-title">{headline(context)}</span>
-      <span className="ws-meta">{KIND_HINT[context.kind]}</span>
+      <span className="ws-meta">{hint(context)}</span>
       <span className="ws-mono-sm ws-ellipsis" title={context.url}>
         {context.url}
       </span>

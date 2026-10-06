@@ -518,6 +518,10 @@ export const TargetEditSchema = z.object({
 export const GuardContextSchema = z.object({
   kind: z.enum([...GUARD_KINDS, 'await-user'] as const),
   label: z.optional(z.string()),
+  /** The `await-user` step's condition on its target. */
+  until: z.optional(z.enum(STEP_UNTILS)),
+  /** The `await-user` step target's primary selector. */
+  target: z.optional(z.object({ strategy: z.enum(STRATEGIES), value: z.string() })),
   reason: z.string(),
   page: z.int().check(z.positive()),
   url: z.string(),

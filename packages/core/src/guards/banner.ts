@@ -1,5 +1,6 @@
 import type { Session } from '../ports';
-import type { GuardKind } from '../recipe/schema';
+import type { STEP_UNTILS } from '../recipe/constants';
+import type { GuardKind, Strategy } from '../recipe/schema';
 
 /** What needs the user: a guard kind, or an `await-user` step. */
 export type AttentionKind = GuardKind | 'await-user';
@@ -9,6 +10,10 @@ export interface GuardBannerInfo {
   kind: AttentionKind;
   /** The `await-user` step's label, shown in place of the guard kind. */
   label?: string;
+  /** The `await-user` step's condition: whether the run waits for `target` to appear or disappear. */
+  until?: (typeof STEP_UNTILS)[number];
+  /** The `await-user` step target's primary selector. */
+  target?: { strategy: Strategy; value: string };
   reason: string;
   page: number;
   url: string;

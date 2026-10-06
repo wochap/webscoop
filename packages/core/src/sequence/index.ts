@@ -4,7 +4,7 @@ import { RunFailure } from '../failure';
 import { awaitUserLabel, runFlow, type AwaitUserRequest, type StepCache } from '../flows/replay';
 import { targetPresent, type RunWindows } from '../flows/windows';
 import type { AttentionLease } from '../guards/attention';
-import type { AttentionKind, GuardBannerHandler, GuardBannerHooks } from '../guards/banner';
+import type { AttentionKind, GuardBannerHandler, GuardBannerHooks, GuardBannerInfo } from '../guards/banner';
 import { GuardBudget } from '../guards/budget';
 import { detect, guardContext, LOGIN_URL_PATTERN, type GuardDetector, type GuardMatch } from '../guards/detectors';
 import { Recheck, waitForClear, type WaitResult } from '../guards/wait';
@@ -597,6 +597,8 @@ export class SequenceRun {
       const result = await this.hold({
         kind: 'await-user',
         label,
+        ...(step.until ? { until: step.until } : {}),
+        ...(step.target?.selectors[0] ? { target: { strategy: step.target.selectors[0].strategy, value: step.target.selectors[0].value } } : {}),
         reason: `waiting for you: ${label}`,
         window,
         url,
@@ -626,6 +628,8 @@ export class SequenceRun {
   private async hold(opts: {
     kind: AttentionKind;
     label?: string;
+    until?: GuardBannerInfo['until'];
+    target?: GuardBannerInfo['target'];
     reason: string;
     window: Session;
     url: string;
@@ -668,6 +672,8 @@ export class SequenceRun {
           .show(window, {
             kind: opts.kind,
             ...(opts.label ? { label: opts.label } : {}),
+            ...(opts.until ? { until: opts.until } : {}),
+            ...(opts.target ? { target: opts.target } : {}),
             reason: opts.reason,
             page: this.page,
             url: opts.url,

@@ -416,6 +416,16 @@ describe('await-user', () => {
     expect(result.report.steps[0]).toMatchObject({ kind: 'await-user', outcome: 'ok' });
   });
 
+  it("passes the step's condition and primary selector to the banner", async () => {
+    const b = banner();
+    const target = { selectors: [{ strategy: 'role', value: 'button|Log in', stability: 'stable' }, css('#login')] };
+    const t = setup({ [PAGE]: { dom: loginPage() } }, recipe({ target }), { guards: { enabled: true, timeoutMs: 5_000, pollMs: 5, banner: b.handler } });
+    t.runner.emitter.on('attention.needed', () => void setTimeout(() => t.session().replaceDom(loggedIn()), 15));
+    const result = await t.runner.run();
+    expect(result.ok).toBe(true);
+    expect(b.shown).toEqual([expect.objectContaining({ until: 'disappears', target: { strategy: 'role', value: 'button|Log in' } })]);
+  });
+
   it('does not ask when the condition already holds', async () => {
     const t = setup({ [PAGE]: { dom: loggedIn() } }, recipe(), { guards: { enabled: true, timeoutMs: 5_000, pollMs: 5 } });
     const result = await t.runner.run();

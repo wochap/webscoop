@@ -90,4 +90,18 @@ describe('await-user banner', () => {
     expect(p.q('guard-banner')).not.toBeNull();
     expect(p.q('guard-panel')).toBeNull();
   });
+
+  it('names the condition with the target as the selector chip writes it', () => {
+    const disappears = renderPanel(guardState({ kind: 'await-user', label: 'Log in to SOL', until: 'disappears', target: { strategy: 'role', value: 'button|Log in' } }));
+    expect(disappears.q('guard-hint')!.textContent).toBe('Continues when button "Log in" disappears.');
+    expect(disappears.q('guard-hint')!.title).toBe('Continues when button "Log in" disappears.');
+    cleanup();
+    const appears = renderPanel(guardState({ kind: 'await-user', label: 'Wait', until: 'appears', target: { strategy: 'css', value: '#dashboard' } }));
+    expect(appears.q('guard-hint')!.textContent).toBe('Continues when #dashboard appears.');
+  });
+
+  it('keeps the generic hint without a target', () => {
+    const p = renderPanel(guardState({ kind: 'await-user', label: 'Log in to SOL' }));
+    expect(p.q('guard-hint')!.textContent).toBe('Do this in the browser; the run continues by itself once it is done.');
+  });
 });
