@@ -299,6 +299,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
         name: v.name,
         type: v.type ?? ('string' as const),
         ...(v.secret ? { secret: true } : {}),
+        ...(v.raw ? { raw: true } : {}),
         // Secrets are never saved; external values stay where they are bound.
         ...(v.secret ? {} : v.origin ? (v.savedDefault !== undefined ? { default: v.savedDefault } : {}) : v.value !== '' ? { default: v.value } : {}),
         ...(v.description ? { description: v.description } : {}),
@@ -472,6 +473,7 @@ export function draftFromRecipe(
       ...(declared?.description ? { description: declared.description } : {}),
       ...(declared?.type === 'path' ? { type: 'path' as const } : {}),
       ...(declared?.secret ? { secret: true as const } : {}),
+      ...(declared?.raw ? { raw: true as const } : {}),
       ...(origins[name] ? { origin: origins[name], ...(declared?.default !== undefined ? { savedDefault: declared.default } : {}) } : {}),
     };
   });
@@ -701,7 +703,7 @@ export type DraftAction =
   /** Add a variable with a value and kind, for a fill that creates it; the name must be free. */
   | { type: 'declareVar'; name: string; value: string; secret?: boolean; path?: boolean }
   /** Mark a variable secret or not, or switch it between text and path; an external variable is left alone. */
-  | { type: 'setVarKind'; name: string; secret?: boolean; varType?: 'string' | 'path' }
+  | { type: 'setVarKind'; name: string; secret?: boolean; varType?: 'string' | 'path'; raw?: boolean }
   | { type: 'markSaved' };
 
 /** The object with its `description` set to `text`, or removed when `text` is empty. */
@@ -1199,11 +1201,13 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
     case 'setVarKind': {
       const variable = draft.vars.find((v) => v.name === action.name);
       if (!variable || variable.origin) return draft;
-      const { secret: _s, type: _t, ...rest } = variable;
-      const secret = action.secret ?? variable.secret === true;
-      const path = action.varType !== undefined ? action.varType === 'path' : variable.type === 'path';
+      const { secret: _s, type: _t, raw: _r, ...rest } = variable;
+      // A variable has one kind: raw clears secret and path, and either of them clears raw.
+      const raw = action.raw === true || (action.raw === undefined && variable.raw === true && !action.secret && action.varType !== 'path');
+      const secret = !raw && (action.secret ?? variable.secret === true);
+      const path = !raw && (action.varType !== undefined ? action.varType === 'path' : variable.type === 'path');
       // A path is never secret: paths are saved as defaults.
-      const updated = { ...rest, ...(secret && !path ? { secret: true as const } : {}), ...(path ? { type: 'path' as const } : {}) };
+      const updated = { ...rest, ...(raw ? { raw: true as const } : {}), ...(secret && !path ? { secret: true as const } : {}), ...(path ? { type: 'path' as const } : {}) };
       next = { ...draft, vars: draft.vars.map((v) => (v === variable ? updated : v)) };
       break;
     }
@@ -1232,7 +1236,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       next = {
         ...draft,
         // A secret's value never lands in the recipe.
-        url: inlineVariable(draft.url, variable.name, variable.secret ? '' : variable.value, true),
+        url: inlineVariable(draft.url, variable.name, variable.secret ? '' : variable.value, !variable.raw),
         flows: rewriteSteps(draft.flows, (value) => inlineVariable(value, variable.name, variable.secret ? '' : variable.value, false)),
         vars: draft.vars.filter((v) => v !== variable),
       };

@@ -155,6 +155,15 @@ describe('url strategy', () => {
     expect(browser.openedProfiles).toEqual([]);
   });
 
+  it('fills a raw template variable unchanged on every page', async () => {
+    const paged = pagedRecipe(URL_PAGINATION, { url: `${BASE}?page={n}&q={q}`, vars: [{ name: 'n', type: 'string' }, { name: 'q', type: 'string', raw: true }] });
+    const browser = new FakeBrowser();
+    for (let p = 1; p <= 3; p++) browser.setPage(`${BASE}?page=${p}&q=a+b`, { dom: listPage(slice(p)), title: `Page ${p}` });
+    const r = await run(paged, browser, { vars: { q: 'a+b' } }).result;
+    expect(r.ok).toBe(true);
+    expect(browser.visited.slice(0, 2)).toEqual([`${BASE}?page=1&q=a+b`, `${BASE}?page=2&q=a+b`]);
+  });
+
   it('sets the page as a query parameter when the template has no page variable', async () => {
     const browser = urlSite(2);
     browser.setPage(`${BASE}?page=1`, listPage(slice(1)));

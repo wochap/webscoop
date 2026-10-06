@@ -10,7 +10,6 @@ import {
   buildPlan,
   convertValue,
   Dedup,
-  encodeReserved,
   EXCLUDED_BEHAVIORS,
   header,
   loadRecipe,
@@ -136,8 +135,8 @@ describe('buildPlan', () => {
     const plan = buildPlan(fixture('playground-catalog'));
     expect(plan.recipe).toBe('playground-catalog');
     expect(plan.vars).toEqual([
-      { name: 'port', default: '4777', required: true, secret: false, path: false },
-      { name: 'tier', default: '0', required: true, secret: false, path: false },
+      { name: 'port', default: '4777', required: true, secret: false, path: false, raw: false },
+      { name: 'tier', default: '0', required: true, secret: false, path: false, raw: false },
     ]);
     expect(plan.tables).toHaveLength(1);
     expect(plan.primary).toBe(0);
@@ -250,7 +249,7 @@ describe('buildPlan', () => {
 
   it('resolves url pagination: the page variable is not required and sits in the template', () => {
     const plan = buildPlan(fixture('playground-paged'));
-    expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false, secret: false, path: false });
+    expect(plan.vars.find((v) => v.name === 'page')).toEqual({ name: 'page', default: '1', required: false, secret: false, path: false, raw: false });
     expect(plan.pagination).toMatchObject({
       kind: 'url',
       table: 'items',
@@ -326,7 +325,7 @@ describe('buildPlan', () => {
       sequence: [{ flow: 'search' }, { extract: 'items' }],
     });
     const plan = buildPlan(recipe);
-    expect(plan.vars).toEqual([{ name: 'q', default: null, required: true, secret: false, path: false }]);
+    expect(plan.vars).toEqual([{ name: 'q', default: null, required: true, secret: false, path: false, raw: false }]);
     expect(plan.flows[0]!.steps.map((s) => s.action)).toEqual([
       { kind: 'fill', text: '{q} shoes', path: null, vars: ['q'] },
       { kind: 'press', key: 'Enter' },
@@ -359,10 +358,10 @@ describe('buildPlan', () => {
   it('carries reactive flows, await-user and popup steps, frames, and secret and path variables', () => {
     const plan = buildPlan(flowsRecipe());
     expect(plan.vars).toEqual([
-      { name: 'port', default: '4777', required: true, secret: false, path: false },
-      { name: 'user', default: 'u', required: true, secret: false, path: false },
-      { name: 'pass', default: null, required: true, secret: true, path: false },
-      { name: 'resume', default: null, required: true, secret: false, path: true },
+      { name: 'port', default: '4777', required: true, secret: false, path: false, raw: false },
+      { name: 'user', default: 'u', required: true, secret: false, path: false, raw: false },
+      { name: 'pass', default: null, required: true, secret: true, path: false, raw: false },
+      { name: 'resume', default: null, required: true, secret: false, path: true, raw: false },
     ]);
     const [login, upload] = plan.flows;
     expect(login).toMatchObject({ name: 'login-wall', maxRetries: 4, recover: true, trigger: { selectors: [{ strategy: 'css', value: '#spa-login' }], frame: null } });
@@ -397,7 +396,7 @@ describe('buildPlan', () => {
         sequence: [{ paginate: { ...base.sequence[0].paginate, kind: 'next', limit: 3 } }],
       }),
     );
-    expect(plan.vars).toEqual([{ name: 'section', default: null, required: true, secret: false, path: false }]);
+    expect(plan.vars).toEqual([{ name: 'section', default: null, required: true, secret: false, path: false, raw: false }]);
     expect(plan.pagination).toMatchObject({ kind: 'next', param: null, limit: 3 });
     expect(plan.pagination.target).toEqual({
       selectors: [
@@ -616,22 +615,12 @@ process.stdout.write(JSON.stringify({ conversions, pages, numbers: ['x 1,5', 'no
   }, 60_000);
 });
 
-describe('reserved URL variables in the preludes', () => {
-  const CASES = ['ID/edit?usp=drive_link', 'a b/c%20d', '%', 'é', "x:y@z[1]!$&'()*+,;=#"];
-
-  it('fill {+name} with the reserved encoder, matching core', () => {
-    expect(TS_PRELUDE).toContain("plus === '+' ? encodeReserved(");
-    expect(PY_PRELUDE).toContain('encode_reserved(value) if m.group(1) == "+"');
-    const source = /function encodeReserved[\s\S]*?\n}\n/.exec(TS_PRELUDE)![0];
-    const safe = /const RESERVED_SAFE = .*;/.exec(TS_PRELUDE)![0];
-    const encode = new Function(`${safe}\n${source.replace(/: string/g, '').replace(/\)!/g, ')')}\nreturn encodeReserved;`)() as (v: string) => string;
-    for (const value of CASES) expect(encode(value)).toBe(encodeReserved(value));
-  });
-
-  it.skipIf(!hasPython)('Python encode_reserved matches core', () => {
-    const source = /def encode_reserved[\s\S]*?\n\n/.exec(PY_PRELUDE)![0];
-    const out = execFileSync('python3', ['-c', `import json, re, sys\nfrom urllib.parse import quote\n${source}\nprint(json.dumps([encode_reserved(v) for v in json.loads(sys.argv[1])]))`, JSON.stringify(CASES)], { encoding: 'utf8' });
-    expect(JSON.parse(out)).toEqual(CASES.map(encodeReserved));
+describe('raw URL variables in the preludes', () => {
+  it('fill raw values unchanged and URL-encode the rest', () => {
+    expect(TS_PRELUDE).not.toContain('encodeReserved');
+    expect(PY_PRELUDE).not.toContain('encode_reserved');
+    expect(TS_PRELUDE).toContain('v.name === name && v.raw');
+    expect(PY_PRELUDE).toContain('return value if m.group(1) in raw else encode_uri_component(value)');
   });
 });
 

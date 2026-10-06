@@ -72,8 +72,13 @@ export const VarSchema = z.object({
   type: z.enum(['string', 'path']),
   /** Never saved with a default, printed, logged, or passed to hooks. */
   secret: z.boolean().optional(),
+  /** Substituted into the URL unchanged, with no encoding. */
+  raw: z.boolean().optional(),
   default: z.string().optional(),
   description: DescriptionSchema.refine((value) => !/[\r\n]/.test(value), 'a variable description is one line').optional(),
+}).superRefine((v, ctx) => {
+  if (v.raw && v.secret) ctx.addIssue({ code: 'custom', path: ['raw'], message: `variable "${v.name}" cannot be both raw and secret` });
+  if (v.raw && v.type === 'path') ctx.addIssue({ code: 'custom', path: ['raw'], message: `variable "${v.name}" cannot be both raw and a path` });
 });
 
 export const ItemSchema = z.object({

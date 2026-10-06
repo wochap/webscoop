@@ -8,7 +8,7 @@ export { classifyFillElement, currentFillValue, FILL_KINDS, FILLABLE_KINDS, type
 export { collapseWhitespace, defaultAttr } from '../convert';
 export {
   describeUrlDiff,
-  encodeFor,
+  encodeValue,
   fillTemplate,
   templateParts,
   templateProblem,

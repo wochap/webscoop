@@ -32,6 +32,8 @@ export interface PlanVar {
   secret: boolean;
   /** The value is one or more file paths separated by `:`. */
   path: boolean;
+  /** The value enters the URL unchanged, with no encoding. */
+  raw: boolean;
 }
 
 /** What a step does once its window and target (if any) are found. Defaults are already resolved. */
@@ -237,8 +239,8 @@ export function buildPlan(recipe: Recipe): ExportPlan {
   const needed = new Set(templateVariables(recipe.url));
   for (const flow of recipe.flows) for (const step of flow.steps) if ((step.kind === 'fill' || step.kind === 'download') && step.value) for (const name of templateVariables(step.value)) needed.add(name);
   if (pageParam) needed.delete(pageParam.name);
-  const vars: PlanVar[] = recipe.vars.map((v) => ({ name: v.name, default: v.default ?? null, required: needed.has(v.name), secret: v.secret === true, path: v.type === 'path' }));
-  for (const name of needed) if (!recipe.vars.some((v) => v.name === name)) vars.push({ name, default: null, required: true, secret: false, path: false });
+  const vars: PlanVar[] = recipe.vars.map((v) => ({ name: v.name, default: v.default ?? null, required: needed.has(v.name), secret: v.secret === true, path: v.type === 'path', raw: v.raw === true }));
+  for (const name of needed) if (!recipe.vars.some((v) => v.name === name)) vars.push({ name, default: null, required: true, secret: false, path: false, raw: false });
 
   const flows: PlanFlow[] = recipe.flows.map((flow) => ({
     name: flow.name,

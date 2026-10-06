@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fillTemplate, PROFILE_NAME, type BrowserPort, type OpenOptions, type Session } from '@webscoop/core';
+import { fillTemplate, PROFILE_NAME, type RecipeVar, type BrowserPort, type OpenOptions, type Session } from '@webscoop/core';
 import { launchProblem, type BrowserChoice, type BrowserId } from './browser';
 import { profileRules, type Config } from './config';
 import { log, type BrowserInfo, type CliIo } from './context';
@@ -49,7 +49,7 @@ export function profileNote(resolved: ResolvedProfile): string {
 }
 
 /** Host name of a URL template filled with `values` and the defaults of `vars`; undefined when a variable is missing or the URL is invalid. */
-export function hostOf(urlTemplate: string, values: Readonly<Record<string, string>> = {}, vars: Parameters<typeof fillTemplate>[1] = []): string | undefined {
+export function hostOf(urlTemplate: string, values: Readonly<Record<string, string>> = {}, vars: readonly RecipeVar[] = []): string | undefined {
   try {
     return new URL(fillTemplate(urlTemplate, vars, values)).hostname || undefined;
   } catch {

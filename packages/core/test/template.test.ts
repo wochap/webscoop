@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeUrlDiff, encodeFor, encodeReserved, fillTemplate, fillText, inlineVariable, MissingVariableError, renameVariable, retemplateUrl, templateParts, templateProblem, templateVariables, urlDiff } from '../src';
+import { describeUrlDiff, encodeValue, fillTemplate, fillText, inlineVariable, MissingVariableError, renameVariable, retemplateUrl, templateParts, templateProblem, templateVariables, urlDiff } from '../src';
 
 describe('URL template', () => {
   it('lists variables in order of first use', () => {
@@ -48,13 +48,14 @@ describe('template helpers', () => {
   });
 
   it('re-templates a page URL on an exact single match', () => {
-    expect(retemplateUrl('https://shop.test/search?q=red+shoes&page=2', [{ name: 'query', value: 'red shoes' }])).toBe(
-      'https://shop.test/search?q={query}&page=2',
-    );
-    expect(retemplateUrl('https://x.test/?a=top%20llms', [{ name: 'q', value: 'top llms' }])).toBe('https://x.test/?a={q}');
+    expect(retemplateUrl('https://shop.test/search?q=red+shoes&page=2', [{ name: 'query', value: 'red shoes' }])).toEqual({
+      url: 'https://shop.test/search?q={query}&page=2',
+      raw: [],
+    });
+    expect(retemplateUrl('https://x.test/?a=top%20llms', [{ name: 'q', value: 'top llms' }]).url).toBe('https://x.test/?a={q}');
     // Two matches leave the URL literal; longer values claim their span first.
-    expect(retemplateUrl('https://x.test/1/1', [{ name: 'n', value: '1' }])).toBe('https://x.test/1/1');
-    expect(retemplateUrl('https://x.test/?a=shoes&b=red%20shoes', [{ name: 's', value: 'shoes' }, { name: 'r', value: 'red shoes' }])).toBe(
+    expect(retemplateUrl('https://x.test/1/1', [{ name: 'n', value: '1' }]).url).toBe('https://x.test/1/1');
+    expect(retemplateUrl('https://x.test/?a=shoes&b=red%20shoes', [{ name: 's', value: 'shoes' }, { name: 'r', value: 'red shoes' }]).url).toBe(
       'https://x.test/?a={s}&b={r}',
     );
   });
@@ -69,44 +70,38 @@ describe('template helpers', () => {
   });
 });
 
-describe('reserved {+name} variables', () => {
+describe('raw variables', () => {
   const str = (name: string) => ({ name, type: 'string' as const });
+  const raw = (name: string) => ({ name, type: 'string' as const, raw: true });
 
-  it('reserved-encodes values', () => {
-    expect(encodeReserved('ID/edit?usp=drive_link')).toBe('ID/edit?usp=drive_link');
-    expect(encodeReserved('a b/c%20d')).toBe('a%20b/c%20d');
-    expect(encodeReserved('%')).toBe('%25');
-    expect(encodeReserved('é')).toBe('%C3%A9');
-    expect(encodeFor(true, 'a/b')).toBe('a/b');
-    expect(encodeFor(false, 'a/b')).toBe('a%2Fb');
+  it('encodes by the declaration', () => {
+    expect(encodeValue(true, 'a/b')).toBe('a/b');
+    expect(encodeValue(false, 'a/b')).toBe('a%2Fb');
   });
 
-  it('fills each occurrence by its form', () => {
-    expect(fillTemplate('https://h.test/d/{+path}', [str('path')], { path: 'ID/edit?usp=drive_link' })).toBe('https://h.test/d/ID/edit?usp=drive_link');
+  it('inserts a raw value unchanged and URL-encodes the rest', () => {
+    expect(fillTemplate('https://www.google.com/search?q={q}', [raw('q')], { q: 'a+sentence+with+plus' })).toBe('https://www.google.com/search?q=a+sentence+with+plus');
+    expect(fillTemplate('https://h.test/{p}', [raw('p')], { p: '100%/a' })).toBe('https://h.test/100%/a');
     expect(fillTemplate('https://h.test/d/{path}', [str('path')], { path: 'ID/edit' })).toBe('https://h.test/d/ID%2Fedit');
-    expect(fillTemplate('https://h.test/{+x}?q={x}', [str('x')], { x: 'a/b' })).toBe('https://h.test/a/b?q=a%2Fb');
-    expect(fillText('{+x} and {x}', [str('x')], { x: 'a/b c' })).toBe('a/b c and a/b c');
-    expect(templateVariables('https://h.test/{+x}?q={x}&y={+y}')).toEqual(['x', 'y']);
+    expect(fillTemplate('https://h.test/d/{path}', [raw('path')], { path: 'ID/edit?usp=drive_link' })).toBe('https://h.test/d/ID/edit?usp=drive_link');
+    expect(fillText('{x}', [raw('x')], { x: 'a/b c' })).toBe('a/b c');
   });
 
-  it('validates, splits, renames, and inlines the reserved form', () => {
-    expect(templateProblem('https://h.test/d/{+path}')).toBeNull();
-    expect(templateProblem('https://h.test/d/{+}')).toMatch(/unmatched/);
-    expect(templateProblem('https://h.test/d/{+1x}')).toMatch(/unmatched/);
-    expect(templateProblem('https://h.test/d/{+path')).toMatch(/unmatched/);
-    expect(templateParts('https://h.test/{+p}?q={p}')).toEqual([
-      { text: 'https://h.test/' },
-      { name: 'p', reserved: true },
-      { text: '?q=' },
-      { name: 'p', reserved: false },
-    ]);
-    expect(renameVariable('https://h.test/{+path}?q={path}', 'path', 'p')).toBe('https://h.test/{+p}?q={p}');
-    expect(inlineVariable('https://h.test/{+path}?q={path}', 'path', 'ID/edit', true)).toBe('https://h.test/ID/edit?q=ID%2Fedit');
-    expect(inlineVariable('{+path} {path}', 'path', 'ID/edit', false)).toBe('ID/edit ID/edit');
+  it('refuses the {+name} syntax', () => {
+    expect(templateProblem('https://h.test/d/{+path}')).toMatch(/unmatched/);
+    expect(templateProblem('https://h.test/d/{+path}')).not.toContain('or {+name}');
+    expect(templateVariables('https://h.test/{+x}')).toEqual([]);
+    expect(templateParts('https://h.test/{p}?q=1')).toEqual([{ text: 'https://h.test/' }, { name: 'p' }, { text: '?q=1' }]);
+    expect(renameVariable('https://h.test/{path}?q={path}', 'path', 'p')).toBe('https://h.test/{p}?q={p}');
+    expect(inlineVariable('https://h.test/{path}', 'path', 'ID/edit', false)).toBe('https://h.test/ID/edit');
   });
 
-  it('puts back {+name} when only the reserved form matches', () => {
-    expect(retemplateUrl('https://h.test/d/ID/edit?usp=sharing', [{ name: 'path', value: 'ID/edit' }])).toBe('https://h.test/d/{+path}?usp=sharing');
-    expect(retemplateUrl('https://shop.test/search?q=red+shoes&page=2', [{ name: 'query', value: 'red shoes' }])).toBe('https://shop.test/search?q={query}&page=2');
+  it('re-templates by the unchanged value and reports what it marked raw', () => {
+    expect(retemplateUrl('https://h.test/d/ID/edit?usp=sharing', [{ name: 'path', value: 'ID/edit' }])).toEqual({ url: 'https://h.test/d/{path}?usp=sharing', raw: ['path'] });
+    expect(retemplateUrl('https://h.test/d/ID/edit#top', [{ name: 'path', value: 'ID/edit', raw: true }])).toEqual({ url: 'https://h.test/d/{path}#top', raw: [] });
+    // A raw variable tries only its unchanged value.
+    expect(retemplateUrl('https://x.test/?a=top%20llms', [{ name: 'q', value: 'top llms', raw: true }]).url).toBe('https://x.test/?a=top%20llms');
+    // A variable bound outside the recipe is never marked raw.
+    expect(retemplateUrl('https://h.test/d/ID/edit', [{ name: 'path', value: 'ID/edit', origin: 'cli' }])).toEqual({ url: 'https://h.test/d/ID/edit', raw: [] });
   });
 });

@@ -561,7 +561,7 @@ export class RecorderController {
   /** The URL the draft's template and variable values produce. */
   targetUrl(): string {
     const values = Object.fromEntries(this.draft.vars.map((v) => [v.name, v.value]));
-    return fillTemplate(this.draft.url, [], values);
+    return fillTemplate(this.draft.url, this.draft.vars, values);
   }
 
   /** Expose the bridge, inject the bundle, and open the target URL. */
@@ -1116,7 +1116,7 @@ export class RecorderController {
         if (this.draft.vars.some((v) => v.name === msg.name && v.type === 'path')) await this.checkPath(msg.name);
         return;
       case 'draft.setVarKind':
-        this.applyVar({ type: 'setVarKind', name: msg.name, ...(msg.secret !== undefined ? { secret: msg.secret } : {}), ...(msg.type !== undefined ? { varType: msg.type } : {}) });
+        this.applyVar({ type: 'setVarKind', name: msg.name, ...(msg.secret !== undefined ? { secret: msg.secret } : {}), ...(msg.type !== undefined ? { varType: msg.type } : {}), ...(msg.raw !== undefined ? { raw: msg.raw } : {}) });
         await this.checkPath(msg.name);
         return;
       case 'vars.checkPath':
@@ -1137,9 +1137,12 @@ export class RecorderController {
       case 'draft.setUrl':
         this.setUrl(msg.url);
         return;
-      case 'draft.useCurrentUrl':
-        this.setUrl(retemplateUrl(this.current.url, this.draft.vars));
+      case 'draft.useCurrentUrl': {
+        const { url, raw } = retemplateUrl(this.current.url, this.draft.vars);
+        this.setUrl(url);
+        if (this.draft.url === url) for (const name of raw) this.applyVar({ type: 'setVarKind', name, raw: true });
         return;
+      }
       case 'draft.addVar': {
         const error = varNameError(this.draft, msg.name);
         if (error) this.current = { ...this.current, varError: { name: msg.name, message: error } };

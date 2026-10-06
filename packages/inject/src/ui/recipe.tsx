@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react';
-import { describeUrlDiff, encodeFor, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type RecorderState, type VarValue } from '@webscoop/core/page';
+import { describeUrlDiff, encodeValue, fillTemplate, templateParts, templateVariables, urlDiff, type DescriptionTarget, type Draft, type RecorderState, type VarValue } from '@webscoop/core/page';
 import { useActions } from './context';
 import { Icon } from './icons';
 import { Toggle } from './items';
@@ -14,11 +14,12 @@ export function varUsage(draft: Pick<Draft, 'url' | 'flows'>, name: string): { u
 }
 
 /** How the variables list shows a variable: a display label, not a stored type. */
-export type ShownAs = 'text' | 'secret' | 'path' | 'external';
+export type ShownAs = 'text' | 'raw' | 'secret' | 'path' | 'external';
 
 export function shownAs(v: VarValue): ShownAs {
   if (v.origin) return 'external';
   if (v.secret) return 'secret';
+  if (v.raw) return 'raw';
   return v.type === 'path' ? 'path' : 'text';
 }
 
@@ -37,13 +38,13 @@ const valuesOf = (vars: readonly VarValue[]) => Object.fromEntries(vars.map((v) 
 /** The URL the template opens with the current values. */
 export function renderedUrl(draft: Pick<Draft, 'url' | 'vars'>): string {
   try {
-    return fillTemplate(draft.url, [], valuesOf(draft.vars));
+    return fillTemplate(draft.url, draft.vars, valuesOf(draft.vars));
   } catch {
     return draft.url;
   }
 }
 
-/** The template as text runs and highlighted `{name}` and `{+name}` tokens, for the input backdrop. */
+/** The template as text runs and highlighted `{name}` tokens, for the input backdrop. */
 function TemplateHighlight({ template }: { template: string }) {
   return (
     <>
@@ -51,7 +52,7 @@ function TemplateHighlight({ template }: { template: string }) {
         'text' in part ? (
           <span key={i}>{part.text}</span>
         ) : (
-          <span key={i} className="ws-token">{`{${part.reserved ? '+' : ''}${part.name}}`}</span>
+          <span key={i} className="ws-token">{`{${part.name}}`}</span>
         ),
       )}
     </>
@@ -127,7 +128,7 @@ export function RenderedUrl({ draft }: { draft: Pick<Draft, 'url' | 'vars'> }) {
             <span key={i}>{part.text}</span>
           ) : (
             <span key={i} className="ws-rendered-value">
-              {encodeFor(part.reserved, values[part.name] ?? '')}
+              {encodeValue(draft.vars.find((v) => v.name === part.name)?.raw === true, values[part.name] ?? '')}
             </span>
           ),
         )}
@@ -231,6 +232,7 @@ export function VarTableRow({
     if (stale) void actions.send({ kind: 'vars.checkPath', name });
   }, [stale, name, actions]);
   const notes = [
+    ...(kind === 'raw' ? ['raw · only affects URL'] : []),
     ...(kind === 'secret' ? ['secret · never saved'] : []),
     ...(kind === 'path' ? ['default saved'] : []),
     ...(kind === 'external' ? [`from ${variable.origin === 'config' ? 'config' : 'CLI'} · read-only here`] : []),
@@ -287,10 +289,11 @@ export function VarTableRow({
             data-ws={`var-kind-${name}`}
             onChange={(e) => {
               const to = e.target.value as ShownAs;
-              void actions.send({ kind: 'draft.setVarKind', name, secret: to === 'secret', type: to === 'path' ? 'path' : 'string' });
+              void actions.send({ kind: 'draft.setVarKind', name, secret: to === 'secret', type: to === 'path' ? 'path' : 'string', raw: to === 'raw' });
             }}
           >
             <option value="text">text</option>
+            <option value="raw">raw</option>
             <option value="secret">secret</option>
             <option value="path">path</option>
           </select>
@@ -438,7 +441,7 @@ export function RecipeSummary({ draft }: { draft: Draft }) {
           'text' in part ? (
             <span key={i}>{part.text}</span>
           ) : (
-            <span key={i} className="ws-chip" data-ws={`recipe-summary-var-${part.name}`} title={`{${part.reserved ? '+' : ''}${part.name}}`}>
+            <span key={i} className="ws-chip" data-ws={`recipe-summary-var-${part.name}`} title={`{${part.name}}`}>
               {part.name}
               <span className="ws-chip-value">{draft.vars.find((v) => v.name === part.name)?.value ?? ''}</span>
             </span>

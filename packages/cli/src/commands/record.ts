@@ -183,15 +183,17 @@ export async function recordCommand(outer: CliIo, template: string | undefined, 
   const redactor = Redactor.of(resolvedVars.values, resolvedVars.secrets);
   io = { ...io, stderr: redactor.wrap(io.stderr) };
   const values = await resolveValues(io, template, resolvedVars.values, recipe);
-  for (const warning of encodedValueWarnings(template, values)) log(io, warning);
-  const url = fillTemplate(template, [], values);
+  // A fresh template has no declarations: nothing is raw yet.
+  const declared = recipe?.vars ?? [];
+  for (const warning of encodedValueWarnings(template, values, declared, { record: true })) log(io, warning);
+  const url = fillTemplate(template, declared, values);
   const name = opts.name ?? recipe?.name ?? proposeName(url);
   // A fresh recording has no recipe yet: only the flag and the config apply.
   const settings = browserSettings(config, recipe, opts, io.env);
 
   requireDisplay(io.env);
 
-  const resolved = resolveProfile({ flag: opts.profile, recipePin: recipe?.browser?.profile, name, host: hostOf(url), config });
+  const resolved = resolveProfile({ flag: opts.profile, recipePin: recipe?.browser?.profile, name, host: hostOf(template, values, declared), config });
   const profile = resolved.profile;
   checkProfileName(profile);
   const { profileDir, createBrowser } = await prepareProfile(io, config, paths, profile);

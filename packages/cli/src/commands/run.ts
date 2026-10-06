@@ -30,7 +30,6 @@ import {
   type StepReport,
   tablesOf,
   templateParts,
-  templateVariables,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, resolveDownloadDir, type Config } from '../config';
@@ -141,12 +140,18 @@ export function healingFromFlags(opts: Pick<RunCommandOptions, 'heal' | 'save'>)
 /**
  * One warning per URL template variable whose value looks URL-encoded already:
  * values are encoded again, so `+` stays a literal plus and `%20` becomes `%2520`.
- * Variables only steps use are typed as is and are skipped.
+ * Variables only steps use are typed as is, and raw variables are not encoded:
+ * both are skipped. At `record` the warning also points at the panel's raw kind.
  */
-export function encodedValueWarnings(template: string, values: Readonly<Record<string, string>>): string[] {
+export function encodedValueWarnings(
+  template: string,
+  values: Readonly<Record<string, string>>,
+  vars: readonly { name: string; raw?: boolean }[] = [],
+  options: { record?: boolean } = {},
+): string[] {
   const warnings: string[] = [];
-  // Reserved `{+name}` keeps `+` and `%XX`; only plain `{name}` re-encodes them.
-  const plain = templateParts(template).flatMap((part) => ('name' in part && !part.reserved ? [part.name] : []));
+  const panel = options.record ? ', or mark it raw in the panel' : '';
+  const plain = templateParts(template).flatMap((part) => ('name' in part && !vars.some((v) => v.name === part.name && v.raw) ? [part.name] : []));
   for (const name of new Set(plain)) {
     const value = values[name];
     if (value === undefined) continue;
@@ -158,10 +163,10 @@ export function encodedValueWarnings(template: string, values: Readonly<Record<s
         // Not decodable as a whole; name only the problem.
       }
       warnings.push(
-        `warning: --var ${name}="${value}" is URL-encoded again ("%" becomes "%25")${decoded === null ? '' : `; pass the decoded text "${decoded}"`}`,
+        `warning: --var ${name}="${value}" is URL-encoded again ("%" becomes "%25")${decoded === null ? '' : `; pass the decoded text "${decoded}"`}${panel}`,
       );
     } else if (value.includes('+')) {
-      warnings.push(`warning: --var ${name}="${value}" is URL-encoded, so "+" stays a literal plus; for a space pass "${value.replaceAll('+', ' ')}"`);
+      warnings.push(`warning: --var ${name}="${value}" is URL-encoded, so "+" stays a literal plus; for a space pass "${value.replaceAll('+', ' ')}"${panel}`);
     }
   }
   return warnings;
@@ -366,7 +371,7 @@ export async function prepare(
     throw error;
   }
   const defaults = Object.fromEntries(recipe.vars.flatMap((v) => (v.default !== undefined ? [[v.name, v.default]] : [])));
-  for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars })) infoLog(io, opts.quiet)(warning);
+  for (const warning of encodedValueWarnings(recipe.url, { ...defaults, ...vars }, recipe.vars)) infoLog(io, opts.quiet)(warning);
   const settings: BrowserSettings = { ...browserSettings(config, recipe, opts, io.env), humanize: resolveHumanize(opts, recipe, config) };
 
   requireDisplay(io.env);

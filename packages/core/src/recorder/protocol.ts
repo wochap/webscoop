@@ -211,6 +211,8 @@ export const VarValueSchema = z.object({
   type: z.optional(z.literal('path')),
   /** Masked in the panel, kept for the session only, never saved. The panel receives an empty value and `set`. */
   secret: z.optional(z.literal(true)),
+  /** Substituted into the URL unchanged, with no encoding. */
+  raw: z.optional(z.literal(true)),
   /** Sent to the panel for a secret with a value. */
   set: z.optional(z.literal(true)),
   /** Bound outside the recipe, in the config file or on the command line: read-only, and saved without a default. */
@@ -798,7 +800,7 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   /** Remove a variable, writing its value in place of every use. */
   msg('draft.removeVar', { name: z.string() }),
   /** Mark a text variable secret (or not), or change its type between text and path; external variables refuse. */
-  msg('draft.setVarKind', { name: z.string(), secret: z.optional(z.boolean()), type: z.optional(z.enum(['string', 'path'])) }),
+  msg('draft.setVarKind', { name: z.string(), secret: z.optional(z.boolean()), type: z.optional(z.enum(['string', 'path'])), raw: z.optional(z.boolean()) }),
   /** Check on the host that every path of a path variable names an existing file; the answer lands in `pathChecks`. */
   msg('vars.checkPath', { name: z.string() }),
   /** Set the template from the open page's URL, putting back variables found exactly once. */

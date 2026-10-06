@@ -59,8 +59,9 @@ describe('webscoop export', () => {
     expect(await main(['export', 'sunat', '--out', 'sunat.ts'], io)).toBe(ExitCode.Ok);
     const script = await readFile(join(dir, 'sunat.ts'), 'utf8');
     expect(script).toContain('"frame": [{ "strategy": "id", "value": "iframeApplication" }]');
-    expect(script).toContain('"name": "pass", "default": null, "required": false, "secret": true, "path": false');
-    expect(script).toContain('"name": "video", "default": null, "required": false, "secret": false, "path": true');
+    const flat = script.replace(/\s+/g, ' ');
+    expect(flat).toContain('"name": "pass", "default": null, "required": false, "secret": true, "path": false, "raw": false');
+    expect(flat).toContain('"name": "video", "default": null, "required": false, "secret": false, "path": true, "raw": false');
   });
 
   it('exits 1 naming the flag for an unknown format', async () => {

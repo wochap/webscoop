@@ -123,15 +123,15 @@ describe('identity and URL template', () => {
     expect(errors[0]!.message).toContain('secret');
   });
 
-  it('checks reserved {+name} variables like plain ones', () => {
-    const undeclared = errorsOf(base({ url: 'https://example.com/c/{category}/{+x}' }));
-    expect(undeclared).toHaveLength(1);
-    expect(undeclared[0]!.message).toContain('x');
-    const secret = errorsOf(base({ url: 'https://example.com/c/{category}/{+token}', vars: [{ name: 'category', type: 'string' }, { name: 'token', type: 'string', secret: true }] }));
-    expect(secret).toHaveLength(1);
-    expect(secret[0]!.path).toBe('$.url');
-    expect(secret[0]!.message).toContain('token');
+  it('checks raw variables and refuses the {+name} syntax', () => {
+    expect(validateRecipe(base({ url: 'https://example.com/c/{category}', vars: [{ name: 'category', type: 'string', raw: true }] })).ok).toBe(true);
+    const secret = errorsOf(base({ vars: [{ name: 'category', type: 'string' }, { name: 'token', type: 'string', secret: true, raw: true }] }));
+    expect(secret.some((e) => e.message.includes('token'))).toBe(true);
+    const path = errorsOf(base({ vars: [{ name: 'category', type: 'string' }, { name: 'video', type: 'path', raw: true }] }));
+    expect(path.some((e) => e.message.includes('video'))).toBe(true);
+    expect(errorsOf(base({ url: 'https://example.com/c/{+category}' })).length).toBeGreaterThan(0);
   });
+
 
   it('rejects a name that is not kebab-case', () => {
     const errors = errorsOf(base({ name: 'My Shop' }));

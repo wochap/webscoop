@@ -151,7 +151,7 @@ def parse_args(argv):
 # Variables and templates (cli vars.ts, core template.ts)
 # ---------------------------------------------------------------------------
 
-VARIABLE = re.compile(r"\{(\+?)([A-Za-z_][A-Za-z0-9_]*)\}")
+VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def env_name(name):
@@ -218,23 +218,19 @@ def encode_uri_component(value):
     return quote(value, safe="!'()*-._~")
 
 
-def encode_reserved(value):
-    """Reserved encoding for {+name}: keep reserved characters and valid %XX escapes, encode the rest."""
-    value = re.sub(r"%(?![0-9A-Fa-f]{2})", "%25", value)
-    return quote(value, safe=":/?#[]@!$&'()*+,;=-._~%")
-
-
 def fill_template(template, values):
-    """Fill a URL template: {name} values URL-encoded, {+name} values reserved-encoded."""
+    """Fill a URL template: values URL-encoded, raw variables' values unchanged."""
+    raw = {v["name"] for v in VARS if v["raw"]}
+
     def fill(m):
-        value = values.get(m.group(2), "")
-        return encode_reserved(value) if m.group(1) == "+" else encode_uri_component(value)
+        value = values.get(m.group(1), "")
+        return value if m.group(1) in raw else encode_uri_component(value)
     return VARIABLE.sub(fill, template)
 
 
 def fill_text(template, values):
     """Fill a typed value: inserted as it is."""
-    return VARIABLE.sub(lambda m: values.get(m.group(2), ""), template)
+    return VARIABLE.sub(lambda m: values.get(m.group(1), ""), template)
 
 
 def path_files(action, values):

@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { templateVariables } from '../template';
+import { templateProblem, templateVariables } from '../template';
 import { RecipeSchema, type Recipe } from './schema';
 
 export interface ValidationError {
@@ -89,6 +89,8 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
     });
   }
   if (typeof input.url === 'string') {
+    const problem = templateProblem(input.url);
+    if (problem) errors.push({ path: '$.url', message: problem });
     for (const name of templateVariables(input.url)) {
       if (!declared.has(name)) {
         errors.push({ path: '$.url', message: `template variable "${name}" is not declared under vars` });

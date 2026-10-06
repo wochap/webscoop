@@ -78,12 +78,15 @@ describe('recipe bar', () => {
     expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('top%20llms');
   });
 
-  it('renders and highlights a reserved variable', () => {
-    const draft = emptyDraft({ name: 'slides', url: 'https://docs.google.com/presentation/d/{+path}', vars: [{ name: 'path', value: 'ID/edit' }] });
-    const p = renderPanel(baseState(draft, 'https://docs.google.com/presentation/d/ID/edit'));
-    expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('ID/edit');
-    expect(p.q('recipe-url-backdrop')!.querySelector('.ws-token')!.textContent).toBe('{+path}');
+  it('renders a raw variable unchanged and notes it', () => {
+    const draft = emptyDraft({ name: 'google', url: 'https://www.google.com/search?q={q}', vars: [{ name: 'q', value: 'a+sentence+with+plus', raw: true }] });
+    const p = renderPanel(baseState(draft, 'https://www.google.com/search?q=a+sentence+with+plus'));
+    expect(p.q('recipe-rendered-url')!.getAttribute('title')).toBe('https://www.google.com/search?q=a+sentence+with+plus');
+    expect(p.q('recipe-rendered-url')!.querySelector('.ws-rendered-value')!.textContent).toBe('a+sentence+with+plus');
+    expect(p.q('recipe-url-backdrop')!.querySelector('.ws-token')!.textContent).toBe('{q}');
+    expect(p.q('var-kind-note-q')!.textContent).toBe('raw · only affects URL');
   });
+
 
   it('flags Reopen and the template when the rendered URL differs from the opened one', () => {
     const same = renderPanel(google());
@@ -265,9 +268,11 @@ describe('variable kinds', () => {
   it('marks a variable secret, changes its type, and asks the host to check a path', () => {
     const p = renderPanel(baseState(draft()));
     fireEvent.change(p.q('var-kind-period')!, { target: { value: 'secret' } });
-    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: true, type: 'string' });
+    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: true, type: 'string', raw: false });
     fireEvent.change(p.q('var-kind-period')!, { target: { value: 'path' } });
-    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: false, type: 'path' });
+    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: false, type: 'path', raw: false });
+    fireEvent.change(p.q('var-kind-period')!, { target: { value: 'raw' } });
+    expect(p.sent).toContainEqual({ kind: 'draft.setVarKind', name: 'period', secret: false, type: 'string', raw: true });
     expect(p.sent).toContainEqual({ kind: 'vars.checkPath', name: 'video' });
   });
 
