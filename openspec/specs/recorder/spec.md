@@ -648,6 +648,52 @@ Text pasted or typed as `strategy=value` with a known strategy SHALL set the dro
 - **WHEN** the user opens the strategy menu while the input is on `id`
 - **THEN** the menu lists the seven strategies with their tags and examples, `id` has the accent background, and the footer mentions pasting `id=…`
 
+### Requirement: Pending selector text
+A selector input's text SHALL be pending while it is not empty and differs, in the `strategy=value` form, from the selector in effect for that place. While text is pending, the input SHALL show a pending state: an amber border and a dot. Applying the text, or the selector in effect changing to it, SHALL end the pending state. Esc, or Cancel of the surrounding editor, SHALL drop pending text without applying it.
+
+These controls SHALL apply pending text before they act:
+- "Done" on a list parent or item row of the list setup: it SHALL apply that row's pending text, then close the row.
+- "Accept" (or "Update list") of the list setup, by click or by Enter: it SHALL apply pending text of every open list parent or item row and of the exclusion input, then accept the list setup with those selectors.
+- "Use frame" of the frame target editor: it SHALL apply the frame selector input's pending text, then close the editor.
+
+When the panel can tell before sending that pending text is invalid (it does not parse as a selector), the control SHALL NOT close the editor or accept the list setup; the input SHALL show the inline error and keep the text. Otherwise the control SHALL apply the text and act at once. An error the recorder reports for the applied text afterwards, such as a selector that matches nothing, SHALL show on that row as defined for typed selectors.
+
+In the frame target editor, Enter inside the selector input SHALL apply the text and close the editor, and "Use frame" SHALL be the only confirm control; the editor SHALL NOT show a separate "Set" button. "Done" on a list setup row and "Use frame" SHALL show the Enter key hint.
+
+The typed selector of the selection keeps its "Select" button, and the step target editor keeps its "Use" button; both already apply the typed text.
+
+#### Scenario: Done applies a typed item selector
+- **WHEN** the item row of the list setup is open on `css=li.card`, the user types `.product` in its selector input without pressing Enter, and clicks "Done"
+- **THEN** the recorder receives `css=.product` for the item level, and the row closes showing the `.product` chip
+
+#### Scenario: Pending state
+- **WHEN** the item row shows `css=li.card` and the user types `.product`
+- **THEN** the input shows the amber border and dot until the text is applied or dropped
+
+#### Scenario: Invalid pending text keeps the row open
+- **WHEN** the user types `div[` in the item row's selector input and clicks "Done"
+- **THEN** the row stays open, the input shows the inline error, and the item selector in effect is unchanged
+
+#### Scenario: Accept applies pending text
+- **WHEN** the list parent row is open with pending text `css=main ol` and the user clicks "Accept"
+- **THEN** the list parent is set to `css=main ol` before the list setup is accepted
+
+#### Scenario: Accept applies a pending exclusion
+- **WHEN** the exclusion input holds `.sponsored` without pressing "Exclude" and the user presses Enter outside the panel inputs to accept
+- **THEN** `.sponsored` is added to the exclusions before the list setup is accepted
+
+#### Scenario: Use frame applies the typed frame selector
+- **WHEN** the frame target editor is open, the user types `#checkout-frame` in its selector input, and clicks "Use frame"
+- **THEN** the frame target is set to `css=#checkout-frame` and the editor closes
+
+#### Scenario: Enter in the frame selector closes the editor
+- **WHEN** the user types `#checkout-frame` in the frame selector input and presses Enter
+- **THEN** the frame target is set to `css=#checkout-frame` and the editor closes
+
+#### Scenario: Esc drops pending text
+- **WHEN** the item row has pending text and the user presses Esc
+- **THEN** the text is dropped and the item selector in effect is unchanged
+
 ### Requirement: Selector stack display
 Where the panel shows an item container, it SHALL show the levels of the composed selector as a selector stack: one row per level, outermost first (list parent, then item container, then the field when one is shown), each row indented below the previous one with a connector, holding the level's name, the level's primary selector as a selector chip with that level's stripe color, and the level's match count (for a field, the containers holding a match out of the container count). Levels that are not set SHALL be omitted. The stack SHALL be used in the Rows section, the item proposal, the inspector of an item scoped selection, and the editor of an item scoped field. A field row in the field list SHALL show only the field's own chip, not the stack. The stack SHALL be display only. The recipe SHALL keep one scoped selector list per level.
 
