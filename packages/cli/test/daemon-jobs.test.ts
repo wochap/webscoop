@@ -61,7 +61,7 @@ describe('jobs in the daemon', () => {
   });
 
   it('runs up to daemon.concurrency jobs at once in one browser, each printing only its rows', async () => {
-    const dir = await shopHome({ daemon: { concurrency: 3 } }, { url: 'https://shop.test/search?q={query}', vars: [{ name: 'query', type: 'string' }] });
+    const dir = await shopHome({ daemon: { concurrency: { total: 3 } } }, { url: 'https://shop.test/search?q={query}', vars: [{ name: 'query', type: 'string' }] });
     const daemon = sharedDaemon();
     const browser = new FakeBrowser();
     for (const q of ['cat', 'dog', 'fox']) browser.setPage(`https://shop.test/search?q=${q}`, shopCards(2, q));
@@ -107,7 +107,7 @@ describe('jobs in the daemon', () => {
   });
 
   it('cancels only the interrupted job and closes its tab', async () => {
-    const dir = await shopHome({ daemon: { concurrency: 2 } });
+    const dir = await shopHome({ daemon: { concurrency: { total: 2 } } });
     const daemon = sharedDaemon();
     const browser = walled();
     const a = client(dir, daemon, { browser });
@@ -130,7 +130,7 @@ describe('jobs in the daemon', () => {
 
 describe('attention in the daemon', () => {
   it('lets one solve free the next run, which reloads and continues without asking', async () => {
-    const dir = await shopHome({ daemon: { concurrency: 2 } });
+    const dir = await shopHome({ daemon: { concurrency: { total: 2 } } });
     const daemon = sharedDaemon();
     const browser = walled();
     const a = client(dir, daemon, { browser });
@@ -274,7 +274,7 @@ describe('await-user in the daemon', () => {
   });
 
   it('lets a second run waiting on the same login continue without asking once the first user logged in', async () => {
-    const dir = await shopHome({ notify: false, daemon: { concurrency: 2 } }, awaitRecipe);
+    const dir = await shopHome({ notify: false, daemon: { concurrency: { total: 2 } } }, awaitRecipe);
     const daemon = sharedDaemon();
     const browser = new FakeBrowser({ [SHOP_PAGE]: loginPage() });
     const a = client(dir, daemon, { browser });

@@ -1,3 +1,4 @@
+import type { DaemonConcurrency } from '../config';
 import type { SharedBrowserHandle } from '../context';
 import type { BrowserStatus } from './protocol';
 
@@ -19,7 +20,7 @@ export interface Job {
   /** Canonical launch settings; a job runs only in a browser launched with the same key. */
   readonly key: string;
   /** `daemon.concurrency` and `daemon.idleMs` of the job's config, used when it launches the browser. */
-  readonly concurrency: number;
+  readonly concurrency: DaemonConcurrency;
   readonly idleMs: number;
   /** Give up when the job has not started within this many milliseconds. */
   readonly queueTimeoutMs?: number;
@@ -104,7 +105,7 @@ class Slot {
   launchAbort: AbortController | null = null;
   closing: Promise<void> | null = null;
   key: string | null = null;
-  concurrency = 1;
+  concurrency: DaemonConcurrency = { total: 1, recipes: {} };
   idleMs = 0;
   readonly running = new Map<string, Entry>();
   readonly queue: Entry[] = [];
@@ -140,9 +141,10 @@ export interface SchedulerOptions {
 }
 
 /**
- * Per-profile browsers and FIFO queues: each browser runs at most its
- * concurrency of jobs; a job with other launch settings waits until the
- * browser is idle, which is then relaunched.
+ * Per-profile browsers and queues: each browser runs at most its total
+ * of jobs and its cap per recipe, starting the oldest job under its recipe's
+ * cap; a job with other launch settings waits until the browser is idle,
+ * which is then relaunched, and holds every later job back.
  */
 export class Scheduler {
   private readonly slots = new Map<string, Slot>();
@@ -315,17 +317,33 @@ export class Scheduler {
         this.schedulePump(slot);
         return;
       }
-      const head = slot.queue[0]!;
       const live = slot.browser !== null || slot.launching !== null;
-      if (live && slot.key !== head.job.key) {
+      const limits = live ? slot.concurrency : slot.queue[0]!.job.concurrency;
+      if (slot.running.size >= limits.total) return;
+      const next = this.nextEntry(slot, live, limits);
+      if (next === 'barrier') {
         // Other launch settings: wait for the browser to be idle, then relaunch.
-        if (slot.running.size === 0 && slot.browser) void this.closeBrowser(slot).then(() => this.pump(slot));
+        if (slot.queue[0]!.job.key !== slot.key) {
+          if (slot.running.size === 0 && slot.browser) void this.closeBrowser(slot).then(() => this.pump(slot));
+        }
         return;
       }
-      if (slot.running.size >= (live ? slot.concurrency : head.job.concurrency)) return;
-      slot.queue.shift();
-      void this.start(slot, head);
+      if (!next) return;
+      slot.queue.splice(slot.queue.indexOf(next), 1);
+      void this.start(slot, next);
     }
+  }
+
+  /** The oldest queued job whose recipe is under its cap, or 'barrier' when a job with other launch settings comes first. */
+  private nextEntry(slot: Slot, live: boolean, limits: DaemonConcurrency): Entry | 'barrier' | undefined {
+    const counts = new Map<string, number>();
+    for (const e of slot.running.values()) counts.set(e.job.recipe, (counts.get(e.job.recipe) ?? 0) + 1);
+    for (const entry of slot.queue) {
+      if (live && entry.job.key !== slot.key) return 'barrier';
+      const cap = limits.recipes[entry.job.recipe] ?? limits.perRecipe ?? Infinity;
+      if ((counts.get(entry.job.recipe) ?? 0) < cap) return entry;
+    }
+    return undefined;
   }
 
   private async start(slot: Slot, entry: Entry): Promise<void> {

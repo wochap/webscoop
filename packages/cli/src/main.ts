@@ -154,9 +154,10 @@ attention.needed when a guard or a re-pick needs you in the browser; use them
 to hide and show the window with your window manager.
 
 Daemon: run and test execute in a background daemon that keeps one browser
-per profile warm and runs each job in its own tab. daemon.concurrency in the
-config sets how many jobs a browser runs at once (default 1); the others wait
-in order. --queue-timeout gives up on a job that has not started in time.
+per profile warm and runs each job in its own tab. daemon.concurrency.total in
+the config sets how many jobs a browser runs at once (default 1), perRecipe
+how many of one recipe, and recipes a cap per recipe name. Waiting jobs start
+oldest first, passing over jobs whose recipe is at its cap. --queue-timeout gives up on a job that has not started in time.
 
 Guards: when a page asks for a human (a login redirect, a bot check, or a
 short or errored page where nothing resolves), the run waits until no other

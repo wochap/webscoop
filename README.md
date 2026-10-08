@@ -270,11 +270,16 @@ working directory, config, and recipe of the command that submitted it (so
 `--out rows.json` lands in your current directory and `WEBSCOOP_LLM_KEY`
 comes from your shell). Ctrl+C cancels only that job and closes its tab.
 
-- `daemon.concurrency` (config, default 1) is how many jobs one browser runs
-  at once; the others wait in submission order, and each waiting command
-  prints one `queued on profile "shop": 2 jobs ahead` line (not with
-  `--quiet`). Raise it to fan out searches in parallel tabs; the default keeps
-  anti-bot guards calm.
+- `daemon.concurrency.total` (config, default 1) is how many jobs one browser
+  runs at once. `daemon.concurrency.perRecipe` (unset: no cap) is how many
+  jobs of one recipe it runs at once, and `daemon.concurrency.recipes` gives
+  single recipes their own cap, e.g. `{ "bing": 2 }`. Waiting jobs start
+  oldest first, but a job whose recipe is at its cap does not hold back later
+  jobs of other recipes; jobs of one recipe always start in submission order.
+  Each waiting command prints one `queued on profile "shop": 2 jobs ahead`
+  line (not with `--quiet`). `{ "total": 3, "perRecipe": 1 }` lets google,
+  bing, and duckduckgo searches run side by side while each host sees one run
+  at a time; the default keeps anti-bot guards calm.
 - `daemon.idleMs` (config, default 60000) keeps a browser open this long after
   its last job; 0 closes it right away. The daemon exits once it has no
   browser and no job.
@@ -1056,7 +1061,7 @@ Config file, all keys optional:
     "locale": "es-ES",
     "args": ["--class=webscoop"]
   },
-  "daemon": { "concurrency": 1, "idleMs": 60000 },
+  "daemon": { "concurrency": { "total": 3, "perRecipe": 1, "recipes": { "bing": 2 } }, "idleMs": 60000 },
   "notify": true,
   "guards": { "banner": true },
   "hooks": { "attention.needed": "~/bin/webscoop-window show" },
@@ -1111,8 +1116,9 @@ logged in with. When they are equal, it removes any pin, and the recipe keeps
 following the config.
 
 One shared profile (for example `profiles.default`) means runs of different
-recipes share one browser, and with `daemon.concurrency` 1 they queue. Raise
-the concurrency, or use per-host rules to give them browsers of their own.
+recipes share one browser, and with `daemon.concurrency.total` 1 they queue.
+Raise `total` and set `perRecipe` 1 to run different recipes side by side,
+one run per recipe, or use per-host rules to give them browsers of their own.
 
 ### Language model
 

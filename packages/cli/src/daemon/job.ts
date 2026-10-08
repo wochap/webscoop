@@ -15,6 +15,7 @@ import {
 import { log, type CliIo, type Output, type SharedBrowserHandle } from '../context';
 import { reportError } from '../exit';
 import type { HookQueue } from '../hooks';
+import type { DaemonConcurrency } from '../config';
 import { Redactor } from '../redact';
 import type { ResolvedVars } from '../vars';
 import { acquireProfileLock } from '../lock';
@@ -104,7 +105,7 @@ export class DaemonJob implements Job {
   readonly profile: string;
   readonly profileDir: string;
   readonly key: string;
-  readonly concurrency: number;
+  readonly concurrency: DaemonConcurrency;
   readonly idleMs: number;
   readonly queueTimeoutMs?: number;
   private readonly signalListeners = new Set<(signal: AttentionSignal) => void>();

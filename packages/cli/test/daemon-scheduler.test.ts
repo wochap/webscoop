@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { DaemonConcurrency } from '../src/config';
 import type { SharedBrowserHandle } from '../src/context';
 import { AttentionGate, Scheduler, type Job, type LaunchedBrowser } from '../src/daemon/scheduler';
 
@@ -40,7 +41,7 @@ interface FakeJob extends Job {
 function fakeJob(
   port: ReturnType<typeof fakePort>,
   runId: string,
-  opts: { profile?: string; key?: string; concurrency?: number; idleMs?: number; queueTimeoutMs?: number; launch?: (signal: AbortSignal) => Promise<LaunchedBrowser> } = {},
+  opts: { profile?: string; recipe?: string; key?: string; concurrency?: DaemonConcurrency; idleMs?: number; queueTimeoutMs?: number; launch?: (signal: AbortSignal) => Promise<LaunchedBrowser> } = {},
 ): FakeJob {
   const events: string[] = [];
   const profile = opts.profile ?? 'default';
@@ -52,11 +53,11 @@ function fakeJob(
   const key = opts.key ?? 'k';
   return {
     runId,
-    recipe: `recipe-${runId}`,
+    recipe: opts.recipe ?? `recipe-${runId}`,
     profile,
     profileDir: `/profiles/${profile}`,
     key,
-    concurrency: opts.concurrency ?? 1,
+    concurrency: opts.concurrency ?? { total: 1, recipes: {} },
     idleMs: opts.idleMs ?? 0,
     ...(opts.queueTimeoutMs !== undefined ? { queueTimeoutMs: opts.queueTimeoutMs } : {}),
     launch: opts.launch ?? (async () => port.launch(`/profiles/${profile}`, key)),
@@ -112,7 +113,7 @@ describe('Scheduler', () => {
   it('runs up to the concurrency at once', async () => {
     const port = fakePort();
     const scheduler = new Scheduler();
-    const jobs = ['a', 'b', 'c', 'd'].map((id) => fakeJob(port, id, { concurrency: 3 }));
+    const jobs = ['a', 'b', 'c', 'd'].map((id) => fakeJob(port, id, { concurrency: { total: 3, recipes: {} } }));
     for (const job of jobs) scheduler.submit(job);
     await Promise.all(jobs.slice(0, 3).map((j) => j.running));
     await tick();
@@ -125,6 +126,91 @@ describe('Scheduler', () => {
     for (const job of [jobs[0]!, jobs[2]!, jobs[3]!]) job.end();
     await Promise.all(jobs.map((j) => j.done));
     expect(port.launches()).toBe(1);
+  });
+
+  it('runs different recipes side by side, one job per recipe, and the second job of a recipe after the first', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const concurrency = { total: 3, perRecipe: 1, recipes: {} };
+    const [g1, g2, bing, ddg] = [
+      ['g1', 'google'],
+      ['g2', 'google'],
+      ['b', 'bing'],
+      ['d', 'duckduckgo'],
+    ].map(([id, recipe]) => fakeJob(port, id!, { recipe: recipe!, concurrency }));
+    for (const job of [g1!, g2!, bing!, ddg!]) scheduler.submit(job);
+    await Promise.all([g1!.running, bing!.running, ddg!.running]);
+    await tick();
+    expect(g2!.events).toEqual(['queued 1']);
+    bing!.end();
+    await bing!.done;
+    await tick();
+    expect(g2!.events).toEqual(['queued 1']);
+    g1!.end();
+    await g2!.running;
+    g2!.end();
+    ddg!.end();
+    await Promise.all([g2!.done, ddg!.done]);
+    expect(port.launches()).toBe(1);
+  });
+
+  it('lets a recipe override replace perRecipe', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const concurrency = { total: 4, perRecipe: 1, recipes: { bing: 2 } };
+    const jobs = ['a', 'b', 'c'].map((id) => fakeJob(port, id, { recipe: 'bing', concurrency }));
+    for (const job of jobs) scheduler.submit(job);
+    await Promise.all([jobs[0]!.running, jobs[1]!.running]);
+    await tick();
+    expect(jobs[2]!.events).toEqual(['queued 2']);
+    jobs[0]!.end();
+    await jobs[2]!.running;
+    jobs[1]!.end();
+    jobs[2]!.end();
+    await Promise.all(jobs.map((j) => j.done));
+  });
+
+  it('keeps the total cap over recipes under their caps', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const concurrency = { total: 2, perRecipe: 1, recipes: {} };
+    const jobs = ['google', 'bing', 'duckduckgo'].map((recipe) => fakeJob(port, recipe, { recipe, concurrency }));
+    for (const job of jobs) scheduler.submit(job);
+    await Promise.all([jobs[0]!.running, jobs[1]!.running]);
+    await tick();
+    expect(jobs[2]!.events).toEqual(['queued 2']);
+    jobs[1]!.end();
+    await jobs[2]!.running;
+    jobs[0]!.end();
+    jobs[2]!.end();
+    await Promise.all(jobs.map((j) => j.done));
+  });
+
+  it('holds later jobs behind a job with other launch settings until it relaunches', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const concurrency = { total: 3, perRecipe: 1, recipes: {} };
+    const g1 = fakeJob(port, 'g1', { recipe: 'google', concurrency, idleMs: 60_000 });
+    const g2 = fakeJob(port, 'g2', { recipe: 'google', concurrency });
+    const other = fakeJob(port, 'x', { recipe: 'shop', key: 'direct', concurrency });
+    const bing = fakeJob(port, 'b', { recipe: 'bing', concurrency });
+    scheduler.submit(g1);
+    await g1.running;
+    for (const job of [g2, other, bing]) scheduler.submit(job);
+    await tick();
+    // g2 is capped; the barrier keeps bing from starting in the old browser.
+    expect(bing.events).toEqual(['queued 3']);
+    g1.end();
+    await g2.running;
+    expect(other.events).toEqual(['queued 2']);
+    g2.end();
+    await other.running;
+    expect(port.log.filter((l) => l.startsWith('launch'))).toEqual(['launch 1 /profiles/default k', 'launch 2 /profiles/default direct']);
+    expect(bing.events).toEqual(['queued 3']);
+    other.end();
+    await bing.running;
+    bing.end();
+    await bing.done;
   });
 
   it('keeps one browser per profile', async () => {
@@ -145,9 +231,9 @@ describe('Scheduler', () => {
   it('relaunches for other launch settings once the browser is idle', async () => {
     const port = fakePort();
     const scheduler = new Scheduler();
-    const a = fakeJob(port, 'a', { key: 'proxy-a', concurrency: 3, idleMs: 60_000 });
-    const b = fakeJob(port, 'b', { key: 'direct', concurrency: 3 });
-    const c = fakeJob(port, 'c', { key: 'proxy-a', concurrency: 3 });
+    const a = fakeJob(port, 'a', { key: 'proxy-a', concurrency: { total: 3, recipes: {} }, idleMs: 60_000 });
+    const b = fakeJob(port, 'b', { key: 'direct', concurrency: { total: 3, recipes: {} } });
+    const c = fakeJob(port, 'c', { key: 'proxy-a', concurrency: { total: 3, recipes: {} } });
     scheduler.submit(a);
     await a.running;
     scheduler.submit(b);
@@ -211,9 +297,9 @@ describe('Scheduler', () => {
   it('cancels one job and leaves the others running', async () => {
     const port = fakePort();
     const scheduler = new Scheduler();
-    const a = fakeJob(port, 'a', { concurrency: 2 });
-    const b = fakeJob(port, 'b', { concurrency: 2 });
-    const c = fakeJob(port, 'c', { concurrency: 2 });
+    const a = fakeJob(port, 'a', { concurrency: { total: 2, recipes: {} } });
+    const b = fakeJob(port, 'b', { concurrency: { total: 2, recipes: {} } });
+    const c = fakeJob(port, 'c', { concurrency: { total: 2, recipes: {} } });
     for (const job of [a, b, c]) scheduler.submit(job);
     await Promise.all([a.running, b.running]);
     expect(scheduler.cancel('c')).toBe(true);

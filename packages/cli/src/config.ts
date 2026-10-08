@@ -109,12 +109,21 @@ export const ConfigSchema = z.object({
   /** The background daemon that runs `run` and `test` jobs. */
   daemon: z
     .object({
-      /** Jobs one browser runs at once; the rest wait in order. Default 1. */
-      concurrency: z.number().int().positive().default(1),
+      /** Jobs one browser runs at once, in total and per recipe. */
+      concurrency: z
+        .object({
+          /** Jobs one browser runs at once. Default 1. */
+          total: z.number().int().positive().default(1),
+          /** Jobs of one recipe one browser runs at once; unset means no cap. */
+          perRecipe: z.number().int().positive().optional(),
+          /** Recipe name to its own cap, replacing `perRecipe`. */
+          recipes: z.record(z.string(), z.number().int().positive()).default({}),
+        })
+        .default({ total: 1, recipes: {} }),
       /** Milliseconds an idle browser stays open; 0 closes it after its last job. Default 60000. */
       idleMs: z.number().int().nonnegative().default(DEFAULT_IDLE_MS),
     })
-    .default({ concurrency: 1, idleMs: DEFAULT_IDLE_MS }),
+    .default({ concurrency: { total: 1, recipes: {} }, idleMs: DEFAULT_IDLE_MS }),
   /** False sends no desktop notification when a guard needs you; `--notify` or `--no-notify` overrides it. Default true. */
   notify: z.boolean().optional(),
   guards: z
@@ -148,6 +157,7 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type DaemonConcurrency = Config['daemon']['concurrency'];
 
 const configDirs = new WeakMap<Config, string>();
 

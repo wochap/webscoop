@@ -50,7 +50,7 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, daemon: { concurrency: 1, idleMs: 60_000 }, profiles: { rules: [] } });
+    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, daemon: { concurrency: { total: 1, recipes: {} }, idleMs: 60_000 }, profiles: { rules: [] } });
   });
 
   it('accepts the LLM fields', async () => {
@@ -86,6 +86,10 @@ describe('loadConfig', () => {
     await writeFile(join(home, 'config.json'), JSON.stringify({ notify: false }));
     expect((await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'))).notify).toBe(false);
     expect(await configError({ notify: 'no' })).toContain('notify');
+  });
+
+  it('rejects a number for daemon.concurrency, naming it', async () => {
+    expect(await configError({ daemon: { concurrency: 3 } })).toContain('daemon.concurrency');
   });
 
   it('accepts hooks as a command line or a list, and hookTimeoutMs', async () => {
