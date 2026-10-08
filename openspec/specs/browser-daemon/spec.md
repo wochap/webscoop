@@ -37,18 +37,34 @@ The daemon SHALL keep at most one browser per profile directory, launched on the
 - **THEN** the second job starts after the first ends, in a relaunched browser without the proxy
 
 ### Requirement: Scheduling
-Each browser SHALL run at most `daemon.concurrency` jobs at once (config, default 1). Further jobs for that browser SHALL wait in submission order. `run` and `test` SHALL accept `--queue-timeout <ms>`: when the job has not started within that time it SHALL be removed from the queue and the command SHALL exit 1 with a message naming the profile and the number of jobs ahead. Without `--queue-timeout` a job SHALL wait until it starts. While a job waits, the command SHALL print one stderr line saying it is queued and how many jobs are ahead, unless `--quiet` is given.
+Each browser SHALL run at most `daemon.concurrency.total` jobs at once (config, default 1). When `daemon.concurrency.recipes` names a job's recipe, that browser SHALL run at most that many jobs of the recipe at once; otherwise, when `daemon.concurrency.perRecipe` is set, at most `perRecipe` jobs of the recipe; otherwise the recipe SHALL have no cap of its own. `daemon.concurrency` SHALL be an object; a number SHALL fail config validation. Jobs waiting for a browser SHALL start in submission order, except that a job whose recipe is at its cap SHALL NOT keep later jobs of other recipes from starting: whenever a browser can start a job, it SHALL start the oldest waiting job whose recipe is under its cap. Jobs of one recipe SHALL start in submission order. A waiting job that needs other launch settings than the open browser SHALL keep every later job waiting until it starts. `run` and `test` SHALL accept `--queue-timeout <ms>`: when the job has not started within that time it SHALL be removed from the queue and the command SHALL exit 1 with a message naming the profile and the number of jobs ahead. Without `--queue-timeout` a job SHALL wait until it starts. While a job waits, the command SHALL print one stderr line saying it is queued and how many jobs are ahead, unless `--quiet` is given; jobs ahead SHALL count the running jobs and the older waiting jobs of that browser.
 
 #### Scenario: Default queue
-- **WHEN** `daemon.concurrency` is 1 and three runs on profile `default` are submitted at once
+- **WHEN** `daemon.concurrency` is `{}` and three runs on profile `default` are submitted at once
 - **THEN** they run one after another in submission order, in one browser
 
 #### Scenario: Parallel runs of one recipe
-- **WHEN** `daemon.concurrency` is 3 and `webscoop run bing --var query=cat`, `--var query=dog`, and `--var query=fox` are started at once
+- **WHEN** `daemon.concurrency` is `{ "total": 3 }` and `webscoop run bing --var query=cat`, `--var query=dog`, and `--var query=fox` are started at once
 - **THEN** the three runs extract at the same time in three tabs and each prints only its own rows
 
+#### Scenario: Different recipes in parallel, one per recipe
+- **WHEN** `daemon.concurrency` is `{ "total": 3, "perRecipe": 1 }` and two `google` runs, one `bing` run, and one `duckduckgo` run are submitted in that order on profile `default`
+- **THEN** the first `google` run, the `bing` run, and the `duckduckgo` run run at the same time in three tabs, and the second `google` run starts when the first `google` run ends
+
+#### Scenario: Recipe override
+- **WHEN** `daemon.concurrency` is `{ "total": 4, "perRecipe": 1, "recipes": { "bing": 2 } }` and three `bing` runs are submitted at once
+- **THEN** two `bing` runs run at the same time and the third starts when one of them ends
+
+#### Scenario: Total still caps
+- **WHEN** `daemon.concurrency` is `{ "total": 2, "perRecipe": 1 }` and one `google`, one `bing`, and one `duckduckgo` run are submitted in that order
+- **THEN** the `google` and `bing` runs run at the same time and the `duckduckgo` run starts when one of them ends
+
+#### Scenario: Number form rejected
+- **WHEN** the config sets `"daemon": { "concurrency": 3 }` and `webscoop run shop` is executed
+- **THEN** the command exits 1 with a config error naming `daemon.concurrency`
+
 #### Scenario: Queue timeout
-- **WHEN** one job is running on profile `default`, `daemon.concurrency` is 1, and `webscoop run shop --queue-timeout 1000` is started and the running job lasts longer than 1 second
+- **WHEN** one job is running on profile `default`, `daemon.concurrency` is `{}`, and `webscoop run shop --queue-timeout 1000` is started and the running job lasts longer than 1 second
 - **THEN** the command exits 1 with a message naming `default` and 1 job ahead
 
 ### Requirement: Jobs behave like local runs
