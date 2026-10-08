@@ -37,7 +37,7 @@ node packages/cli/dist/webscoop.js record 'https://www.google.com/search?q={quer
 
 Or build the Nix package. `./result` keeps pointing at the last
 `nix build`, so rebuild after each change (the `npmDeps` hash in
-`flake.nix` only changes with `package-lock.json`):
+`nix/package.nix` only changes with `package-lock.json`):
 
 ```sh
 nix build
@@ -100,10 +100,40 @@ inputs.webscoop.url = "path:/path/to/webscoop"; # or a git URL
 environment.systemPackages = [ inputs.webscoop.packages.x86_64-linux.default ];
 ```
 
+With home-manager, import the module and configure `programs.webscoop`:
+
+```nix
+# home-manager configuration
+imports = [ inputs.webscoop.homeManagerModules.default ];
+
+programs.webscoop = {
+  enable = true;
+  # Set for every webscoop command (and the daemon jobs it submits).
+  environment.NODE_EXTRA_CA_CERTS = "/etc/ssl/local-ca.pem";
+  # Written to ~/.config/webscoop/config.json; option paths match JSON paths.
+  settings = {
+    browser.driver = "patchright";
+    daemon.concurrency = {
+      total = 3;
+      perRecipe = 1;
+      recipes.google-search = 2;
+    };
+  };
+};
+```
+
+`settings.daemon.concurrency.{total,perRecipe,recipes}` and
+`settings.daemon.idleMs` are typed, so a wrong value fails evaluation; other
+keys pass through as-is. `shellCompletions.enable = false` skips the zsh
+completion. Do not combine `settings` with `environment.WEBSCOOP_HOME`: webscoop
+then reads `$WEBSCOOP_HOME/config.json`, and the module refuses the combination.
+The overlay `overlays.default` adds `pkgs.webscoop`.
+
 Try it without installing: `nix run . -- doctor`. After changing
-dependencies, update the `npmDeps` hash in `flake.nix`: set `hash` to
+dependencies, update the `npmDeps` hash in `nix/package.nix`: set `hash` to
 `lib.fakeHash`, run `nix build .#default`, then copy the `got:` hash from the
-`hash mismatch` error into `flake.nix`.
+`hash mismatch` error into `nix/package.nix`. `nix flake check` evaluates the
+home-manager module.
 
 ### Shell completion
 
