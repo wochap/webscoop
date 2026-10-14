@@ -21,7 +21,7 @@ The CLI SHALL perform one command per invocation and exit when it completes. `ru
 The CLI SHALL exit with:
 - `0` when the command succeeded
 - `1` on an error the user must fix or an unexpected failure (bad arguments, invalid recipe, no display, browser crash)
-- `2` when a run was paused for user input and the wait timed out
+- `2` when a run was paused for user input and the wait timed out, or was refused or ended because its recipe is cold
 - `3` when a run could not resolve a required field and no recovery was possible
 
 A cron job SHALL be able to treat `2` as "retry later" and `3` as "alert a human".
@@ -41,6 +41,10 @@ A cron job SHALL be able to treat `2` as "retry later" and `3` as "alert a human
 #### Scenario: Optional field missing
 - **WHEN** only optional fields fail to resolve
 - **THEN** rows are emitted with `null` for those fields and the exit code is 0
+
+#### Scenario: Cold recipe
+- **WHEN** `webscoop run shop` is executed while `shop` is cold
+- **THEN** the exit code is 2
 
 ### Requirement: Output streams
 Extracted data SHALL go to stdout only. Logs, progress, and errors SHALL go to stderr only. For a recipe with one table, the default stdout format SHALL be a single JSON array of row objects, and with `--jsonl` stdout SHALL carry one JSON object per line, written as soon as each row is available. For a recipe with several tables, the default stdout format SHALL be a single JSON object with one key per table name, in recipe order, each holding that table's array of rows; with `--jsonl` each line SHALL be one row carrying `_table` with its table name, written as soon as the row is available. `--table <name>` SHALL restrict the output to that table in the single table shapes and SHALL exit 1 naming the table when the recipe has none by that name. With `--out <path>`, the same content SHALL be written to that file instead of stdout; when `<path>` is an existing directory or ends with a path separator, one file per table named `<table>.json` (or `<table>.jsonl` with `--jsonl`) SHALL be written into it, each in the single table shape.
@@ -278,7 +282,7 @@ For a `url` kind recipe, a `--var` for the page parameter SHALL set the starting
 - **THEN** pages 3 and 4 are extracted
 
 ### Requirement: Guard flags
-`webscoop run` and `webscoop test` SHALL accept `--guard-timeout <ms>` (default 600000) and `--no-guards`. `test` SHALL default to a guard timeout of 0 unless `--guard-timeout` is given, so a wall makes `test` exit 2 promptly.
+`webscoop run` and `webscoop test` SHALL accept `--guard-timeout <ms>` (default 600000), `--no-guards`, and `--ignore-cooldown`. `test` SHALL default to a guard timeout of 0 unless `--guard-timeout` is given, so a wall makes `test` exit 2 promptly. `--ignore-cooldown` SHALL run the recipe even when it is cold, as defined by the cooldown capability.
 
 #### Scenario: Cron-friendly timeout
 - **WHEN** `webscoop run shop --guard-timeout 300000` hits a login wall nobody clears
@@ -287,6 +291,10 @@ For a `url` kind recipe, a `--var` for the page parameter SHALL set the starting
 #### Scenario: Test hits a wall
 - **WHEN** `webscoop test shop` hits a captcha wall
 - **THEN** the process exits 2 without waiting
+
+#### Scenario: Run a cold recipe anyway
+- **WHEN** `shop` is cold and the user runs `webscoop run shop --ignore-cooldown`
+- **THEN** the run opens a tab and navigates to the recipe URL
 
 ### Requirement: Desktop notification
 When a guard is raised and notifications are on, the CLI SHALL send a desktop notification through `notify-send` when it is on the PATH, with critical urgency, the recipe name, the guard kind, and the page number. When `notify-send` is absent, the CLI SHALL log the same text to stderr and continue.
@@ -310,11 +318,15 @@ Notifications SHALL be on unless turned off. The config file MAY declare `notify
 - **THEN** no desktop notification is sent
 
 ### Requirement: Exit 2 semantics
-Exit code 2 SHALL be used only when a run was paused on a guard and the guard timeout elapsed. The stderr message SHALL name the guard kind, the page, and the URL. Rows emitted before the guard SHALL remain on stdout in JSONL mode; in JSON array mode the array SHALL contain the rows of completed pages.
+Exit code 2 SHALL be used only when a run was paused on a guard and the guard timeout elapsed (failure reason `paused`), or when a run was refused or ended because its recipe is cold (failure reason `cold`). The stderr message SHALL name the guard kind, the page, and the URL; for `cold` it SHALL also name the time the recipe warms up. Rows emitted before the guard SHALL remain on stdout in JSONL mode; in JSON array mode the array SHALL contain the rows of completed pages.
 
 #### Scenario: Partial JSON array on timeout
 - **WHEN** pages 1 and 2 completed and page 3 timed out on a guard in JSON array mode
 - **THEN** stdout holds an array with the rows of pages 1 and 2 and the exit code is 2
+
+#### Scenario: Refused cold run in JSON array mode
+- **WHEN** `webscoop run shop` is refused because `shop` is cold and `shop` has one table
+- **THEN** stdout holds an empty array and the exit code is 2
 
 ### Requirement: Flows flags and test behavior
 `webscoop run` and `webscoop test` SHALL accept `--skip-flows`, which runs no flow, called or reactive, and runs the sequence's `extract` and `paginate` blocks only. `webscoop test` SHALL run flows by default so its result matches a run. The stderr log SHALL print one line per flow run with its name and kind, and one line per replayed or skipped step with its flow, index, kind, and outcome.
@@ -557,22 +569,27 @@ The CLI package SHALL ship a zsh completion function named `_webscoop`. It SHALL
 - every option of each subcommand, including negated forms such as `--no-heal`
 - fixed option values: `ts` and `py` for `--format`; `1` and `all` for `--pages`
 - `show` and `hide` for the `browser` subcommand
-- recipe names for the `<recipe>` argument of `run`, `test`, `edit`, `export`, and `bench`, and for `record --edit`, alongside ordinary file paths
+- `list` and `clear` for the `cooldown` subcommand
+- recipe names for the `<recipe>` argument of `run`, `test`, `edit`, `export`, `bench`, and `cooldown clear`, and for `record --edit`, alongside ordinary file paths
 - profile names for `--profile`
 
 Recipe names SHALL be the `.json` files in the recipes directory without the extension. Profile names SHALL be the directory names in the profiles directory with any `@<browser>` suffix removed, without duplicates. Both directories SHALL be resolved as the CLI resolves them: `$WEBSCOOP_HOME/{recipes,profiles}` when `WEBSCOOP_HOME` is set, otherwise `${XDG_DATA_HOME:-~/.local/share}/webscoop/{recipes,profiles}`. Completion SHALL NOT start the `webscoop` program or Node. A missing directory SHALL yield no candidates, not an error.
 
 #### Scenario: Subcommands
 - **WHEN** the user types `webscoop ` and presses TAB
-- **THEN** `run`, `test`, `record`, `edit`, `recipes`, `export`, `bench`, `browser`, and `doctor` are offered with descriptions
+- **THEN** `run`, `test`, `record`, `edit`, `recipes`, `export`, `bench`, `browser`, `cooldown`, and `doctor` are offered with descriptions
 
 #### Scenario: Flags of a subcommand
 - **WHEN** the user types `webscoop run shop --` and presses TAB
-- **THEN** every option of `run` is offered, including `--no-heal` and `--humanize`, and `--show` and `--hide` are not offered
+- **THEN** every option of `run` is offered, including `--no-heal`, `--humanize`, and `--ignore-cooldown`, and `--show` and `--hide` are not offered
 
 #### Scenario: Recipe names
 - **WHEN** the recipes directory holds `shop.json` and `news.json` and the user types `webscoop run ` and presses TAB
 - **THEN** `shop` and `news` are offered
+
+#### Scenario: Recipe names for cooldown clear
+- **WHEN** the recipes directory holds `shop.json` and the user types `webscoop cooldown clear ` and presses TAB
+- **THEN** `shop` is offered
 
 #### Scenario: Profile names
 - **WHEN** the profiles directory holds `work@chromium`, `work@chrome`, and `default`, and the user types `webscoop run shop --profile ` and presses TAB

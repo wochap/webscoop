@@ -22,7 +22,7 @@ Lets many `webscoop run` and `webscoop test` invocations share one warm, headed 
 - **THEN** exactly one daemon process remains and both runs complete
 
 ### Requirement: Browsers per profile
-The daemon SHALL keep at most one browser per profile directory, launched on the first job for that profile, with the profile lock held for as long as the browser is open. Each job SHALL run in its own new tab of that browser and SHALL close its tab, and any popup opened from it, when it ends. A browser SHALL close after it has had no job for `daemon.idleMs` milliseconds (config, default 60000; 0 closes it as soon as its last job ends). The launch settings of a browser are its driver, channel, binary, proxy, timezone, locale, and extra arguments. A job whose launch settings differ from those of its profile's open browser SHALL wait until that browser has no job, then the browser SHALL be closed and relaunched with the job's settings.
+The daemon SHALL keep at most one browser per profile directory, launched on the first job for that profile, with the profile lock held for as long as the browser is open. Each job SHALL run in its own new tab of that browser and SHALL close its tab, and any popup opened from it, when it ends, except a tab kept as a cold tab as defined by the cooldown capability. A browser SHALL close after it has had no job and no cold tab for `daemon.idleMs` milliseconds (config, default 600000; 0 closes it as soon as its last job ends and its last cold tab closes). Cold tabs SHALL NOT count toward `daemon.concurrency`, SHALL NOT hold attention, and SHALL NOT keep a job that needs other launch settings waiting. When a browser closes for a relaunch, an exclusive command, or `daemon stop`, its cold tabs SHALL close and their recipes SHALL stay cold. The launch settings of a browser are its driver, channel, binary, proxy, timezone, locale, and extra arguments. A job whose launch settings differ from those of its profile's open browser SHALL wait until that browser has no job, then the browser SHALL be closed and relaunched with the job's settings.
 
 #### Scenario: Warm browser reused
 - **WHEN** `webscoop run shop` ends and `webscoop run shop --var page=2` starts 10 seconds later
@@ -35,6 +35,22 @@ The daemon SHALL keep at most one browser per profile directory, launched on the
 #### Scenario: Different proxy waits for a relaunch
 - **WHEN** a job with proxy `socks5://a:1080` is running on profile `default` and a job on `default` with no proxy is submitted
 - **THEN** the second job starts after the first ends, in a relaunched browser without the proxy
+
+#### Scenario: Default idle time
+- **WHEN** the config sets no `daemon.idleMs` and the last job on a browser ended 5 minutes ago
+- **THEN** the browser is still open
+
+#### Scenario: Cold tab keeps the browser open
+- **WHEN** `daemon.idleMs` is 0 and the only job on a browser ends by making its recipe cold for 60 seconds
+- **THEN** the browser stays open until the cold tab closes, then closes
+
+#### Scenario: Cold tab does not use a slot
+- **WHEN** `daemon.concurrency.total` is 1, recipe `shop` has a cold tab, and `webscoop run news` is submitted
+- **THEN** `news` starts at once in a new tab
+
+#### Scenario: Relaunch closes cold tabs
+- **WHEN** recipe `shop` has a cold tab on profile `default` and a job on `default` with another proxy is submitted
+- **THEN** the browser relaunches, the cold tab is gone, and `shop` is still cold
 
 ### Requirement: Scheduling
 Each browser SHALL run at most `daemon.concurrency.total` jobs at once (config, default 1). When `daemon.concurrency.recipes` names a job's recipe, that browser SHALL run at most that many jobs of the recipe at once; otherwise, when `daemon.concurrency.perRecipe` is set, at most `perRecipe` jobs of the recipe; otherwise the recipe SHALL have no cap of its own. `daemon.concurrency` SHALL be an object; a number SHALL fail config validation. Jobs waiting for a browser SHALL start in submission order, except that a job whose recipe is at its cap SHALL NOT keep later jobs of other recipes from starting: whenever a browser can start a job, it SHALL start the oldest waiting job whose recipe is under its cap. Jobs of one recipe SHALL start in submission order. A waiting job that needs other launch settings than the open browser SHALL keep every later job waiting until it starts. `run` and `test` SHALL accept `--queue-timeout <ms>`: when the job has not started within that time it SHALL be removed from the queue and the command SHALL exit 1 with a message naming the profile and the number of jobs ahead. Without `--queue-timeout` a job SHALL wait until it starts. While a job waits, the command SHALL print one stderr line saying it is queued and how many jobs are ahead, unless `--quiet` is given; jobs ahead SHALL count the running jobs and the older waiting jobs of that browser.

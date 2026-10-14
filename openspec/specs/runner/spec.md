@@ -189,7 +189,7 @@ The runner SHALL emit typed events during a run: `browser.started`, `run.start`,
 - **THEN** `attention.resolved` is observed before `run.failed`
 
 ### Requirement: Clean shutdown
-On success, failure, guard timeout, or SIGINT a run SHALL close its own tab and any popup opened from it, and release attention if it holds it. It SHALL NOT close a browser that the daemon keeps for other jobs. The daemon SHALL close a browser and release its profile lock when the browser's idle time elapses, on `daemon stop`, or for an exclusive command. A run that ends while paused on a guard SHALL close its tab like any other run.
+On success, failure, guard timeout, or SIGINT a run SHALL close its own tab and any popup opened from it, and release attention if it holds it. It SHALL NOT close a browser that the daemon keeps for other jobs. The daemon SHALL close a browser and release its profile lock when the browser's idle time elapses, on `daemon stop`, or for an exclusive command. A run that ends while paused on a guard SHALL close its tab like any other run, except when it makes its recipe cold: then its tab SHALL stay open as the recipe's cold tab, as defined by the cooldown capability, and only its popups SHALL close.
 
 #### Scenario: Interrupted run
 - **WHEN** SIGINT is received mid-run
@@ -198,6 +198,14 @@ On success, failure, guard timeout, or SIGINT a run SHALL close its own tab and 
 #### Scenario: Interrupted while paused
 - **WHEN** SIGINT is received while the run is paused on a guard and holds attention
 - **THEN** the run's tab closes, attention passes to the next waiting run, and the exit code is 1
+
+#### Scenario: Guard timeout with cooldowns off
+- **WHEN** `guards.cooldownMs` is 0 and a run times out on a `login` guard
+- **THEN** the run's tab closes
+
+#### Scenario: Guard timeout leaves a cold tab
+- **WHEN** a run times out on a `captcha` guard and makes its recipe cold
+- **THEN** the run's tab stays open showing the captcha, its popups are closed, and attention is released
 
 ### Requirement: Per-row candidate fallback
 After the runner settles an item scoped field on a page (candidate order and healing, as in candidate resolution order), it SHALL resolve that field in each container with the settled primary candidate only, unless the field sets `fallback: true`. A container where the settled primary candidate matches nothing SHALL yield no value for that field, and the missing fields rules SHALL apply. With `fallback: true`, the runner SHALL try the settled candidates in listed order in each container and use the first that matches inside it. Healing SHALL behave the same in both modes.
