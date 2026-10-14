@@ -105,7 +105,8 @@ Each emitted row SHALL contain one key per field of its table, plus `_page` (1-b
 With `--json` it SHALL print a JSON array with one object per recipe holding `name`, `url`, `fields` (the field count), `modified`, `path`, and:
 - `description`: the full recipe description, or absent;
 - `vars`: one object per declared variable with `name`, and `default` and `description` when declared;
-- `tables`: one object per table in recipe order with `name`, `description` when declared, and `fields`, a list of objects with each field's `name` and `type`. A recipe in the shorthand form SHALL list one table named `items`.
+- `tables`: one object per table in recipe order with `name`, `description` when declared, and `fields`, a list of objects with each field's `name` and `type`. A recipe in the shorthand form SHALL list one table named `items`;
+- `captures`: one object per capture in recipe order with `name`, and `description` when declared; absent when the recipe has no captures.
 
 #### Scenario: Empty recipes directory
 - **WHEN** no recipes exist
@@ -118,6 +119,10 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 #### Scenario: Text listing shows the first line
 - **WHEN** a recipe description is "Google results\nOne row per organic result" and `webscoop recipes` is run
 - **THEN** the recipe's DESCRIPTION column reads `Google results`
+
+#### Scenario: Captures in the catalog
+- **WHEN** the recipe `lesson-video` has no tables and a capture `videos` described "HLS playlist URL", and `webscoop recipes --json` is run
+- **THEN** its entry holds `tables` `[]` and `captures` `[{ "name": "videos", "description": "HLS playlist URL" }]`
 
 ### Requirement: `doctor` command
 `webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, the configured LLM endpoint if any, and the configured hooks as one line per event with its number of commands (or a line saying no hooks are configured). When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.
@@ -198,7 +203,7 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 - **THEN** the browser shows the re-pick panel for `price` and the run continues after the user picks
 
 ### Requirement: `test` command
-`webscoop test <recipe> [--var name=value]... [--profile <name>] [--timeout <ms>] [--json]` SHALL run the recipe on its first page with healing enabled and write-back disabled, print a per-field table to stdout with name, status, matches, and the selector or rung used, and exit 0 when every required field resolved on at least one row, 3 when a required field is unresolved, 1 on error. With `--json` the table SHALL be a JSON array. No rows SHALL be printed.
+`webscoop test <recipe> [--var name=value]... [--profile <name>] [--timeout <ms>] [--json]` SHALL run the recipe on its first page with healing enabled and write-back disabled, print a per-field table to stdout with name, status, matches, and the selector or rung used, and exit 0 when every required field resolved on at least one row, 3 when a required field is unresolved, 1 on error. Each capture SHALL add one row after the fields, with the capture name, its status (`ok`, `partial`, or `missing`), its number of matched URLs, and its `match` pattern in the selector column; a required capture with status `partial` or `missing` SHALL make the exit code 3. With `--json` the table SHALL be a JSON array, and capture rows SHALL carry `kind: "capture"`. No rows SHALL be printed.
 
 #### Scenario: Healthy recipe
 - **WHEN** `webscoop test playground-catalog` runs against tier 0
@@ -207,6 +212,14 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 #### Scenario: Broken field
 - **WHEN** a required field cannot be resolved by any rung
 - **THEN** its row shows `missing` and the exit code is 3
+
+#### Scenario: Capture in test
+- **WHEN** `webscoop test lesson-video --var id=42` runs and the playlist request is seen
+- **THEN** the table has a `videos` row with status `ok`, 1 match, and the pattern, and the exit code is 0
+
+#### Scenario: Required capture missing in test
+- **WHEN** the same test runs and no playlist request is seen before the timeout
+- **THEN** the `videos` row shows `missing` and the exit code is 3
 
 ### Requirement: Re-pick from the command line
 `webscoop record --edit <recipe> --repick <field>` SHALL open the recipe's page in the recorder's re-pick mode focused on that field, save the new selection into the recipe on confirmation, and exit 0. `<field>` SHALL be either `table.field` or a bare field name; a bare name SHALL be accepted when exactly one table has a field by that name. An unknown field, an unknown table, or an ambiguous bare name SHALL exit 1 naming it and, for an ambiguous name, the tables that have it.
@@ -603,7 +616,7 @@ A config file that declares a `window` block SHALL load, with one stderr warning
 - **THEN** files are saved in `~/Downloads/webscoop`
 
 ### Requirement: Downloads table output
-A recipe with at least one `download` step SHALL have an output table `downloads`, after the recipe's tables. Each file a `download` step saved SHALL be one row with `file` (absolute path), `name`, `url` (the download's source URL), `bytes`, `_page`, and `_index`, emitted when the file is saved. Downloads that no `download` step took SHALL NOT be rows. The table SHALL follow the output stream and row shape rules like any other table: a recipe with no other tables SHALL print a JSON array of download rows, and `--table downloads` SHALL select it.
+A recipe with at least one `download` step SHALL have an output table `downloads`, after the recipe's tables and capture tables. Each file a `download` step saved SHALL be one row with `file` (absolute path), `name`, `url` (the download's source URL), `bytes`, `_page`, and `_index`, emitted when the file is saved. Downloads that no `download` step took SHALL NOT be rows. The table SHALL follow the output stream and row shape rules like any other table: a recipe with no other tables SHALL print a JSON array of download rows, and `--table downloads` SHALL select it.
 
 #### Scenario: Download-only recipe
 - **WHEN** `webscoop run gslides --var id=1Qi | jq -r '.[0].file'` runs and the recipe has no tables and one `download` step
@@ -612,3 +625,14 @@ A recipe with at least one `download` step SHALL have an output table `downloads
 #### Scenario: Recipe with a table and a download
 - **WHEN** a recipe has a table `page` and a `download` step
 - **THEN** stdout is one JSON object with keys `page` and `downloads`
+
+### Requirement: Capture tables output
+Each capture of a recipe SHALL be an output table named after the capture, with the rows defined by the network-captures capability, placed after the recipe's tables in recipe order and before `downloads`. Capture tables SHALL follow the output stream and row shape rules like any other table: a recipe whose only table is one capture SHALL print a JSON array of its rows, `--table <capture>` SHALL select it, `--jsonl` rows SHALL carry `_table` when there are several tables and SHALL be written when the row is made, and `--out <dir>/` SHALL write `<capture>.json`. A capture with no rows SHALL be an empty array.
+
+#### Scenario: Captures-only recipe
+- **WHEN** `webscoop run lesson-video --var id=42 | jq -r '.[0].url'` runs and the recipe's only output is capture `videos`
+- **THEN** jq prints the playlist URL and the exit code is 0
+
+#### Scenario: Table, capture, and download
+- **WHEN** a recipe has a table `page`, a capture `videos`, and a `download` step
+- **THEN** stdout is one JSON object with keys `page`, `videos`, and `downloads`, in that order

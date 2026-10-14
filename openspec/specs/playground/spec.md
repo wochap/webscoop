@@ -318,3 +318,18 @@ The submit button SHALL post the form to `/forms/submit`, which renders every re
 #### Scenario: File through the button
 - **WHEN** a file of 12 bytes named `a.txt` is chosen through the "Select file" button and the form is submitted
 - **THEN** the echo shows `a.txt` with size 12
+
+### Requirement: Video page with a cross-origin player
+The playground SHALL serve `/video?id=<id>`: a page with a heading naming the lesson and an `<iframe id="player">` whose document comes from a different origin than the page (the playground host swapped between `127.0.0.1` and `localhost` on the same port). The player document SHALL fetch, over XHR, `/stream/<id>/playlist.m3u8`, then `/stream/<id>/1080p/video.m3u8`, then the segments `/stream/<id>/1080p/video0.ts` through `video3.ts`, and SHALL fetch `playlist.m3u8` a second time. It SHALL set its `<video>` element's source to a `blob:` URL. `?delay=<ms>` SHALL delay the first playlist request by that many milliseconds after the player loads. `?noplay=1` SHALL make the player fetch nothing. The manifests SHALL be served with `content-type: application/vnd.apple.mpegurl` and the segments with `video/mp2t`.
+
+#### Scenario: Playlist from a different origin
+- **WHEN** `http://127.0.0.1:<port>/video?id=42` is loaded
+- **THEN** the iframe's document is on `http://localhost:<port>` and a request for `http://localhost:<port>/stream/42/playlist.m3u8` is made from it
+
+#### Scenario: Delayed playlist
+- **WHEN** `/video?id=42&delay=2000` is loaded
+- **THEN** the playlist request starts about 2 seconds after the player loads
+
+#### Scenario: Nothing to capture
+- **WHEN** `/video?id=42&noplay=1` is loaded
+- **THEN** no `/stream/` request is made

@@ -325,3 +325,33 @@ A recipe SHALL declare `sequence` as defined by the flows capability. A `paginat
 #### Scenario: Next without target
 - **WHEN** a paginate block has kind `next` and no `target`
 - **THEN** validation fails naming the paginate block
+
+### Requirement: Captures block
+A recipe MAY declare `captures`: a non-empty list of captures. Each capture SHALL have:
+- a `name`, kebab-case
+- a `match` string that compiles as a JavaScript regular expression without flags
+- an optional `count`, an integer of at least 1, default 1
+- an optional `optional` boolean, default false
+- an optional `description` string
+
+Capture names SHALL be unique within the recipe and SHALL NOT equal a table name of the recipe or `downloads`. Validation SHALL report every capture error in the same pass as the other recipe errors, naming the capture and the key. A recipe MAY declare captures with no tables and no flows.
+
+#### Scenario: Valid capture
+- **WHEN** a recipe declares `captures: [{ "name": "videos", "match": "/playlist\\.m3u8(\\?|$)" }]`
+- **THEN** validation succeeds, with `count` 1 and `optional` false filled in
+
+#### Scenario: Invalid regex
+- **WHEN** a capture's `match` is `\.m3u8(\?|$`
+- **THEN** validation fails naming the capture, `match`, and the regex error
+
+#### Scenario: Name clashes with a table
+- **WHEN** a recipe has a table `videos` and a capture `videos`
+- **THEN** validation fails naming `videos`
+
+#### Scenario: Reserved downloads name
+- **WHEN** a capture is named `downloads`
+- **THEN** validation fails naming the capture and saying `downloads` is reserved
+
+#### Scenario: Captures-only recipe
+- **WHEN** a recipe declares `schemaVersion`, `name`, `url`, `vars`, and `captures` only
+- **THEN** validation succeeds

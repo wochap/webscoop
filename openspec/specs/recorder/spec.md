@@ -29,9 +29,10 @@ The panel SHALL be laid out, top to bottom, as:
 - a Sequence section
 - the table tab bar
 - the content of the active table
-- a fixed footer with the test run control, the counts (tables, fields, flows, steps), the save status, and the save control
+- a Captures section
+- a fixed footer with the test run control, the counts (tables, fields, flows, steps, and captures when there are any), the save status, and the save control
 
-The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Flows, and Sequence sections SHALL apply to the whole recipe.
+The header and footer SHALL stay in place while the content between them scrolls. The Recipe, Flows, Sequence, and Captures sections SHALL apply to the whole recipe.
 
 The content of the active table SHALL hold, in order:
 - a table header with the table's name, its mode ("List · N rows" for a list with its row count, "Page · 1 row" for a page table, "No mode yet" for a table with neither fields nor item container), a pages badge when the table drives the paginate block, and a "…" menu
@@ -39,18 +40,19 @@ The content of the active table SHALL hold, in order:
 - a Pick section
 - a Fields section
 
-A recipe with no tables SHALL show, in place of the tab bar and table content, an empty state saying the recipe only runs flows, with an action to add a table.
+A recipe with no tables SHALL show, in place of the tab bar and table content, an empty state saying the recipe only runs flows, with an action to add a table. When the recipe has no tables and at least one capture, the empty state SHALL say "Captures only" and that the run opens the URL, waits for every required capture, and outputs one table per capture, naming them; its action to add a table SHALL remain. Sections with nothing in them SHALL drop out as they do for a recipe with no tables (frame N8).
 
-Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Flows, and Sequence sections SHALL be collapsible with a chevron in their header. When collapsed:
+Sections SHALL be separated by a divider, and each section SHALL have a header with its title, a count when it lists things, and its actions on the right. The Recipe, Flows, Sequence, and Captures sections SHALL be collapsible with a chevron in their header. When collapsed:
 - the Recipe section SHALL show a one-line summary with the recipe name and the URL template with its variables as chips holding their values
 - the Flows section SHALL show the active flow and the number of called and reactive flows
 - the Sequence section SHALL show its blocks in short form, with an error marker when it has errors
+- the Captures section SHALL show the hint "URLs from network requests" and the "Pick from network" action when empty, else its count
 
-The Recipe and Flows sections SHALL start expanded. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
+The Recipe and Flows sections SHALL start expanded. The Captures section SHALL start collapsed when empty and expanded otherwise. Collapse state SHALL last for the session, including across navigations, and SHALL NOT be saved in the recipe.
 
 #### Scenario: Sections in order
-- **WHEN** the panel shows a draft with two flows, a paginate block, and tables `results` and `page`
-- **THEN** the panel shows, in order, the header, the Recipe, Flows, and Sequence sections, the tab bar with `results` and `page`, the active table's header, Rows, Pick, and Fields sections, and the footer
+- **WHEN** the panel shows a draft with two flows, a paginate block, tables `results` and `page`, and a capture `videos`
+- **THEN** the panel shows, in order, the header, the Recipe, Flows, and Sequence sections, the tab bar with `results` and `page`, the active table's header, Rows, Pick, and Fields sections, the Captures section, and the footer
 
 #### Scenario: Collapsed recipe summary
 - **WHEN** the recipe is `google-com-search` with URL `https://www.google.com/search?q={query}` and `query` is `top llms`, and the user collapses the Recipe section
@@ -67,6 +69,10 @@ The Recipe and Flows sections SHALL start expanded. Collapse state SHALL last fo
 #### Scenario: Header shows the mode
 - **WHEN** the active table `results` is a list with 11 containers
 - **THEN** the table header reads `results` and "List · 11 rows"
+
+#### Scenario: Captures-only draft
+- **WHEN** the draft has no flows, no tables, and a capture `videos`
+- **THEN** the panel shows the Recipe, Sequence, and Captures sections, the "Captures only" empty state naming `videos`, and a footer reading "0 tables · 1 capture"
 
 ### Requirement: URL template and variables
 The session SHALL accept a URL template with `{name}` variables. Before opening, it SHALL prompt for a value for each variable that has no default, then open the substituted URL. Values SHALL be substituted as the runner does: fully URL-encoded, or unchanged for a raw variable (as defined in the recipe-format capability).
@@ -1549,3 +1555,79 @@ The panel SHALL NOT scroll when the card is already fully visible. When the card
 #### Scenario: Breadcrumb does not scroll
 - **WHEN** the user scrolls the panel so the inspector is half visible and clicks a breadcrumb level in it
 - **THEN** the panel body scroll position does not change
+
+### Requirement: Captures section
+The Captures section SHALL list the draft's captures, one row each, with the name, the `match` pattern in monospace (ellipsized, full on hover), and a live badge with the number of URLs in the session's request log that match it ("1 match", "2 matches", "0 matches yet"), followed by "waits for N" and "required" or "optional". The row's caret or badge SHALL expand the list of matched URLs. A "…" menu SHALL offer Edit, Show in picker, and Delete. The section's "Pick from network" action SHALL open the Network picker. The badge SHALL update as requests arrive. An optional capture with no matches SHALL stay neutral.
+
+A required capture with no matches SHALL show an amber notice in the section saying it has not matched yet and that a run now would fail, with actions "Make optional" and "Open picker", and the footer SHALL show the number of unmatched required captures. Save SHALL stay enabled (frame N7).
+
+#### Scenario: Live badge
+- **WHEN** the draft has capture `videos` with match `/playlist\.m3u8(\?|$)` and the page fetches the playlist
+- **THEN** the `videos` row's badge changes from "0 matches" to "1 match"
+
+#### Scenario: Required capture unmatched
+- **WHEN** a required capture has no match in the request log
+- **THEN** the section shows the amber notice with "Make optional" and "Open picker", the footer shows "1 unmatched", and Save is enabled
+
+#### Scenario: Make optional
+- **WHEN** the user presses "Make optional" in the notice
+- **THEN** the capture becomes optional and the notice disappears
+
+### Requirement: Network picker
+The Network picker SHALL list the requests in the session's request log, newest first, and SHALL update live. It SHALL offer a filter field matching the URL, host, or MIME type, and filter chips Media (default), XHR/Fetch, and All, each with its count, plus a counter "N requests · M shown" that ellipsizes when space runs out. Each row SHALL show the end of the path first, with the middle of the URL ellipsized, the relative time, and a second line with method, status, shortened host, MIME type, and a frame badge: teal with the frame's host for a request from an iframe, blue "popup" for a request from a popup. Hover or the right arrow SHALL show the full URL with a copy action.
+
+- **Manifests first:** HLS and DASH manifests (`.m3u8`, `.mpd`) and media files SHALL carry a "stream" badge and float above other rows.
+- **Segments grouped:** media segment requests (`.ts`, `.m4s`, `.aac`, and similar) that share a path prefix SHALL fold into one dimmed, expandable group row such as "video0.ts … video41.ts · 42 segments", sorted below the manifests.
+- **Deduped:** requests for a URL already listed SHALL NOT add rows; the row SHALL show a repeat count such as "×3". Range requests (status 206) for the same URL without its query string SHALL count as repeats.
+- **Empty:** when the active filter shows nothing, the picker SHALL say so per filter ("No media requests yet"), hint "Play the video or navigate in the page, requests appear here live", and offer "Show all N" when All has rows.
+
+Up and Down SHALL move through rows, Enter or a click SHALL pick the row, and Esc SHALL close the picker. In a popup that owns the panel, the picker SHALL open as a compact sheet over the page showing only the picker (frame N2b); picking a row there SHALL open the capture editor in the main window.
+
+#### Scenario: Picker shows the playlist
+- **WHEN** a player iframe from `iframe.mediadelivery.net` fetched `…/playlist.m3u8` and the user opens the picker
+- **THEN** the Media filter lists the playlist first with a "stream" badge and a teal `iframe.mediadelivery.net` badge
+
+#### Scenario: Segments fold
+- **WHEN** the page fetched `video0.ts` through `video41.ts` under the same path
+- **THEN** the picker shows one dimmed group row "video0.ts … video41.ts · 42 segments" below the manifests
+
+#### Scenario: Repeat count
+- **WHEN** the playlist was fetched three times
+- **THEN** the picker shows one row for it with "×3"
+
+### Requirement: Capture editor
+Picking a row SHALL open the capture editor, showing the picked URL and its frame, with:
+- **name**: prefilled `videos` for a stream row and `requests` otherwise, made unique against tables and captures
+- **pattern**: chips filename (default), extension, host + ext, and exact URL, each with its live match count, and a monospace regex input. The filename chip SHALL give the last path segment, regex escaped, preceded by `/` and followed by `(\?|$)`; extension SHALL give `\.<ext>(\?|$)`; host + ext SHALL give the escaped host, `/.*`, and the extension pattern; exact URL SHALL give the whole URL escaped. Picking a chip SHALL fill the input, and editing the input SHALL deselect the chips.
+- **matches**: the number of matching requests in the log with the matching URLs listed, updating live
+- **count**: a stepper, default 1
+- **optional**: a toggle, off by default, with the note "required · the run fails if fewer match"
+- **output**: a line naming the table and its columns
+
+The helper under the input SHALL say the pattern is matched against the full request URL and is case-sensitive. When the exact URL chip is selected, the helper SHALL say "Matches only this URL. Other pages or videos won't match." (frame N3b). When the input does not compile, the helper SHALL be replaced by the regex error, matches SHALL say to fix the pattern, and "Add capture" SHALL be disabled (frame N6). "Add capture" (Enter) SHALL add the capture to the draft; Cancel (Esc) SHALL close the editor. Edit from a capture's menu SHALL open the same editor for that capture.
+
+#### Scenario: Filename chip is the default
+- **WHEN** the user picks `https://vz-aa93bf80-5cb.b-cdn.net/0999851b/playlist.m3u8` and the log also holds `…/1080p/video.m3u8`
+- **THEN** the editor selects filename with `/playlist\.m3u8(\?|$)` and 1 match, and extension shows 2
+
+#### Scenario: Invalid pattern
+- **WHEN** the user edits the pattern to `\.m3u8(\?|$`
+- **THEN** the error appears under the input, no chip is selected, and "Add capture" is disabled
+
+#### Scenario: Exact URL hint
+- **WHEN** the user selects the exact URL chip
+- **THEN** the helper says the pattern matches only this URL
+
+### Requirement: Captures in the panel test run
+The panel's test run SHALL apply the draft's captures with the run's matching and waiting, and the results drawer SHALL show one tab per capture after the table tabs, with its rows, its JSON view, its status (`ok`, `partial`, `missing`), and its row count.
+
+#### Scenario: Test run with a capture
+- **WHEN** the draft has a table `page` and a capture `videos` and the user runs a test
+- **THEN** the drawer shows a `page` tab and a `videos` tab holding the playlist row
+
+### Requirement: Capture wait in the sequence
+When the draft has captures, the Sequence section SHALL end with a fixed line "wait for captures" that cannot be dragged, edited, or removed, and that is not saved as a block. A draft with captures and no flows or tables SHALL show its default sequence as "open URL · wait for captures".
+
+#### Scenario: Wait line
+- **WHEN** the draft has a default sequence with `extract results` and a capture `videos`
+- **THEN** the Sequence section shows `extract results` followed by the fixed "wait for captures" line

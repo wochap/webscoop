@@ -164,3 +164,14 @@ An exported script (TS or Python) SHALL, for a field with `hover: true`, hover t
 #### Scenario: Exported hover
 - **WHEN** a recipe with a `hover` field is exported and the script runs against the hover-reveal playground page
 - **THEN** its output carries the real URLs, matching `webscoop run`
+
+### Requirement: Capture parity
+For a recipe with captures, the exported script SHALL listen for requests on its browser context before opening the recipe URL, match them with each capture's `match`, keep one row per unique URL with `url`, `method`, `status`, `mime`, `frame`, `_page`, and `_index`, and after the sequence wait, bounded by the navigation timeout, until each capture has its `count`. A required capture that falls short SHALL exit 3 naming it; an optional one SHALL warn on stderr. Capture tables SHALL follow the output contract, after the recipe's tables and before `downloads`.
+
+#### Scenario: Exported captures-only recipe
+- **WHEN** a recipe with only a capture `videos` is exported to TypeScript and the script runs against a page whose iframe fetches a playlist
+- **THEN** stdout is a JSON array with one row whose `url` is the playlist URL, and the exit code is 0
+
+#### Scenario: Exported required capture missing
+- **WHEN** the exported Python script runs and no request matches the required capture `videos`
+- **THEN** the script exits 3 naming `videos`
