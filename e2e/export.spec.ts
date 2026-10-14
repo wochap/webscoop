@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportAndRun, hasPythonPlaywright, PYTHON, type ExportFormat } from './export-fixture';
 import type { RecipeInput } from '@webscoop/core';
-import { expect, formsRecipe, FRAMED_RECIPE, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, TABLES_RECIPE, test, type Scoop } from './fixtures';
+import { expect, formsRecipe, FRAMED_RECIPE, VIDEO_RECIPE, hasDisplay, PAGED_RECIPE, POSITIONAL_RECIPE, referenceRecipe, STEPS_RECIPE, TABLES_RECIPE, test, type Scoop } from './fixtures';
 
 test.skip(!hasDisplay, 'webscoop run, the reference for the rows, needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -126,6 +126,22 @@ for (const format of ['ts', 'py'] as const satisfies readonly ExportFormat[]) {
       const lost = await exportAndRun(scoop, 'lost-list', format);
       expect(lost.code, lost.stderr).toBe(3);
       expect(lost.stderr).toMatch(/list parent \(item\.within\) matched no element/);
+    });
+
+    test('the video recipe captures the playlist like webscoop run, and exits 3 naming the capture when nothing plays', async ({ scoop }) => {
+      test.setTimeout(120_000);
+      const recipe = JSON.parse(await readFile(VIDEO_RECIPE, 'utf8')) as RecipeInput;
+      await scoop.writeRecipe(recipe);
+      const vars = ['--var', `port=${scoop.playground.port}`, '--var', 'id=42'];
+      const video = await exportAndRun(scoop, 'playground-video', format, vars);
+      expect(video.code, video.stderr).toBe(0);
+      expect(video.rows).toEqual(await runRows(scoop, 'playground-video', vars));
+      expect(video.rows).toEqual([expect.objectContaining({ url: `http://localhost:${scoop.playground.port}/stream/42/playlist.m3u8`, _index: 0 })]);
+
+      await scoop.writeRecipe({ ...recipe, name: 'silent-video', url: `${recipe.url}&noplay=1` });
+      const silent = await exportAndRun(scoop, 'silent-video', format, vars);
+      expect(silent.code, silent.stderr).toBe(3);
+      expect(silent.stderr).toContain('videos (count 1, 0 found)');
     });
 
     test('a required field matching nothing exits 3 with empty stdout', async ({ scoop }) => {

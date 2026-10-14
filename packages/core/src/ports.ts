@@ -154,8 +154,40 @@ export interface Session {
   onDownload(cb: (download: SavedDownload) => void): () => void;
   /** Wait, up to `timeoutMs`, for downloads of this page and its popups that are still in progress. */
   settleDownloads(timeoutMs: number): Promise<void>;
+  /**
+   * Called with each request this page, its frames, its popups, and their
+   * workers make (`data:` and `blob:` URLs excluded), then with an update when
+   * its response arrives or it fails. Returns an unsubscribe function.
+   */
+  onRequest(listener: (event: RequestEvent) => void): () => void;
   close(): Promise<void>;
 }
+
+/** A request a session saw. */
+export interface SeenRequest {
+  /** Unique within the session, so a response matches its request when a URL is fetched several times. */
+  id: string;
+  url: string;
+  method: string;
+  /** URL of the document of the frame that made it, null when unknown (a worker). */
+  frameUrl: string | null;
+  window: 'main' | 'popup';
+  /** Playwright resource type: `document`, `xhr`, `fetch`, `media`, `script`, … */
+  resourceType: string;
+  /** Epoch milliseconds when it was seen. */
+  at: number;
+}
+
+/** The outcome of a seen request: its response, or its failure (`status` and `mime` null). */
+export interface RequestUpdate {
+  id: string;
+  status: number | null;
+  /** `content-type` without parameters. */
+  mime: string | null;
+  failed: boolean;
+}
+
+export type RequestEvent = ({ type: 'request' } & SeenRequest) | ({ type: 'update' } & RequestUpdate);
 
 export interface NextDownloadOptions {
   since: number;

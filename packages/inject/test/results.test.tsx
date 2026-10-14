@@ -36,6 +36,7 @@ describe('results drawer', () => {
       { name: 'products', rows: Array.from({ length: 22 }, (_, i) => ({ _page: 1, _index: i, title: `t${i}` })), rowCount: 22, dropped: { count: 2, fields: ['url'] }, fields: [{ name: 'title', status: 'ok' }] },
       { name: 'page', rows: [{ _page: 1, _index: 0, heading: 'Electronics' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'heading', status: 'ok' }] },
     ],
+    captures: [],
     durationMs: 4,
     warnings: [],
   };
@@ -97,6 +98,7 @@ describe('results drawer', () => {
     const rows = Array.from({ length: 22 }, (_, i) => ({ _page: 1, _index: i, url: `/p/${i}` }));
     const test = {
       tables: [{ name: 'items', rows, rowCount: 22, dropped: { count: 2, fields: ['url'] }, fields: [{ name: 'url', status: 'partial' as const }] }],
+      captures: [],
       durationMs: 5,
       warnings: ['dropped 2 rows on page 1: required field "url" missing on rows 3, 9'],
     };

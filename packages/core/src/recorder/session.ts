@@ -1,11 +1,13 @@
 import { convertValue, defaultAttr } from '../convert';
 import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
-import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type SavedDownload, type SerializedElement, type StoragePort } from '../ports';
+import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type RequestEvent, type SavedDownload, type SerializedElement, type StoragePort } from '../ports';
+import { CaptureSet } from '../captures';
+import type { CaptureRow } from '../events';
 
 /** Longest gap between a browse-recorded click and the download it started. */
 export const DOWNLOAD_CLICK_MS = 1000;
 import { scoreFingerprint } from '../healing/score';
-import type { FieldScope, FieldType, Fingerprint, Flow, SelectorCandidate } from '../recipe/schema';
+import type { Capture, FieldScope, FieldType, Fingerprint, Flow, SelectorCandidate } from '../recipe/schema';
 import { DESCRIPTION_MAX } from '../recipe/constants';
 import { tablesOf } from '../recipe/tables';
 import { validateRecipe } from '../recipe/validate';
@@ -88,6 +90,8 @@ import {
   type TargetRef,
   popupClosedReason,
   BLANK_GLOBAL,
+  type NetworkEntry,
+  type TestCapture,
   type TestResults,
   type TestTable,
 } from './protocol';
@@ -147,6 +151,12 @@ function describeReplay(flow: string, index: number | null, reports: readonly St
 
 /** Rows sent to the panel after a test run; the count is always the full count. */
 const MAX_TEST_ROWS = 200;
+
+/** Requests the session's log keeps, newest last; older ones drop out. */
+export const NETWORK_LOG_MAX = 2000;
+
+/** Shortest interval between two `network.requests` messages to the panel. */
+export const NETWORK_FLUSH_MS = 250;
 const TOP = new Set(['html', 'body', 'head']);
 
 /** An item's text for a sample: its separate text parts joined with ` · `, so the panel can tell them apart. */
@@ -295,6 +305,15 @@ export class RecorderController {
   private awaitingStartDownload = false;
   /** Files saved so far, and the last one, so a file saved while the start URL was still loading is found. */
   private downloads: { count: number; last: { name: string; file: string } | null } = { count: 0, last: null };
+  /** Every request of every window, across navigations, the newest last; at most `NETWORK_LOG_MAX`. */
+  private readonly network: NetworkEntry[] = [];
+  private readonly networkById = new Map<string, NetworkEntry>();
+  /** Entries new or changed since the panel last heard, by id. */
+  private readonly networkChanged = new Map<string, NetworkEntry>();
+  private networkTimer: ReturnType<typeof setTimeout> | null = null;
+  private networkFlushedAt = 0;
+  /** Listeners for live requests, such as a test run waiting for its captures. */
+  private readonly requestListeners = new Set<(event: RequestEvent) => void>();
 
   constructor(private readonly opts: RecorderOptions) {
     this.emitter = opts.emitter ?? new RecorderEmitter();
@@ -373,7 +392,7 @@ export class RecorderController {
       saved: null,
       busy: null,
       error: null,
-      panel: { collapsed: { recipe: false, flows: false, sequence: true } },
+      panel: { collapsed: { recipe: false, flows: false, sequence: true, captures: (draft.captures ?? []).length === 0 } },
     };
     this.closedPromise = new Promise((resolve) => (this.closedResolve = resolve));
     this.repickPromise = new Promise((resolve) => (this.repickResolve = resolve));
@@ -427,6 +446,7 @@ export class RecorderController {
     this.current = { ...this.current, url, panelMode: 'owner', popup: this.ownerIsPopup(), levelPick: null };
     this.emitter.emit('recorder.owner', { window: id });
     await this.broadcast();
+    await this.flushNetwork(true);
   }
 
   /** Tell every window how to show the panel: the owner gets the state, the others their mode. */
@@ -629,6 +649,7 @@ export class RecorderController {
     await main.inject(this.opts.bundle);
     this.unsubscribe.push(
       main.onDownload((download) => void this.handleInternal(() => this.downloaded(download))),
+      main.onRequest((event) => this.requestSeen(event)),
       main.onWindow((win) => this.addWindow(win)),
       main.onNavigated((url) => {
         if (this.owner !== MAIN_WINDOW) return;
@@ -681,6 +702,59 @@ export class RecorderController {
 
   dispose(): void {
     for (const off of this.unsubscribe.splice(0)) off();
+    if (this.networkTimer) clearTimeout(this.networkTimer);
+    this.networkTimer = null;
+  }
+
+  /** The session's request log, oldest first. */
+  get requests(): readonly NetworkEntry[] {
+    return this.network;
+  }
+
+  /** Log a request or its outcome, and schedule a batch for the panel. */
+  private requestSeen(event: RequestEvent): void {
+    for (const listener of this.requestListeners) listener(event);
+    if (event.type === 'request') {
+      const entry: NetworkEntry = { id: event.id, url: event.url, method: event.method, status: null, mime: null, frame: event.frameUrl, window: event.window, resourceType: event.resourceType, at: event.at, failed: false };
+      this.network.push(entry);
+      this.networkById.set(entry.id, entry);
+      while (this.network.length > NETWORK_LOG_MAX) {
+        const dropped = this.network.shift()!;
+        this.networkById.delete(dropped.id);
+        this.networkChanged.delete(dropped.id);
+      }
+      this.networkChanged.set(entry.id, entry);
+    } else {
+      const entry = this.networkById.get(event.id);
+      if (!entry) return;
+      const updated: NetworkEntry = { ...entry, status: event.status, mime: event.mime, failed: event.failed };
+      this.network[this.network.indexOf(entry)] = updated;
+      this.networkById.set(updated.id, updated);
+      this.networkChanged.set(updated.id, updated);
+    }
+    this.scheduleNetworkFlush();
+  }
+
+  private scheduleNetworkFlush(): void {
+    if (this.networkTimer || this.detached) return;
+    const wait = Math.max(0, this.networkFlushedAt + NETWORK_FLUSH_MS - Date.now());
+    this.networkTimer = setTimeout(() => {
+      this.networkTimer = null;
+      void this.flushNetwork(false);
+    }, wait);
+  }
+
+  /** Send the panel the log entries it has not seen, or the whole log with `reset`. */
+  private async flushNetwork(reset: boolean): Promise<void> {
+    this.networkFlushedAt = Date.now();
+    const entries = reset ? [...this.network] : [...this.networkChanged.values()];
+    this.networkChanged.clear();
+    if (!reset && entries.length === 0) return;
+    try {
+      await this.raw.dispatch({ kind: 'network.requests', entries, reset } satisfies HostMessage);
+    } catch {
+      // The page is navigating; it gets the whole log once it is ready.
+    }
   }
 
   /** Entry point for the page binding, with the window that called. Messages are handled one at a time, in order. */
@@ -792,6 +866,7 @@ export class RecorderController {
         void this.handleInternal(async () => {
           await this.recount();
           await this.push();
+          await this.flushNetwork(true);
         });
         return;
       case 'session.end':
@@ -1092,6 +1167,27 @@ export class RecorderController {
       }
       case 'frame.edit':
         return void (await this.editFrame(msg.key, msg.by, msg.index, msg.selector));
+      case 'capture.add':
+        this.apply({ type: 'addCapture', capture: msg.capture });
+        this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, captures: false } } };
+        return;
+      case 'capture.update':
+        this.apply({ type: 'updateCapture', index: msg.index, patch: msg.patch });
+        return;
+      case 'capture.remove':
+        this.apply({ type: 'removeCapture', index: msg.index });
+        return;
+      case 'capture.pick': {
+        // Picked in a popup's network sheet: the main window takes the panel and opens the editor on the request.
+        if (!this.networkById.has(msg.id)) throw new Error('that request is no longer in the network log');
+        await this.setOwner(MAIN_WINDOW);
+        try {
+          await this.raw.dispatch({ kind: 'capture.picked', id: msg.id } satisfies HostMessage);
+        } catch {
+          // The main window is navigating; the user picks again there.
+        }
+        return;
+      }
       case 'panel.setCollapsed':
         this.current = { ...this.current, panel: { collapsed: { ...this.current.panel.collapsed, [msg.section]: msg.collapsed } } };
         return;
@@ -3049,6 +3145,7 @@ export class RecorderController {
     if (!validated.ok) {
       results = {
         tables: [],
+        captures: [],
         durationMs: 0,
         warnings: [],
         error: validated.errors.map((e) => `${e.path}: ${e.message}`).join('\n'),
@@ -3085,10 +3182,12 @@ export class RecorderController {
                 : {}),
           };
         }),
+        captures: [],
         durationMs: Math.max(0, this.now().getTime() - started.getTime()),
         warnings: extracted.flatMap((e) => e.warnings),
       };
     }
+    if (validated.ok && validated.recipe.captures) results = { ...results, captures: await this.testCaptures(validated.recipe.captures) };
     this.current = { ...this.current, test: results };
     const failed = results.tables.filter((t) => t.error);
     const error = results.error ?? (failed.length > 0 ? failed.map((t) => (results.tables.length > 1 ? `${t.name}: ${t.error}` : t.error)).join('; ') : undefined);
@@ -3098,6 +3197,32 @@ export class RecorderController {
       ...(error ? { error } : {}),
     });
     return results;
+  }
+
+  /**
+   * Apply the captures to the session's request log as a run would, waiting
+   * up to the navigation timeout for each required capture's count while new
+   * requests arrive.
+   */
+  private async testCaptures(captures: readonly Capture[]): Promise<TestCapture[]> {
+    const rows = new Map<string, CaptureRow[]>();
+    const set = new CaptureSet(captures, { page: () => 1, onMatched: (name, row) => rows.set(name, [...(rows.get(name) ?? []), row]) });
+    for (const entry of this.network) {
+      set.handle({ type: 'request', id: entry.id, url: entry.url, method: entry.method, frameUrl: entry.frame, window: entry.window, resourceType: entry.resourceType, at: entry.at });
+      if (entry.status !== null || entry.failed) set.handle({ type: 'update', id: entry.id, status: entry.status, mime: entry.mime, failed: entry.failed });
+    }
+    const live = (event: RequestEvent) => set.handle(event);
+    this.requestListeners.add(live);
+    try {
+      await set.settle(this.opts.timeoutMs ?? 30_000);
+    } finally {
+      this.requestListeners.delete(live);
+    }
+    set.finish();
+    return set.report().map((r) => {
+      const list = (rows.get(r.name) ?? []).sort((a, b) => a._index - b._index);
+      return { name: r.name, rows: list.slice(0, MAX_TEST_ROWS), rowCount: list.length, status: r.status, count: r.count, optional: r.optional };
+    });
   }
 
   /** Validate and write the draft through storage. The session stays open. */

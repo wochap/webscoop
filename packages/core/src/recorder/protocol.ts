@@ -352,6 +352,34 @@ export const DraftTableSchema = z.object({
   defaultName: z.optional(z.boolean()),
 });
 
+/** A capture rule of the draft: request URLs matching `match` become rows of a table named after it. */
+export const DraftCaptureSchema = z.object({
+  name: z.string(),
+  match: z.string(),
+  count: z.int().check(z.positive()),
+  optional: z.boolean(),
+  description: z.optional(z.string()),
+  /** Why the capture does not validate, such as a regex that does not compile or a name clash. */
+  error: z.optional(z.string()),
+});
+
+/** A request a window of the recording session made, as the panel's network log holds it. */
+export const NetworkEntrySchema = z.object({
+  id: z.string(),
+  url: z.string(),
+  method: z.string(),
+  /** Null until the response arrives, and for a failed request. */
+  status: z.nullable(z.int()),
+  mime: z.nullable(z.string()),
+  /** URL of the document of the frame that made it; null when unknown. */
+  frame: z.nullable(z.string()),
+  window: z.enum(['main', 'popup']),
+  resourceType: z.string(),
+  /** Epoch milliseconds when it was seen. */
+  at: z.number(),
+  failed: z._default(z.boolean(), false),
+});
+
 /** How the draft is written: the shorthand (top level `item` and `fields`) or the `tables` form. */
 export const DRAFT_FORMS = ['shorthand', 'tables'] as const;
 
@@ -375,6 +403,8 @@ export const DraftSchema = z.object({
   sequence: z._default(DraftSequenceSchema, { custom: false, blocks: [] }),
   /** Sequence validation errors; while any exist, Save and Test run are disabled. */
   sequenceErrors: z._default(z.array(SequenceErrorSchema), []),
+  /** Capture rules, in recipe order. */
+  captures: z._default(z.array(DraftCaptureSchema), []),
   guards: z.optional(z.array(z.object({ kind: z.enum(GUARD_KINDS), enabled: z.boolean() }))),
   healing: z.optional(z.object({ fuzzyThreshold: z.number(), llm: z.boolean() })),
   /** The recipe's browser block, kept as loaded; the panel edits only `humanize`, and `profile` round-trips untouched. */
@@ -392,7 +422,7 @@ export const DraftSchema = z.object({
 });
 
 /** Panel sections that collapse. */
-export const PANEL_SECTIONS = ['recipe', 'flows', 'sequence'] as const;
+export const PANEL_SECTIONS = ['recipe', 'flows', 'sequence', 'captures'] as const;
 export type PanelSection = (typeof PANEL_SECTIONS)[number];
 
 export const SelectedSchema = z.object({
@@ -456,9 +486,21 @@ export const TestTableSchema = z.object({
   error: z.optional(z.string()),
 });
 
+/** One capture of a test run: its rows and status. */
+export const TestCaptureSchema = z.object({
+  name: z.string(),
+  rows: z.array(z.record(z.string(), z.unknown())),
+  rowCount: count(),
+  status: z.enum(['ok', 'partial', 'missing']),
+  count: count(),
+  optional: z.boolean(),
+});
+
 export const TestResultsSchema = z.object({
   /** One entry per table, in draft order; empty when the draft does not validate. */
   tables: z.array(TestTableSchema),
+  /** One entry per capture, in draft order. */
+  captures: z._default(z.array(TestCaptureSchema), []),
   durationMs: z.number().check(z.nonnegative()),
   warnings: z.array(z.string()),
   error: z.optional(z.string()),
@@ -599,7 +641,7 @@ export const RecorderStateSchema = z.object({
    */
   frame: z._default(z.nullable(z.object({ path: z.nullable(PathSchema), selectors: z.array(CandidateSchema) })), null),
   /** Panel state kept for the session, across navigations; never saved in the recipe. */
-  panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, flows: false, sequence: true } }),
+  panel: z._default(z.object({ collapsed: z.record(z.enum(PANEL_SECTIONS), z.boolean()) }), { collapsed: { recipe: false, flows: false, sequence: true, captures: true } }),
 });
 
 const FieldPatchSchema = z.object({
@@ -784,6 +826,15 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
    * every table, step, and pagination target with that frame gets the result.
    */
   msg('frame.edit', { key: SelectorSchema, by: z.enum(['primary', 'selector']), index: z.optional(index()), selector: z.optional(z.string()) }),
+  /** Add a capture to the draft; its name is made unique against tables and captures. */
+  msg('capture.add', { capture: z.object({ name: z.string(), match: z.string(), count: z.optional(z.int().check(z.positive())), optional: z.optional(z.boolean()), description: z.optional(z.string()) }) }),
+  msg('capture.update', {
+    index: index(),
+    patch: z.object({ name: z.optional(z.string()), match: z.optional(z.string()), count: z.optional(z.int().check(z.positive())), optional: z.optional(z.boolean()), description: z.optional(z.string()) }),
+  }),
+  msg('capture.remove', { index: index() }),
+  /** A request was picked in a popup's network sheet: the owner window opens the capture editor on it. */
+  msg('capture.pick', { id: z.string() }),
   /** Collapse or expand a panel section; session state only. */
   msg('panel.setCollapsed', { section: z.enum(PANEL_SECTIONS), collapsed: z.boolean() }),
   msg('draft.setName', { name: z.string() }),
@@ -839,6 +890,10 @@ export const HostMessageSchema = z.discriminatedUnion('kind', [
   msg('session.detach', {}),
   /** A window of the session saved a download, for a short notice. */
   msg('download.saved', { name: z.string(), file: z.string() }),
+  /** New and updated entries of the session's request log, oldest first; `reset` replaces the panel's log. */
+  msg('network.requests', { entries: z.array(NetworkEntrySchema), reset: z._default(z.boolean(), false) }),
+  /** A request picked in a popup's network sheet, for the owner's capture editor. */
+  msg('capture.picked', { id: z.string() }),
 ]);
 
 export const MessageSchema = z.union([PageMessageSchema, HostMessageSchema]);
@@ -867,6 +922,9 @@ export type DraftForm = (typeof DRAFT_FORMS)[number];
 export type DraftPagination = z.infer<typeof DraftPaginationSchema>;
 export type DraftStep = z.infer<typeof DraftStepSchema>;
 export type DraftFlow = z.infer<typeof DraftFlowSchema>;
+export type DraftCapture = z.infer<typeof DraftCaptureSchema>;
+export type NetworkEntry = z.infer<typeof NetworkEntrySchema>;
+export type TestCapture = z.infer<typeof TestCaptureSchema>;
 export type DraftBlock = z.infer<typeof DraftBlockSchema>;
 export type DraftInnerBlock = z.infer<typeof DraftInnerBlockSchema>;
 export type DraftSequence = z.infer<typeof DraftSequenceSchema>;

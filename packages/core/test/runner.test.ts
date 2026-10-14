@@ -139,6 +139,7 @@ describe('Runner', () => {
           },
           onDownload: () => () => {},
           settleDownloads: async () => {},
+          onRequest: () => () => {},
           isClosed: () => false,
           close: async () => {
             closed = true;

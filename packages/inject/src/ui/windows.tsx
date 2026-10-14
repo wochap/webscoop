@@ -2,6 +2,7 @@ import type { Draft } from '@webscoop/core/page';
 import { useActions, useSnapshot } from './context';
 import { FlowsSection } from './flows';
 import { Icon } from './icons';
+import { NetworkPicker } from './captures';
 import { Kbd } from './shell';
 import { TargetPickPanel, targetBack } from './target-editor';
 
@@ -39,7 +40,8 @@ export function CompactBar({ draft }: { draft: Draft }) {
   const actions = useActions();
   // A target edit's pick opens the sheet on its details.
   const edit = host?.targetEdit && host.targetEdit.phase !== 'typing' ? host.targetEdit : null;
-  const sheet = ui.sheet || edit !== null;
+  const network = ui.sheet === 'network' && edit === null;
+  const sheet = ui.sheet === true || edit !== null;
   const flow = draft.activeFlow !== null ? draft.flows[draft.activeFlow] : undefined;
   return (
     <>
@@ -60,11 +62,21 @@ export function CompactBar({ draft }: { draft: Draft }) {
         <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-label="Pick element" title="Pick element (P)" onClick={actions.startPicking} data-ws="bar-pick">
           <Icon name="crosshair-simple" size={12} />
         </button>
-        <button type="button" className="ws-btn ws-btn-sm" aria-expanded={sheet} onClick={() => actions.setUi({ sheet: !ui.sheet })} data-ws="bar-panel">
+        <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" aria-expanded={network} onClick={() => actions.setUi({ sheet: network ? false : 'network' })} data-ws="bar-network">
+          Pick from network
+        </button>
+        <button type="button" className="ws-btn ws-btn-sm" aria-expanded={sheet} onClick={() => actions.setUi({ sheet: sheet ? false : true })} data-ws="bar-panel">
           <Icon name={sheet ? 'caret-down' : 'caret-right'} size={10} />
           {sheet ? 'Less' : 'Panel'}
         </button>
       </div>
+      {network && (
+        <div className="ws-sheet" data-ws="network-sheet">
+          <div className="ws-sheet-body">
+            <NetworkPicker compact onClose={() => actions.setUi({ sheet: false })} onPick={(entry) => (actions.setUi({ sheet: false }), void actions.send({ kind: 'capture.pick', id: entry.id }))} />
+          </div>
+        </div>
+      )}
       {sheet && (
         <div className="ws-sheet" data-ws="panel-sheet">
           <div className="ws-sheet-body">

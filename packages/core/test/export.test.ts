@@ -35,7 +35,7 @@ const NOW = new Date('2026-01-02T03:04:05.000Z');
 const OPTS = { version: '0.0.0-test', now: NOW };
 
 const fixture = (name: string): Recipe => loadRecipe(readFileSync(join(FIXTURES, `${name}.json`), 'utf8'));
-const FIXTURE_NAMES = ['playground-catalog', 'playground-positional', 'playground-paged', 'playground-steps', 'playground-tables', 'playground-framed'] as const;
+const FIXTURE_NAMES = ['playground-catalog', 'playground-positional', 'playground-paged', 'playground-steps', 'playground-tables', 'playground-framed', 'playground-video'] as const;
 
 /** Scratch files inside the repository, so `playwright` resolves from the generated code. */
 const scratch: string[] = [];

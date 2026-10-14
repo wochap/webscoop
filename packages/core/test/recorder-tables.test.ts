@@ -499,13 +499,13 @@ describe('RecorderController: tables', () => {
 
   it('keeps section collapse state for the session, outside the draft', async () => {
     const t = await products();
-    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: false, sequence: true });
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: false, sequence: true, captures: true });
     const dirty = t.controller.draft.dirty;
     await t.send({ kind: 'panel.setCollapsed', section: 'flows', collapsed: true });
     expect(t.controller.draft.dirty).toBe(dirty);
     // The page is injected again after a navigation and announces itself.
     await t.send({ kind: 'session.ready', url: MIXED });
-    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: true, sequence: true });
+    expect(t.controller.state.panel.collapsed).toEqual({ recipe: false, flows: true, sequence: true, captures: true });
     const reply = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
     expect(reply.ok).toBe(true);
     expect(JSON.stringify(await t.storage.load('shop-catalog'))).not.toMatch(/collapsed/);

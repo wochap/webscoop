@@ -10,6 +10,7 @@ import type {
   Draft,
   DraftBlock,
   DraftField,
+  DraftCapture,
   DraftFlow,
   DraftInnerBlock,
   DraftItem,
@@ -118,6 +119,7 @@ export function emptyDraft(opts: { name: string; url: string; vars: VarValue[] }
     tables: [{ name: SHORTHAND_TABLE, item: null, fields: [], defaultName: true }],
     activeTable: 0,
     form: 'shorthand',
+    captures: [],
     flows: [],
     activeFlow: null,
     pagination: null,
@@ -138,19 +140,19 @@ const emptyTable = (t: DraftTable) => t.fields.length === 0 && t.item === null;
 
 /**
  * Whether the draft saves no table: its only table is still empty and it has
- * flows, so the recipe only runs flows.
+ * flows or captures, so the recipe only runs flows or captures.
  */
-export function flowsOnly(draft: Pick<Draft, 'tables' | 'flows'>): boolean {
-  return draft.flows.length > 0 && draft.tables.length === 1 && emptyTable(draft.tables[0]!);
+export function flowsOnly(draft: Pick<Draft, 'tables' | 'flows'> & { captures?: readonly unknown[] }): boolean {
+  return (draft.flows.length > 0 || (draft.captures?.length ?? 0) > 0) && draft.tables.length === 1 && emptyTable(draft.tables[0]!);
 }
 
 /** Names of the tables the recipe will have, in strip order. */
-export function savedTables(draft: Pick<Draft, 'tables' | 'flows'>): string[] {
+export function savedTables(draft: Pick<Draft, 'tables' | 'flows'> & { captures?: readonly unknown[] }): string[] {
   return flowsOnly(draft) ? [] : draft.tables.map((t) => t.name);
 }
 
 /** The default sequence of the draft: called flows, then each table once, the paginate block around the driving table and those after it. */
-export function defaultDraftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination'>): DraftBlock[] {
+export function defaultDraftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination'> & { captures?: readonly unknown[] }): DraftBlock[] {
   const blocks = defaultSequence(
     draft.flows.map((f) => ({ name: f.name, ...(f.trigger ? { trigger: { appears: recipeTarget(f.trigger) } } : {}) })),
     savedTables(draft),
@@ -160,7 +162,7 @@ export function defaultDraftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pa
 }
 
 /** The sequence the draft shows and saves: its own blocks once customized, else the default. */
-export function draftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination' | 'sequence'>): DraftBlock[] {
+export function draftSequence(draft: Pick<Draft, 'tables' | 'flows' | 'pagination' | 'sequence'> & { captures?: readonly unknown[] }): DraftBlock[] {
   return draft.sequence.custom ? draft.sequence.blocks : defaultDraftSequence(draft);
 }
 
@@ -356,6 +358,15 @@ export function draftToRecipe(draft: Draft): RecipeInput {
       },
     };
   });
+  if (draft.captures.length > 0) {
+    recipe.captures = draft.captures.map((c) => ({
+      name: c.name,
+      match: c.match,
+      ...(c.count !== 1 ? { count: c.count } : {}),
+      ...(c.optional ? { optional: true } : {}),
+      ...(c.description ? { description: c.description } : {}),
+    }));
+  }
   if (draft.guards) recipe.guards = draft.guards;
   if (draft.healing) recipe.healing = draft.healing;
   if (draft.browser) recipe.browser = draft.browser;
@@ -392,6 +403,7 @@ export function validateDraft(draft: Draft): Draft {
   const tableErrors = new Map<number, string>();
   const stepErrors = new Map<string, string>();
   const flowErrors = new Map<number, string>();
+  const captureErrors = new Map<number, string>();
   const sequenceErrors: SequenceError[] = [];
   let nameError: string | undefined;
   const errors: Draft['errors'] = [];
@@ -400,7 +412,11 @@ export function validateDraft(draft: Draft): Draft {
     const step = /^\$\.flows\[(\d+)\]\.steps\[(\d+)\]/.exec(error.path);
     const flow = /^\$\.flows\[(\d+)\]/.exec(error.path);
     const block = sequenceErrorPath(error.path);
-    if (target?.index !== undefined) {
+    const capture = /^\$\.captures\[(\d+)\]/.exec(error.path);
+    if (capture) {
+      const index = Number(capture[1]);
+      if (!captureErrors.has(index)) captureErrors.set(index, error.message);
+    } else if (target?.index !== undefined) {
       const key = `${target.table}:${target.index}`;
       if (!fieldErrors.has(key)) fieldErrors.set(key, error.message);
     } else if (target) {
@@ -436,9 +452,14 @@ export function validateDraft(draft: Draft): Draft {
     const error = flowErrors.get(fi);
     return { ...restFlow, steps, ...(error ? { error } : {}) };
   });
+  const captures = (draft.captures ?? []).map((c, i) => {
+    const { error: _old, ...restCapture } = c;
+    const error = captureErrors.get(i);
+    return error ? { ...restCapture, error } : restCapture;
+  });
   const { nameError: _oldName, ...rest } = draft;
   const sequence = draft.sequence.custom ? draft.sequence : { custom: false, blocks: defaultDraftSequence(draft) };
-  return { ...rest, ...(nameError ? { nameError } : {}), tables, flows, sequence, sequenceErrors, errors };
+  return { ...rest, ...(nameError ? { nameError } : {}), tables, flows, sequence, sequenceErrors, captures, errors };
 }
 
 /** A draft for editing an existing recipe; counts are unknown until the page is counted. */
@@ -521,6 +542,15 @@ export function draftFromRecipe(
         ...(p.table ? { table: p.table } : {}),
       }
     : null;
+  const captures: DraftCapture[] = (recipe.captures ?? []).map((c) => ({
+    name: c.name,
+    match: c.match,
+    count: c.count,
+    optional: c.optional,
+    ...(c.description ? { description: c.description } : {}),
+  }));
+  // A recipe without tables edits with one empty table, which it saves as none.
+  if (tables.length === 0) tables.push({ name: SHORTHAND_TABLE, item: null, fields: [], defaultName: true });
   const blocks: DraftBlock[] = recipe.sequence.map((b) => ('paginate' in b ? { paginate: { do: b.paginate.do } } : b));
   const shape = (list: readonly DraftBlock[]) => JSON.stringify(list);
   return validateDraft({
@@ -534,14 +564,26 @@ export function draftFromRecipe(
     flows,
     activeFlow: flows.length > 0 ? 0 : null,
     pagination,
-    sequence: { custom: shape(blocks) !== shape(defaultDraftSequence({ tables, flows, pagination })), blocks },
+    sequence: { custom: shape(blocks) !== shape(defaultDraftSequence({ tables, flows, pagination, captures })), blocks },
     sequenceErrors: [],
+    captures,
     guards: recipe.guards,
     healing: recipe.healing,
     ...(recipe.browser ? { browser: recipe.browser } : {}),
     dirty: false,
     errors: [],
   });
+}
+
+/** Names a new capture cannot take: the saved tables, the other captures, and `downloads`. */
+export function captureNamesTaken(draft: Pick<Draft, 'tables' | 'flows' | 'captures'>, except?: number): string[] {
+  return [...savedTables(draft), ...draft.captures.filter((_, i) => i !== except).map((c) => c.name), 'downloads'];
+}
+
+/** A kebab-case capture name not in `taken`: the base, else `base-2`, `base-3`, and so on. */
+export function uniqueCaptureName(base: string, taken: readonly string[]): string {
+  if (!taken.includes(base)) return base;
+  for (let i = 2; ; i++) if (!taken.includes(`${base}-${i}`)) return `${base}-${i}`;
 }
 
 /** Why a variable name cannot be used, or null: it must be an identifier and not taken by another variable. */
@@ -704,6 +746,10 @@ export type DraftAction =
   | { type: 'declareVar'; name: string; value: string; secret?: boolean; path?: boolean }
   /** Mark a variable secret or not, or switch it between text and path; an external variable is left alone. */
   | { type: 'setVarKind'; name: string; secret?: boolean; varType?: 'string' | 'path'; raw?: boolean }
+  /** Add a capture; its name is made unique against tables, captures, and `downloads`. */
+  | { type: 'addCapture'; capture: Pick<DraftCapture, 'name' | 'match'> & Partial<Pick<DraftCapture, 'count' | 'optional' | 'description'>> }
+  | { type: 'updateCapture'; index: number; patch: Partial<Pick<DraftCapture, 'name' | 'match' | 'count' | 'optional' | 'description'>> }
+  | { type: 'removeCapture'; index: number }
   | { type: 'markSaved' };
 
 /** The object with its `description` set to `text`, or removed when `text` is empty. */
@@ -1242,6 +1288,31 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
       };
       break;
     }
+    case 'addCapture': {
+      const { capture } = action;
+      const name = uniqueCaptureName(capture.name, captureNamesTaken(draft));
+      next = {
+        ...draft,
+        captures: [
+          ...draft.captures,
+          { name, match: capture.match, count: capture.count ?? 1, optional: capture.optional ?? false, ...(capture.description ? { description: capture.description } : {}) },
+        ],
+      };
+      break;
+    }
+    case 'updateCapture': {
+      const current = draft.captures[action.index];
+      if (!current) return draft;
+      const { description, ...patch } = action.patch;
+      let updated: DraftCapture = { ...current, ...patch };
+      if (description !== undefined) updated = withDescription(updated, description.trim());
+      next = { ...draft, captures: draft.captures.map((c, i) => (i === action.index ? updated : c)) };
+      break;
+    }
+    case 'removeCapture':
+      if (!draft.captures[action.index]) return draft;
+      next = { ...draft, captures: draft.captures.filter((_, i) => i !== action.index) };
+      break;
     case 'markSaved':
       next = { ...draft, dirty: false };
       break;

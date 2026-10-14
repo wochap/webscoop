@@ -432,6 +432,47 @@ describe('webscoop recipes', () => {
   });
 });
 
+describe('captures in recipes and test', () => {
+  const VIDEO = 'https://learn.test/v/42';
+  const PLAYLIST = 'https://cdn.test/0999851b/playlist.m3u8';
+  const lesson: RecipeInput = {
+    schemaVersion: 2,
+    name: 'lesson-video',
+    url: 'https://learn.test/v/{id}',
+    vars: [{ name: 'id', type: 'string' }],
+    captures: [{ name: 'videos', match: '/playlist\\.m3u8(\\?|$)', description: 'HLS playlist URL' }],
+  };
+
+  it('lists captures in the catalog', async () => {
+    const dir = await home([lesson, recipe()]);
+    const io = testIo({ env: { WEBSCOOP_HOME: dir } });
+    expect(await main(['recipes', '--json'], io)).toBe(ExitCode.Ok);
+    const [video, shop] = JSON.parse(io.out());
+    expect(video.tables).toEqual([]);
+    expect(video.captures).toEqual([{ name: 'videos', description: 'HLS playlist URL' }]);
+    expect('captures' in shop).toBe(false);
+  });
+
+  it('adds a capture row to the test table', async () => {
+    const dir = await home([lesson]);
+    const browser = new FakeBrowser({ [VIDEO]: { dom: h('html', {}), requests: [{ url: PLAYLIST }] } });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['test', 'lesson-video', '--var', 'id=42'], io)).toBe(ExitCode.Ok);
+    const line = io.out().trimEnd().split('\n').find((l) => l.startsWith('videos'));
+    expect(line).toMatch(/^videos\s+ok\s+1\s+\/playlist\\\.m3u8\(\\\?\|\$\)$/);
+    const json = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [VIDEO]: { dom: h('html', {}), requests: [{ url: PLAYLIST }] } }) });
+    expect(await main(['test', 'lesson-video', '--var', 'id=42', '--json'], json)).toBe(ExitCode.Ok);
+    expect(JSON.parse(json.out())).toEqual([{ kind: 'capture', name: 'videos', status: 'ok', matches: 1, rows: 1, optional: false, resolvedBy: '/playlist\\.m3u8(\\?|$)' }]);
+  });
+
+  it('exits 3 with a missing row when a required capture never matches', async () => {
+    const dir = await home([lesson]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [VIDEO]: h('html', {}) }) });
+    expect(await main(['test', 'lesson-video', '--var', 'id=42', '--timeout', '50'], io)).toBe(3);
+    expect(io.out()).toMatch(/^videos\s+missing\s+0\s+/m);
+  });
+});
+
 describe('webscoop doctor', () => {
   it('prints the isolated paths and exits 0 when everything is present', async () => {
     const dir = await tempDir();

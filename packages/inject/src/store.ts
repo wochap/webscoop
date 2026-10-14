@@ -1,5 +1,6 @@
 import { createPendingSelectors } from './pending';
-import type { BlockPath, Crumb, PageMessage, PanelMode, Path, RecorderState, TargetRef } from '@webscoop/core/page';
+import { mergeNetwork, type NetworkFilter } from './network';
+import type { BlockPath, Crumb, NetworkEntry, PageMessage, PanelMode, Path, RecorderState, TargetRef } from '@webscoop/core/page';
 
 export type Mode = 'idle' | 'picking' | 'browsing' | 'repick' | 'guard' | 'selected' | 'items' | 'editing' | 'test';
 
@@ -35,8 +36,17 @@ export interface UiState {
   popup: boolean;
   /** The window is narrower than 640 pixels: the owner shows the compact bar. */
   narrow: boolean;
-  /** The compact bar's sheet is open. */
-  sheet: boolean;
+  /** The compact bar's sheet is open: the panel sheet, or the network picker alone (`network`). */
+  sheet: boolean | 'network';
+  /** The Network picker is open in the Captures section. */
+  picker: boolean;
+  /** The picker's filter chip and filter text. */
+  networkFilter: NetworkFilter;
+  networkQuery: string;
+  /** The capture editor: a new capture from a picked request, or a saved capture by index. */
+  captureEditor: CaptureEditorState | null;
+  /** Captures whose matched URLs are expanded, by name. */
+  openCaptures: string[];
   /** A recipe without tables shows the tab bar anyway, after "Add a table". */
   showTables: boolean;
   /** Table tab that has keyboard focus, for Alt+Left, Alt+Right, and F2. */
@@ -57,6 +67,8 @@ export interface UiState {
   pickSeq: number;
   toasts: Toast[];
 }
+
+export type CaptureEditorState = { mode: 'new'; url: string; frame: string | null; stream: boolean } | { mode: 'edit'; index: number };
 
 /** A step by its flow index and its index in that flow. */
 export interface StepRef {
@@ -86,6 +98,11 @@ export const initialUi: UiState = {
   popup: false,
   narrow: false,
   sheet: false,
+  picker: false,
+  networkFilter: 'media',
+  networkQuery: '',
+  captureEditor: null,
+  openCaptures: [],
   showTables: false,
   focusedTab: null,
   renamingTab: null,
@@ -102,11 +119,13 @@ export const initialUi: UiState = {
 export interface Snapshot {
   host: RecorderState | null;
   ui: UiState;
+  /** The session's request log, oldest first, as the host sent it. */
+  network: NetworkEntry[];
 }
 
 /** A tiny external store for `useSyncExternalStore`. */
 export class Store {
-  private snapshot: Snapshot = { host: null, ui: initialUi };
+  private snapshot: Snapshot = { host: null, ui: initialUi, network: [] };
   private readonly listeners = new Set<() => void>();
   /** Selector inputs with pending text, applied by the closers of their editors. */
   readonly pending = createPendingSelectors();
@@ -120,6 +139,12 @@ export class Store {
 
   setHost(host: RecorderState): void {
     this.snapshot = { ...this.snapshot, host };
+    this.emit();
+  }
+
+  /** Merge a batch of the host's request log; `reset` replaces the log. */
+  setNetwork(entries: readonly NetworkEntry[], reset: boolean): void {
+    this.snapshot = { ...this.snapshot, network: mergeNetwork(this.snapshot.network, entries, reset) };
     this.emit();
   }
 

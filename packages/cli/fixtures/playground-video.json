@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "playground-video",
+  "description": "HLS playlist URL of a playground lesson video",
+  "url": "http://127.0.0.1:{port}/video?id={id}",
+  "vars": [
+    { "name": "id", "type": "string", "default": "42", "description": "lesson id" },
+    { "name": "port", "type": "string", "default": "4777" }
+  ],
+  "captures": [{ "name": "videos", "match": "/playlist\\.m3u8(\\?|$)", "description": "HLS playlist URL" }]
+}

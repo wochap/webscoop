@@ -19,6 +19,8 @@ import {
   type HealOutcome,
   type BrowserPort,
   type OpenOptions,
+  type Capture,
+  captureStatus,
   type Recipe,
   type RepickHandler,
   type Resolver,
@@ -192,7 +194,9 @@ export function summary(report: RunReport): string {
   const reactive = firings > 0 ? `, reactive flows fired ${firings} time${firings === 1 ? '' : 's'}` : '';
   const files = report.downloads.length;
   const downloads = files > 0 ? `, ${files} file${files === 1 ? '' : 's'} saved` : '';
-  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped}${reactive}${downloads} in ${seconds}s (${report.recipe})`;
+  const urls = report.captures.reduce((sum, c) => sum + c.rows, 0);
+  const captured = urls > 0 ? `, ${urls} URL${urls === 1 ? '' : 's'} captured` : '';
+  return `${rowCounts(report)} from ${pages}${healed}${guards}${duplicates}${dropped}${skipped}${reactive}${downloads}${captured} in ${seconds}s (${report.recipe})`;
 }
 
 const selectorText = (c: SelectorCandidate | null | undefined) => (c ? `${c.strategy}=${c.value}` : '-');
@@ -231,6 +235,8 @@ export interface RowSinkOptions {
   tables: readonly string[];
   /** `--table`: keep only this table's rows. */
   only?: string;
+  /** Tables whose rows arrive out of order (captures): sorted by `_index` in JSON mode. */
+  indexed?: readonly string[];
 }
 
 interface Writable {
@@ -291,7 +297,10 @@ export class RowSink {
   async finish(success: boolean): Promise<void> {
     await this.pending;
     if (success) {
-      const rowsOf = (table: string) => this.buffered.get(table) ?? [];
+      const rowsOf = (table: string) => {
+        const rows = this.buffered.get(table) ?? [];
+        return this.opts.indexed?.includes(table) ? [...rows].sort((a, b) => a._index - b._index) : rows;
+      };
       if (this.opts.jsonl) {
         // Files exist even for a table without rows.
         if (this.opts.dir !== undefined || this.opts.out !== undefined) for (const table of this.selected) await this.target(table);
@@ -314,9 +323,14 @@ export async function isOutDir(out: string, path: string): Promise<boolean> {
   return (await stat(path).catch(() => null))?.isDirectory() ?? false;
 }
 
-/** Output tables of a recipe, in order: its own tables, then `downloads` when a flow has a `download` step. */
+/** Output tables of a recipe, in order: its own tables, then its captures, then `downloads` when a flow has a `download` step. */
 export function outputTables(recipe: Recipe): string[] {
-  return [...tablesOf(recipe).map((t) => t.name), ...(hasDownloadStep(recipe) ? [DOWNLOADS_TABLE] : [])];
+  return [...tablesOf(recipe).map((t) => t.name), ...captureTables(recipe), ...(hasDownloadStep(recipe) ? [DOWNLOADS_TABLE] : [])];
+}
+
+/** Names of a recipe's capture tables, in recipe order. */
+export function captureTables(recipe: Recipe): string[] {
+  return (recipe.captures ?? []).map((c) => c.name);
 }
 
 /** `--table` must name one of the recipe's output tables. */
@@ -458,6 +472,7 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
   emitter.on('recipe.saved', (e) => info(`recipe written to ${e.path}`));
   emitter.on('download.saved', (e) => info(`saved ${e.file}`));
+  emitter.on('capture.matched', (e) => info(`captured ${e.capture}: ${e.row.url}`));
 }
 
 /** Logger for informational and warning lines: a no-op under `--quiet`. Errors and prompts to act use `log`. */
@@ -509,6 +524,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
     tables,
     ...(dir !== undefined ? { dir } : out !== undefined ? { out } : {}),
     ...(opts.table !== undefined ? { only: opts.table } : {}),
+    indexed: captureTables(recipe),
   });
 
   try {
@@ -517,6 +533,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
     hooks.attach(emitter, { run: true, browser: false });
     job.watch?.(emitter);
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
+    emitter.on('capture.matched', (e) => sink.row(e.capture, e.row));
     // Files `download` steps took are rows of the downloads table, indexed per page.
     const perPage = new Map<number, number>();
     emitter.on('download.saved', (e) => {
@@ -608,21 +625,24 @@ export function testPagination(opts: Pick<TestCommandOptions, 'pages' | 'maxPage
 }
 
 export interface TestRow {
+  /** Set on a capture's row; field and item rows have none. */
+  kind?: 'capture';
   name: string;
   status: string;
   /** Rows (or item containers) where the target resolved. */
   matches: number;
   rows: number;
   optional: boolean;
-  outcome: HealOutcome;
-  /** The selector or rung that resolved the target. */
+  /** How a field or the item container resolved; absent on a capture's row. */
+  outcome?: HealOutcome;
+  /** The selector or rung that resolved the target; a capture's `match` pattern. */
   resolvedBy: string;
   /** Why healing rungs declined the target. */
   notes?: string[];
 }
 
-/** Per-target rows for `webscoop test`: the item container first, then every field. */
-export function testRows(report: RunReport): TestRow[] {
+/** Per-target rows for `webscoop test`: the item container first, then every field, then every capture. */
+export function testRows(report: RunReport, captures: readonly Capture[] = []): TestRow[] {
   const out: TestRow[] = [];
   // One row per item container, or a single row for a recipe without one.
   const rows = report.item ? report.item.count : 1;
@@ -651,13 +671,26 @@ export function testRows(report: RunReport): TestRow[] {
       ...(field.notes ? { notes: field.notes } : {}),
     });
   }
+  for (const capture of captures) {
+    const found = report.captures.find((c) => c.name === capture.name);
+    const matched = found?.rows ?? 0;
+    out.push({
+      kind: 'capture',
+      name: capture.name,
+      status: found?.status ?? captureStatus(0, capture.count),
+      matches: matched,
+      rows: capture.count,
+      optional: capture.optional,
+      resolvedBy: capture.match,
+    });
+  }
   return out;
 }
 
 /** Aligned plain-text table. */
 export function formatTable(rows: readonly TestRow[]): string {
   const header = ['FIELD', 'STATUS', 'MATCHES', 'RESOLVED BY'];
-  const cells = rows.map((r) => [`${r.name}${r.optional ? '?' : ''}`, r.status, r.name === 'item' ? String(r.matches) : `${r.matches}/${r.rows}`, r.resolvedBy]);
+  const cells = rows.map((r) => [`${r.name}${r.optional ? '?' : ''}`, r.status, r.name === 'item' || r.kind === 'capture' ? String(r.matches) : `${r.matches}/${r.rows}`, r.resolvedBy]);
   const widths = header.map((h, i) => Math.max(h.length, ...cells.map((c) => c[i]!.length)));
   const line = (c: string[]) => c.map((v, i) => (i === c.length - 1 ? v : v.padEnd(widths[i]!))).join('  ');
   return `${[line(header), ...cells.map(line)].join('\n')}\n`;
@@ -704,7 +737,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       ...(job.attention ? { attention: job.attention } : {}),
     });
     const result = await runner.run();
-    const rows = testRows(result.report);
+    const rows = testRows(result.report, recipe.captures);
     io.stdout.write(opts.json ? `${JSON.stringify(rows, null, 2)}\n` : formatTable(rows));
     if (result.ok) {
       const skipped = result.report.steps.filter((s) => s.outcome === 'skipped').length;

@@ -266,6 +266,16 @@ export const RecipeBrowserSchema = z.object({
   profile: z.string().regex(PROFILE_NAME, 'invalid profile name: start with a letter or digit, then letters, digits, ., _, or -').optional(),
 });
 
+/** A rule that turns request URLs seen during a run into rows of a table named after it. */
+export const CaptureSchema = z.object({
+  name: z.string().regex(KEBAB, 'capture names must be kebab-case'),
+  /** Regex source, compiled without flags, tested against the full request URL. */
+  match: z.string().min(1),
+  count: z.number().int().min(1).default(1),
+  optional: z.boolean().default(false),
+  description: DescriptionSchema.optional(),
+});
+
 const defaultGuards = () => GUARD_KINDS.map((kind) => ({ kind, enabled: true }));
 
 const RecipeObjectSchema = z.object({
@@ -280,7 +290,9 @@ const RecipeObjectSchema = z.object({
   fields: z.array(FieldSchema).min(1, 'a recipe needs at least one field').optional(),
   tables: z.array(TableSchema).optional(),
   flows: z.array(FlowSchema).default([]),
-  sequence: z.array(BlockSchema).min(1, 'a sequence needs at least one block'),
+  /** Empty only in a recipe with captures: the run opens the URL and waits for them. */
+  sequence: z.array(BlockSchema).default([]),
+  captures: z.array(CaptureSchema).min(1, 'captures needs at least one capture').optional(),
   guards: z.array(GuardSchema).default(defaultGuards),
   healing: HealingSchema.default(() => HealingSchema.parse({})),
   browser: RecipeBrowserSchema.optional(),
@@ -332,6 +344,7 @@ export type PaginationKind = Pagination['kind'];
 export type Guard = z.infer<typeof GuardSchema>;
 export type GuardKind = Guard['kind'];
 export type Healing = z.infer<typeof HealingSchema>;
+export type Capture = z.output<typeof CaptureSchema>;
 export type RecipeBrowser = z.infer<typeof RecipeBrowserSchema>;
 export type Recipe = Omit<ParsedRecipe, 'fields' | 'tables'> & { fields?: RecipeField[]; tables?: RecipeTable[] };
 /** Recipe as written on disk, before defaults are filled in. */

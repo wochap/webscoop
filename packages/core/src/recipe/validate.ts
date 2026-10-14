@@ -167,6 +167,7 @@ function crossFieldErrors(input: Record<string, unknown>): ValidationError[] {
 
   errors.push(...flowErrors(input, declared));
   errors.push(...sequenceErrors(input));
+  errors.push(...captureErrors(input));
 
   return errors;
 }
@@ -234,6 +235,47 @@ export const DOWNLOADS_TABLE = 'downloads';
 export function hasDownloadStep(input: unknown): boolean {
   if (!isRecord(input) || !Array.isArray(input.flows)) return false;
   return input.flows.some((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.some((step) => isRecord(step) && step.kind === 'download'));
+}
+
+/** Capture checks: the regex compiles, names are unique and clash with no table or `downloads`. */
+function captureErrors(input: Record<string, unknown>): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const hasSequence = Array.isArray(input.sequence) && input.sequence.length > 0;
+  const hasCaptures = Array.isArray(input.captures) && input.captures.length > 0;
+  if (!hasSequence && !hasCaptures && (input.sequence === undefined || Array.isArray(input.sequence))) {
+    errors.push({ path: '$.sequence', message: 'a sequence needs at least one block' });
+  }
+  if (!Array.isArray(input.captures)) return errors;
+  const tables = new Set<string>();
+  if (Array.isArray(input.tables)) for (const t of input.tables) if (isRecord(t) && typeof t.name === 'string') tables.add(t.name);
+  if (!Array.isArray(input.tables) && input.fields !== undefined) tables.add('items');
+  const names = new Map<string, number>();
+  input.captures.forEach((capture, index) => {
+    if (!isRecord(capture)) return;
+    const name = typeof capture.name === 'string' ? capture.name : `#${index}`;
+    if (typeof capture.match === 'string') {
+      const problem = regexProblem(capture.match);
+      if (problem) errors.push({ path: jsonPath(['captures', index, 'match']), message: `capture "${name}" match is not a valid regex: ${problem}` });
+    }
+    if (typeof capture.name !== 'string') return;
+    const at = jsonPath(['captures', index, 'name']);
+    if (capture.name === DOWNLOADS_TABLE) errors.push({ path: at, message: `capture "${capture.name}": the name "${DOWNLOADS_TABLE}" is reserved` });
+    else if (tables.has(capture.name)) errors.push({ path: at, message: `capture name "${capture.name}" clashes with a table of the same name` });
+    if (names.has(capture.name)) {
+      errors.push({ path: at, message: `duplicate capture name "${capture.name}" (first declared at ${jsonPath(['captures', names.get(capture.name)!])})` });
+    } else names.set(capture.name, index);
+  });
+  return errors;
+}
+
+/** The compile error of a regex source, or undefined when it compiles. */
+export function regexProblem(source: string): string | undefined {
+  try {
+    new RegExp(source);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /** Sequence checks: blocks name known called flows and tables, each table once, one paginate block at the top level, everything used. */

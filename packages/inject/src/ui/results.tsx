@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { TestResults, TestTable } from '@webscoop/core/page';
+import type { TestCapture, TestResults, TestTable } from '@webscoop/core/page';
 import { useDrawerHost } from './context';
 
 export function TestRunSummary({ results, durationMs }: { results: TestTable; durationMs: number }) {
@@ -93,9 +93,9 @@ export function ResultsTable({ rows, hover = [] }: { rows: TestTable['rows']; ho
   );
 }
 
-/** One tab per table with its row count; shown only when the run has more than one table. */
-export function ResultTabs({ tables, shown, onShow }: { tables: TestTable[]; shown: string; onShow: (name: string) => void }) {
-  if (tables.length < 2) return null;
+/** One tab per table, then one per capture, with its row count; shown only when the run has more than one. */
+export function ResultTabs({ tables, captures = [], shown, onShow }: { tables: TestTable[]; captures?: TestCapture[]; shown: string; onShow: (name: string) => void }) {
+  if (tables.length + captures.length < 2) return null;
   return (
     <div className="ws-seg" role="tablist" aria-label="Result tables" data-ws="results-tabs">
       {tables.map((t) => (
@@ -103,7 +103,29 @@ export function ResultTabs({ tables, shown, onShow }: { tables: TestTable[]; sho
           {t.name} · {t.rowCount}
         </button>
       ))}
+      {captures.map((c) => (
+        <button key={c.name} type="button" role="tab" aria-selected={c.name === shown} aria-pressed={c.name === shown} onClick={() => onShow(c.name)} data-ws="results-tab" data-table={c.name} data-capture="true">
+          {c.name} · {c.rowCount}
+        </button>
+      ))}
     </div>
+  );
+}
+
+/** A capture's summary in the drawer: its URL count and status. */
+function CaptureSummary({ capture, durationMs }: { capture: TestCapture; durationMs: number }) {
+  return (
+    <span className="ws-row" data-ws="results-summary" data-capture={capture.name}>
+      <span className="ws-title" data-ws="results-rows">
+        {capture.rowCount} URL{capture.rowCount === 1 ? '' : 's'}
+      </span>
+      <span className={`ws-badge ${STATUS_TONE[capture.status]}`} data-ws="results-capture-status">
+        {capture.status}
+      </span>
+      <span className="ws-meta">
+        waits for {capture.count} · {capture.optional ? 'optional' : 'required'} · in {durationMs} ms
+      </span>
+    </span>
   );
 }
 
@@ -128,13 +150,17 @@ export function ResultsDrawer({
 }) {
   const host = useDrawerHost();
   const [picked, setPicked] = useState<string | null>(null);
-  const table = results.tables.find((t) => t.name === (picked ?? active)) ?? results.tables[0];
-  const rows = table?.rows ?? [];
+  const captures = results.captures ?? [];
+  const capture = captures.find((c) => c.name === picked) ?? (results.tables.length === 0 ? captures[0] : undefined);
+  const table = capture ? undefined : (results.tables.find((t) => t.name === (picked ?? active)) ?? results.tables[0]);
+  const rows = capture?.rows ?? table?.rows ?? [];
   const drawer = (
     <div id="ws-drawer" data-ws="results" role="region" aria-label="Test run results">
       <div className="ws-drawer-head">
-        <ResultTabs tables={results.tables} shown={table?.name ?? ''} onShow={setPicked} />
-        {table ? (
+        <ResultTabs tables={results.tables} captures={captures} shown={capture?.name ?? table?.name ?? ''} onShow={setPicked} />
+        {capture ? (
+          <CaptureSummary capture={capture} durationMs={results.durationMs} />
+        ) : table ? (
           <>
             <TestRunSummary results={table} durationMs={results.durationMs} />
             <FieldStatusList fields={table.fields} />

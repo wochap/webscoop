@@ -31,6 +31,7 @@ import {
   snapshotOf,
 } from './dom';
 import { FocusGuard } from './focus-guard';
+import { isSegment, isStream } from './network';
 import { crossOriginFrames, frameDocument, frameElementOf } from './frames';
 import type { HoverPlace, HoverWalkInfo, ListOutlines, Overlay } from './overlay';
 import { walkChain, type HoverWalk, type ObservedAction } from './picker';
@@ -248,6 +249,17 @@ export class Runtime implements Actions {
       case 'download.saved':
         this.toast('ok', `Saved ${msg.name}`);
         return;
+      case 'network.requests':
+        this.store.setNetwork(msg.entries, msg.reset);
+        return;
+      case 'capture.picked': {
+        // Picked in a popup's network sheet: open the editor on the request here.
+        const entry = this.store.get().network.find((e) => e.id === msg.id);
+        if (!entry) return;
+        this.store.setUi({ picker: false, sheet: false, captureEditor: { mode: 'new', url: entry.url, frame: entry.frame, stream: isStream(entry) || isSegment(entry) } });
+        if (this.store.get().host?.panel.collapsed.captures) void this.send({ kind: 'panel.setCollapsed', section: 'captures', collapsed: false });
+        return;
+      }
       case 'session.detach':
         this.dispose();
         this.opts.onDetach?.();

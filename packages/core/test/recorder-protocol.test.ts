@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyDraft, HOST_MESSAGE_KINDS, isInteractiveSession, PAGE_MESSAGE_KINDS, parse, parseHostMessage, parsePageMessage, ProtocolError, type Draft, type HostMessage, type PageMessage, type RecorderState } from '../src';
+import { DraftSchema, emptyDraft, PANEL_SECTIONS, HOST_MESSAGE_KINDS, isInteractiveSession, PAGE_MESSAGE_KINDS, parse, parseHostMessage, parsePageMessage, ProtocolError, type Draft, type HostMessage, type PageMessage, type RecorderState } from '../src';
 import { FakeBrowser, h } from '../src/testing';
 import { CATALOG } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
@@ -38,7 +38,7 @@ const sampleState: RecorderState = {
   saved: null,
   busy: null,
   error: null,
-  panel: { collapsed: { recipe: false, flows: false, sequence: true } },
+  panel: { collapsed: { recipe: false, flows: false, sequence: true, captures: true } },
 };
 
 const selection = {
@@ -63,6 +63,10 @@ function newDraft(): Draft {
 
 describe('protocol', () => {
   const page: PageMessage[] = [
+    { kind: 'capture.add', capture: { name: 'videos', match: '/playlist\\.m3u8(\\?|$)' } },
+    { kind: 'capture.update', index: 0, patch: { optional: true, count: 2 } },
+    { kind: 'capture.remove', index: 0 },
+    { kind: 'capture.pick', id: 'r3' },
     { kind: 'session.ready', url: CATALOG },
     { kind: 'session.end' },
     { kind: 'picker.hover', path: [1, 0], tag: 'h2' },
@@ -170,7 +174,7 @@ describe('protocol', () => {
     { kind: 'inspect.countResult', count: 24 },
     {
       kind: 'test.results',
-      results: { tables: [{ name: 'items', rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'title', status: 'ok' }] }], durationMs: 12, warnings: [] },
+      results: { tables: [{ name: 'items', rows: [{ _page: 1, _index: 0, title: 'x' }], rowCount: 1, dropped: { count: 0, fields: [] }, fields: [{ name: 'title', status: 'ok' }] }], captures: [], durationMs: 12, warnings: [] },
       state: sampleState,
     },
     { kind: 'save.result', ok: false, errors: [{ path: '$.fields', message: 'a recipe needs at least one field' }], state: sampleState },
@@ -178,6 +182,12 @@ describe('protocol', () => {
     { kind: 'step.replayResult', index: 0, ok: true, message: 'replayed step 1 (click)', state: sampleState },
     { kind: 'session.detach' },
     { kind: 'download.saved', name: 'report.csv', file: '/dl/report.csv' },
+    {
+      kind: 'network.requests',
+      entries: [{ id: 'r1', url: 'https://cdn.test/a/playlist.m3u8', method: 'GET', status: 200, mime: 'application/vnd.apple.mpegurl', frame: 'https://player.test/e', window: 'main', resourceType: 'xhr', at: 1, failed: false }],
+      reset: true,
+    },
+    { kind: 'capture.picked', id: 'r1' },
     { kind: 'panel.mode', mode: 'strip', popup: true },
     {
       kind: 'draft.state',
@@ -307,5 +317,15 @@ describe('FakeInteractiveSession', () => {
     await session.userClose();
     expect(closed).toBe(1);
     await expect(session.dispatch({})).rejects.toThrow(/closed/);
+  });
+
+  it('parses draft captures with defaults and rejects a bad count', () => {
+    const draft = DraftSchema.parse({ ...sampleState.draft });
+    expect(draft.captures).toEqual([]);
+    expect(PANEL_SECTIONS).toContain('captures');
+    const withCapture = DraftSchema.parse({ ...sampleState.draft, captures: [{ name: 'videos', match: 'm3u8', count: 1, optional: false }] });
+    expect(withCapture.captures[0]!.name).toBe('videos');
+    expect(() => DraftSchema.parse({ ...sampleState.draft, captures: [{ name: 'videos', match: 'm3u8', count: 0, optional: false }] })).toThrow();
+    expect(parsePageMessage({ kind: 'capture.add', capture: { name: 'videos', match: 'x' } })).toEqual({ kind: 'capture.add', capture: { name: 'videos', match: 'x' } });
   });
 });

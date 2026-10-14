@@ -57,6 +57,8 @@ function constants(plan: ExportPlan, opts: RenderOptions): string {
     `TABLES = ${pyLiteral(plan.tables)}`,
     '# Index of the table whose absence on its first extraction fails the run; -1 when none.',
     `LEAD = ${plan.primary}`,
+    '# Request URL captures: output tables after TABLES.',
+    `CAPTURES = ${pyLiteral(plan.captures)}`,
     `PAGINATION = ${pyLiteral(pagination)}`,
     '# Functions evaluated in the page, from webscoop core.',
     `PAGE_JS = ${pyLiteral(PAGE_HELPERS)}`,

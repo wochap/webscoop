@@ -122,7 +122,7 @@ test('gate=tabs with paginate=url: a flow inside the paginate block opens the ta
   recipe.name = 'tabs-shop';
   recipe.url = recipe.url.replace('&page={page}', '&gate=tabs&page={page}');
   recipe.flows = [{ name: 'products-tab', steps: [{ kind: 'click', target: { selectors: [{ strategy: 'role', value: 'tab|Products', stability: 'stable' }] } }] }];
-  const block = recipe.sequence[0] as Extract<RecipeInput['sequence'][number], { paginate: unknown }>;
+  const block = recipe.sequence![0] as Extract<NonNullable<RecipeInput['sequence']>[number], { paginate: unknown }>;
   recipe.sequence = [{ paginate: { ...block.paginate, do: [{ flow: 'products-tab' }, { extract: 'items' }] } }];
   await scoop.writeRecipe(recipe);
   const run = await scoop.run(['run', 'tabs-shop', '--pages', '3']);

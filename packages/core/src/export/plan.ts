@@ -154,6 +154,14 @@ export interface PlanTable {
   key: string | null;
 }
 
+export interface PlanCapture {
+  name: string;
+  /** Regex source, compiled without flags. */
+  match: string;
+  count: number;
+  optional: boolean;
+}
+
 /**
  * The runtime part of a recipe as both renderers embed it, with every schema
  * default resolved and fingerprints left out: the preludes interpret it the
@@ -169,6 +177,8 @@ export interface ExportPlan {
   tables: PlanTable[];
   /** Index of the lead table (the paginate block's driving table, else the first with an item block), whose absence fails the run; -1 when none. */
   primary: number;
+  /** Captures, in recipe order: output tables after `tables`. */
+  captures: PlanCapture[];
   pagination: PlanPagination;
   timings: PlanTimings;
 }
@@ -294,6 +304,7 @@ export function buildPlan(recipe: Recipe): ExportPlan {
     sequence: recipe.sequence.map(block),
     tables,
     primary,
+    captures: (recipe.captures ?? []).map((c) => ({ name: c.name, match: c.match, count: c.count, optional: c.optional })),
     pagination: {
       kind: pagination.kind,
       table: driving,

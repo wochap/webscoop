@@ -14,10 +14,12 @@ export interface ListedRecipe extends RecipeSummary {
   vars: { name: string; default?: string; description?: string }[];
   /** Every table in recipe order; a shorthand recipe lists one table named `items`. */
   tables: { name: string; description?: string; fields: { name: string; type: FieldType }[] }[];
+  /** Every capture in recipe order; absent without captures. */
+  captures?: { name: string; description?: string }[];
 }
 
 /** What a listing shows of a recipe beyond its file: descriptions, variables, and tables. */
-function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 'tables'> {
+function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 'tables' | 'captures'> {
   return {
     ...(recipe.description ? { description: recipe.description } : {}),
     vars: recipe.vars.map((v) => ({ name: v.name, ...(v.default !== undefined ? { default: v.default } : {}), ...(v.description ? { description: v.description } : {}) })),
@@ -26,6 +28,7 @@ function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 
       ...(t.description ? { description: t.description } : {}),
       fields: t.fields.map((f) => ({ name: f.name, type: f.type })),
     })),
+    ...(recipe.captures ? { captures: recipe.captures.map((c) => ({ name: c.name, ...(c.description ? { description: c.description } : {}) })) } : {}),
   };
 }
 

@@ -9,10 +9,10 @@ type Kind = 'url' | 'next' | 'more' | 'scroll';
 
 const role = (value: string) => ({ strategy: 'role' as const, value, stability: 'stable' as const });
 
-type Paginate = Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'];
+type Paginate = Extract<NonNullable<RecipeInput['sequence']>[number], { paginate: unknown }>['paginate'];
 
 /** The recipe's paginate block settings, to change in place. */
-const block = (r: RecipeInput): Paginate => (r.sequence.find((b) => 'paginate' in b) as { paginate: Paginate }).paginate;
+const block = (r: RecipeInput): Paginate => (r.sequence!.find((b) => 'paginate' in b) as { paginate: Paginate }).paginate;
 
 /** The paged reference recipe for one pagination kind, with extra catalog query switches. */
 async function paged(scoop: Scoop, name: string, kind: Kind, change: (r: RecipeInput) => void = () => {}): Promise<string> {

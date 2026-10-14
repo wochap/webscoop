@@ -3,6 +3,7 @@ import { STOP_RULES, type BlockPath, type Draft, type DraftBlock, type DraftInne
 import { useActions, useSnapshot } from './context';
 import { dropIndex, lineClass, rowHeader, useDragList, type DragRowState } from './drag';
 import { Segmented } from './flows';
+import { CaptureWaitLine } from './captures';
 import { Icon } from './icons';
 import { Toggle } from './items';
 import { Section } from './section';
@@ -23,11 +24,13 @@ export function blockText(block: DraftBlock | DraftInnerBlock, pagination: Draft
   return `paginate: ${pagination?.kind ?? '…'}`;
 }
 
-/** The collapsed Sequence summary: the blocks in short form. */
-export function sequenceSummary(draft: Pick<Draft, 'sequence' | 'pagination'>): string {
+/** The collapsed Sequence summary: the blocks in short form, then the wait for captures when the draft has any. */
+export function sequenceSummary(draft: Pick<Draft, 'sequence' | 'pagination'> & { captures?: readonly unknown[] }): string {
   const blocks = draft.sequence.blocks;
-  if (blocks.length === 0) return 'empty';
-  return blocks.map((b) => ('paginate' in b ? `paginate ${draft.pagination?.kind ?? ''} [${b.paginate.do.map((d) => blockText(d, null)).join(', ')}]` : blockText(b, null))).join(' → ');
+  const waits = (draft.captures?.length ?? 0) > 0;
+  if (blocks.length === 0) return waits ? 'open URL · wait for captures' : 'empty';
+  const text = blocks.map((b) => ('paginate' in b ? `paginate ${draft.pagination?.kind ?? ''} [${b.paginate.do.map((d) => blockText(d, null)).join(', ')}]` : blockText(b, null))).join(' → ');
+  return waits ? `${text} → wait for captures` : text;
 }
 
 /** "Fix N sequence errors to save", or null without errors. */
@@ -290,7 +293,14 @@ export function SequenceSection({ draft, collapsed, onCollapse }: { draft: Draft
       }
     >
       <div className="ws-col" data-ws="sequence" {...drag.containerProps}>
-        {blocks.length === 0 && <span className="ws-meta">Nothing runs yet. Add a table or record a flow.</span>}
+        {blocks.length === 0 &&
+          (draft.captures.length > 0 ? (
+            <span className="ws-meta" data-ws="sequence-open-url">
+              open URL
+            </span>
+          ) : (
+            <span className="ws-meta">Nothing runs yet. Add a table or record a flow.</span>
+          ))}
         {blocks.map((block, i) => {
           const path: BlockPath = [i];
           if (!('paginate' in block)) {
@@ -314,6 +324,7 @@ export function SequenceSection({ draft, collapsed, onCollapse }: { draft: Draft
             </BlockRow>
           );
         })}
+        {draft.captures.length > 0 && <CaptureWaitLine />}
         {errors.filter((e) => e.path === null).map((e, i) => (
           <span key={i} className="ws-error" data-ws="sequence-error">
             {e.message}

@@ -67,7 +67,7 @@ describe('flows section', () => {
   it('collapses to the active flow and the counts of each kind', () => {
     const draft = withFlows([setup(), loginWall]);
     expect(flowsSummary(draft)).toBe('into setup · 1 called · 1 reactive');
-    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: false, flows: true, sequence: true } } });
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: false, flows: true, sequence: true, captures: true } } });
     expect(p.q('flows-summary')!.textContent).toBe('into setup · 1 called · 1 reactive');
     fireEvent.click(p.q('section-flows')!.querySelector('[data-ws="section-toggle"]')!);
     expect(p.sent).toEqual([{ kind: 'panel.setCollapsed', section: 'flows', collapsed: false }]);

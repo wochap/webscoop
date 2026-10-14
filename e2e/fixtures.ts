@@ -19,6 +19,7 @@ export const STEPS_RECIPE = join(root, 'packages/cli/fixtures/playground-steps.j
 export const TABLES_RECIPE = join(root, 'packages/cli/fixtures/playground-tables.json');
 export const HOVER_RECIPE = join(root, 'packages/cli/fixtures/playground-hover.json');
 export const FRAMED_RECIPE = join(root, 'packages/cli/fixtures/playground-framed.json');
+export const VIDEO_RECIPE = join(root, 'packages/cli/fixtures/playground-video.json');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 

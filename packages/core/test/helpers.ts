@@ -57,7 +57,7 @@ export function sequenced(input: Omit<RecipeInput, 'sequence'> & { sequence?: Re
   return { ...input, sequence: input.sequence ?? extractAll(input) } as RecipeInput;
 }
 
-type PaginateInput = Omit<Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'], 'do'> & { do?: Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate']['do'] };
+type PaginateInput = Omit<Extract<NonNullable<RecipeInput['sequence']>[number], { paginate: unknown }>['paginate'], 'do'> & { do?: Extract<NonNullable<RecipeInput['sequence']>[number], { paginate: unknown }>['paginate']['do'] };
 
 /** A sequence of one paginate block, extracting `items` (or the given blocks) on every page. */
 export function paged(settings: PaginateInput, before: RecipeInput['sequence'] = []): RecipeInput['sequence'] {

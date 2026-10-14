@@ -74,6 +74,8 @@ export function PanelFooter({
   fieldCount = 0,
   flowCount = 0,
   stepCount = 0,
+  captureCount = 0,
+  unmatched = 0,
   canTest,
   blocker = null,
   onTest,
@@ -85,6 +87,10 @@ export function PanelFooter({
   fieldCount?: number;
   flowCount?: number;
   stepCount?: number;
+  /** Captures of the draft; with any, the counts leave out zeros and name the captures. */
+  captureCount?: number;
+  /** Required captures nothing in the request log matches yet. */
+  unmatched?: number;
   canTest: boolean;
   /** Why Save and Test run are disabled, such as sequence errors; null when they are not. */
   blocker?: string | null;
@@ -92,7 +98,10 @@ export function PanelFooter({
   onSave: () => void;
   savedName: string | null;
 }) {
-  const counts = [tableCount === 0 ? 'No tables' : plural(tableCount, 'table'), plural(fieldCount, 'field'), plural(flowCount, 'flow'), plural(stepCount, 'step')].join(' · ');
+  const counts =
+    captureCount > 0
+      ? [plural(tableCount, 'table'), ...[plural(fieldCount, 'field'), plural(flowCount, 'flow'), plural(stepCount, 'step')].filter((c) => !c.startsWith('0 ')), plural(captureCount, 'capture')].join(' · ')
+      : [tableCount === 0 ? 'No tables' : plural(tableCount, 'table'), plural(fieldCount, 'field'), plural(flowCount, 'flow'), plural(stepCount, 'step')].join(' · ');
   return (
     <>
       {blocker && (
@@ -109,6 +118,11 @@ export function PanelFooter({
         <span className="ws-meta ws-ellipsis" title={counts} data-ws="footer-count">
           {counts}
         </span>
+        {unmatched > 0 && (
+          <span className="ws-tone-warn-text ws-meta" title="Required captures no request matched yet" data-ws="footer-unmatched">
+            <Icon name="warning" size={10} /> {unmatched} unmatched
+          </span>
+        )}
         <span className="ws-spacer" />
         <span className="ws-meta" data-ws="footer-status">
           {dirty ? 'Unsaved' : savedName ? `Saved ${savedName}` : ''}

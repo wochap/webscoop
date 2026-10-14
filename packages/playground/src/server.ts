@@ -217,6 +217,63 @@ ${listen}
 </body></html>`;
 }
 
+/** The same playground on the other loopback hostname, so a frame from it is cross-origin. */
+function otherOrigin(hostHeader: string | undefined, fallback: string): string {
+  const host = hostHeader ?? fallback;
+  const [name, port] = host.startsWith('[') ? [host.slice(0, host.indexOf(']') + 1), host.slice(host.indexOf(']') + 2)] : (host.split(':') as [string, string?]);
+  const other = name === 'localhost' ? '127.0.0.1' : 'localhost';
+  return `http://${other}${port ? `:${port}` : ''}`;
+}
+
+/** A lesson page whose player iframe comes from the other loopback origin; with `popup=1`, a button opens the player in a popup instead. */
+function videoPage(id: string, playerOrigin: string, query: URLSearchParams): string {
+  const params = new URLSearchParams({ id });
+  for (const key of ['delay', 'noplay']) {
+    const value = query.get(key);
+    if (value !== null) params.set(key, value);
+  }
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Lesson ${escapeHtml(id)}</title></head>
+<body><h1 id="lesson">Lesson ${escapeHtml(id)}</h1>
+${
+    query.get('popup') === '1'
+      ? `<button id="open-player" type="button" onclick="window.open(${escapeHtml(JSON.stringify(`/video/player?${params.toString()}`))}, 'player', 'width=500,height=600')">Open the player</button>`
+      : `<iframe id="player" src="${playerOrigin}/video/player?${params.toString()}" width="640" height="360" title="Player"></iframe>`
+  }
+</body></html>`;
+}
+
+/** The player: fetches the playlist, the variant, its segments, and the playlist again over XHR, then plays a blob URL. */
+function playerPage(id: string, delayMs: number, noplay: boolean): string {
+  const base = `/stream/${encodeURIComponent(id)}`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Player</title></head>
+<body style="margin:0"><video id="video" width="640" height="360" muted></video>
+<script>
+const get = (url) => new Promise((resolve) => { const x = new XMLHttpRequest(); x.open('GET', url); x.onloadend = () => resolve(x.responseText); x.send(); });
+async function play() {
+  await get(${JSON.stringify(`${base}/playlist.m3u8`)});
+  await get(${JSON.stringify(`${base}/1080p/video.m3u8`)});
+  for (let i = 0; i < 4; i++) await get(${JSON.stringify(`${base}/1080p/video`)} + i + '.ts');
+  await get(${JSON.stringify(`${base}/playlist.m3u8`)});
+  document.getElementById('video').src = URL.createObjectURL(new Blob(['segment'], { type: 'video/mp2t' }));
+}
+${noplay ? '' : `setTimeout(play, ${delayMs});`}
+</script></body></html>`;
+}
+
+/** Manifests and segments under `/stream/<id>/`. */
+function streamFile(path: string): { body: string; type: string } | null {
+  const match = /^\/stream\/([^/]+)\/(playlist\.m3u8|1080p\/video\.m3u8|1080p\/video([0-3])\.ts)$/.exec(path);
+  if (!match) return null;
+  if (match[2] === 'playlist.m3u8') return { body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n1080p/video.m3u8\n', type: 'application/vnd.apple.mpegurl' };
+  if (match[2] === '1080p/video.m3u8') {
+    const segments = [0, 1, 2, 3].map((i) => `#EXTINF:4.0,\nvideo${i}.ts`).join('\n');
+    return { body: `#EXTM3U\n#EXT-X-TARGETDURATION:4\n${segments}\n#EXT-X-ENDLIST\n`, type: 'application/vnd.apple.mpegurl' };
+  }
+  return { body: `segment ${match[3]}`, type: 'video/mp2t' };
+}
+
 function send(res: ServerResponse, status: number, body: string, type = 'text/plain; charset=utf-8'): void {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
@@ -464,6 +521,19 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     }
     if (url.pathname === '/framed') return send(res, 200, framedPage(url.searchParams.get('show') ?? 'catalog'), 'text/html; charset=utf-8');
     if (url.pathname === '/framed/inner') return send(res, 200, framedInner(url.searchParams.get('view') ?? 'catalog', products, control.seed), 'text/html; charset=utf-8');
+    if (url.pathname === '/video') {
+      const id = url.searchParams.get('id') ?? '1';
+      return send(res, 200, videoPage(id, otherOrigin(req.headers.host, host), url.searchParams), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/video/player') {
+      const delayMs = intParam(url.searchParams.get('delay'), 'delay', 0, 60_000) ?? 0;
+      return send(res, 200, playerPage(url.searchParams.get('id') ?? '1', delayMs, url.searchParams.get('noplay') === '1'), 'text/html; charset=utf-8');
+    }
+    const stream = streamFile(url.pathname);
+    if (stream) {
+      res.writeHead(200, { 'content-type': stream.type, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+      return void res.end(stream.body);
+    }
     if (url.pathname === '/forms') return send(res, 200, formsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/csp') {

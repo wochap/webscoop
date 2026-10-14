@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { draftFromRecipe, draftToRecipe, isReactive, loadRecipe, maxRetriesOf, paginationOf, RecipeError, saveRecipe, tablesOf, validateRecipe, type RecipeInput } from '../src';
@@ -828,5 +828,65 @@ describe('descriptions', () => {
     const result = validateRecipe(base());
     expect(result.ok).toBe(true);
     expect(result.ok && result.recipe.description).toBeUndefined();
+  });
+});
+
+describe('recipe captures', () => {
+  const capturesOnly = (captures: unknown[]) => ({ schemaVersion: 2, name: 'lesson-video', url: 'https://example.com/v/{id}', vars: [{ name: 'id', type: 'string' }], captures });
+
+  it('loads a captures-only recipe with defaults filled in', () => {
+    const result = validateRecipe(capturesOnly([{ name: 'videos', match: '/playlist\\.m3u8(\\?|$)' }]));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.recipe.captures).toEqual([{ name: 'videos', match: '/playlist\\.m3u8(\\?|$)', count: 1, optional: false }]);
+    expect(result.recipe.sequence).toEqual([]);
+  });
+
+  it('still needs a sequence without captures', () => {
+    const errors = errorsOf({ ...base(), sequence: undefined, fields: undefined });
+    expect(errors.map((e) => e.message)).toContain('a sequence needs at least one block');
+  });
+
+  it('reports an invalid regex naming the capture, match, and the error', () => {
+    const errors = errorsOf(capturesOnly([{ name: 'videos', match: '\\.m3u8(\\?|$' }]));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.path).toBe('$.captures[0].match');
+    expect(errors[0]!.message).toContain('videos');
+    expect(errors[0]!.message).toMatch(/Invalid regular expression|Unterminated group/);
+  });
+
+  it('reports duplicate names, a table clash, and the reserved downloads name in one pass', () => {
+    const errors = errorsOf({
+      ...base(),
+      fields: undefined,
+      tables: [{ name: 'videos', fields: base().fields }],
+      sequence: [{ extract: 'videos' }],
+      captures: [
+        { name: 'videos', match: 'a' },
+        { name: 'downloads', match: 'b' },
+        { name: 'subs', match: 'c' },
+        { name: 'subs', match: 'd' },
+      ],
+    });
+    const messages = errors.map((e) => e.message).join('\n');
+    expect(messages).toContain('capture name "videos" clashes with a table');
+    expect(messages).toContain('"downloads" is reserved');
+    expect(messages).toContain('duplicate capture name "subs"');
+  });
+});
+
+describe('cli fixtures', () => {
+  const dir = fileURLToPath(new URL('../../cli/fixtures/', import.meta.url));
+  const names = readdirSync(dir).filter((f) => f.endsWith('.json'));
+
+  it.each(names)('%s validates', (name) => {
+    const result = validateRecipe(JSON.parse(readFileSync(`${dir}${name}`, 'utf8')));
+    expect(result.errors).toEqual([]);
+  });
+
+  it('has the video fixture with its capture', () => {
+    const recipe = loadRecipe(readFileSync(`${dir}playground-video.json`, 'utf8'));
+    expect(recipe.captures).toEqual([{ name: 'videos', match: '/playlist\\.m3u8(\\?|$)', count: 1, optional: false, description: 'HLS playlist URL' }]);
+    expect(recipe.vars.map((v) => v.name)).toEqual(['id', 'port']);
   });
 });

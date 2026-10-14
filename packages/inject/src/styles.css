@@ -879,6 +879,21 @@
 .ws-sheet-body { overflow-y: auto; padding: var(--ws-s2) var(--ws-s4); }
 .ws-sheet-foot { display: flex; align-items: center; gap: 8px; padding: 8px var(--ws-s4); border-top: 1px solid var(--ws-border); }
 
+/* Captures and the Network picker */
+.ws-url { display: flex; min-width: 0; font: 400 11.5px/1.4 var(--ws-mono); }
+.ws-url-head { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ws-text-muted); }
+.ws-url-tail { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ws-text); }
+.ws-capture { gap: 2px; padding: 2px 0; }
+.ws-capture-editor { gap: 8px; }
+.ws-capture-editor .ws-chip[aria-pressed='true'] { box-shadow: inset 0 0 0 1px var(--ws-accent-600); color: var(--ws-text); }
+.ws-net { gap: 6px; }
+.ws-net-list { gap: 1px; max-height: 360px; overflow-y: auto; outline: none; }
+.ws-net-compact .ws-net-list { max-height: 260px; }
+.ws-net-row { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: var(--ws-r-sm); cursor: pointer; min-width: 0; }
+.ws-net-row-focused { background: var(--ws-neutral-900); box-shadow: inset 2px 0 0 var(--ws-accent-600); }
+.ws-block-fixed { flex-direction: row; align-items: center; gap: 6px; padding: 4px 8px; border: 1px dashed var(--ws-neutral-700); color: var(--ws-text-muted); cursor: default; }
+.ws-block-fixed:hover { background: transparent; }
+
 /* The guard banner spans the whole width in a narrow window, where no sidebar shows. */
 @media (max-width: 639px) {
   #ws-guard { right: 0; flex-wrap: wrap; }

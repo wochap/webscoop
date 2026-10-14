@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { recordEvents, RUN_EVENT_NAMES, RunEmitter, type DownloadReport, type FailureReason, type GuardEntry, type Row, type RunEvents, type RunReport } from '../src';
+import { recordEvents, type CaptureReport, RUN_EVENT_NAMES, RunEmitter, type DownloadReport, type FailureReason, type GuardEntry, type Row, type RunEvents, type RunReport } from '../src';
 
 describe('RunEmitter', () => {
   it('delivers typed payloads to named and catch-all listeners', () => {
@@ -75,5 +75,19 @@ describe('RunEmitter', () => {
     const log = recordEvents(emitter);
     emitter.emit('download.saved', { page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'http://x/a.csv', bytes: 3, step: null });
     expect(log.of('download.saved')).toEqual([{ page: 1, file: '/dl/a.csv', name: 'a.csv', url: 'http://x/a.csv', bytes: 3, step: null }]);
+  });
+
+  it('types capture.matched and the report capture list', () => {
+    expect(RUN_EVENT_NAMES.indexOf('capture.matched')).toBeGreaterThan(RUN_EVENT_NAMES.indexOf('download.saved'));
+    expectTypeOf<RunEvents['capture.matched']>().toEqualTypeOf<{
+      capture: string;
+      row: Row & { url: string; method: string; status: number | null; mime: string | null; frame: string | null };
+    }>();
+    expectTypeOf<RunReport['captures']>().toEqualTypeOf<CaptureReport[]>();
+    expectTypeOf<CaptureReport>().toEqualTypeOf<{ name: string; count: number; optional: boolean; rows: number; status: 'ok' | 'partial' | 'missing' }>();
+    const emitter = new RunEmitter();
+    const log = recordEvents(emitter);
+    emitter.emit('capture.matched', { capture: 'videos', row: { url: 'u', method: 'GET', status: 200, mime: 'application/vnd.apple.mpegurl', frame: null, _page: 1, _index: 0 } });
+    expect(log.of('capture.matched')[0]!.capture).toBe('videos');
   });
 });

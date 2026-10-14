@@ -20,7 +20,7 @@ function draft(extra: Partial<Draft> = {}): Draft {
   return validateDraft({ ...newDraft(), tables, activeTable: 0, form: 'tables', flows: [reach], activeFlow: 0, ...extra });
 }
 
-const open = (d: Draft) => ({ ...baseState(d), panel: { collapsed: { recipe: false, flows: false, sequence: false } } });
+const open = (d: Draft) => ({ ...baseState(d), panel: { collapsed: { recipe: false, flows: false, sequence: false, captures: true } } });
 
 /** Gives rows a vertical layout of 40px tall rows for drag tests. */
 function stack(rows: HTMLElement[]) {

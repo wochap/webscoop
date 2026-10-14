@@ -1,5 +1,5 @@
 import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { Crumb, RecorderState } from '@webscoop/core/page';
+import type { Crumb, PanelSection, RecorderState } from '@webscoop/core/page';
 import { currentTable, tableMode } from '@webscoop/core/page';
 import { isMenuTarget, isTypingTarget, shortcutFor, walkTrail, type KeyLike, type Shortcut } from '../keyboard';
 import type { PendingSelectors } from '../pending';
@@ -23,6 +23,7 @@ import { SequenceSection, sequenceBlocker } from './sequence';
 import { TabBar, TableDescription, TableHeader } from './tables';
 import { CompactBar, PanelRail, PanelStrip } from './windows';
 import { flowsOnly } from './empty';
+import { CapturesSection, unmatchedCaptures } from './captures';
 
 /** Carry out a shortcut against the current state. */
 export function runShortcut(shortcut: Shortcut, snap: Snapshot, actions: Actions, pending?: PendingSelectors): void {
@@ -197,7 +198,7 @@ export function handleKey(e: KeyLike, target: EventTarget | null, snap: Snapshot
     focusedStep: snap.ui.focusedStep,
     focusedBlock: snap.ui.focusedBlock,
     switcher: snap.ui.switcher,
-    sheet: snap.ui.sheet,
+    sheet: Boolean(snap.ui.sheet),
     browsing: snap.ui.browsing,
     repicking: Boolean(snap.host?.repickContext),
     editing: Boolean(snap.host?.editing),
@@ -218,7 +219,7 @@ export function ScoopRoot() {
   const snap = useSnapshot();
   const actions = useActions();
   const pending = usePending();
-  const { host, ui } = snap;
+  const { host, ui, network } = snap;
   const mode = modeOf(snap);
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
@@ -304,7 +305,7 @@ export function ScoopRoot() {
   const noTables = flowsOnly(draft) && !ui.showTables;
   const locked = Boolean(proposal);
   const collapsed = host.panel.collapsed;
-  const collapse = (section: 'recipe' | 'flows' | 'sequence') => (on: boolean) => void actions.send({ kind: 'panel.setCollapsed', section, collapsed: on });
+  const collapse = (section: PanelSection) => (on: boolean) => void actions.send({ kind: 'panel.setCollapsed', section, collapsed: on });
   const edit = (index: number) => {
     if (ui.picking) actions.cancelPicking();
     void actions.send({ kind: 'draft.editField', index });
@@ -321,7 +322,9 @@ export function ScoopRoot() {
             fieldCount={fieldCount}
             flowCount={draft.flows.length}
             stepCount={stepCount}
-            canTest={fieldCount > 0 || stepCount > 0}
+            captureCount={draft.captures.length}
+            unmatched={unmatchedCaptures(draft, network)}
+            canTest={fieldCount > 0 || stepCount > 0 || draft.captures.length > 0}
             blocker={sequenceBlocker(draft)}
             savedName={host.saved?.name ?? null}
             onTest={() => {
@@ -351,20 +354,40 @@ export function ScoopRoot() {
               onCollapse={collapse('recipe')}
             />
             <StartDownloadNotice host={host} />
-            <FlowsSection draft={draft} collapsed={collapsed.flows} onCollapse={collapse('flows')} />
+            {!(noTables && draft.flows.length === 0) && <FlowsSection draft={draft} collapsed={collapsed.flows} onCollapse={collapse('flows')} />}
             <SequenceSection draft={draft} collapsed={collapsed.sequence} onCollapse={collapse('sequence')} />
             {noTables ? (
-              <section className="ws-card ws-col" data-ws="flows-only">
-                <span className="ws-title">
-                  <Icon name="check" size={12} /> Automation only
-                </span>
-                <span className="ws-meta">No tables — this recipe runs its flows and extracts nothing. A run succeeds when every step completes.</span>
+              <section className="ws-card ws-col" data-ws="flows-only" data-captures={draft.captures.length > 0 || undefined}>
+                {draft.captures.length > 0 ? (
+                  <>
+                    <span className="ws-title">
+                      <Icon name="check" size={12} /> Captures only
+                    </span>
+                    <span className="ws-meta" data-ws="captures-only-text">
+                      No tables. The run opens the URL, waits until every required capture has its count, and outputs one table per capture:{' '}
+                      {draft.captures.map((c, i) => (
+                        <span key={c.name}>
+                          {i > 0 && ', '}
+                          <span className="ws-mono-sm">{c.name}</span>
+                        </span>
+                      ))}
+                      .
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="ws-title">
+                      <Icon name="check" size={12} /> Automation only
+                    </span>
+                    <span className="ws-meta">No tables — this recipe runs its flows and extracts nothing. A run succeeds when every step completes.</span>
+                  </>
+                )}
                 <span className="ws-row">
                   <button type="button" className="ws-btn ws-btn-sm" onClick={() => actions.setUi({ showTables: true })} data-ws="flows-only-add-table">
                     <Icon name="plus" size={11} />
                     Add a table
                   </button>
-                  <span className="ws-meta">to extract data too</span>
+                  <span className="ws-meta">{draft.captures.length > 0 ? 'shows the tab bar above Captures' : 'to extract data too'}</span>
                 </span>
                 <PickModeStrip picking={ui.picking} onStart={actions.startPicking} onCancel={actions.cancelPicking} level={host.levelPick?.level ?? null} hover={ui.hover} />
                 <PickResult host={host} trail={ui.trail} />
@@ -403,6 +426,7 @@ export function ScoopRoot() {
             </div>
               </>
             )}
+            <CapturesSection draft={draft} collapsed={collapsed.captures} onCollapse={collapse('captures')} />
           </>
         )}
         {draft.errors.length > 0 && fieldCount > 0 && (

@@ -226,9 +226,88 @@ describe('webscoop run with a download step', () => {
   });
 });
 
+describe('webscoop run with captures', () => {
+  const VIDEO = 'https://learn.test/v/42';
+  const PLAYLIST = 'https://cdn.test/0999851b/playlist.m3u8';
+  const VARIANT = 'https://cdn.test/0999851b/1080p/video.m3u8';
+  const lesson: RecipeInput = {
+    schemaVersion: 2,
+    name: 'lesson-video',
+    url: 'https://learn.test/v/{id}',
+    vars: [{ name: 'id', type: 'string' }],
+    captures: [{ name: 'videos', match: '/playlist\\.m3u8(\\?|$)' }],
+  };
+  const browser = () =>
+    new FakeBrowser({
+      [VIDEO]: { dom: h('html', {}, h('body', {}, h('h1', {}, 'Lesson'))), requests: [{ url: PLAYLIST, frameUrl: 'https://player.test/e/1', mime: 'application/vnd.apple.mpegurl' }, { url: PLAYLIST }] },
+      [EXPORT_URL]: { dom: h('html', {}), download: { name: 'deck.pdf', bytes: 7 } },
+    });
+  const EXPORT_URL = 'https://learn.test/export.pdf';
+
+  it('prints a captures-only recipe as a plain array of capture rows', async () => {
+    const dir = await home([lesson]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42'], io)).toBe(ExitCode.Ok);
+    expect(JSON.parse(io.out())).toEqual([{ url: PLAYLIST, method: 'GET', status: 200, mime: 'application/vnd.apple.mpegurl', frame: 'https://player.test/e/1', _page: 1, _index: 0 }]);
+    expect(io.err()).toContain('1 URL captured');
+  });
+
+  it('orders tables, then captures, then downloads, and --table selects a capture', async () => {
+    const recipe: RecipeInput = {
+      ...lesson,
+      tables: [{ name: 'page', fields: [{ name: 'heading', type: 'text', selectors: [css('h1')] }] }],
+      flows: [{ name: 'fetch', steps: [{ kind: 'download', optional: true }] }],
+      sequence: [{ extract: 'page' }, { flow: 'fetch' }],
+    };
+    const dir = await home([recipe]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--timeout', '50'], io)).toBe(ExitCode.Ok);
+    expect(Object.keys(JSON.parse(io.out()))).toEqual(['page', 'videos', 'downloads']);
+    const one = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--timeout', '50', '--table', 'videos'], one)).toBe(ExitCode.Ok);
+    expect(JSON.parse(one.out())).toEqual([expect.objectContaining({ url: PLAYLIST })]);
+  });
+
+  it('sorts capture rows by _index in JSON mode', async () => {
+    let out = '';
+    const sink = new RowSink({ write: (s: string) => (out += s) }, { jsonl: false, tables: ['videos'], indexed: ['videos'] });
+    sink.row('videos', row(1, 1, { url: VARIANT }));
+    sink.row('videos', row(1, 0, { url: PLAYLIST }));
+    await sink.finish(true);
+    expect(JSON.parse(out).map((r: Row) => r._index)).toEqual([0, 1]);
+  });
+
+  it('exits 3 naming a required capture that never matches', async () => {
+    const dir = await home([lesson]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: new FakeBrowser({ [VIDEO]: h('html', {}) }) });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--timeout', '50'], io)).toBe(3);
+    expect(io.err()).toContain('videos (count 1, 0 found)');
+  });
+
+  it('streams capture rows as JSONL', async () => {
+    const dir = await home([lesson]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--jsonl'], io)).toBe(ExitCode.Ok);
+    expect(io.out().trimEnd().split('\n').map((l) => JSON.parse(l).url)).toEqual([PLAYLIST]);
+  });
+
+  it('warns about an optional capture through the info log, muted by --quiet', async () => {
+    const recipe: RecipeInput = { ...lesson, captures: [...lesson.captures!, { name: 'subtitles', match: '\\.vtt', optional: true }] };
+    const dir = await home([recipe]);
+    const loud = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--timeout', '50'], loud)).toBe(ExitCode.Ok);
+    expect(loud.err()).toContain('warning: optional capture subtitles');
+    expect(loud.err()).toContain('1 URL captured');
+    const quiet = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, cwd: dir, browser: browser() });
+    expect(await main(['run', 'lesson-video', '--var', 'id=42', '--timeout', '50', '--quiet'], quiet)).toBe(ExitCode.Ok);
+    expect(quiet.err()).not.toContain('subtitles');
+    expect(quiet.err()).not.toContain('captured');
+  });
+});
+
 describe('summary with tables', () => {
   const report = (tables: RunReport['tables'], rowCount: number) =>
-    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [], flows: [], downloads: [] }) as unknown as RunReport;
+    ({ recipe: 'results', durationMs: 3100, pageCount: 2, rowCount, tables, healed: 0, guards: [], duplicateCount: 0, droppedCount: 0, steps: [], flows: [], downloads: [], captures: [] }) as unknown as RunReport;
   const table = (name: string, rowCount: number) => ({ name, rowCount, duplicateCount: 0, droppedCount: 0, item: null, fields: [] });
 
   it('lists the count of every table in place of the total', () => {

@@ -67,6 +67,8 @@ function constants(plan: ExportPlan, opts: RenderOptions): string {
     `const TABLES: Table[] = ${literal(plan.tables)};`,
     '/** Index of the table whose absence on its first extraction fails the run; -1 when none. */',
     `const LEAD = ${plan.primary};`,
+    '/** Request URL captures: output tables after TABLES. */',
+    `const CAPTURES: Capture[] = ${literal(plan.captures)};`,
     `const PAGINATION: Pagination = ${literal(pagination)};`,
     '/** Functions evaluated in the page, from webscoop core. */',
     `const PAGE_JS: Record<string, string> = ${literal(PAGE_HELPERS)};`,

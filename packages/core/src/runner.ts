@@ -1,3 +1,4 @@
+import { CaptureSet } from './captures';
 import { RunEmitter, type DownloadReport, type AttentionOutcome, type AttentionReason, type FailureReason, type Row, type RunEvents, type RunReport } from './events';
 import { RunFailure } from './failure';
 import { RunWindows } from './flows/windows';
@@ -262,6 +263,7 @@ export class Runner {
       steps: [],
       flows: [],
       downloads: [],
+      captures: [],
     };
     const finish = () => {
       const ended = now();
@@ -285,6 +287,15 @@ export class Runner {
       await session.settleDownloads(this.opts.timeoutMs ?? 30_000).catch(() => {});
       for (const download of untaken.values()) saved(download);
       untaken.clear();
+    };
+    const captures = new CaptureSet(recipe.captures ?? [], {
+      page: () => currentPage,
+      onMatched: (capture, row) => this.emitter.emit('capture.matched', { capture, row }),
+    });
+    /** Complete rows still waiting for a response, and report every capture. */
+    const finishCaptures = () => {
+      captures.finish();
+      report.captures = captures.report();
     };
     let opened = false;
     let session: Session | undefined;
@@ -326,6 +337,8 @@ export class Runner {
       const live = session;
       windows = new RunWindows(live);
       live.onDownload((d) => untaken.set(d.id, downloadReport(d, currentPage, null)));
+      // Listen before the recipe URL opens, so requests of the first load count.
+      if (captures.size > 0) live.onRequest((event) => captures.handle(event));
       const pid = lifecycle?.browserPid ? await lifecycle.browserPid().catch(() => undefined) : undefined;
       this.emitter.emit('browser.started', pid !== undefined ? { pid } : {});
       if (signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
@@ -402,7 +415,18 @@ export class Runner {
         this.emitter.emit('recipe.saved', { path });
       }
 
+      await captures.settle(this.opts.timeoutMs ?? 30_000, signal);
       await flushDownloads();
+      finishCaptures();
+      const short = report.captures.filter((c) => c.status !== 'ok');
+      for (const c of short.filter((c) => c.optional)) {
+        report.warnings.push(`optional capture ${c.name} matched ${c.rows} of ${c.count} URL${c.count === 1 ? '' : 's'}`);
+      }
+      const required = short.filter((c) => !c.optional);
+      if (required.length > 0) {
+        const detail = required.map((c) => `${c.name} (count ${c.count}, ${c.rows} found)`).join(', ');
+        throw new RunFailure('missing-required', `required capture${required.length === 1 ? '' : 's'} not matched: ${detail}`, required.map((c) => c.name));
+      }
       await closeSession();
       finish();
       this.transition('done');
@@ -411,6 +435,7 @@ export class Runner {
       return { ok: true, rows, report };
     } catch (error) {
       if (!signal?.aborted) await flushDownloads();
+      finishCaptures();
       await closeSession();
       finish();
       this.resolveAttention('ended');

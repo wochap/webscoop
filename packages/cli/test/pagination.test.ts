@@ -11,7 +11,7 @@ import { tempDir, testIo } from './helpers';
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
 const BASE = 'https://shop.test/list';
 
-type Settings = Omit<Extract<RecipeInput['sequence'][number], { paginate: unknown }>['paginate'], 'do'>;
+type Settings = Omit<Extract<NonNullable<RecipeInput['sequence']>[number], { paginate: unknown }>['paginate'], 'do'>;
 
 function recipe(pagination: Settings): RecipeInput {
   return {
@@ -150,6 +150,7 @@ describe('summary', () => {
     steps: [],
     flows: [],
     downloads: [],
+    captures: [],
     ...extra,
   });
 

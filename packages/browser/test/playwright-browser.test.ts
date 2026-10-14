@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { annotate, descendantsOf, refForNode, TimeoutError, xpathFor, type SelectorCandidate, type SerializedElement, type Session } from '@webscoop/core';
+import { annotate, descendantsOf, refForNode, TimeoutError, xpathFor, type RequestEvent, type SelectorCandidate, type SerializedElement, type Session } from '@webscoop/core';
 import { FakeBrowser } from '@webscoop/core/testing';
 import { dataset, startPlayground, type Playground } from '@webscoop/playground';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -610,4 +610,72 @@ describe.skipIf(!hasDisplay)('PlaywrightSession downloads (integration)', () => 
       await rm(downloadDir, { recursive: true, force: true });
     }
   });
+});
+
+describe.skipIf(!hasDisplay)('PlaywrightSession requests (integration)', () => {
+  let server: Server;
+  let port: number;
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = req.url ?? '/';
+      if (url.endsWith('.m3u8')) {
+        res.setHeader('content-type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.end('#EXTM3U');
+        return;
+      }
+      res.setHeader('content-type', 'text/html');
+      if (url === '/player') res.end(`<script>fetch('/frame.m3u8'); fetch('data:text/plain,x');</script>`);
+      else if (url === '/popup') res.end(`<title>popup</title><script>fetch('/popup.m3u8')</script>`);
+      else res.end(`<title>main</title><iframe src="http://localhost:${port}/player"></iframe><button id="open" onclick="window.open('/popup', 'p', 'width=400,height=400')">open</button>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const watch = (session: Session) => {
+    const events: RequestEvent[] = [];
+    session.onRequest((e) => events.push(e));
+    const seen = (suffix: string) => events.find((e) => e.type === 'request' && e.url.endsWith(suffix)) as Extract<RequestEvent, { type: 'request' }> | undefined;
+    return { events, seen };
+  };
+
+  it('sees requests from a cross-origin iframe and from a popup, with their responses', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const session = await new PlaywrightBrowser({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }).open(profileDir);
+    try {
+      const { events, seen } = watch(session);
+      await session.goto(`http://127.0.0.1:${port}/`, { timeoutMs: 10_000 });
+      await expect.poll(() => seen('/frame.m3u8')).toBeDefined();
+      const frame = seen('/frame.m3u8')!;
+      expect(frame).toMatchObject({ method: 'GET', frameUrl: `http://localhost:${port}/player`, window: 'main', resourceType: 'fetch' });
+      await expect.poll(() => events.find((e) => e.type === 'update' && e.id === frame.id)).toMatchObject({ status: 200, mime: 'application/vnd.apple.mpegurl', failed: false });
+      expect(events.some((e) => e.type === 'request' && e.url.startsWith('data:'))).toBe(false);
+      await session.click((await session.resolve(c('id', 'open')))[0]!);
+      await expect.poll(() => seen('/popup.m3u8')).toMatchObject({ window: 'popup', frameUrl: `http://127.0.0.1:${port}/popup` });
+    } finally {
+      await session.close();
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('keeps only its own tab in a shared browser', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'webscoop-browser-'));
+    const shared = await SharedBrowser.launch({ executablePath: process.env.WEBSCOOP_CHROMIUM || undefined }, profileDir);
+    try {
+      const a = await shared.newSession();
+      const b = await shared.newSession();
+      const seenA = watch(a);
+      await b.goto(`http://127.0.0.1:${port}/popup`, { timeoutMs: 10_000 });
+      await a.goto(`http://127.0.0.1:${port}/`, { timeoutMs: 10_000 });
+      await expect.poll(() => seenA.seen('/frame.m3u8')).toBeDefined();
+      await a.click((await a.resolve(c('id', 'open')))[0]!);
+      await expect.poll(() => seenA.events.filter((e) => e.type === 'request' && e.url.endsWith('/popup.m3u8')).length).toBe(1);
+      await a.close();
+      await b.close();
+    } finally {
+      await shared.close();
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -25,6 +25,7 @@ import {
   PAGE_TEXT_LIMIT,
   type PageInfo,
   type ReadOptions,
+  type RequestEvent,
   type RecorderWindow,
   type SelectorCandidate,
   type SettleOptions,
@@ -32,7 +33,7 @@ import {
   type Session,
 } from '@webscoop/core';
 import { HOVER_INSET, HOVER_TIMEOUT_MS, Humanizer, type HoverOptions } from './humanize';
-import { chromium, errors, type BrowserContext, type Download, type Frame, type FrameLocator, type Locator, type Page } from 'playwright';
+import { chromium, errors, type BrowserContext, type Download, type Frame, type FrameLocator, type Locator, type Page, type Request, type Response } from 'playwright';
 
 /** Launch flags that keep Chromium from advertising automation. Patchright manages its own. */
 export const STEALTH_ARGS = ['--disable-blink-features=AutomationControlled'];
@@ -643,6 +644,72 @@ export class PlaywrightSession implements InteractiveSession {
 
   settleDownloads(timeoutMs: number): Promise<void> {
     return this.downloads.queue.settle(timeoutMs);
+  }
+
+  onRequest(listener: (event: RequestEvent) => void): () => void {
+    // In a tab of a shared browser, other jobs share the context: keep only this page and the popups it opened.
+    const owned = new Set<Page>([this.page]);
+    const offPopups = this.tab ? this.watchPopups((popup) => owned.add(popup)) : () => {};
+    const ids = new WeakMap<Request, string>();
+    let count = 0;
+    const pageOf = (request: Request): Page | null => {
+      try {
+        return request.frame().page();
+      } catch {
+        return null; // a service worker's request has no frame
+      }
+    };
+    const onRequest = (request: Request) => {
+      const url = request.url();
+      if (/^(data|blob):/i.test(url)) return;
+      const page = pageOf(request);
+      if (this.tab && (!page || !owned.has(page))) return;
+      const id = `r${++count}`;
+      ids.set(request, id);
+      let frameUrl: string | null;
+      try {
+        frameUrl = page ? request.frame().url() || null : null;
+      } catch {
+        frameUrl = null;
+      }
+      listener({ type: 'request', id, url, method: request.method(), frameUrl, window: !page || page === this.page ? 'main' : 'popup', resourceType: request.resourceType(), at: Date.now() });
+    };
+    const onResponse = (response: Response) => {
+      const id = ids.get(response.request());
+      if (!id) return;
+      const type = response.headers()['content-type'];
+      listener({ type: 'update', id, status: response.status(), mime: type ? type.split(';')[0]!.trim().toLowerCase() || null : null, failed: false });
+    };
+    const onFailed = (request: Request) => {
+      const id = ids.get(request);
+      if (id) listener({ type: 'update', id, status: null, mime: null, failed: true });
+    };
+    this.context.on('request', onRequest);
+    this.context.on('response', onResponse);
+    this.context.on('requestfailed', onFailed);
+    return () => {
+      offPopups();
+      this.context.off('request', onRequest);
+      this.context.off('response', onResponse);
+      this.context.off('requestfailed', onFailed);
+    };
+  }
+
+  /** Call `cb` with every popup of this page and of its popups. */
+  private watchPopups(cb: (popup: Page) => void): () => void {
+    const offs: (() => void)[] = [];
+    const watch = (page: Page) => {
+      const listener = (popup: Page) => {
+        cb(popup);
+        watch(popup);
+      };
+      page.on('popup', listener);
+      offs.push(() => page.off('popup', listener));
+    };
+    watch(this.page);
+    return () => {
+      for (const off of offs.splice(0)) off();
+    };
   }
 
   /** The session over a popup of this page: same context and humanizer settings; closing it closes only the popup. */

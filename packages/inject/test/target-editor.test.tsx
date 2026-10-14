@@ -182,7 +182,7 @@ describe('target editor', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'trigger', flow: 0 }, mode: 'pick' });
     p.unmount();
     const draft = withFlows([{ name: 'setup', steps: [step('click')] }], { pagination: { kind: 'next', target: tab, limit: 'all', stopRules: [], delayMs: 0 } });
-    const q = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: false, flows: false, sequence: false } } }, { paginateOpen: true });
+    const q = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: false, flows: false, sequence: false, captures: true } } }, { paginateOpen: true });
     fireEvent.click(q.q('paginate-target-edit-type')!);
     expect(q.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'pagination' }, mode: 'type' });
   });

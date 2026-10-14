@@ -156,13 +156,19 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
         openOptions,
       }).run();
       const elapsedMs = Math.round(performance.now() - started);
-      const fields: BenchField[] = testRows(result.report).map((row) => ({
-        name: row.name,
-        rung: row.outcome.kind,
-        status: row.status,
-        ...(row.outcome.kind === 'model' ? { rationale: row.outcome.rationale } : {}),
-        ...(row.notes ? { notes: row.notes } : {}),
-      }));
+      const fields: BenchField[] = testRows(result.report).flatMap((row) =>
+        row.outcome
+          ? [
+              {
+                name: row.name,
+                rung: row.outcome.kind,
+                status: row.status,
+                ...(row.outcome.kind === 'model' ? { rationale: row.outcome.rationale } : {}),
+                ...(row.notes ? { notes: row.notes } : {}),
+              },
+            ]
+          : [],
+      );
       const entry: BenchTier = { tier, elapsedMs, ok: result.ok, fields };
       if (!result.ok) {
         entry.reason = result.reason;

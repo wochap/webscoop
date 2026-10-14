@@ -143,7 +143,33 @@ export interface RunReport {
   flows: FlowRunReport[];
   /** Every file the run saved, in the order it was settled. */
   downloads: DownloadReport[];
+  /** Every capture of the recipe, in recipe order. */
+  captures: CaptureReport[];
 }
+
+/** `ok`: the rows reach the count; `partial`: some rows, fewer than the count; `missing`: none. */
+export type CaptureStatus = 'ok' | 'partial' | 'missing';
+
+export interface CaptureReport {
+  name: string;
+  count: number;
+  optional: boolean;
+  /** Unique URLs matched. */
+  rows: number;
+  status: CaptureStatus;
+}
+
+/** A unique request URL a capture matched. */
+export type CaptureRow = Row & {
+  url: string;
+  method: string;
+  /** Null when the request failed or got no response before the run ended. */
+  status: number | null;
+  /** `content-type` without parameters, null without a response. */
+  mime: string | null;
+  /** URL of the document of the frame that made the request, null when unknown. */
+  frame: string | null;
+};
 
 /** A file a run saved in the download directory. */
 export interface DownloadReport {
@@ -222,6 +248,8 @@ export interface RunEvents {
   'recipe.saved': { path: string };
   /** A file was saved under its final name: once a `download` step took it, or at the end of the run for one no step took. */
   'download.saved': DownloadReport;
+  /** A capture row is complete: its first request got a response or failed, or the run ended. Emitted in completion order; `_index` follows request order. */
+  'capture.matched': { capture: string; row: CaptureRow };
   /** A flow started: called from the sequence or fired by its trigger; `window` is the trigger's window URL for a reactive flow. */
   'flow.started': { flow: string; kind: FlowKind; page: number; window?: string };
   'flow.done': { flow: string; kind: FlowKind; page: number; outcome: FlowOutcome };
@@ -258,6 +286,7 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'pagination.stopped',
   'recipe.saved',
   'download.saved',
+  'capture.matched',
   'attention.needed',
   'attention.resolved',
   'run.done',

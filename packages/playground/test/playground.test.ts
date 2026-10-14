@@ -657,3 +657,52 @@ describe('forms', () => {
     expect(echo).toEqual({ combobox: 'Lima', otp: '482913', chooser: [{ name: 'a.txt', size: 12 }] });
   });
 });
+
+describe('/video', () => {
+  it('embeds the player from the other loopback origin, passing delay and noplay', async () => {
+    const pg = await start();
+    const port = new URL(pg.url).port;
+    const res = await fetch(`http://127.0.0.1:${port}/video?id=42&delay=2000`);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const doc = new JSDOM(await res.text()).window.document;
+    expect(doc.querySelector('h1')!.textContent).toBe('Lesson 42');
+    expect(doc.querySelector('iframe#player')!.getAttribute('src')).toBe(`http://localhost:${port}/video/player?id=42&delay=2000`);
+    const swapped = await (await fetch(`http://localhost:${port}/video?id=42`).catch(() => null))?.text();
+    if (swapped !== undefined) expect(swapped).toContain(`src="http://127.0.0.1:${port}/video/player?id=42"`);
+    else console.warn('localhost does not resolve to the playground here; skipping the reverse origin check');
+  });
+
+  it('plays the stream over XHR into a blob, after the delay, or not at all with noplay', async () => {
+    const pg = await start();
+    const player = await (await fetch(`${pg.url}/video/player?id=42&delay=2000`)).text();
+    expect(player).toContain('"/stream/42/playlist.m3u8"');
+    expect(player).toContain('"/stream/42/1080p/video.m3u8"');
+    expect(player.split('"/stream/42/playlist.m3u8"').length - 1).toBe(2);
+    expect(player).toContain('URL.createObjectURL');
+    expect(player).toContain('setTimeout(play, 2000)');
+    const silent = await (await fetch(`${pg.url}/video/player?id=42&noplay=1`)).text();
+    expect(silent).not.toContain('setTimeout(play');
+  });
+
+  it('serves manifests and segments with their content types', async () => {
+    const pg = await start();
+    const playlist = await fetch(`${pg.url}/stream/42/playlist.m3u8`);
+    expect(playlist.headers.get('content-type')).toBe('application/vnd.apple.mpegurl');
+    expect(await playlist.text()).toContain('1080p/video.m3u8');
+    const variant = await fetch(`${pg.url}/stream/42/1080p/video.m3u8`);
+    expect(variant.headers.get('content-type')).toBe('application/vnd.apple.mpegurl');
+    expect(await variant.text()).toContain('video3.ts');
+    const segment = await fetch(`${pg.url}/stream/42/1080p/video3.ts`);
+    expect(segment.headers.get('content-type')).toBe('video/mp2t');
+    expect((await fetch(`${pg.url}/stream/42/1080p/video4.ts`)).status).toBe(404);
+  });
+});
+
+describe('/video?popup=1', () => {
+  it('opens the player in a popup instead of embedding it', async () => {
+    const pg = await start();
+    const doc = new JSDOM(await (await fetch(`${pg.url}/video?id=7&popup=1`)).text()).window.document;
+    expect(doc.querySelector('iframe')).toBeNull();
+    expect(doc.querySelector('#open-player')!.getAttribute('onclick')).toContain('/video/player?id=7');
+  });
+});

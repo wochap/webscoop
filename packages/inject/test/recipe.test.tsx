@@ -178,7 +178,7 @@ describe('recipe bar', () => {
 describe('collapsed recipe', () => {
   it('shows the collapsed recipe as one line with the name and the URL with its variable values', () => {
     const draft = { ...newDraft(), name: 'google-com-search', url: 'https://www.google.com/search?q={query}', vars: [{ name: 'query', value: 'top llms' }] };
-    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true } } });
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true, captures: true } } });
     const summary = p.q('section-recipe')!.querySelector('[data-ws="section-summary"]')!;
     expect(summary.querySelector('[data-ws="recipe-summary-name"]')!.textContent).toBe('google-com-search');
     expect(summary.querySelector('[data-ws="recipe-summary-url"]')!.textContent).toBe('https://www.google.com/search?q=querytop llms');
@@ -198,7 +198,7 @@ describe('collapsed recipe', () => {
         { name: 'email', value: 'me@acme.dev', added: true as const },
       ],
     };
-    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true } } });
+    const p = renderPanel({ ...baseState(draft), panel: { collapsed: { recipe: true, flows: false, sequence: true, captures: true } } });
     const summary = p.q('section-recipe')!.querySelector('[data-ws="section-summary"]')!;
     expect(summary.querySelector('[data-ws="recipe-summary-url"]')!.textContent).toBe('https://www.google.com/search?q=querytop llms&hl=langen');
     expect(summary.querySelector('[data-ws="recipe-summary-var-lang"] .ws-chip-value')!.textContent).toBe('en');

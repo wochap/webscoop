@@ -11,6 +11,7 @@ import type {
   NextDownloadOptions,
   PageInfo,
   ReadOptions,
+  RequestEvent,
   SavedDownload,
   RecorderWindow,
   SerializedElement,
@@ -78,6 +79,26 @@ export interface FakePage {
   hover?: (el: SerializedElement, url: string) => void;
   /** Replace the DOM this many milliseconds after the page loads, for content that shows up late. */
   later?: { afterMs: number; dom: SerializedElement };
+  /** Requests the page makes once it loads, as its scripts and frames would. */
+  requests?: FakeRequest[];
+}
+
+/** A request a fake page makes. */
+export interface FakeRequest {
+  url: string;
+  method?: string;
+  /** Default the page's URL; null for a worker. */
+  frameUrl?: string | null;
+  resourceType?: string;
+  /** Milliseconds after the page loads; without it the request is made while the page loads. */
+  afterMs?: number;
+  /** Response status, default 200. */
+  status?: number;
+  mime?: string | null;
+  /** Fail the request instead of answering it. */
+  fail?: boolean;
+  /** Milliseconds from the request to its response; without it the response comes at once. */
+  respondMs?: number;
 }
 
 /**
@@ -145,6 +166,8 @@ export class FakeSession implements Session {
   readonly windowId: string;
   /** Download queue shared with the popups of the window at the top of the opener chain. */
   private readonly downloads: DownloadQueue;
+  private readonly requestListeners = new Set<(event: RequestEvent) => void>();
+  private readonly requestTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     protected readonly browser: FakeBrowser,
@@ -181,6 +204,54 @@ export class FakeSession implements Session {
 
   settleDownloads(timeoutMs: number): Promise<void> {
     return this.downloads.settle(timeoutMs);
+  }
+
+  onRequest(listener: (event: RequestEvent) => void): () => void {
+    this.requestListeners.add(listener);
+    return () => this.requestListeners.delete(listener);
+  }
+
+  /** Make a request from this window, as the page would: listeners of this window and its openers hear it. */
+  emitRequest(request: FakeRequest): void {
+    if (this.closed || /^(data|blob):/.test(request.url)) return;
+    const id = `r${++this.browser.requestCount}`;
+    const seen: RequestEvent = {
+      type: 'request',
+      id,
+      url: request.url,
+      method: request.method ?? 'GET',
+      frameUrl: request.frameUrl === undefined ? this.currentUrl : request.frameUrl,
+      window: this.opener ? 'popup' : 'main',
+      resourceType: request.resourceType ?? 'xhr',
+      at: Date.now(),
+    };
+    this.tellRequest(seen);
+    const update: RequestEvent = request.fail
+      ? { type: 'update', id, status: null, mime: null, failed: true }
+      : { type: 'update', id, status: request.status ?? 200, mime: request.mime === undefined ? 'application/octet-stream' : request.mime, failed: false };
+    if (request.respondMs === undefined) this.tellRequest(update);
+    else this.after(request.respondMs, () => this.tellRequest(update));
+  }
+
+  private tellRequest(event: RequestEvent): void {
+    for (const listener of this.requestListeners) listener(event);
+    this.opener?.tellRequest(event);
+  }
+
+  private after(ms: number, fn: () => void): void {
+    const timer = setTimeout(() => {
+      this.requestTimers.delete(timer);
+      if (!this.closed) fn();
+    }, ms);
+    this.requestTimers.add(timer);
+  }
+
+  /** Make a page's requests: at once for those without `afterMs`, else on a timer. */
+  private makeRequests(page: FakePage): void {
+    for (const request of page.requests ?? []) {
+      if (request.afterMs === undefined) this.emitRequest(request);
+      else this.after(request.afterMs, () => this.emitRequest(request));
+    }
   }
 
   /** The window at the top of the opener chain. */
@@ -222,6 +293,7 @@ export class FakeSession implements Session {
   private enter(url: string, page: FakePage): void {
     this.load(url, page.dom);
     this.loadedAt = Date.now();
+    this.makeRequests(page);
   }
 
   private page(url: string): FakePage {
@@ -585,6 +657,8 @@ export class FakeSession implements Session {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const timer of this.requestTimers) clearTimeout(timer);
+    this.requestTimers.clear();
     this.browser.openSessions--;
   }
 }
@@ -665,6 +739,8 @@ export class FakeBrowser implements BrowserPort {
   readonly actions: FakeActionRecord[] = [];
   readonly openedProfiles: string[] = [];
   openSessions = 0;
+  /** Requests made by every window, for unique request ids. */
+  requestCount = 0;
   /** Every popup opened by any window, oldest first. */
   readonly popups: FakeInteractiveSession[] = [];
   readonly sessionsByWindow = new Map<string, FakeInteractiveSession>();

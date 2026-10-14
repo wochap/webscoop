@@ -103,6 +103,13 @@ interface Pagination {
   stopRules: string[];
   delayMs: number;
 }
+/** Request URLs matching match become rows of a table named after the capture. */
+interface Capture {
+  name: string;
+  match: string;
+  count: number;
+  optional: boolean;
+}
 type Value = string | number | null;
 type Row = Record<string, Value>;
 
@@ -280,8 +287,9 @@ function parseArgs(argv: readonly string[]): Options {
         throw new Failure('unknown option "' + arg + '"\n' + usage(), EXIT_ERROR);
     }
   }
-  if (opts.table !== null && !TABLES.some((t) => t.name === opts.table)) {
-    throw new Failure('recipe "' + RECIPE_NAME + '" has no table "' + opts.table + '" (tables: ' + TABLES.map((t) => t.name).join(', ') + ')', EXIT_ERROR);
+  const names = outputTables();
+  if (opts.table !== null && !names.includes(opts.table)) {
+    throw new Failure('recipe "' + RECIPE_NAME + '" has no table "' + opts.table + '" (tables: ' + names.join(', ') + ')', EXIT_ERROR);
   }
   return opts;
 }
@@ -1206,6 +1214,11 @@ function evaluateStop(
  * rows. Several tables to one target give a JSON object keyed by table name,
  * or JSONL rows carrying _table.
  */
+/** Output tables in order: the recipe's tables, then its captures. */
+function outputTables(): string[] {
+  return [...TABLES.map((t) => t.name), ...CAPTURES.map((c) => c.name)];
+}
+
 class RowSink {
   private readonly buffered = new Map<string, Row[]>();
   private readonly opened = new Set<string>();
@@ -1218,7 +1231,7 @@ class RowSink {
     private readonly outDir: boolean,
     only: string | null,
   ) {
-    this.selected = only !== null ? [only] : TABLES.map((t) => t.name);
+    this.selected = only !== null ? [only] : outputTables();
   }
 
   /** Several tables share one target. */
@@ -1252,7 +1265,8 @@ class RowSink {
   }
 
   finish(): void {
-    const rowsOf = (table: string) => this.buffered.get(table) ?? [];
+    // Capture rows arrive as their responses do; their order is _index.
+    const rowsOf = (table: string) => [...(this.buffered.get(table) ?? [])].sort((a, b) => (CAPTURES.some((c) => c.name === table) ? Number(a._index) - Number(b._index) : 0));
     // With JSONL, files exist even for a table without rows.
     if (this.jsonl) for (const table of this.selected) this.write(table, '');
     else if (this.combined) this.write('', JSON.stringify(Object.fromEntries(this.selected.map((table) => [table, rowsOf(table)])), null, 2) + '\n');
@@ -1347,6 +1361,11 @@ class Run {
   rowCount = 0;
   /** Pages whose rows were emitted; a discarded last page does not count. */
   pageCount = 0;
+
+  /** The page number the run is on. */
+  get currentPage(): number {
+    return this.page;
+  }
 
   constructor(
     private readonly windows: Windows,
@@ -1776,6 +1795,89 @@ class Run {
 }
 
 // ---------------------------------------------------------------------------
+// Captures (core captures.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests every request of the browser context against each capture, keeps one
+ * row per unique URL, and writes a row once its first request got a response
+ * or failed, or the run ended.
+ */
+class Captures {
+  private readonly slots = CAPTURES.map((capture) => ({ capture, regex: new RegExp(capture.match), rows: new Map<string, { row: Row; done: boolean }>() }));
+  private readonly pending = new Map<object, { name: string; entry: { row: Row; done: boolean } }[]>();
+
+  constructor(
+    context: BrowserContext,
+    private readonly sink: RowSink,
+    private readonly page: () => number,
+  ) {
+    if (CAPTURES.length === 0) return;
+    context.on('request', (request) => {
+      const url = request.url();
+      if (/^(data|blob):/i.test(url)) return;
+      let frame: string | null = null;
+      try {
+        frame = request.frame().url() || null;
+      } catch {
+        frame = null;
+      }
+      for (const slot of this.slots) {
+        if (slot.rows.has(url) || !slot.regex.test(url)) continue;
+        const entry = { row: { url, method: request.method(), status: null, mime: null, frame, _page: this.page(), _index: slot.rows.size } as Row, done: false };
+        slot.rows.set(url, entry);
+        const waiting = this.pending.get(request) ?? [];
+        waiting.push({ name: slot.capture.name, entry });
+        this.pending.set(request, waiting);
+      }
+    });
+    context.on('response', (response) => {
+      const type = response.headers()['content-type'];
+      this.complete(response.request(), response.status(), type ? type.split(';')[0]!.trim().toLowerCase() || null : null);
+    });
+    context.on('requestfailed', (request) => this.complete(request, null, null));
+  }
+
+  private complete(request: object, status: number | null, mime: string | null): void {
+    const waiting = this.pending.get(request);
+    if (!waiting) return;
+    this.pending.delete(request);
+    for (const { name, entry } of waiting) this.write(name, entry, status, mime);
+  }
+
+  private write(name: string, entry: { row: Row; done: boolean }, status: number | null, mime: string | null): void {
+    if (entry.done) return;
+    entry.done = true;
+    entry.row.status = status;
+    entry.row.mime = mime;
+    this.sink.row(name, entry.row);
+  }
+
+  private full(): boolean {
+    return this.slots.every((s) => s.capture.optional || s.rows.size >= s.capture.count);
+  }
+
+  /** Wait, up to the navigation timeout, until every required capture has its count. */
+  async settle(): Promise<void> {
+    const deadline = Date.now() + NAVIGATION_TIMEOUT_MS;
+    while (!this.full() && Date.now() < deadline) await sleep(50);
+  }
+
+  /** Write rows still waiting for a response, then fail on a required capture that fell short and warn on an optional one. */
+  finish(): void {
+    this.pending.clear();
+    for (const slot of this.slots) for (const entry of slot.rows.values()) this.write(slot.capture.name, entry, null, null);
+    const short = this.slots.filter((s) => s.rows.size < s.capture.count);
+    for (const s of short.filter((s) => s.capture.optional)) log('warning: optional capture ' + s.capture.name + ' matched ' + s.rows.size + ' of ' + s.capture.count + ' URL' + (s.capture.count === 1 ? '' : 's'));
+    const required = short.filter((s) => !s.capture.optional);
+    if (required.length > 0) {
+      const detail = required.map((s) => s.capture.name + ' (count ' + s.capture.count + ', ' + s.rows.size + ' found)').join(', ');
+      throw new Failure('required capture' + (required.length === 1 ? '' : 's') + ' not matched: ' + detail, EXIT_UNRESOLVED);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The run (core runner.ts)
 // ---------------------------------------------------------------------------
 
@@ -1805,7 +1907,11 @@ async function scrape(opts: Options): Promise<number> {
     context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const main = new Session(context.pages()[0] ?? (await context.newPage()));
     const run = new Run(new Windows(context, main), values, sink, firstUrl, start, limit, opts.awaitTimeoutMs);
+    // Listen before the recipe URL opens, so requests of the first load count.
+    const captures = new Captures(context, sink, () => run.currentPage);
     const reason = await run.run();
+    await captures.settle();
+    captures.finish();
     if (reason === 'cap') log('warning: stopped at the page cap of ' + DEFAULT_PAGE_CAP + ' pages');
     else if (reason !== 'limit' && reason !== 'none') log('pagination stopped after page ' + run.pageCount + ': ' + reason);
     sink.finish();

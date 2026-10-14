@@ -140,7 +140,7 @@ def parse_args(argv):
             raise Failure('variable "' + name + '" is given more than once on the command line; pass one of --var, --var-file, --var-command', EXIT_ERROR)
         sources[name] = (flag, expand_path(rest) if flag == "--var-file" else rest)
     opts.vars = sources
-    names = [table["name"] for table in TABLES]
+    names = output_tables()
     if opts.table is not None and opts.table not in names:
         raise Failure('recipe "' + RECIPE_NAME + '" has no table "' + opts.table + '" (tables: ' + ", ".join(names) + ")", EXIT_ERROR)
     opts.out_dir = bool(opts.out) and (opts.out.endswith("/") or opts.out.endswith(os.sep) or os.path.isdir(opts.out))
@@ -1104,6 +1104,11 @@ def evaluate_stop(current, previous, limit):
 # ---------------------------------------------------------------------------
 
 
+def output_tables():
+    """Output tables in order: the recipe's tables, then its captures."""
+    return [table["name"] for table in TABLES] + [capture["name"] for capture in CAPTURES]
+
+
 class RowSink:
     """
     Where rows go: stdout, --out, or one file per table; a JSON document at the
@@ -1118,7 +1123,7 @@ class RowSink:
         self.out = out
         self.out_dir = out_dir
         # Tables written, in recipe order.
-        self.selected = [only] if only is not None else [table["name"] for table in TABLES]
+        self.selected = [only] if only is not None else output_tables()
         # Several tables share one target.
         self.combined = not out_dir and len(self.selected) > 1
         self.buffered = {}
@@ -1146,6 +1151,10 @@ class RowSink:
             self.buffered.setdefault(table, []).append(row)
 
     def finish(self):
+        # Capture rows arrive as their responses do; their order is _index.
+        for capture in CAPTURES:
+            if capture["name"] in self.buffered:
+                self.buffered[capture["name"]].sort(key=lambda row: row["_index"])
         if self.jsonl:
             # Files exist even for a table without rows.
             for table in self.selected:
@@ -1648,6 +1657,90 @@ class Run:
 
 
 # ---------------------------------------------------------------------------
+# Captures (core captures.ts)
+# ---------------------------------------------------------------------------
+
+
+class Captures:
+    """
+    Tests every request of the browser context against each capture, keeps one
+    row per unique URL, and writes a row once its first request got a response
+    or failed, or the run ended. Patterns are JavaScript regexes; the common
+    subset (escapes, groups, alternation, anchors) means the same in Python.
+    """
+
+    def __init__(self, context, sink, page):
+        self.sink = sink
+        self.page = page
+        self.slots = [{"capture": capture, "regex": re.compile(capture["match"]), "rows": {}} for capture in CAPTURES]
+        self.pending = {}
+        if CAPTURES:
+            context.on("request", self.on_request)
+            context.on("response", self.on_response)
+            context.on("requestfailed", lambda request: self.complete(request, None, None))
+
+    def on_request(self, request):
+        url = request.url
+        if re.match(r"(?i)(data|blob):", url):
+            return
+        try:
+            frame = request.frame.url or None
+        except PlaywrightError:
+            frame = None
+        for slot in self.slots:
+            if url in slot["rows"] or not slot["regex"].search(url):
+                continue
+            entry = {"row": {"url": url, "method": request.method, "status": None, "mime": None, "frame": frame, "_page": self.page(), "_index": len(slot["rows"])}, "done": False}
+            slot["rows"][url] = entry
+            self.pending.setdefault(request, []).append((slot["capture"]["name"], entry))
+
+    def on_response(self, response):
+        kind = response.headers.get("content-type")
+        mime = kind.split(";")[0].strip().lower() or None if kind else None
+        self.complete(response.request, response.status, mime)
+
+    def complete(self, request, status, mime):
+        for name, entry in self.pending.pop(request, []):
+            self.write(name, entry, status, mime)
+
+    def write(self, name, entry, status, mime):
+        if entry["done"]:
+            return
+        entry["done"] = True
+        entry["row"]["status"] = status
+        entry["row"]["mime"] = mime
+        self.sink.row(name, entry["row"])
+
+    def full(self):
+        return all(slot["capture"]["optional"] or len(slot["rows"]) >= slot["capture"]["count"] for slot in self.slots)
+
+    def settle(self, page):
+        """Wait, up to the navigation timeout, until every required capture has its count; waiting on the page lets events arrive."""
+        deadline = time.monotonic() + NAVIGATION_TIMEOUT_MS / 1000
+        while not self.full() and time.monotonic() < deadline:
+            try:
+                page.wait_for_timeout(50)
+            except PlaywrightError:
+                time.sleep(0.05)
+
+    def finish(self):
+        """Write rows still waiting for a response, then fail on a required capture that fell short and warn on an optional one."""
+        self.pending.clear()
+        for slot in self.slots:
+            for entry in slot["rows"].values():
+                self.write(slot["capture"]["name"], entry, None, None)
+        short = [slot for slot in self.slots if len(slot["rows"]) < slot["capture"]["count"]]
+        for slot in short:
+            if slot["capture"]["optional"]:
+                count = slot["capture"]["count"]
+                log("warning: optional capture " + slot["capture"]["name"] + " matched " + str(len(slot["rows"])) + " of " + str(count) + " URL" + ("" if count == 1 else "s"))
+        required = [slot for slot in short if not slot["capture"]["optional"]]
+        if required:
+            detail = ", ".join(slot["capture"]["name"] + " (count " + str(slot["capture"]["count"]) + ", " + str(len(slot["rows"])) + " found)" for slot in required)
+            raise Failure("required capture" + ("" if len(required) == 1 else "s") + " not matched: " + detail, EXIT_UNRESOLVED)
+
+
+# ---------------------------------------------------------------------------
 # The run (core runner.ts)
 # ---------------------------------------------------------------------------
 
@@ -1684,7 +1777,11 @@ def scrape(opts):
                 main_session = Session(context.pages[0] if context.pages else context.new_page())
                 first_url = url_for(main_session.page, values, start, 1)
                 run = Run(Windows(context, main_session), values, sink, first_url, start, limit, opts.await_timeout)
+                # Listen before the recipe URL opens, so requests of the first load count.
+                captures = Captures(context, sink, lambda: run.page)
                 reason = run.run()
+                captures.settle(main_session.page)
+                captures.finish()
                 if reason == "cap":
                     log("warning: stopped at the page cap of " + str(DEFAULT_PAGE_CAP) + " pages")
                 elif reason not in ("limit", "none"):

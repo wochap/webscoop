@@ -22,10 +22,11 @@ It prints a JSON array (nothing when there are no recipes). Each entry has:
 - `url`: the start URL, possibly with `{variable}` placeholders.
 - `vars`: variables, each with `name`, optional `default`, and optional `description`.
 - `tables`: each with `name`, optional `description`, and `fields` (`name`, `type`).
+- `captures` (optional): each with `name` and optional `description`. A capture is a table of request URLs the page loaded, such as video playlist URLs that never appear on the page itself.
 
 ## 2. Choose a recipe
 
-Match the user's request against each recipe's `description`, its tables' descriptions and field names, and its variables' descriptions. The URL helps when descriptions are missing.
+Match the user's request against each recipe's `description`, its tables' descriptions and field names, its captures' names and descriptions, and its variables' descriptions. The URL helps when descriptions are missing.
 
 When no recipe fits, tell the user so. Do not guess, and do not scrape the site another way unless the user asks. Suggest that the user records a recipe with `webscoop record <url>` (the user runs it; it needs them in the browser).
 
@@ -43,6 +44,14 @@ Add `--table <name>` when only one table of a multi-table recipe is needed.
 
 Stdout has one JSON row per line. Each row has the table's fields plus `_page` (page number) and `_index` (position on the page). When the recipe has several tables and `--table` is not given, each row also has `_table`, the table name.
 
+A capture is a table named after it. Its rows are request URLs seen while the page loaded, each with `url`, `method`, `status`, `mime`, and `frame` (the URL of the frame that made the request), plus `_page` and `_index`. Read `url` for the data, such as a video's playlist URL.
+
+Example: the user asks for the stream URL of lesson 42 and the catalog lists `lesson-video` with variable `id` and capture `videos` described "HLS playlist URL". Run the command below and read `url` from the `videos` row:
+
+```sh
+webscoop run lesson-video --var id=42 --jsonl --quiet
+```
+
 Example: the user asks "search cats" and the catalog lists `bing-search`, described "Bing web search results for a query", with variable `query` described "search terms":
 
 ```sh
@@ -54,7 +63,7 @@ webscoop run bing-search --var query=cats --jsonl --quiet
 - `0`: success. Use the rows.
 - `1`: error. Report it to the user with the stderr text.
 - `2`: the browser needed the user (login or captcha) and nobody answered in time. Ask the user to handle the browser window, then retry the same command.
-- `3`: the page changed and a required field was not found. Tell the user the recipe needs repair with `webscoop edit <recipe>`.
+- `3`: the page changed and a required field or capture was not found. Tell the user the recipe needs repair with `webscoop edit <recipe>`.
 
 ## Parallel runs and pauses
 
