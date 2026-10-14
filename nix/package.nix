@@ -28,7 +28,7 @@ stdenv.mkDerivation {
   npmDeps = fetchNpmDeps {
     inherit src;
     fetcherVersion = 2;
-    hash = "sha256-76+im8YgqQYMa4rZq8QNoegd18SlWbzpJ6ph6NGV0jA=";
+    hash = "sha256-5A178/NdOq03DlUr87aBEuyf962vssIk50X4lct0R9A=";
   };
 
   nativeBuildInputs = [

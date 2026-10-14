@@ -19,6 +19,8 @@ export interface GuardBannerInfo {
   url: string;
   /** When the guard timeout runs out, in epoch milliseconds. */
   deadline: number;
+  /** The recipe's cold tab, left open after the run ended: no Abort, and `deadline` is when it warms up. */
+  cold?: boolean;
   /** The window is a popup of the run, which may close itself once the user is done; closing it is not an abort. */
   popup?: boolean;
 }

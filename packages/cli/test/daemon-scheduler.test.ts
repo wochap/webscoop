@@ -1,7 +1,12 @@
+import { join } from 'node:path';
+import { loadRecipe, type RecipeInput } from '@webscoop/core';
+import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import type { DaemonConcurrency } from '../src/config';
+import { CooldownStore } from '../src/cooldown';
 import type { SharedBrowserHandle } from '../src/context';
-import { AttentionGate, Scheduler, type Job, type LaunchedBrowser } from '../src/daemon/scheduler';
+import { AttentionGate, Scheduler, type ColdTrigger, type Job, type LaunchedBrowser } from '../src/daemon/scheduler';
+import { tempDir } from './helpers';
 
 /** A browser port that counts launches and closes. */
 function fakePort() {
@@ -371,3 +376,146 @@ describe('AttentionGate', () => {
     expect(gate.holder).toBeNull();
   });
 });
+
+describe('Scheduler cooldowns', () => {
+  const PAGE = 'https://shop.test/c';
+  const walledPage = () => h('html', {}, h('body', {}, h('iframe', { src: 'https://challenges.test/turnstile' })));
+  const shopRecipe = () =>
+    loadRecipe({
+      schemaVersion: 2,
+      sequence: [{ extract: 'items' }],
+      name: 'shop',
+      url: PAGE,
+      item: { selectors: [{ strategy: 'css', value: '.card', stability: 'medium' }] },
+      fields: [{ name: 'title', type: 'text', scope: 'item', selectors: [{ strategy: 'css', value: 'h2', stability: 'medium' }] }],
+    } as RecipeInput);
+
+  async function setup(baseMs = 60_000) {
+    const store = new CooldownStore(join(await tempDir(), 'cooldowns.json'));
+    const browser = new FakeBrowser({ [PAGE]: walledPage() });
+    const cooldown = (ignore = false) => ({ store, settings: { baseMs, maxMs: 1_800_000 }, ignore });
+    /** A job of `shop` that, when ended with `wall`, hands over a walled tab and reports a captcha. */
+    const coldJob = (port: ReturnType<typeof fakePort>, runId: string, opts: Parameters<typeof fakeJob>[2] & { ignore?: boolean } = {}) => {
+      const job = fakeJob(port, runId, { recipe: 'shop', ...opts });
+      let trigger: ColdTrigger | null = null;
+      const refusals: boolean[] = [];
+      const extra = {
+        cooldown: cooldown(opts.ignore),
+        refuseCold: (_entry: unknown, first: boolean) => {
+          refusals.push(first);
+          job.finish(2, 'cold');
+        },
+        coldTrigger: () => trigger,
+        endedCold: () => false,
+        goneCold: () => void job.events.push('gone cold'),
+        refusals,
+        /** End by timing out on a captcha, handing over a tab. */
+        wall: async () => {
+          const session = await browser.open('/p');
+          await session.goto(PAGE, { timeoutMs: 1000 });
+          trigger = { guard: { kind: 'captcha', page: 1, url: PAGE }, tab: { session, recipe: shopRecipe() } };
+          job.end(2);
+        },
+      };
+      return Object.assign(job, extra);
+    };
+    return { store, browser, coldJob };
+  }
+
+  it('refuses a cold recipe at submit without launching, and notifies once', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const { store, coldJob } = await setup();
+    store.goCold('shop', { kind: 'captcha', page: 1, url: PAGE }, { baseMs: 60_000, maxMs: 60_000 }, Date.now());
+    const jobs = ['a', 'b', 'c'].map((id) => coldJob(port, id));
+    for (const job of jobs) scheduler.submit(job);
+    expect(jobs.map((j) => j.refusals)).toEqual([[true], [false], [false]]);
+    expect(port.launches()).toBe(0);
+    const ignored = coldJob(port, 'd', { ignore: true });
+    scheduler.submit(ignored);
+    await ignored.running;
+    expect(port.launches()).toBe(1);
+    ignored.end();
+    await ignored.done;
+  });
+
+  it('keeps the browser open for a cold tab with no idle time, then closes it', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const { browser, coldJob } = await setup(150);
+    const job = coldJob(port, 'a');
+    scheduler.submit(job);
+    await job.running;
+    await job.wall();
+    await job.done;
+    expect(browser.openSessions).toBe(1);
+    expect(port.log).not.toContain('close 1');
+    await until(() => port.log.includes('close 1'));
+    expect(browser.openSessions).toBe(0);
+    expect(browser.visited).toEqual([PAGE]);
+  });
+
+  it('starts another recipe at once while a cold tab is open', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const { coldJob } = await setup();
+    const job = coldJob(port, 'a', { idleMs: 60_000 });
+    scheduler.submit(job);
+    await job.running;
+    await job.wall();
+    await job.done;
+    const news = fakeJob(port, 'n', { recipe: 'news', idleMs: 60_000 });
+    scheduler.submit(news);
+    await news.running;
+    news.end();
+    await news.done;
+    expect(port.launches()).toBe(1);
+    await scheduler.stop(false);
+  });
+
+  it('closes cold tabs on a relaunch, and the recipe stays cold', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const { store, browser, coldJob } = await setup();
+    const job = coldJob(port, 'a', { idleMs: 60_000 });
+    scheduler.submit(job);
+    await job.running;
+    await job.wall();
+    await job.done;
+    const other = fakeJob(port, 'o', { recipe: 'news', key: 'other proxy', idleMs: 60_000 });
+    scheduler.submit(other);
+    await other.running;
+    expect(port.log).toContain('close 1');
+    expect(browser.openSessions).toBe(0);
+    expect(store.cold('shop', Date.now())).not.toBeNull();
+    other.end();
+    await other.done;
+    await scheduler.stop(false);
+  });
+
+  it('drops queued jobs of the recipe and tells running ones when it goes cold', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const { coldJob } = await setup();
+    const concurrency = { total: 2, recipes: {} };
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => coldJob(port, id, { concurrency, idleMs: 60_000 }));
+    for (const job of [a!, b!, c!]) scheduler.submit(job);
+    await a!.running;
+    await b!.running;
+    await a!.wall();
+    await a!.done;
+    expect(c!.refusals).toEqual([true]);
+    expect(b!.events).toContain('gone cold');
+    b!.end();
+    await b!.done;
+    await scheduler.stop(false);
+  });
+});
+
+async function until(ok: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!ok()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}

@@ -31,8 +31,15 @@ function targetText(target: NonNullable<GuardContextView['target']>): string {
   return `${main}${d.quoted}`;
 }
 
+/** `HH:MM` local time. */
+export function clockMinutes(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** The hint under the headline: an await-user step names its condition, else the kind's generic hint. */
 export function hint(context: GuardContextView): string {
+  if (context.cold) return 'webscoop sends no request to this site meanwhile; clear the check here to warm the recipe up.';
   if (context.kind === 'await-user' && context.target && context.until) return `Continues when ${targetText(context.target)} ${context.until}.`;
   return KIND_HINT[context.kind];
 }
@@ -73,22 +80,24 @@ export function GuardBanner({
 }) {
   const host = useDrawerHost();
   const banner = (
-    <div id="ws-guard" data-ws="guard-banner" data-kind={context.kind} role="alert">
+    <div id="ws-guard" data-ws="guard-banner" data-kind={context.kind} {...(context.cold ? { 'data-cold': 'true' } : {})} role="alert">
       <span className="ws-badge ws-tone-warn" data-ws="guard-kind">
         {context.kind === 'await-user' ? 'await-user' : KIND_LABEL[context.kind]}
       </span>
       <span className="ws-col ws-spacer ws-guard-text">
         <span className="ws-title ws-ellipsis" data-ws="guard-reason">
-          {context.kind === 'await-user' ? headline(context) : `Page ${context.page}: ${context.reason}`}
+          {context.cold ? `Cold until ${clockMinutes(context.deadline)}` : context.kind === 'await-user' ? headline(context) : `Page ${context.page}: ${context.reason}`}
         </span>
         <span className="ws-meta ws-ellipsis" data-ws="guard-hint" title={hint(context)}>
           {hint(context)}
         </span>
       </span>
       <Countdown deadline={context.deadline} {...(now ? { now } : {})} />
-      <button type="button" className="ws-btn ws-btn-ghost" onClick={onAbort} data-ws="guard-abort" title="Stop the run">
-        Abort
-      </button>
+      {context.cold ? null : (
+        <button type="button" className="ws-btn ws-btn-ghost" onClick={onAbort} data-ws="guard-abort" title="Stop the run">
+          Abort
+        </button>
+      )}
       <button type="button" className="ws-btn ws-btn-primary" onClick={onContinue} data-ws="guard-continue" title="Check again now">
         Continue
       </button>
@@ -101,7 +110,7 @@ export function GuardBanner({
 export function GuardPanel({ context }: { context: GuardContextView }) {
   return (
     <section className="ws-card ws-col" data-ws="guard-panel">
-      <span className="ws-caps">{context.kind === 'await-user' ? 'Waiting for you' : 'Run paused'}</span>
+      <span className="ws-caps">{context.cold ? `Cold until ${clockMinutes(context.deadline)}` : context.kind === 'await-user' ? 'Waiting for you' : 'Run paused'}</span>
       <span className="ws-title">{headline(context)}</span>
       <span className="ws-meta">{hint(context)}</span>
       <span className="ws-mono-sm ws-ellipsis" title={context.url}>

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import type { GuardContextView, RecorderState } from '@webscoop/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleKey } from '../src/ui/App';
-import { Countdown, formatCountdown, WARN_UNDER_MS } from '../src/ui/guard';
+import { clockMinutes, Countdown, formatCountdown, WARN_UNDER_MS } from '../src/ui/guard';
 import { baseState, renderPanel } from './panel';
 
 afterEach(() => {
@@ -44,6 +44,17 @@ describe('guard banner', () => {
     expect(p.q('guard-panel')).not.toBeNull();
     expect(p.q('fields')).toBeNull();
     expect(p.q('footer-save')).toBeNull();
+  });
+
+  it('shows a cold tab with its warm-up time and Continue only', () => {
+    vi.useFakeTimers({ now: NOW });
+    const p = renderPanel(guardState({ kind: 'captcha', cold: true, deadline: NOW + 60_000 }));
+    const banner = p.q('guard-banner')!;
+    expect(banner.dataset.cold).toBe('true');
+    expect(p.q('guard-kind')!.textContent).toBe('Bot check');
+    expect(p.q('guard-reason')!.textContent).toBe(`Cold until ${clockMinutes(NOW + 60_000)}`);
+    expect(p.q('guard-abort')).toBeNull();
+    expect(p.q('guard-continue')).not.toBeNull();
   });
 
   it('switches the countdown to the warning tone under 90 seconds as time passes', () => {

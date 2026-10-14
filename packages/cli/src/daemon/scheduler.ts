@@ -1,6 +1,22 @@
-import type { DaemonConcurrency } from '../config';
+import type { CooldownSettings, DaemonConcurrency } from '../config';
 import type { SharedBrowserHandle } from '../context';
+import type { ColdGuard, CooldownEntry, CooldownStore } from '../cooldown';
+import { ColdTab, type ColdTabSource } from './cold-tab';
 import type { BrowserStatus } from './protocol';
+
+/** Cold state a job's recipe is checked against; unset when cooldowns are off. */
+export interface JobCooldown {
+  store: CooldownStore;
+  settings: CooldownSettings;
+  /** `--ignore-cooldown`: run even while the recipe is cold. */
+  ignore: boolean;
+}
+
+/** A job's end that makes its recipe cold: the wall, and the tab it left open. */
+export interface ColdTrigger {
+  guard: ColdGuard;
+  tab: ColdTabSource | null;
+}
 
 /** A browser the daemon launched for a profile, holding the profile lock. */
 export interface LaunchedBrowser {
@@ -38,6 +54,18 @@ export interface Job {
   interrupt(message?: string): void;
   /** The browser this job ran in last closed. */
   browserClosed(pid: number | null): Promise<void>;
+  /** Cold state of the job's recipe; unset when cooldowns are off. */
+  readonly cooldown?: JobCooldown;
+  /** End the job unstarted: its recipe is cold. `first` for the first refusal of the cold period. */
+  refuseCold?(entry: CooldownEntry, first: boolean): void;
+  /** After `execute`: the wall that makes the recipe cold, or null. */
+  coldTrigger?(): ColdTrigger | null;
+  /** After `execute`: whether the job ended because its recipe went cold. */
+  endedCold?(): boolean;
+  /** The recipe went cold while the job runs: end its wait for attention, and a later guard, with `cold`. */
+  goneCold?(entry: CooldownEntry): void;
+  /** After `execute` and any cold fan-out: release attention the job held back. */
+  afterRun?(): void;
 }
 
 type JobState = 'queued' | 'launching' | 'running';
@@ -114,6 +142,8 @@ class Slot {
   pausedUntil = 0;
   lastJob: Job | null = null;
   readonly attention = new AttentionGate();
+  /** Walled tabs of cold recipes, by recipe; they keep the browser open but take no job slot. */
+  readonly coldTabs = new Map<string, ColdTab>();
 
   constructor(
     readonly profile: string,
@@ -122,6 +152,11 @@ class Slot {
 
   get busy(): boolean {
     return this.running.size > 0 || this.queue.length > 0;
+  }
+
+  /** Busy, or holding a cold tab: the browser must stay open. */
+  get held(): boolean {
+    return this.busy || this.coldTabs.size > 0;
   }
 
   get open(): boolean {
@@ -138,6 +173,8 @@ export interface SchedulerOptions {
   releasePauseMs?: number;
   /** Replaces every job's `daemon.idleMs`. */
   idleMs?: number;
+  /** Interval between re-checks of a cold tab. Default 1000. */
+  coldPollMs?: number;
 }
 
 /**
@@ -156,10 +193,11 @@ export class Scheduler {
 
   /** No browser open and no job. */
   get empty(): boolean {
-    return [...this.slots.values()].every((s) => !s.open && !s.busy);
+    return [...this.slots.values()].every((s) => !s.open && !s.held);
   }
 
   submit(job: Job): void {
+    if (this.refuseIfCold(job)) return;
     let slot = this.slots.get(job.profileDir);
     if (!slot) {
       slot = new Slot(job.profile, job.profileDir);
@@ -330,6 +368,10 @@ export class Scheduler {
       }
       if (!next) return;
       slot.queue.splice(slot.queue.indexOf(next), 1);
+      if (this.refuseIfCold(next.job)) {
+        clearTimeout(next.timer);
+        continue;
+      }
       void this.start(slot, next);
     }
   }
@@ -399,15 +441,95 @@ export class Scheduler {
     }
     slot.running.delete(job.runId);
     slot.lastJob = job;
+    try {
+      this.coolDown(slot, job);
+    } catch (error) {
+      message = `could not update the recipe's cooldown: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    job.afterRun?.();
     // With no idle time the browser closes before the job reports its end, so its hooks come first.
-    if (!slot.busy && slot.idleMs <= 0) await this.closeBrowser(slot);
+    if (!slot.held && slot.idleMs <= 0) await this.closeBrowser(slot);
     job.finish(code, message);
     this.afterJob(slot);
   }
 
+  /**
+   * Refuse a job whose recipe is cold, unless it ignores cooldowns. The first
+   * refusal of a cold period notifies and brings the cold tab to the front.
+   */
+  private refuseIfCold(job: Job): boolean {
+    const cd = job.cooldown;
+    if (!cd || cd.ignore || !job.refuseCold) return false;
+    const now = this.now();
+    const entry = cd.store.cold(job.recipe, now);
+    if (!entry) return false;
+    const first = cd.store.markNotified(job.recipe, now);
+    if (first) void this.coldTabOf(job.recipe)?.focus();
+    job.refuseCold(entry, first);
+    return true;
+  }
+
+  private coldTabOf(recipe: string): ColdTab | undefined {
+    for (const slot of this.slots.values()) {
+      const tab = slot.coldTabs.get(recipe);
+      if (tab) return tab;
+    }
+    return undefined;
+  }
+
+  /** Close the recipe's cold tab, wherever it is. */
+  disposeColdTab(recipe: string): Promise<void> {
+    return Promise.all([...this.slots.values()].map((slot) => slot.coldTabs.get(recipe)?.dispose())).then(() => {});
+  }
+
+  /**
+   * After a job ran: a cold trigger makes the recipe cold, ends its queued
+   * jobs and its waits for attention, and keeps the walled tab; any other
+   * end, except one caused by the recipe being cold, resets the recipe.
+   */
+  private coolDown(slot: Slot, job: Job): void {
+    const cd = job.cooldown;
+    if (!cd) return;
+    const trigger = job.coldTrigger?.() ?? null;
+    if (!trigger) {
+      if (job.endedCold?.()) return;
+      cd.store.reset(job.recipe);
+      void this.disposeColdTab(job.recipe);
+      return;
+    }
+    const now = this.now();
+    const entry = cd.store.goCold(job.recipe, trigger.guard, cd.settings, now);
+    for (const other of this.slots.values()) {
+      for (const queued of other.queue.filter((e) => e.job.recipe === job.recipe)) {
+        if (queued.job.cooldown?.ignore) continue;
+        other.queue.splice(other.queue.indexOf(queued), 1);
+        clearTimeout(queued.timer);
+        if (!this.refuseIfCold(queued.job)) queued.job.finish(1, `the recipe ${job.recipe} went cold`);
+      }
+      for (const running of other.running.values()) if (running.job.recipe === job.recipe) running.job.goneCold?.(entry);
+    }
+    void this.disposeColdTab(job.recipe);
+    if (trigger.tab) this.keepColdTab(slot, job.recipe, trigger.tab, entry, cd.store);
+  }
+
+  private keepColdTab(slot: Slot, recipe: string, source: ColdTabSource, entry: CooldownEntry, store: CooldownStore): void {
+    const tab: ColdTab = new ColdTab(source, {
+      entry,
+      now: this.now,
+      ...(this.opts.coldPollMs !== undefined ? { pollMs: this.opts.coldPollMs } : {}),
+      onEnd: (end) => {
+        if (slot.coldTabs.get(recipe) === tab) slot.coldTabs.delete(recipe);
+        // The user solved the wall: the recipe warms up, keeping its streak.
+        if (end === 'cleared') store.warm(recipe, this.now());
+        if (!slot.closing) this.afterJob(slot);
+      },
+    });
+    slot.coldTabs.set(recipe, tab);
+  }
+
   private afterJob(slot: Slot): void {
     this.pump(slot);
-    if (slot.busy) return;
+    if (slot.held) return;
     clearTimeout(slot.idleTimer);
     if (slot.browser) {
       if (slot.idleMs <= 0) {
@@ -430,6 +552,7 @@ export class Scheduler {
     }
     clearTimeout(slot.idleTimer);
     slot.closing = (async () => {
+      await Promise.all([...slot.coldTabs.values()].map((tab) => tab.dispose()));
       slot.browser = null;
       slot.key = null;
       await launched.handle.close().catch(() => {});
@@ -452,7 +575,7 @@ export class Scheduler {
   }
 
   private checkEmpty(): void {
-    for (const [dir, slot] of this.slots) if (!slot.open && !slot.busy) this.slots.delete(dir);
+    for (const [dir, slot] of this.slots) if (!slot.open && !slot.held) this.slots.delete(dir);
     if (this.empty) this.opts.onEmpty?.();
   }
 }

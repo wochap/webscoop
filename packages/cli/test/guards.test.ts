@@ -95,6 +95,7 @@ describe('guard flags', () => {
 
   it('maps paused to exit 2', () => {
     expect(exitCodeFor('paused')).toBe(ExitCode.Paused);
+    expect(exitCodeFor('cold')).toBe(ExitCode.Paused);
     expect(ExitCode.Paused).toBe(2);
   });
 

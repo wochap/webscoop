@@ -351,6 +351,35 @@ describe('runner guards', () => {
     expect(t.browser.openSessions).toBe(0);
   });
 
+  it('hands the walled tab over instead of closing it', async () => {
+    const kept: Session[] = [];
+    const seen: (string | null)[] = [];
+    const t = setupRun({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() }, {
+      guards: { enabled: true, timeoutMs: 30, pollMs: 5 },
+      handoff: (failure, guard) => {
+        seen.push(`${failure.reason} ${guard?.kind ?? 'none'}`);
+        return (session) => kept.push(session);
+      },
+    });
+    const result = await t.runner.run();
+    expect(result).toMatchObject({ ok: false, reason: 'paused' });
+    expect(seen).toEqual(['paused login']);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.isClosed()).toBe(false);
+    expect(t.browser.openSessions).toBe(1);
+    expect(t.calls.slice(-2)).toEqual(['attention.resolved', 'run.failed']);
+  });
+
+  it('does not hand the tab over when the signal ends the run', async () => {
+    const controller = new AbortController();
+    const handoff = vi.fn(() => () => {});
+    const t = setupRun({ [PAGE]: loginForm() }, { signal: controller.signal, handoff });
+    t.onRaised(async () => controller.abort());
+    await t.runner.run();
+    expect(handoff).not.toHaveBeenCalled();
+    expect(t.browser.openSessions).toBe(0);
+  });
+
   it('fails at once after the notification with a zero timeout', async () => {
     const t = setupRun({ [PAGE]: loginForm() });
     const runner = new Runner({ ...(t.runner as unknown as { opts: RunOptions }).opts, guards: { enabled: true, timeoutMs: 0, notify: { notify: async (n) => void t.notifications.push(n) } } });

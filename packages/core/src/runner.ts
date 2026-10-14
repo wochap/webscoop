@@ -5,7 +5,7 @@ import { RunWindows } from './flows/windows';
 import type { AttentionLease, AttentionPort } from './guards/attention';
 import type { GuardBannerHandler } from './guards/banner';
 import { DEFAULT_GUARD_TIMEOUT_MS, GuardBudget } from './guards/budget';
-import { enabledDetectors } from './guards/detectors';
+import { enabledDetectors, type GuardMatch } from './guards/detectors';
 import { applyPromotions } from './healing/apply';
 import type { Promotion } from './healing/promote';
 import { targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
@@ -91,6 +91,12 @@ export interface RunOptions {
   flows?: FlowOptions;
   /** The user's attention, shared with other runs in the same browser. Default: held at once. */
   attention?: AttentionPort;
+  /**
+   * On a failure the signal did not cause, called with the guard the run was
+   * paused on (null when none). A returned receiver takes the run's tab
+   * instead of it being closed; its popups still close.
+   */
+  handoff?: (failure: RunFailure, guard: GuardMatch | null) => ((session: Session) => void) | null;
 }
 
 export interface FlowOptions {
@@ -301,11 +307,16 @@ export class Runner {
     let session: Session | undefined;
     let windows: RunWindows | undefined;
     let closing: Promise<void> | undefined;
-    const closeSession = (): Promise<void> => {
+    /** The guard the run is paused on, from its raise until it clears. */
+    let pausedOn: GuardMatch | null = null;
+    const offRaised = this.emitter.on('guard.raised', (e) => (pausedOn = { kind: e.kind, reason: e.reason }));
+    const offCleared = this.emitter.on('guard.cleared', () => (pausedOn = null));
+    const closeSession = (receiver?: (session: Session) => void): Promise<void> => {
       if (!session) return Promise.resolve();
       return (closing ??= (async () => {
         await windows?.close();
-        await session!.close().catch(() => {});
+        if (receiver && !session!.isClosed()) receiver(session!);
+        else await session!.close().catch(() => {});
       })());
     };
     const onAbort = () => void closeSession();
@@ -436,10 +447,11 @@ export class Runner {
     } catch (error) {
       if (!signal?.aborted) await flushDownloads();
       finishCaptures();
-      await closeSession();
+      const failure = toFailure(error, signal);
+      const receiver = !signal?.aborted && this.opts.handoff ? this.opts.handoff(failure, pausedOn) : null;
+      await closeSession(receiver ?? undefined);
       finish();
       this.resolveAttention('ended');
-      const failure = toFailure(error, signal);
       if (this.currentState !== 'failed') this.transition('failed');
       this.emitter.emit('run.failed', {
         reason: failure.reason,
@@ -459,13 +471,15 @@ export class Runner {
       };
     } finally {
       offPage();
+      offRaised();
+      offCleared();
       signal?.removeEventListener('abort', onAbort);
     }
   }
 }
 
 /** Failures after which the rows already emitted are still returned. */
-const KEEPS_ROWS: readonly FailureReason[] = ['paused', 'pagination-lost'];
+const KEEPS_ROWS: readonly FailureReason[] = ['paused', 'cold', 'pagination-lost'];
 
 /** Title of the blank page the browser opens on, for window manager rules. */
 export const WINDOW_TITLE = 'webscoop';

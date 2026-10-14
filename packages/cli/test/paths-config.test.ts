@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CliError, ConfigSchema, hookCommands, loadConfig, resolveDownloadDir, resolvePaths, WINDOW_CONFIG_WARNING } from '../src';
+import { CliError, ConfigSchema, cooldownSettings, hookCommands, loadConfig, resolveDownloadDir, resolvePaths, WINDOW_CONFIG_WARNING } from '../src';
 import { tempDir } from './helpers';
 
 describe('resolvePaths', () => {
@@ -50,7 +50,27 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, daemon: { concurrency: { total: 1, recipes: {} }, idleMs: 60_000 }, profiles: { rules: [] } });
+    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, daemon: { concurrency: { total: 1, recipes: {} }, idleMs: 600_000 }, profiles: { rules: [] } });
+  });
+
+  it('defaults the cooldown settings', async () => {
+    const home = await tempDir();
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(cooldownSettings(config)).toEqual({ baseMs: 60_000, maxMs: 1_800_000 });
+  });
+
+  it('accepts a cooldown of 0', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ guards: { cooldownMs: 0 } }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(cooldownSettings(config)).toEqual({ baseMs: 0, maxMs: 1_800_000 });
+  });
+
+  it('rejects a cooldown cap lower than the base', async () => {
+    const home = await tempDir();
+    await writeFile(join(home, 'config.json'), JSON.stringify({ guards: { cooldownMs: 600_000, cooldownMaxMs: 60_000 } }));
+    const error = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h')).catch((e: unknown) => e);
+    expect(String(error)).toContain('guards.cooldownMaxMs');
   });
 
   it('accepts the LLM fields', async () => {

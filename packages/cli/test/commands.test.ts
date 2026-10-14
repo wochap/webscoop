@@ -5,6 +5,7 @@ import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import { ExitCode, main } from '../src';
 import { tempDir, testIo } from './helpers';
+import { CooldownStore } from '../src/cooldown';
 import { doctorCommand } from '../src/commands/doctor';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
@@ -59,6 +60,24 @@ describe('webscoop run', () => {
       { _page: 1, _index: 2, title: 'Shoe 2', price: 1200, link: 'https://shop.test/p/2' },
     ]);
     expect(io.err()).toMatch(/3 rows from 1 page in \d+\.\d+s \(shop\)\n$/);
+  });
+
+  it('refuses a cold recipe with exit 2 and runs it with --ignore-cooldown', async () => {
+    const dir = await home();
+    new CooldownStore(join(dir, 'cooldowns.json')).goCold('shop', { kind: 'captcha', page: 1, url: PAGE }, { baseMs: 60_000, maxMs: 60_000 }, Date.now());
+    const browser = new FakeBrowser({ [PAGE]: shopPage(1) });
+    const refused = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--jsonl'], refused)).toBe(ExitCode.Paused);
+    expect(refused.out()).toBe('');
+    expect(refused.err()).toContain('shop is cold until');
+    const test = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['test', 'shop', '--json'], test)).toBe(ExitCode.Paused);
+    expect(JSON.parse(test.out())).toEqual([]);
+    expect(browser.visited).toEqual([]);
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+    expect(await main(['run', 'shop', '--ignore-cooldown'], io)).toBe(ExitCode.Ok);
+    expect(JSON.parse(io.out())).toHaveLength(1);
+    expect(browser.visited).toEqual([PAGE]);
   });
 
   it('streams JSONL', async () => {

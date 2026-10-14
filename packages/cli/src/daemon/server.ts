@@ -108,6 +108,9 @@ export class DaemonServer {
         case 'stop':
           void this.stop(m.force).then(() => link.send({ type: 'result', ok: true }));
           break;
+        case 'cooldown-clear':
+          void Promise.all(m.recipes.map((recipe) => this.scheduler.disposeColdTab(recipe))).then(() => link.send({ type: 'result', ok: true }));
+          break;
         case 'release': {
           const usage = this.scheduler.usage(m.profileDir);
           if (!m.force || !usage.open) {

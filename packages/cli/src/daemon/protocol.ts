@@ -19,7 +19,9 @@ export type ClientMessage =
   | { type: 'cancel' }
   | { type: 'status' }
   | { type: 'stop'; force: boolean }
-  | { type: 'release'; profileDir: string; command: string; force: boolean };
+  | { type: 'release'; profileDir: string; command: string; force: boolean }
+  /** `webscoop cooldown clear` warmed these recipes up: close their cold tabs. */
+  | { type: 'cooldown-clear'; recipes: string[] };
 
 /** One browser of the daemon, as `daemon status` shows it. */
 export interface BrowserStatus {

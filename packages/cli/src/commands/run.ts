@@ -29,12 +29,17 @@ import {
   type RunReport,
   type SelectorCandidate,
   type FlowOptions,
+  type GuardMatch,
+  type RunFailure,
+  type RunOptions,
+  type Session,
   type StepReport,
   tablesOf,
   templateParts,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, resolveDownloadDir, type Config } from '../config';
+import { clockTime, type CooldownEntry } from '../cooldown';
 import { log, type BrowserInfo, type CliIo } from '../context';
 import { submitJob } from '../daemon/client';
 import { requireDisplay } from '../display';
@@ -92,6 +97,8 @@ export interface RunCommandOptions {
   quiet?: boolean;
   /** `--download-dir`; absolute once the submitting command resolved it. */
   downloadDir?: string;
+  /** `--ignore-cooldown`: run the recipe even while it is cold. */
+  ignoreCooldown?: boolean;
 }
 
 /** How long `browser.started` waits for the browser's process id. */
@@ -421,6 +428,52 @@ export interface JobContext {
   saveRecipe?(path: string, save: () => Promise<string>): Promise<string>;
   /** Receives the runner's events, to forward attention to the client. */
   watch?(emitter: RunEmitter): void;
+  /** Takes the run's tab when its failure makes the recipe cold, with the run's banner. */
+  handoff?(failure: RunFailure, guard: GuardMatch | null, banner: GuardBannerHandler | undefined): ((session: Session) => void) | null;
+}
+
+/** The runner's `handoff` for a job, passing the run's banner along. */
+function handoffOf(job: JobContext, banner: GuardBannerHandler | undefined): RunOptions['handoff'] | undefined {
+  return job.handoff ? (failure, guard) => job.handoff!(failure, guard, banner) : undefined;
+}
+
+/** Why a cold recipe does not run: kind, page, URL, and warm-up time. */
+export function coldMessage(recipe: string, entry: CooldownEntry): string {
+  return `${recipe} is cold until ${clockTime(entry.until)} after a ${entry.kind} guard on page ${entry.page} (${entry.url})`;
+}
+
+/**
+ * A job refused because its recipe is cold: say why (even under `--quiet`),
+ * fire `run.failed`, write the empty output the job's mode expects, and send
+ * the notification when this is the period's first refusal. Exit 2.
+ */
+export async function refuseCold(io: CliIo, prepared: Prepared, command: 'run' | 'test', opts: RunCommandOptions | TestCommandOptions, entry: CooldownEntry, first: boolean): Promise<Code> {
+  const { recipe, hooks, config } = prepared;
+  const message = coldMessage(recipe.name, entry);
+  log(io, `${message}; not running it (--ignore-cooldown runs it anyway)`);
+  await hooks.fire('run.failed', { url: entry.url, reason: 'cold', message, rows: 0, pages: 0 });
+  if (command === 'run') {
+    const run = opts as RunCommandOptions;
+    const out = run.out ? resolve(io.cwd, run.out) : undefined;
+    const dir = run.out && out && (await isOutDir(run.out, out)) ? out : undefined;
+    const sink = new RowSink(io.stdout, {
+      jsonl: run.jsonl ?? false,
+      tables: outputTables(recipe),
+      ...(dir !== undefined ? { dir } : out !== undefined ? { out } : {}),
+      ...(run.table !== undefined ? { only: run.table } : {}),
+    });
+    await sink.finish(true);
+  } else if ((opts as TestCommandOptions).json) {
+    io.stdout.write('[]\n');
+  }
+  if (first && (opts.notify ?? config.notify ?? true)) {
+    await io
+      .createNotify(io.env)
+      .notify({ title: `webscoop: ${recipe.name} is cold`, body: `${entry.kind} guard; cold until ${clockTime(entry.until)}`, urgency: 'normal' })
+      .catch(() => {});
+  }
+  await hooks.drain();
+  return ExitCode.Paused;
 }
 
 /** The guard banner, unless the config turns it off; it and re-pick need the page's CSP out of the way. */
@@ -564,10 +617,11 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },
       ...(repick ? { repick } : {}),
       ...(job.attention ? { attention: job.attention } : {}),
+      ...(handoffOf(job, banner) ? { handoff: handoffOf(job, banner)! } : {}),
     });
     const result = await runner.run();
     // Rows already emitted stay valid when a wait timed out or the page state was lost on a later page.
-    await sink.finish(result.ok || result.reason === 'paused' || result.reason === 'pagination-lost');
+    await sink.finish(result.ok || result.reason === 'paused' || result.reason === 'cold' || result.reason === 'pagination-lost');
 
     for (const warning of result.report.warnings) infoLog(io, opts.quiet)(`warning: ${warning}`);
     if (opts.report) io.stderr.write(`${JSON.stringify(result.report, null, 2)}\n`);
@@ -617,6 +671,8 @@ export interface TestCommandOptions {
   skipFlows?: boolean;
   /** `--download-dir`; absolute once the submitting command resolved it. */
   downloadDir?: string;
+  /** `--ignore-cooldown`: run the recipe even while it is cold. */
+  ignoreCooldown?: boolean;
 }
 
 /** `test` stays on the first page, whatever the recipe says, unless `--pages` asks for more. */
@@ -735,6 +791,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       flows: flowsFromFlags(opts),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },
       ...(job.attention ? { attention: job.attention } : {}),
+      ...(handoffOf(job, banner) ? { handoff: handoffOf(job, banner)! } : {}),
     });
     const result = await runner.run();
     const rows = testRows(result.report, recipe.captures);

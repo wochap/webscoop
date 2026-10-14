@@ -6,6 +6,7 @@ import { ReadStream, WriteStream } from 'node:tty';
 import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { browserCommand, type BrowserCommandOptions } from './commands/browser';
+import { cooldownClearCommand, cooldownListCommand } from './commands/cooldown';
 import { attentionCommand, daemonStatusCommand, daemonStopCommand } from './commands/daemon';
 import { doctorCommand } from './commands/doctor';
 import { exportCommand, type ExportCommandOptions } from './commands/export';
@@ -143,6 +144,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addOption(new Option('--guard-timeout <ms>', 'longest total wait for you to clear login walls and bot checks before exiting 2 (default: 600000)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials; treat them like any other page')
+    .option('--ignore-cooldown', 'run the recipe even while it is cold after a login wall or bot check')
     .option('--notify', 'send a desktop notification when a guard pauses the run, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard pauses the run')
     .option('--skip-flows', "run none of the recipe's flows, called or reactive; only extract and paginate, for debugging")
@@ -213,6 +215,7 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
     .addOption(new Option('--guard-timeout <ms>', 'how long to wait for you to clear a login wall or bot check (default: 0, exit 2 at once)').argParser(positiveInt))
     .option('--no-guards', 'never pause on login walls, bot checks, or interstitials')
+    .option('--ignore-cooldown', 'test the recipe even while it is cold after a login wall or bot check')
     .option('--notify', 'send a desktop notification when a guard is raised, whatever the config says')
     .option('--no-notify', 'do not send a desktop notification when a guard is raised')
     .option('--skip-flows', "run none of the recipe's flows, which test runs like a run by default")
@@ -346,6 +349,30 @@ browser, and exits.`,
       if (!io.serveDaemon) throw new CliError('cannot serve a daemon here');
       setCode(await io.serveDaemon());
     });
+
+  const cooldown = program
+    .command('cooldown')
+    .description('list or clear recipes kept off their site after a login wall or bot check')
+    .addHelpText(
+      'after',
+      `
+A recipe goes cold when a run ends on a login wall or bot check nobody
+cleared. While cold, run and test refuse it with exit 2 and make no request;
+--ignore-cooldown runs it anyway. list prints the cold recipes; clear warms
+one up (or every one with --all) and closes its cold tab. Neither starts the
+daemon.`,
+    );
+  cooldown
+    .command('list')
+    .description('print the cold recipes: guard kind, page, URL, warm-up time, and streak')
+    .option('--json', 'print JSON')
+    .action(async (opts: { json?: boolean }) => setCode(await cooldownListCommand(io, opts)));
+  cooldown
+    .command('clear')
+    .description('warm a cold recipe up now, closing its cold tab')
+    .argument('[recipe]', 'the recipe to warm up')
+    .option('--all', 'warm every cold recipe up')
+    .action(async (recipe: string | undefined, opts: { all?: boolean }) => setCode(await cooldownClearCommand(io, recipe, opts)));
 
   program
     .command('attention')

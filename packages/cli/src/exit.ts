@@ -5,7 +5,7 @@ export const ExitCode = {
   Ok: 0,
   /** An error the user must fix, or an unexpected failure. */
   Error: 1,
-  /** A run paused for user input and the wait timed out. Retry later. */
+  /** A run paused for user input and the wait timed out, or its recipe is cold. Retry later. */
   Paused: 2,
   /** A required field could not be resolved. Alert a human. */
   Unresolved: 3,
@@ -26,7 +26,7 @@ export class CliError extends Error {
 
 export function exitCodeFor(reason: FailureReason): ExitCode {
   if (reason === 'missing-required') return ExitCode.Unresolved;
-  if (reason === 'paused') return ExitCode.Paused;
+  if (reason === 'paused' || reason === 'cold') return ExitCode.Paused;
   return ExitCode.Error;
 }
 

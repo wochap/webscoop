@@ -567,8 +567,10 @@ export const GuardContextSchema = z.object({
   reason: z.string(),
   page: z.int().check(z.positive()),
   url: z.string(),
-  /** When the guard timeout runs out, in epoch milliseconds. */
+  /** When the guard timeout runs out, in epoch milliseconds; for a cold tab, when the recipe warms up. */
   deadline: z.number(),
+  /** The run ended and left this tab open while its recipe is cold: Continue only re-checks. */
+  cold: z.optional(z.boolean()),
 });
 
 /**

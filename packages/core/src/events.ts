@@ -12,7 +12,7 @@ export type Row = Record<string, unknown> & { _page: number; _index: number };
  * `flow-loop`: a reactive flow fired more than its `maxRetries` between two extractions.
  * `pagination-lost`: the page state could not be rebuilt on a later page of click pagination.
  */
-export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'paused' | 'flow-loop' | 'pagination-lost' | 'error';
+export type FailureReason = 'missing-required' | 'invalid-input' | 'timeout' | 'aborted' | 'paused' | 'cold' | 'flow-loop' | 'pagination-lost' | 'error';
 
 export type FlowKind = 'called' | 'reactive';
 export type FlowOutcome = 'ok' | 'failed';

@@ -427,3 +427,151 @@ describe('exclusive commands', () => {
     expect(job.err()).toContain('stopped by `edit`');
   });
 });
+
+describe('cooldowns in the daemon', () => {
+  const coldList = async (dir: string, daemon: SharedDaemon) => {
+    const io = client(dir, daemon);
+    expect(await main(['cooldown', 'list', '--json'], io)).toBe(ExitCode.Ok);
+    return JSON.parse(io.out()) as { recipe: string; kind: string; page: number; streak: number; until: string }[];
+  };
+
+  it('makes the recipe cold on a guard timeout, keeps the walled tab, and refuses the next run without a request', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    const first = client(dir, daemon, { browser });
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], first)).toBe(ExitCode.Paused);
+    expect(browser.openSessions).toBe(1);
+    expect(await coldList(dir, daemon)).toEqual([expect.objectContaining({ recipe: 'shop', kind: 'login', page: 1, streak: 1 })]);
+    const visited = browser.visited.length;
+    const second = client(dir, daemon, { browser });
+    expect(await main(['run', 'shop', '--quiet'], second)).toBe(ExitCode.Paused);
+    expect(second.err()).toMatch(/shop is cold until \d\d:\d\d:\d\d after a login guard on page 1 \(https:\/\/shop\.test\/login.*\); not running it \(--ignore-cooldown runs it anyway\)/);
+    expect(JSON.parse(second.out())).toEqual([]);
+    expect(browser.visited.length).toBe(visited);
+    expect(browser.openSessions).toBe(1);
+    await daemon.server!.stop(true);
+    expect(browser.openSessions).toBe(0);
+  });
+
+  it('does not cool down on a zero-fields guard, and closes its tab', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: h('html', {}, h('body', {}, h('p', {}, 'Please wait'))) });
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    expect(await coldList(dir, daemon)).toEqual([]);
+    expect(browser.openSessions).toBe(0);
+  });
+
+  it('does not cool down when cooldownMs is 0', async () => {
+    const dir = await shopHome({ guards: { cooldownMs: 0 } });
+    const daemon = sharedDaemon();
+    const browser = walled();
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    expect(await coldList(dir, daemon)).toEqual([]);
+    expect(browser.openSessions).toBe(0);
+  });
+
+  it('ends a queued job of the recipe with cold, without opening a tab', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    const a = client(dir, daemon, { browser });
+    const runA = main(['run', 'shop', '--guard-timeout', '300', '--no-notify'], a);
+    await until(() => a.err().includes('guard login'));
+    const b = client(dir, daemon, { browser });
+    const runB = main(['run', 'shop', '--no-notify'], b);
+    await until(() => b.err().includes('queued on profile'));
+    expect(await runA).toBe(ExitCode.Paused);
+    expect(await runB).toBe(ExitCode.Paused);
+    expect(b.err()).toContain('shop is cold until');
+    expect(browser.sessions).toHaveLength(1);
+    await daemon.server!.stop(true);
+  });
+
+  it('ends a job waiting for attention with cold, without reloading its page', async () => {
+    const dir = await shopHome({ daemon: { concurrency: { total: 2 } } });
+    const daemon = sharedDaemon();
+    const browser = walled();
+    const a = client(dir, daemon, { browser });
+    const runA = main(['run', 'shop', '--guard-timeout', '300', '--no-notify'], a);
+    await until(() => a.err().includes('guard login'));
+    const c = client(dir, daemon, { browser });
+    const runC = main(['run', 'shop', '--no-notify'], c);
+    await until(() => c.err().includes('waiting for run'));
+    const visited = browser.visited.length;
+    expect(await runA).toBe(ExitCode.Paused);
+    expect(await runC).toBe(ExitCode.Paused);
+    expect(c.err()).toContain('run failed (cold)');
+    expect(browser.visited.length).toBe(visited);
+    await daemon.server!.stop(true);
+  });
+
+  it('resets the streak after a clean --ignore-cooldown run, and doubles it on a repeat wall', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    const firstTab = browser.sessions[0]!;
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify', '--ignore-cooldown'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    const [entry] = await coldList(dir, daemon);
+    expect(entry).toMatchObject({ streak: 2 });
+    await until(() => firstTab.isClosed());
+    expect(browser.openSessions).toBe(1);
+    browser.setPage(SHOP_PAGE, shopCards(1));
+    expect(await main(['run', 'shop', '--ignore-cooldown', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Ok);
+    expect(await coldList(dir, daemon)).toEqual([]);
+    await until(() => browser.openSessions === 0);
+  });
+
+  it('sends one notification for three refused runs', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    const first = client(dir, daemon, { browser });
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], first)).toBe(ExitCode.Paused);
+    for (let i = 0; i < 3; i++) expect(await main(['run', 'shop'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    expect(first.notifications.filter((n) => n.title.includes('is cold'))).toHaveLength(1);
+    await daemon.server!.stop(true);
+  });
+
+  it('warms up when the user clears the wall in the cold tab, without the tab navigating', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    const visited = browser.visited.length;
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(browser.visited.length).toBe(visited);
+    await logIn(browser, 0);
+    await until(() => browser.openSessions === 0, 4000);
+    expect(await coldList(dir, daemon)).toEqual([]);
+    expect(await main(['run', 'shop', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Ok);
+  });
+
+  it('cooldown clear warms the recipe and closes its cold tab; a warm recipe is reported', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const browser = walled();
+    expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], client(dir, daemon, { browser }))).toBe(ExitCode.Paused);
+    const clear = client(dir, daemon);
+    expect(await main(['cooldown', 'clear', 'shop'], clear)).toBe(ExitCode.Ok);
+    expect(clear.err()).toContain('shop is warm');
+    await until(() => browser.openSessions === 0);
+    const again = client(dir, daemon);
+    expect(await main(['cooldown', 'clear', 'news'], again)).toBe(ExitCode.Ok);
+    expect(again.err()).toContain('news is not cold');
+    expect(await main(['cooldown', 'clear'], client(dir, daemon))).toBe(ExitCode.Error);
+    expect(await main(['cooldown', 'clear', 'shop', '--all'], client(dir, daemon))).toBe(ExitCode.Error);
+  });
+
+  it('cooldown commands do not start the daemon', async () => {
+    const dir = await shopHome();
+    const daemon = sharedDaemon();
+    const io = client(dir, daemon);
+    expect(await main(['cooldown', 'list'], io)).toBe(ExitCode.Ok);
+    expect(io.out()).toBe('');
+    expect(await main(['cooldown', 'clear', '--all'], client(dir, daemon))).toBe(ExitCode.Ok);
+    expect(daemon.started).toBe(0);
+  });
+});

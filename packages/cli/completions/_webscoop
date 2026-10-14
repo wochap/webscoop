@@ -86,6 +86,7 @@ _webscoop() {
         'bench:run a playground recipe on every playground tier'
         'browser:fire the browser.show or browser.hide hooks'
         'daemon:show or stop the background daemon'
+        'cooldown:list or clear recipes kept off their site after a wall'
         'attention:answer the run waiting for you in the browser'
         'doctor:check paths, display, browser, proxy, profiles, hooks, and LLM'
       )
@@ -118,6 +119,7 @@ _webscoop() {
             '--delay[wait between pages]:ms:' \
             '--guard-timeout[longest total wait to clear guards]:ms:' \
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--ignore-cooldown[run the recipe even while it is cold]' \
             '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
             "--skip-flows[run none of the recipe's flows]" \
@@ -140,6 +142,7 @@ _webscoop() {
             '--delay[wait between pages]:ms:' \
             '--guard-timeout[how long to wait to clear a guard]:ms:' \
             '--no-guards[never pause on login walls, bot checks, or interstitials]' \
+            '--ignore-cooldown[run the recipe even while it is cold]' \
             '--notify[send a desktop notification on a guard, whatever the config says]' \
             '--no-notify[do not send a desktop notification on a guard]' \
             "--skip-flows[run none of the recipe's flows]" \
@@ -216,6 +219,17 @@ _webscoop() {
           case $words[1] in
             status) _arguments '--json[print JSON]' && ret=0 ;;
             stop) _arguments '--force[cancel running and queued jobs instead of waiting]' && ret=0 ;;
+          esac
+          ;;
+        # command: cooldown
+        cooldown)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '1:action:((list\:"print the cold recipes" clear\:"warm a cold recipe up now"))' \
+            '*:: :->cooldown_args' && ret=0
+          case $words[1] in
+            list) _arguments '--json[print JSON]' && ret=0 ;;
+            clear) _arguments '--all[warm every cold recipe up]' '1::recipe:_webscoop_recipes' && ret=0 ;;
           esac
           ;;
         # command: attention

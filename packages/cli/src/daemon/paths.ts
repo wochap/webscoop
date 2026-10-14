@@ -13,10 +13,15 @@ export function socketPath(env: Env, uid: number): string {
   return join('/tmp', `webscoop-${uid}`, 'daemon.sock');
 }
 
-/** The daemon log in the state directory: `$WEBSCOOP_HOME`, else `$XDG_STATE_HOME/webscoop`, else `~/.local/state/webscoop`. */
-export function daemonLogPath(env: Env, homedir: string): string {
+/** The state directory: `$WEBSCOOP_HOME`, else `$XDG_STATE_HOME/webscoop`, else `~/.local/state/webscoop`. */
+export function stateDir(env: Env, homedir: string): string {
   const home = env.WEBSCOOP_HOME?.trim();
-  if (home) return join(home, 'daemon.log');
+  if (home) return home;
   const state = env.XDG_STATE_HOME?.trim();
-  return join(state || join(homedir, '.local', 'state'), 'webscoop', 'daemon.log');
+  return join(state || join(homedir, '.local', 'state'), 'webscoop');
+}
+
+/** The daemon log in the state directory. */
+export function daemonLogPath(env: Env, homedir: string): string {
+  return join(stateDir(env, homedir), 'daemon.log');
 }

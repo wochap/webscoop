@@ -182,7 +182,8 @@ describe('hooks in commands', () => {
   });
 
   it('pairs attention with a guard that times out, before run.failed', async () => {
-    const home = await hookedHome();
+    // With cooldowns on, the walled tab would keep the browser open past the run.
+    const home = await hookedHome({ guards: { cooldownMs: 0 } });
     const browser = new FakeBrowser({ [PAGE]: { dom: loginForm(), redirect: LOGIN }, [LOGIN]: loginForm() });
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: home.dir, PATH: process.env.PATH }, browser });
     expect(await main(['run', 'shop', '--guard-timeout', '0', '--no-notify'], io)).toBe(ExitCode.Paused);

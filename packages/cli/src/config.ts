@@ -27,7 +27,12 @@ export const HOOK_EVENTS = [
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 /** Default `daemon.idleMs`: how long an idle daemon browser stays open. */
-export const DEFAULT_IDLE_MS = 60_000;
+export const DEFAULT_IDLE_MS = 600_000;
+
+/** Default `guards.cooldownMs`: how long a recipe stays cold after its first wall. */
+export const DEFAULT_COOLDOWN_MS = 60_000;
+/** Default `guards.cooldownMaxMs`: the longest cold period, however often the recipe hits a wall. */
+export const DEFAULT_COOLDOWN_MAX_MS = 1_800_000;
 
 /** Default `hookTimeoutMs`. */
 export const DEFAULT_HOOK_TIMEOUT_MS = 5000;
@@ -120,7 +125,7 @@ export const ConfigSchema = z.object({
           recipes: z.record(z.string(), z.number().int().positive()).default({}),
         })
         .default({ total: 1, recipes: {} }),
-      /** Milliseconds an idle browser stays open; 0 closes it after its last job. Default 60000. */
+      /** Milliseconds an idle browser stays open; 0 closes it after its last job. Default 600000. */
       idleMs: z.number().int().nonnegative().default(DEFAULT_IDLE_MS),
     })
     .default({ concurrency: { total: 1, recipes: {} }, idleMs: DEFAULT_IDLE_MS }),
@@ -130,6 +135,14 @@ export const ConfigSchema = z.object({
     .object({
       /** False shows no banner over a page waiting for a guard, and injects nothing. Default true. */
       banner: z.boolean().optional(),
+      /** Milliseconds a recipe stays cold after a run ends on a login or captcha wall; doubles per repeat. 0 turns cooldowns off. Default 60000. */
+      cooldownMs: z.number().int().nonnegative().optional(),
+      /** Longest cold period. Default 1800000. */
+      cooldownMaxMs: z.number().int().positive().optional(),
+    })
+    .refine((g) => (g.cooldownMaxMs ?? DEFAULT_COOLDOWN_MAX_MS) >= (g.cooldownMs ?? DEFAULT_COOLDOWN_MS), {
+      message: 'must not be lower than guards.cooldownMs',
+      path: ['cooldownMaxMs'],
     })
     .optional(),
   /** Shell commands per lifecycle event: one command line or a list, run in order. */
@@ -158,6 +171,16 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type DaemonConcurrency = Config['daemon']['concurrency'];
+
+/** Cold periods of a config: the base and the cap, in milliseconds. A base of 0 turns cooldowns off. */
+export interface CooldownSettings {
+  baseMs: number;
+  maxMs: number;
+}
+
+export function cooldownSettings(config: Config): CooldownSettings {
+  return { baseMs: config.guards?.cooldownMs ?? DEFAULT_COOLDOWN_MS, maxMs: config.guards?.cooldownMaxMs ?? DEFAULT_COOLDOWN_MAX_MS };
+}
 
 const configDirs = new WeakMap<Config, string>();
 

@@ -73,7 +73,7 @@ in
             perRecipe = nullable types.ints.positive "Maximum jobs per recipe.";
             recipes = nullable (types.attrsOf types.ints.positive) "Per-recipe job limits, by recipe name.";
           };
-          idleMs = nullable types.ints.unsigned "Milliseconds the daemon waits idle before exiting.";
+          idleMs = nullable types.ints.unsigned "Milliseconds an idle browser stays open (default 600000); 0 closes it after its last job.";
         };
       };
       default = { };
