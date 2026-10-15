@@ -43,6 +43,24 @@ _webscoop_profiles() {
   _describe -t profiles 'profile' profiles
 }
 
+# LLM entry names: "default" plus the keys of llms in the config file, read with jq when it is installed.
+_webscoop_llms() {
+  local file
+  if [[ -n ${WEBSCOOP_HOME//[[:space:]]/} ]]; then
+    file=$WEBSCOOP_HOME/config.json
+  elif [[ -n ${XDG_CONFIG_HOME//[[:space:]]/} ]]; then
+    file=$XDG_CONFIG_HOME/webscoop/config.json
+  else
+    file=$HOME/.config/webscoop/config.json
+  fi
+  local -a llms
+  llms=( default )
+  if (( $+commands[jq] )) && [[ -r $file ]]; then
+    llms+=( ${(f)"$(jq -r '.llms // {} | keys_unsorted[]' $file 2>/dev/null)"} )
+  fi
+  _describe -t llms 'LLM entry' llms
+}
+
 _webscoop() {
   local curcontext=$curcontext state line ret=1
   typeset -A opt_args
@@ -113,7 +131,8 @@ _webscoop() {
             '--no-heal[try only the first stored selector per target]' \
             '--no-save[heal, but do not write the recipe back]' \
             '--interactive[show the re-pick panel when a required field cannot be healed]' \
-            '--no-llm[never ask the language model to locate a field]' \
+            '(--no-llm)--llm[LLM entry for the model rung]:entry:_webscoop_llms' \
+            '(--llm)--no-llm[never ask the language model to locate a field]' \
             '--pages[pages to walk]:pages:(1 all)' \
             '--max-pages[most pages "all" walks]:n:' \
             '--delay[wait between pages]:ms:' \
@@ -136,7 +155,8 @@ _webscoop() {
             '--profile[browser profile name]:profile:_webscoop_profiles' \
             '--download-dir[save downloads in this directory]:directory:_files -/' \
             '--json[print the field table as a JSON array]' \
-            '--no-llm[never ask the language model to locate a field]' \
+            '(--no-llm)--llm[LLM entry for the model rung]:entry:_webscoop_llms' \
+            '(--llm)--no-llm[never ask the language model to locate a field]' \
             '--pages[pages to walk]:pages:(1 all)' \
             '--max-pages[most pages "all" walks]:n:' \
             '--delay[wait between pages]:ms:' \
@@ -200,7 +220,8 @@ _webscoop() {
             '--seed[playground seed]:n:' \
             '--json[print the results as JSON]' \
             '--profile[browser profile name]:profile:_webscoop_profiles' \
-            '--no-llm[never ask the language model to locate a field]' \
+            '(--no-llm)--llm[LLM entry for the model rung]:entry:_webscoop_llms' \
+            '(--llm)--no-llm[never ask the language model to locate a field]' \
             '1:recipe:_webscoop_recipes' && ret=0
           ;;
         # command: browser

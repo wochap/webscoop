@@ -50,7 +50,7 @@ describe('loadConfig', () => {
   it('returns defaults when the file is missing', async () => {
     const home = await tempDir();
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
-    expect(config).toEqual({ llm: {}, browser: { driver: 'playwright' }, daemon: { concurrency: { total: 1, recipes: {} }, idleMs: 600_000 }, profiles: { rules: [] } });
+    expect(config).toEqual({ llm: {}, llms: {}, browser: { driver: 'playwright' }, daemon: { concurrency: { total: 1, recipes: {} }, idleMs: 600_000 }, profiles: { rules: [] } });
   });
 
   it('defaults the cooldown settings', async () => {
@@ -81,6 +81,30 @@ describe('loadConfig', () => {
     );
     const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
     expect(config.llm).toEqual({ endpoint: 'http://127.0.0.1:11434/v1', model: 'qwen3.5:9b', contextTokens: 32768 });
+  });
+
+  it('accepts named LLM entries with every key and resolves their key files', async () => {
+    const home = await tempDir();
+    const entry = {
+      endpoint: 'http://h/v1',
+      model: 'm',
+      apiKeyFile: 'secrets/key',
+      maxOutputTokens: 1024,
+      maxTokensField: 'max_completion_tokens',
+      effort: 'high',
+      retryBudgetMs: 0,
+      models: { m: { contextTokens: 131072, maxOutputTokens: 2048, effort: 'low' } },
+    };
+    await writeFile(join(home, 'config.json'), JSON.stringify({ llms: { fast: entry } }));
+    const config = await loadConfig(resolvePaths({ WEBSCOOP_HOME: home }, '/h'));
+    expect(config.llms.fast).toEqual({ ...entry, apiKeyFile: join(home, 'secrets/key') });
+  });
+
+  it('rejects llms.default, a bad maxTokensField, and two key sources, naming paths', async () => {
+    expect(await configError({ llms: { default: {} } })).toContain('$.llms.default');
+    expect(await configError({ llms: { default: {} } })).toContain('default entry');
+    expect(await configError({ llms: { fast: { maxTokensField: 'max_output_tokens' } } })).toContain('$.llms.fast.maxTokensField');
+    expect(await configError({ llms: { fast: { apiKeyFile: 'a', apiKeyCommand: 'b' } } })).toContain('$.llms.fast');
   });
 
   it('rejects an invalid config with the file and path', async () => {

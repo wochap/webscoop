@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NoopLlm } from '@webscoop/core';
 import { MockLlm, OpenAiCompatibleLlm } from '@webscoop/llm';
 import { describe, expect, it } from 'vitest';
-import { CliError, ConfigSchema, createLlm, llmSettings, loadConfig, resolvePaths } from '../src';
+import { CliError, ConfigSchema, createLlm, llmSettings, loadConfig, resolveLlm, resolvePaths } from '../src';
 import { tempDir } from './helpers';
 
 const config = (llm: Record<string, unknown> = {}) => ConfigSchema.parse({ llm });
@@ -155,5 +155,61 @@ describe('llm key sources', () => {
     const llm = createLlm(config({ ...base, apiKeyCommand: `touch ${marker}; echo k` }), { WEBSCOOP_LLM_API_KEY: 'env' });
     expect(keyOf(llm)).toBe('env');
     expect(existsSync(marker)).toBe(false);
+  });
+});
+
+describe('resolveLlm', () => {
+  const full = (llms: Record<string, unknown>, llm: Record<string, unknown> = { endpoint: 'http://d/v1', model: 'dm' }) => ConfigSchema.parse({ llm, llms });
+  const fast = { endpoint: 'http://fast/v1', model: 'fm' };
+  const smart = { endpoint: 'http://smart/v1', model: 'sm' };
+  const endpointOf = (llm: unknown) => (llm as OpenAiCompatibleLlm).endpoint;
+
+  it('picks the caller name, then the flag, then default', () => {
+    const c = full({ fast, smart });
+    expect(endpointOf(resolveLlm(c, {}, '/', { flag: 'fast' }))).toBe('http://fast/v1');
+    expect(endpointOf(resolveLlm(c, {}, '/', { name: 'smart', flag: 'fast' }))).toBe('http://smart/v1');
+    expect(endpointOf(resolveLlm(c, {}))).toBe('http://d/v1');
+    expect(endpointOf(resolveLlm(c, {}, '/', { flag: 'default' }))).toBe('http://d/v1');
+  });
+
+  it('names the unknown entry and lists the defined ones', () => {
+    expect(() => resolveLlm(full({ fast }), {}, '/', { flag: 'nope' })).toThrow(/unknown LLM entry "nope"; defined: default, fast/);
+  });
+
+  it('applies the environment overrides to the default entry only', () => {
+    const c = full({ fast });
+    const env = { WEBSCOOP_LLM_ENDPOINT: 'http://env/v1' };
+    expect(endpointOf(resolveLlm(c, env))).toBe('http://env/v1');
+    expect(endpointOf(resolveLlm(c, env, '/', { flag: 'fast' }))).toBe('http://fast/v1');
+  });
+
+  it('lets the mock answer every defined entry and still rejects an unknown one', async () => {
+    const dir = await tempDir();
+    await writeFile(join(dir, 's.json'), JSON.stringify({ responses: [{ reply: { ok: true } }] }));
+    const c = full({ fast });
+    const env = { WEBSCOOP_LLM_MOCK: 's.json' };
+    expect(resolveLlm(c, env, dir, { name: 'fast' })).toBeInstanceOf(MockLlm);
+    expect(() => resolveLlm(c, env, dir, { name: 'nope' })).toThrow(/unknown LLM entry "nope"/);
+  });
+
+  it('runs a key command once across two resolutions of one entry', async () => {
+    const dir = await tempDir();
+    const c = full({ fast: { ...fast, apiKeyCommand: `echo x >> ${dir}/count; echo sk-1` } });
+    const env = {};
+    resolveLlm(c, env, dir, { flag: 'fast' });
+    resolveLlm(c, env, dir, { name: 'fast' });
+    expect((await readFile(join(dir, 'count'), 'utf8')).trim().split('\n')).toHaveLength(1);
+  });
+
+  it('applies the models override for the selected model only', () => {
+    const models = { big: { contextTokens: 131072, maxOutputTokens: 512, effort: 'high' } };
+    const big = resolveLlm(full({ a: { ...fast, model: 'big', models } }), {}, '/', { flag: 'a' }) as OpenAiCompatibleLlm;
+    expect([big.contextTokens, big.maxOutputTokens, big.effort]).toEqual([131072, 512, 'high']);
+    const small = resolveLlm(full({ a: { ...fast, model: 'small', models } }), {}, '/', { flag: 'a' }) as OpenAiCompatibleLlm;
+    expect([small.contextTokens, small.maxOutputTokens, small.effort]).toEqual([32768, 4096, 'default']);
+  });
+
+  it('returns the unavailable adapter for an entry without endpoint or model', () => {
+    expect(resolveLlm(full({ empty: {} }), {}, '/', { flag: 'empty' })).toBeInstanceOf(NoopLlm);
   });
 });

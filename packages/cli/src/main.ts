@@ -84,11 +84,25 @@ function humanizeOptions(command: Command): Command {
     .on('option:no-humanize', note('no-humanize'));
 }
 
+/** `--llm <name>` and `--no-llm`, which share the `llm` value and may not be passed together. */
+function llmOptions(command: Command, noLlmHelp: string): Command {
+  const seen = new Set<string>();
+  const note = (flag: string) => () => {
+    seen.add(flag);
+    if (seen.size === 2) command.error('error: option --llm <name> cannot be used with option --no-llm');
+  };
+  return command
+    .option('--llm <name>', 'LLM entry for the model rung: "default" (the config llm block) or a key of llms (default: default)')
+    .option('--no-llm', noLlmHelp)
+    .on('option:llm', note('llm'))
+    .on('option:no-llm', note('no-llm'));
+}
+
 const EXIT_HELP = `
 Healing:
   run heals selectors that stopped matching and rewrites the recipe after a
   successful run. --no-save keeps the file, --no-heal tries only the first
-  selector, --no-llm skips the language model rung, --interactive asks you to
+  selector, --llm <name> picks the language model entry, --no-llm skips the language model rung, --interactive asks you to
   re-pick a field nothing else could find.
   test <recipe> checks a recipe without saving; record --edit <recipe>
   --repick <field> picks one field again.
@@ -120,7 +134,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     })
     .showHelpAfterError('(run webscoop --help for usage)');
 
-  humanizeOptions(proxyOptions(program.command('run')))
+  llmOptions(humanizeOptions(proxyOptions(program.command('run'))), 'never ask the language model to locate a field, whatever the config and recipe say')
     .description('run a recipe and print the extracted rows')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -138,7 +152,6 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     .option('--no-heal', 'try only the first stored selector per target; never heal or rewrite the recipe')
     .option('--no-save', 'heal, but do not write the healed selectors back to the recipe file')
     .option('--interactive', 'when a required field cannot be healed, show the re-pick panel and wait for you instead of exiting 3')
-    .option('--no-llm', 'never ask the language model to locate a field, whatever the config and recipe say')
     .addOption(new Option('--pages <1|N|all>', 'pages to walk, replacing the recipe limit').argParser(pagesArg))
     .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
@@ -198,7 +211,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
-  humanizeOptions(proxyOptions(program.command('test')))
+  llmOptions(humanizeOptions(proxyOptions(program.command('test'))), 'never ask the language model to locate a field')
     .description('check a recipe on its first page: heal without saving and print each field\'s status')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -209,7 +222,6 @@ working selector first (unless --no-save).`,
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--queue-timeout <ms>', 'give up (exit 1) when the job has not started within this time (default: wait until it starts)').argParser(positiveInt))
     .option('--json', 'print the field table as a JSON array')
-    .option('--no-llm', 'never ask the language model to locate a field')
     .addOption(new Option('--pages <1|N|all>', 'pages to walk (default: the first page only)').argParser(pagesArg))
     .addOption(new Option('--max-pages <n>', 'most pages "all" walks').argParser(maxPagesArg).default(500))
     .addOption(new Option('--delay <ms>', 'wait between pages, replacing the recipe delay').argParser(positiveInt))
@@ -284,14 +296,13 @@ and export again when the site changes. Needs no display.`,
     )
     .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
 
-  humanizeOptions(proxyOptions(program.command('bench')))
+  llmOptions(humanizeOptions(proxyOptions(program.command('bench'))), 'never ask the language model to locate a field')
     .description('run a playground recipe on every playground tier and report which rung resolved each field')
     .argument('<recipe>', 'recipe with a {port} variable, e.g. the playground-catalog fixture')
     .option('--tiers <range>', 'tiers to run, e.g. 0-4, 3, or 0,3-4', '0-4')
     .addOption(new Option('--seed <n>', 'playground seed').argParser(seedInt).default(1))
     .option('--json', 'print the results as JSON')
     .option('--profile <name>', 'browser profile name (default: resolved from recipe and config)')
-    .option('--no-llm', 'never ask the language model to locate a field')
     .addOption(new Option('--timeout <ms>', 'navigation timeout').argParser(positiveInt).default(30_000))
     .addOption(new Option('--lock-timeout <ms>', 'how long to wait for a busy profile').argParser(positiveInt).default(30_000))
     .option('--force', 'stop the daemon browser on the profile, and its jobs, without asking')

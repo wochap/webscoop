@@ -6,7 +6,7 @@ export { detectDisplay, requireDisplay } from './display';
 export { acquireProfileLock, LOCK_FILE, type ProfileLock } from './lock';
 export { FsStorage, isRecipePath } from './storage';
 export type { CliIo, BrowserInfo, Output } from './context';
-export { createLlm, llmSettings, canProbe, type Probeable } from './llm';
+export { createLlm, resolveLlm, entrySettings, llmEntryNames, llmSettings, canProbe, DEFAULT_LLM, type Probeable, type ResolveLlmOptions } from './llm';
 export { NotifySend, spawnProcess, NOTIFY_TIMEOUT_MS, type Spawn } from './notify';
 export { findBrowserPid, type FindPidOptions } from './browser-pid';
 export { HookRunner, type HookCommand, type HookContext, type HookDetails } from './hooks';

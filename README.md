@@ -176,13 +176,13 @@ webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [
 webscoop run <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]...
                       [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
-                      [--no-heal] [--no-save] [--no-llm] [--interactive]
+                      [--no-heal] [--no-save] [--llm name | --no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
-webscoop test <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--no-llm]
+webscoop test <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--llm name | --no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
                        [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
-webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--no-llm]
+webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--llm name | --no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
 webscoop browser show|hide [--profile name]
@@ -217,7 +217,7 @@ After `npm run build` the CLI is a single file: `node packages/cli/dist/webscoop
 - `--queue-timeout` gives up (exit 1) on a run that has not started within
   that many milliseconds, naming the profile and the jobs ahead; without it a
   run waits until it starts.
-- `--no-heal`, `--no-save`, `--no-llm`, and `--interactive` control healing;
+- `--no-heal`, `--no-save`, `--llm`, `--no-llm`, and `--interactive` control healing;
   see below.
 - `--pages`, `--max-pages`, and `--delay` control pagination; see below.
 - `--guard-timeout`, `--no-guards`, and `--notify` / `--no-notify` control guards; see below.
@@ -420,6 +420,9 @@ fingerprint; nothing else in the file changes. A failed run never writes.
 - `--no-save` heals but leaves the recipe file alone.
 - `--no-heal` tries only the first candidate per target and never writes;
   anything else missing is missing (exit 3 when required).
+- `--llm <name>` sends the model rung to the named entry of the config's
+  `llms` (or `default`, the `llm` block) for this run; an unknown name exits 1
+  before a browser starts. `--llm` with `--no-llm` is a usage error.
 - `--no-llm` skips the model rung for this run, whatever the config and recipe
   say.
 - `--interactive` shows the re-pick panel in the run's tab, whose
@@ -1110,6 +1113,17 @@ Config file, all keys optional:
     "contextTokens": 32768,
     "timeoutMs": 60000,
     "temperature": 0
+  },
+  "llms": {
+    "fast": { "endpoint": "http://127.0.0.1:8080/v1", "model": "qwen3.5:4b" },
+    "cloud": {
+      "endpoint": "https://api.openai.com/v1",
+      "model": "gpt-5",
+      "apiKeyFile": "secrets/openai-key",
+      "maxTokensField": "max_completion_tokens",
+      "effort": "low",
+      "models": { "gpt-5": { "contextTokens": 400000, "maxOutputTokens": 8192 } }
+    }
   }
 }
 ```
@@ -1160,7 +1174,32 @@ estimated at 3.5 characters per token. `timeoutMs` (default 60000) bounds each
 request, and `temperature` defaults to 0. Without both an endpoint and a model
 the rung is off and runs behave as before.
 
-These environment variables override the file:
+#### Named entries
+
+The `llm` block is the entry named `default`. `llms` adds more, each with the
+same keys (`default` is reserved; names are kebab-case), and `--llm <name>`
+on `run`, `test`, and `bench` picks one for the invocation. Each entry also takes:
+
+| Key | Default | Meaning |
+| --- | ------- | ------- |
+| `maxOutputTokens` | 4096 | output cap per request; the smallest of this and the caller's own caps is sent |
+| `maxTokensField` | `max_tokens` | request field that carries the cap; use `max_completion_tokens` for OpenAI reasoning models, which reject `max_tokens` (llama.cpp ignores the latter) |
+| `effort` | `default` | `none`, `low`, `medium`, `high`, or `default`; `default` sends nothing, `none` sends `reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false`, other levels send `reasoning_effort` only |
+| `retryBudgetMs` | 60000 | total time spent retrying busy answers; 0 turns retries off |
+| `models` | none | per-model overrides of `contextTokens`, `maxOutputTokens`, and `effort`, applied when the entry's `model` is a key |
+
+`apiKeyFile` and `apiKeyCommand` work in every entry; a relative key file is
+resolved against the config directory.
+
+The adapter retries HTTP 429, 502, 503, 504, and 529 with a wait of 500 ms,
+doubling to 8 s (or the server's `Retry-After`, capped at 8 s), until the next
+wait would pass `retryBudgetMs`. Each retry prints
+`llm: HTTP 503, retrying in 2 s` on stderr unless `--quiet`. Other statuses,
+network errors, and timeouts are not retried. Bearer tokens are replaced with
+`***` in every error and log line.
+
+These environment variables override the `llm` block (the `default` entry)
+only; named entries are exactly what the file says:
 
 | Variable | Overrides |
 | -------- | --------- |
@@ -1175,9 +1214,11 @@ reasoning: `chat_template_kwargs.enable_thinking: false` and
 without both. A leading `<think>` block and code fences are stripped from the
 answer, and an answer that is not the expected JSON is asked for again once.
 
-`webscoop doctor` probes a configured endpoint: whether it answers, whether
-`/models` lists the model, the round trip of a one-token completion, and a
-warning when `contextTokens` is below 8192. Probe problems are warnings and do
+`webscoop doctor` prints one block per entry (`llm default`, then each `llms`
+entry in file order) with the endpoint, model, and key source (never the key),
+and probes each endpoint: whether it answers, whether `/models` lists the
+model, a warning for `models` overrides it does not list, the round trip of a
+one-token completion, and a warning when `contextTokens` is below 8192. Probe problems are warnings and do
 not change the exit code.
 
 A `WEBSCOOP_LLM_MOCK` script is an array of responses, or

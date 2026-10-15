@@ -1,6 +1,7 @@
 import { RunEmitter, Runner, templateVariables, withPaginate, type HealOutcome, type Recipe } from '@webscoop/core';
 import { browserSettings, resolveHumanize, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
+import { checkLlmName } from '../llm';
 import { log, type CliIo } from '../context';
 import { requireDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
@@ -25,8 +26,8 @@ export interface BenchCommandOptions {
   lockTimeout: number;
   /** `--force`: stop the daemon's browser on the profile without asking. */
   force?: boolean;
-  /** False with `--no-llm`. */
-  llm?: boolean;
+  /** False with `--no-llm`; the entry name with `--llm <name>`. */
+  llm?: boolean | string;
 }
 
 export const MAX_BENCH_TIER = 4;
@@ -104,6 +105,7 @@ export async function benchCommand(io: CliIo, recipeRef: string, opts: BenchComm
   const tiers = parseTiers(opts.tiers);
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths, (message) => log(io, message));
+  if (typeof opts.llm === 'string') checkLlmName(config, opts.llm);
   const storage = new FsStorage(paths.recipesDir, io.cwd);
   const recipe = await storage.load(recipeRef);
   const variables = templateVariables(recipe.url);

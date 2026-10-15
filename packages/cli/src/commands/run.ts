@@ -46,7 +46,7 @@ import { requireDisplay } from '../display';
 import { CliError, ExitCode, exitCodeFor, type ExitCode as Code } from '../exit';
 import { resolvePaths } from '../paths';
 import { guardBanner } from '../guard';
-import { createLlm } from '../llm';
+import { checkLlmName, resolveLlm } from '../llm';
 import { interactiveRepick } from '../repick';
 import { checkProfileName, hostOf, prepareProfile, profileNote, resolveProfile, type ResolvedProfile } from '../profiles';
 import { FsStorage } from '../storage';
@@ -77,8 +77,8 @@ export interface RunCommandOptions {
   /** False with `--no-save`. */
   save?: boolean;
   interactive?: boolean;
-  /** False with `--no-llm`. */
-  llm?: boolean;
+  /** False with `--no-llm`; the entry name with `--llm <name>`. */
+  llm?: boolean | string;
   /** `--pages`: replaces the recipe's page limit. */
   pages?: number | 'all';
   /** `--max-pages`: cap on `all`. */
@@ -534,8 +534,10 @@ export function infoLog(io: CliIo, quiet: boolean | undefined): (message: string
 }
 
 /** The model rung for `run`, `test`, and `bench`: unavailable without an endpoint, off with `--no-llm`. */
-export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean; quiet?: boolean }): Resolver {
-  return modelResolver(createLlm(config, io.env, io.cwd), { enabled: opts.llm !== false, log: infoLog(io, opts.quiet) });
+export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean | string; quiet?: boolean }): Resolver {
+  const log = infoLog(io, opts.quiet);
+  const llm = resolveLlm(config, io.env, io.cwd, { flag: typeof opts.llm === 'string' ? opts.llm : undefined, log });
+  return modelResolver(llm, { enabled: opts.llm !== false, log });
 }
 
 /** `WEBSCOOP_E2E_CDP_PORT`: a DevTools port so end-to-end tests can drive the run's own browser. */
@@ -553,9 +555,10 @@ export async function runCommand(io: CliIo, recipeRef: string, opts: RunCommandO
 }
 
 /** Variable values and the download directory, read in the submitting command before the job reaches the daemon or a browser opens. */
-export async function clientOptions(io: CliIo, recipeRef: string, opts: VarSources & { downloadDir?: string }): Promise<{ resolvedVars: ResolvedVars; downloadDir: string }> {
+export async function clientOptions(io: CliIo, recipeRef: string, opts: VarSources & { downloadDir?: string; llm?: boolean | string }): Promise<{ resolvedVars: ResolvedVars; downloadDir: string }> {
   const paths = resolvePaths(io.env, io.homedir);
   const config = await loadConfig(paths);
+  if (typeof opts.llm === 'string') checkLlmName(config, opts.llm);
   const recipe = await new FsStorage(paths.recipesDir, io.cwd).load(recipeRef);
   return { resolvedVars: await resolveVars(recipe, opts, config, io.cwd), downloadDir: resolveDownloadDir(opts.downloadDir, config, io.cwd, io.homedir) };
 }
@@ -655,8 +658,8 @@ export interface TestCommandOptions {
   /** `--queue-timeout`: longest wait for the job to start. */
   queueTimeout?: number;
   json?: boolean;
-  /** False with `--no-llm`. */
-  llm?: boolean;
+  /** False with `--no-llm`; the entry name with `--llm <name>`. */
+  llm?: boolean | string;
   /** `--pages`: walk more than the first page. */
   pages?: number | 'all';
   maxPages?: number;

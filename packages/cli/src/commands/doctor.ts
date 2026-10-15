@@ -2,12 +2,12 @@ import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ProbeResult } from '@webscoop/llm';
-import { HOOK_EVENTS, hookCommands, loadConfig, type Config } from '../config';
+import { HOOK_EVENTS, hookCommands, loadConfig, type Config, type LlmEntry } from '../config';
 import { browserSettings } from '../browser';
 import { log, type BrowserInfo, type CliIo } from '../context';
 import { detectDisplay } from '../display';
 import { CliError, ExitCode, type ExitCode as Code } from '../exit';
-import { canProbe, createLlm, llmSettings, type Probeable } from '../llm';
+import { canProbe, entrySettings, llmEntryNames, resolveLlm, type Probeable } from '../llm';
 import { resolvePaths, type Env, type Paths } from '../paths';
 import { hostOf, listProfiles, profileSourceLabel, resolveProfile } from '../profiles';
 import { FsStorage } from '../storage';
@@ -101,6 +101,13 @@ export async function profileLines(config: Config, paths: Pick<Paths, 'recipesDi
 
 /** Doctor lines for a probe result. Every problem is a warning; none changes the exit code. */
 export function probeLines(endpoint: string, model: string, probe: ProbeResult): [string, string][] {
+  const overrides: [string, string][] = probe.unlistedOverrides?.length
+    ? [['llm probe', `warning: models overrides for ${probe.unlistedOverrides.join(', ')}, which ${endpoint} does not list`]]
+    : [];
+  return [...probeCore(endpoint, model, probe), ...overrides];
+}
+
+function probeCore(endpoint: string, model: string, probe: ProbeResult): [string, string][] {
   if (!probe.reachable) return [['llm probe', `warning: ${endpoint} is unreachable${probe.error ? ` (${probe.error})` : ''}`]];
   if (!probe.modelFound) {
     const available = probe.models.length > 0 ? `; available: ${probe.models.join(', ')}` : '';
@@ -108,6 +115,47 @@ export function probeLines(endpoint: string, model: string, probe: ProbeResult):
   }
   if (probe.latencyMs === null) return [['llm probe', `warning: model ${model} found, but a one-token completion failed${probe.error ? ` (${probe.error})` : ''}`]];
   return [['llm probe', `reachable, model ${model} found, ${probe.latencyMs} ms round trip`]];
+}
+
+/** Where an entry's bearer token comes from, never the token itself. */
+function keySource(entry: LlmEntry): string {
+  if (entry.apiKey) return 'apiKey: set';
+  if (entry.apiKeyFile) return `apiKeyFile ${entry.apiKeyFile}`;
+  if (entry.apiKeyCommand) return 'apiKeyCommand';
+  return 'none';
+}
+
+/** Doctor lines for one LLM entry: its settings, then the probe and context lines when it has an endpoint and a model. */
+async function llmEntryLines(io: CliIo, config: Config, name: string, opts: DoctorOptions): Promise<[string, string][]> {
+  const label = `llm ${name}`;
+  const entry = entrySettings(config, name, io.env, io.cwd);
+  if (!entry.endpoint) return [[label, 'not configured']];
+  const lines: [string, string][] = [
+    [label, `${entry.endpoint}${entry.model ? ` (model ${entry.model})` : ' (warning: no model configured, the model rung is off)'}`],
+    [`${label} key`, keySource(entry)],
+  ];
+  if (!entry.model) return lines;
+  let adapter;
+  try {
+    adapter = resolveLlm(config, io.env, io.cwd, { name });
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    return [...lines, [`${label} probe`, `warning: ${error.message}`]];
+  }
+  if (canProbe(adapter)) {
+    const probe = await (opts.probe ?? ((a: Probeable) => a.probe()))(adapter);
+    for (const [key, value] of probeLines(entry.endpoint, entry.model, probe)) lines.push([`${label} ${key.slice(4)}`, value]);
+  } else {
+    lines.push([`${label} probe`, 'skipped (WEBSCOOP_LLM_MOCK is set)']);
+  }
+  const context = adapter.contextTokens;
+  lines.push([
+    `${label} context`,
+    context < MIN_CONTEXT_TOKENS
+      ? `warning: ${context} tokens is below ${MIN_CONTEXT_TOKENS}; prompts will list few candidates`
+      : `${context} tokens (prompts use at most ${Math.floor(context * 0.4)})`,
+  ]);
+  return lines;
 }
 
 export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promise<Code> {
@@ -141,24 +189,7 @@ export async function doctorCommand(io: CliIo, opts: DoctorOptions = {}): Promis
     }
     lines.push(...(await profileLines(config, paths, io.cwd)));
     lines.push(...hookLines(config));
-    const llm = llmSettings(config, io.env, io.cwd);
-    lines.push(['llm', llm.endpoint ? `${llm.endpoint}${llm.model ? ` (model ${llm.model})` : ' (warning: no model configured, the model rung is off)'}` : 'not configured']);
-    if (llm.endpoint && llm.model) {
-      const adapter = createLlm(config, io.env, io.cwd);
-      if (canProbe(adapter)) {
-        const probe = await (opts.probe ?? ((a: Probeable) => a.probe()))(adapter);
-        lines.push(...probeLines(llm.endpoint, llm.model, probe));
-      } else {
-        lines.push(['llm probe', 'skipped (WEBSCOOP_LLM_MOCK is set)']);
-      }
-      const context = adapter.contextTokens;
-      lines.push([
-        'llm context',
-        context < MIN_CONTEXT_TOKENS
-          ? `warning: ${context} tokens is below ${MIN_CONTEXT_TOKENS}; prompts will list few candidates`
-          : `${context} tokens (prompts use at most ${Math.floor(context * 0.4)})`,
-      ]);
-    }
+    for (const name of llmEntryNames(config)) lines.push(...(await llmEntryLines(io, config, name, opts)));
   }
 
   const width = Math.max(...lines.map(([k]) => k.length));

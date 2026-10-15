@@ -300,12 +300,19 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Reasoning effort; `default` sends nothing and leaves the server's choice. */
+export type Effort = 'none' | 'low' | 'medium' | 'high' | 'default';
+
 export interface CompleteOptions {
   maxTokens?: number;
+  /** Output token cap; the smaller of this, `maxTokens`, and the adapter's own cap is sent. */
+  maxOutputTokens?: number;
+  /** Reasoning effort; the adapter's configured value when absent. */
+  effort?: Effort;
   signal?: AbortSignal;
   /** Ask the endpoint for a JSON object (`response_format: json_object`). */
   json?: boolean;
-  /** Ask a reasoning model to skip its thinking block, where the endpoint supports it. */
+  /** Ask a reasoning model to skip its thinking block, where the endpoint supports it. Sugar for `effort: 'none'`. */
   noThinking?: boolean;
   /** Sampling temperature; the adapter's configured value when absent. */
   temperature?: number;
@@ -331,6 +338,8 @@ export class LlmError extends Error {
     readonly kind: LlmErrorKind,
     message: string,
     readonly status?: number,
+    /** The server's `Retry-After` answer in milliseconds, when it gave one. */
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'LlmError';

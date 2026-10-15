@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LlmError, MockLlm, OpenAiCompatibleLlm, type FetchLike } from '../src';
 
 interface Call {
@@ -73,7 +73,7 @@ describe('OpenAiCompatibleLlm', () => {
     const llm = new OpenAiCompatibleLlm({ endpoint: 'http://h/v1', model: 'm', apiKey: 'sk-1', temperature: 0.2, fetch });
     await llm.complete([{ role: 'user', content: 'hi' }]);
     expect(fetch.calls[0]!.headers.authorization).toBe('Bearer sk-1');
-    expect(fetch.calls[0]!.body).toEqual({ model: 'm', messages: [{ role: 'user', content: 'hi' }], temperature: 0.2, stream: false });
+    expect(fetch.calls[0]!.body).toEqual({ model: 'm', messages: [{ role: 'user', content: 'hi' }], temperature: 0.2, max_tokens: 4096, stream: false });
     expect(llm.estimateTokens('x'.repeat(20_000))).toBe(5715);
     expect(llm.contextTokens).toBe(32_768);
   });
@@ -128,7 +128,115 @@ describe('OpenAiCompatibleLlm', () => {
   });
 });
 
+describe('output cap and effort', () => {
+  const msg = [{ role: 'user' as const, content: 'hi' }];
+  const bodyOf = (opts: ConstructorParameters<typeof OpenAiCompatibleLlm>[0], call = {}) => new OpenAiCompatibleLlm(opts).body(msg, call);
+  const base = { endpoint: 'http://h/v1', model: 'm' };
+
+  it('sends the smallest cap under the configured field', () => {
+    const b = bodyOf({ ...base, maxTokensField: 'max_completion_tokens', maxOutputTokens: 1024 }, { maxTokens: 200 });
+    expect(b).toMatchObject({ max_completion_tokens: 200 });
+    expect(b).not.toHaveProperty('max_tokens');
+    expect(bodyOf({ ...base, maxOutputTokens: 1024 }, { maxOutputTokens: 2048 })).toMatchObject({ max_tokens: 1024 });
+    expect(bodyOf(base)).toMatchObject({ max_tokens: 4096 });
+  });
+
+  it('maps each effort level', () => {
+    expect(bodyOf(base)).not.toHaveProperty('reasoning_effort');
+    expect(bodyOf(base, { effort: 'default' })).not.toHaveProperty('chat_template_kwargs');
+    expect(bodyOf(base, { effort: 'none' })).toMatchObject({ reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false } });
+    expect(bodyOf(base, { noThinking: true })).toMatchObject({ reasoning_effort: 'none' });
+    const high = bodyOf({ ...base, effort: 'high' });
+    expect(high).toMatchObject({ reasoning_effort: 'high' });
+    expect(high).not.toHaveProperty('chat_template_kwargs');
+    expect(bodyOf({ ...base, effort: 'high' }, { effort: 'low' })).toMatchObject({ reasoning_effort: 'low' });
+  });
+
+  it('retries a 400 once without reasoning_effort', async () => {
+    const fetch = fakeFetch((call) => (call.body && 'reasoning_effort' in call.body ? new Response('bad', { status: 400 }) : chat('ok')));
+    const llm = new OpenAiCompatibleLlm({ ...base, fetch });
+    expect(await llm.complete(msg, { effort: 'low' })).toBe('ok');
+    expect(fetch.calls).toHaveLength(2);
+    const failing = new OpenAiCompatibleLlm({ ...base, fetch: fakeFetch(() => new Response('bad', { status: 400 })) });
+    expect(await failing.request(msg, { effort: 'low' })).toEqual({ ok: false, error: expect.objectContaining({ status: 400 }) });
+  });
+});
+
+describe('retry on busy answers', () => {
+  const msg = [{ role: 'user' as const, content: 'hi' }];
+  const base = { endpoint: 'http://h/v1', model: 'm' };
+  const busy = (status: number, headers: Record<string, string> = {}) => new Response('busy', { status, headers });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('retries a 503 once and logs the wait', async () => {
+    vi.useFakeTimers();
+    const answers = [busy(503), chat('ok')];
+    const fetch = fakeFetch(() => answers.shift()!);
+    const log: string[] = [];
+    const llm = new OpenAiCompatibleLlm({ ...base, fetch, log: (l) => log.push(l) });
+    const pending = llm.request(msg);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(fetch.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({ ok: true, value: 'ok' });
+    expect(log).toEqual(['llm: HTTP 503, retrying in 0.5 s']);
+  });
+
+  it('honors Retry-After in seconds and as a date', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const answers = [busy(429, { 'retry-after': '2' }), busy(503, { 'retry-after': new Date('2026-01-01T00:00:05Z').toUTCString() }), chat('ok')];
+    const fetch = fakeFetch(() => answers.shift()!);
+    const llm = new OpenAiCompatibleLlm({ ...base, fetch });
+    const pending = llm.request(msg);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetch.calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(fetch.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({ ok: true, value: 'ok' });
+  });
+
+  it('stops when the budget is exhausted', async () => {
+    vi.useFakeTimers();
+    const fetch = fakeFetch(() => busy(503));
+    const llm = new OpenAiCompatibleLlm({ ...base, fetch, retryBudgetMs: 1000 });
+    const pending = llm.request(msg);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toEqual({ ok: false, error: expect.objectContaining({ status: 503 }) });
+    expect(fetch.calls).toHaveLength(2);
+  });
+
+  it('does not retry with a zero budget or on 500', async () => {
+    const f503 = fakeFetch(() => busy(503));
+    expect((await new OpenAiCompatibleLlm({ ...base, fetch: f503, retryBudgetMs: 0 }).request(msg)).ok).toBe(false);
+    expect(f503.calls).toHaveLength(1);
+    const f500 = fakeFetch(() => busy(500));
+    expect((await new OpenAiCompatibleLlm({ ...base, fetch: f500 }).request(msg)).ok).toBe(false);
+    expect(f500.calls).toHaveLength(1);
+  });
+
+  it('redacts the key from errors', async () => {
+    const fetch = fakeFetch(() => new Response('bad key sk-abc', { status: 401 }));
+    const result = await new OpenAiCompatibleLlm({ ...base, apiKey: 'sk-abc', fetch }).request(msg);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('***');
+      expect(result.error.message).not.toContain('sk-abc');
+    }
+  });
+});
+
 describe('probe', () => {
+  it('reports override ids the endpoint does not list', async () => {
+    const fetch = fakeFetch((call) => (call.url.endsWith('/models') ? Response.json({ data: [{ id: 'm' }] }) : chat('O')));
+    const llm = new OpenAiCompatibleLlm({ endpoint: 'http://h/v1', model: 'm', overrideModels: ['m', 'gpt-x'], fetch });
+    expect(await llm.probe()).toMatchObject({ modelFound: true, unlistedOverrides: ['gpt-x'] });
+  });
+
   const models = (...ids: string[]) => Response.json({ object: 'list', data: ids.map((id) => ({ id, object: 'model' })) });
 
   it('finds the model and times a one-token completion', async () => {

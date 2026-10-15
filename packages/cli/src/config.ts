@@ -70,28 +70,63 @@ export const VarBindingSchema = z
 
 export type VarBinding = z.infer<typeof VarBindingSchema>;
 
+const KEBAB_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+const EffortSchema = z.enum(['none', 'low', 'medium', 'high', 'default']);
+
+/** The keys of one LLM entry: the `llm` block and each value of `llms`. */
+export const LlmEntrySchema = z
+  .object({
+    /** OpenAI-compatible base URL ending before `/chat/completions`, e.g. `http://127.0.0.1:11434/v1`. */
+    endpoint: z.url().optional(),
+    model: z.string().min(1).optional(),
+    /** Sent as a bearer token when set. */
+    apiKey: z.string().optional(),
+    /** File whose trimmed contents are the bearer token. Relative to the config file directory; `~/` is the home directory. */
+    apiKeyFile: z.string().min(1).optional(),
+    /** Shell command (`sh -c`, run in the config file directory) whose trimmed stdout is the bearer token. No default. */
+    apiKeyCommand: z.string().min(1).optional(),
+    /** Context window of the model; prompts are budgeted to 40 percent of it. Default 32768. */
+    contextTokens: z.number().int().positive().optional(),
+    /** Output token cap per request. Default 4096. */
+    maxOutputTokens: z.number().int().positive().optional(),
+    /** Request field that carries the output cap. Default `max_tokens`. */
+    maxTokensField: z.enum(['max_tokens', 'max_completion_tokens']).optional(),
+    /** Reasoning effort; `default` sends nothing. Default `default`. */
+    effort: EffortSchema.optional(),
+    /** Per-request timeout. Default 60000. */
+    timeoutMs: z.number().int().positive().optional(),
+    /** Time spent retrying busy answers (429, 502, 503, 504, 529); 0 disables. Default 60000. */
+    retryBudgetMs: z.number().int().nonnegative().optional(),
+    /** Sampling temperature. Default 0. */
+    temperature: z.number().min(0).max(2).optional(),
+    /** Per-model overrides, applied when `model` is a key. */
+    models: z
+      .record(
+        z.string().min(1),
+        z
+          .object({
+            contextTokens: z.number().int().positive().optional(),
+            maxOutputTokens: z.number().int().positive().optional(),
+            effort: EffortSchema.optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .refine((l) => [l.apiKey, l.apiKeyFile, l.apiKeyCommand].filter((v) => v !== undefined).length <= 1, {
+    message: 'set at most one of apiKey, apiKeyFile, apiKeyCommand',
+  });
+
+export type LlmEntry = z.infer<typeof LlmEntrySchema>;
+
 export const ConfigSchema = z.object({
-  llm: z
-    .object({
-      /** OpenAI-compatible base URL ending before `/chat/completions`, e.g. `http://127.0.0.1:11434/v1`. */
-      endpoint: z.url().optional(),
-      model: z.string().min(1).optional(),
-      /** Sent as a bearer token when set. */
-      apiKey: z.string().optional(),
-      /** File whose trimmed contents are the bearer token. Relative to the config file directory; `~/` is the home directory. */
-      apiKeyFile: z.string().min(1).optional(),
-      /** Shell command (`sh -c`, run in the config file directory) whose trimmed stdout is the bearer token. No default. */
-      apiKeyCommand: z.string().min(1).optional(),
-      /** Context window of the model; prompts are budgeted to 40 percent of it. Default 32768. */
-      contextTokens: z.number().int().positive().optional(),
-      /** Per-request timeout. Default 60000. */
-      timeoutMs: z.number().int().positive().optional(),
-      /** Sampling temperature. Default 0. */
-      temperature: z.number().min(0).max(2).optional(),
-    })
-    .refine((l) => [l.apiKey, l.apiKeyFile, l.apiKeyCommand].filter((v) => v !== undefined).length <= 1, {
-      message: 'set at most one of apiKey, apiKeyFile, apiKeyCommand',
-    })
+  /** The default LLM entry. */
+  llm: LlmEntrySchema.default({}),
+  /** Further named LLM entries, selected with `--llm <name>`. */
+  llms: z
+    .record(z.string().regex(KEBAB_NAME, 'LLM entry names must be kebab-case'), LlmEntrySchema)
+    .refine((m) => !('default' in m), { path: ['default'], message: 'the "llm" block is the default entry; pick another name' })
     .default({}),
   browser: z
     .object({
@@ -265,7 +300,9 @@ export async function loadConfig(paths: Paths, warn?: (message: string) => void)
   }
   profileRules(parsed.data);
   const configDir = dirname(paths.configFile);
-  if (parsed.data.llm.apiKeyFile) parsed.data.llm.apiKeyFile = expandPath(parsed.data.llm.apiKeyFile, configDir, homedir());
+  for (const entry of [parsed.data.llm, ...Object.values(parsed.data.llms)]) {
+    if (entry.apiKeyFile) entry.apiKeyFile = expandPath(entry.apiKeyFile, configDir, homedir());
+  }
   if (parsed.data.downloads?.dir !== undefined) parsed.data.downloads.dir = expandPath(parsed.data.downloads.dir, configDir, homedir());
   for (const bindings of Object.values(parsed.data.vars ?? {})) {
     for (const binding of Object.values(bindings)) {

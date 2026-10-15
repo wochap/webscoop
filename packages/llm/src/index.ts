@@ -1,4 +1,4 @@
-export type { ChatMessage, CompleteOptions, LlmPort } from '@webscoop/core';
+export type { ChatMessage, CompleteOptions, Effort, LlmPort } from '@webscoop/core';
 export { LlmError, NoopLlm } from '@webscoop/core';
 export { OpenAiCompatibleLlm, type FetchLike, type LlmResult, type OpenAiCompatibleOptions, type ProbeResult } from './openai';
 export { MockLlm, type MockRequest, type MockResponse } from './mock';

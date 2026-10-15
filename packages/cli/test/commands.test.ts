@@ -48,6 +48,38 @@ async function home(recipes: RecipeInput[] = [recipe()]) {
   return dir;
 }
 
+describe('webscoop --llm', () => {
+  const withLlms = async () => {
+    const dir = await home();
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ llms: { fast: { endpoint: 'http://fast.test/v1', model: 'm' } } }));
+    return dir;
+  };
+
+  it('accepts a defined entry', async () => {
+    const dir = await withLlms();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(1) }) });
+    expect(await main(['run', 'shop', '--llm', 'fast'], io)).toBe(ExitCode.Ok);
+  });
+
+  it('exits 1 before launching a browser for an unknown entry', async () => {
+    const dir = await withLlms();
+    const browser = new FakeBrowser({ [PAGE]: shopPage(1) });
+    for (const command of ['run', 'test']) {
+      const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
+      expect(await main([command, 'shop', '--llm', 'nope'], io)).toBe(ExitCode.Error);
+      expect(io.err()).toContain('unknown LLM entry "nope"; defined: default, fast');
+    }
+    expect(browser.visited).toEqual([]);
+  });
+
+  it('rejects --llm with --no-llm as a usage error', async () => {
+    const dir = await withLlms();
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(1) }) });
+    expect(await main(['run', 'shop', '--llm', 'fast', '--no-llm'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toContain('--llm <name> cannot be used with option --no-llm');
+  });
+});
+
 describe('webscoop run', () => {
   it('prints a JSON array on stdout and logs on stderr', async () => {
     const dir = await home();
@@ -501,7 +533,7 @@ describe('webscoop doctor', () => {
     expect(io.out()).toContain(join(dir, 'profiles'));
     expect(io.out()).toContain(join(dir, 'config.json'));
     expect(io.out()).toContain('WAYLAND_DISPLAY=wayland-1');
-    expect(io.out()).toContain('llm         not configured');
+    expect(io.out()).toContain('llm default  not configured');
   });
 
   it('exits 1 without a display', async () => {
