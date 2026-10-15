@@ -14,8 +14,9 @@ A step SHALL be one of:
 - `wait`: wait for the given milliseconds, or until the target resolves, bounded by the navigation timeout.
 - `await-user`: wait for the user until the target appears or disappears, as defined by the flows capability.
 - `download`: with a target, resolve and click it, then wait for the download the click starts; without a target, wait for a download already in progress in the step's window or one that starts there within the navigation timeout. The file SHALL be saved as defined in "Download step".
+- `agent`: hand a goal to a language model that acts on the step's window through the agent-step capability. It SHALL have `goal`, a non-empty string that MAY reference template variables; MAY have `llm`, the name of an LLM entry; `maxTurns`, a positive integer, default 20; `scope`, `page` (the default and only accepted value); `until`, `download`; and `value`, the file name to save a download as, as for `download`. It SHALL NOT have a target.
 
-`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables.
+`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one; `agent` SHALL NOT have one. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables. `goal`, `llm`, `maxTurns`, and `scope` SHALL be rejected on any kind but `agent`, naming the step; `until` on an `agent` step SHALL accept only `download`. A variable used in `goal` SHALL be declared like one used in a step value.
 
 Every step MAY have:
 - `window`: `same` (default) or `popup`, as defined by the flows capability
@@ -37,6 +38,18 @@ Every step MAY have:
 #### Scenario: Download step with a target
 - **WHEN** a `download` step targets the "Export PDF" button and the click starts a download of `report.pdf`
 - **THEN** the step completes once the file is saved as `report.pdf` in the download directory
+
+#### Scenario: Agent step validates
+- **WHEN** a flow has a step `{ "kind": "agent", "goal": "Download the PDF for {title}", "until": "download", "maxTurns": 10 }` and `title` is declared
+- **THEN** the recipe validates with `scope` `page`
+
+#### Scenario: Agent step with a target
+- **WHEN** an `agent` step declares a `target`
+- **THEN** validation fails naming the step and saying an agent step has no target
+
+#### Scenario: Goal on a click
+- **WHEN** a `click` step declares `goal`
+- **THEN** validation fails naming the step and `goal`
 
 ### Requirement: Target resolution and healing
 A step's target SHALL be resolved in the step's window through the healing ladder like a field target: the stored candidates, then the fuzzy fingerprint match, then the model rung, then failure. A healed step target SHALL be promoted and written back with the recipe, addressed by its flow name and step index. Within one run, a step that resolved SHALL reuse its resolved selector on its next runs, and re-heal only when that selector stops resolving.
@@ -64,11 +77,15 @@ When a step causes a navigation of the main window, the runner SHALL wait for th
 - **THEN** the next `extract` block reads `/search?q=mouse`
 
 ### Requirement: Step reporting
-The runner SHALL emit `step.replayed` after each completed step, with its flow name, index, kind, and healing outcome, and `step.skipped` for skipped optional steps. The run report SHALL list each step under its flow run with kind, outcome (`ok`, `healed`, `skipped`, `failed`), and the page number it ran on. The stderr summary SHALL mention skipped steps when there are any.
+The runner SHALL emit `step.replayed` after each completed step, with its flow name, index, kind, and healing outcome, and `step.skipped` for skipped optional steps. For an `agent` step both events SHALL carry the `agent` transcript defined by the agent-step capability's "Agent reporting". The run report SHALL list each step under its flow run with kind, outcome (`ok`, `healed`, `skipped`, `failed`), and the page number it ran on, and for an `agent` step its transcript. The stderr summary SHALL mention skipped steps when there are any.
 
 #### Scenario: Report with one healed step
 - **WHEN** a flow replays two steps and the first heals
 - **THEN** the report lists step 0 of that flow as `healed` and step 1 as `ok`
+
+#### Scenario: Report with an agent step
+- **WHEN** a flow runs an agent step that ends with a download after three turns
+- **THEN** the report lists the step as `ok` with `turns` 3 and `end` `download`
 
 ### Requirement: Fill by element kind
 A `fill` step SHALL act on its resolved target by kind, checked in this order:

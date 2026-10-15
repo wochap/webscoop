@@ -520,13 +520,14 @@ From a selected element, the panel SHALL offer "Add to flow", which creates a st
 - **THEN** a `click` step is added to the active flow and the tab is not activated
 
 ### Requirement: Steps list editing
-Each flow in the Flows section SHALL list its steps in order with kind, target summary, value, a window badge when `window` is `popup`, a frame badge when the target has a frame, and an optional marker. Selecting a step SHALL open its edit state, where the user can:
+Each flow in the Flows section SHALL list its steps in order with kind, target summary, value, a window badge when `window` is `popup`, a frame badge when the target has a frame, and an optional marker; an `agent` step SHALL show its goal cut to one line instead of a target summary. Selecting a step SHALL open its edit state, where the user can:
 - edit the value, including inserting a `{var}` chip, or turn a literal value into a variable with "make variable"
 - toggle `window` between `same` and `popup`, and `optional`
 - edit the target with the target editor defined in "Target editor for steps, triggers, and the paginate target", and edit its frame
 - for `await-user`, edit `until`, the label, and a timeout override, shown as "guard budget" by default
+- for `agent`, edit the goal (a multi-line field that accepts `{var}` chips), the LLM entry name, the turn cap, the `until` toggle (download or none), and the save-as value; the target editor SHALL NOT be shown
 
-The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Alt+Down, delete them, and replay one step on the live page. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
+Each flow SHALL offer "Add agent step", which appends an `agent` step with an empty goal and opens its edit state; a step with an empty goal SHALL block saving with an inline error. The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Alt+Down, delete them, and replay one step on the live page; replaying an `agent` step SHALL run its loop on the live page as a run does and show the end reason in the panel. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
 
 #### Scenario: Mark the consent click optional
 - **WHEN** the user toggles `optional` on the consent step and saves
@@ -535,6 +536,14 @@ The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Al
 #### Scenario: Replay one step
 - **WHEN** the user replays the search `fill` step
 - **THEN** the search box on the live page contains the step's value
+
+#### Scenario: Add an agent step
+- **WHEN** the user adds an agent step, types the goal `Download the PDF`, turns `until` to download, and saves
+- **THEN** the flow's last step is `{ "kind": "agent", "goal": "Download the PDF", "until": "download" }`
+
+#### Scenario: Empty goal blocks saving
+- **WHEN** the user adds an agent step and saves without a goal
+- **THEN** the panel shows an inline error on the step and the recipe is not written
 
 ### Requirement: Editing the proposal fields
 While the list setup is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. When the list setup has no original selection (opened manually or from Rows > Edit), picking for the item container SHALL accept any element inside the list parent, or anywhere on the page when no list parent is set, and picking for the list parent SHALL accept any element when no item container is set yet. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.

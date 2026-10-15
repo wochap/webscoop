@@ -110,7 +110,9 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 - `description`: the full recipe description, or absent;
 - `vars`: one object per declared variable with `name`, and `default` and `description` when declared;
 - `tables`: one object per table in recipe order with `name`, `description` when declared, and `fields`, a list of objects with each field's `name` and `type`. A recipe in the shorthand form SHALL list one table named `items`;
-- `captures`: one object per capture in recipe order with `name`, and `description` when declared; absent when the recipe has no captures.
+- `captures`: one object per capture in recipe order with `name`, and `description` when declared; absent when the recipe has no captures;
+- `agent`: `true` when any flow of the recipe holds an `agent` step; absent otherwise;
+- `downloads`: `true` when the recipe has a `downloads` output table as defined by "Downloads table output"; absent otherwise.
 
 #### Scenario: Empty recipes directory
 - **WHEN** no recipes exist
@@ -127,6 +129,10 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 #### Scenario: Captures in the catalog
 - **WHEN** the recipe `lesson-video` has no tables and a capture `videos` described "HLS playlist URL", and `webscoop recipes --json` is run
 - **THEN** its entry holds `tables` `[]` and `captures` `[{ "name": "videos", "description": "HLS playlist URL" }]`
+
+#### Scenario: Agent recipe in the catalog
+- **WHEN** the recipe `grab-pdf` has no tables and one flow with an `agent` step with `until` `download`, and `webscoop recipes --json` is run
+- **THEN** its entry holds `agent` `true` and `downloads` `true`
 
 ### Requirement: `doctor` command
 `webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, every configured LLM entry (`default` first, then the keys of `llms` in file order) with its endpoint, model, and key source (`apiKey: set`, `apiKeyFile <path>`, `apiKeyCommand`, or none) and never the key itself, and the configured hooks as one line per event with its number of commands (or a line saying no hooks are configured). For each entry with an endpoint and a model, it SHALL probe the endpoint: reachable or not, whether the model is listed, overrides under `models` for ids the endpoint does not list, the round-trip time of a one-token completion, and a warning when the entry's effective `contextTokens` is below 8192. When `WEBSCOOP_LLM_MOCK` is set, the probe SHALL be reported as skipped for every entry. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM entry SHALL be reported as a warning and SHALL NOT change the exit code.
@@ -245,11 +251,15 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 - **THEN** stderr names `title`, `page`, and `products`, and the exit code is 1
 
 ### Requirement: `--no-llm` flag
-`webscoop run` and `webscoop test` SHALL accept `--no-llm`, which disables the model rung for that invocation regardless of config and recipe.
+`webscoop run` and `webscoop test` SHALL accept `--no-llm`, which disables the model rung for that invocation regardless of config and recipe, and makes every `agent` step unable to run as defined by the agent-step capability's "Termination".
 
 #### Scenario: Flag disables model
 - **WHEN** `webscoop run shop --no-llm` reaches the model rung
 - **THEN** no request is sent to the endpoint
+
+#### Scenario: Flag and an agent step
+- **WHEN** `webscoop run grab-pdf --no-llm` reaches a required agent step
+- **THEN** no request is sent, the run exits 3, and stderr names the step and `--no-llm`
 
 ### Requirement: `--llm` flag
 `webscoop run`, `webscoop test`, and `webscoop bench` SHALL accept `--llm <name>`, which picks the LLM entry (the config's `llm` block as `default`, or a key of `llms`) for that invocation as defined by the llm-adapter capability's "Entry resolution". `--llm` and `--no-llm` together SHALL be a usage error. An unknown name SHALL exit 1 before any browser starts.
@@ -657,7 +667,7 @@ A config file that declares a `window` block SHALL load, with one stderr warning
 - **THEN** files are saved in `~/Downloads/webscoop`
 
 ### Requirement: Downloads table output
-A recipe with at least one `download` step SHALL have an output table `downloads`, after the recipe's tables and capture tables. Each file a `download` step saved SHALL be one row with `file` (absolute path), `name`, `url` (the download's source URL), `bytes`, `_page`, and `_index`, emitted when the file is saved. Downloads that no `download` step took SHALL NOT be rows. The table SHALL follow the output stream and row shape rules like any other table: a recipe with no other tables SHALL print a JSON array of download rows, and `--table downloads` SHALL select it.
+A recipe with at least one `download` step, or one `agent` step with `until` `download`, SHALL have an output table `downloads`, after the recipe's tables and capture tables. Each file a `download` step saved, and each file an `agent` step with `until` `download` ended on, SHALL be one row with `file` (absolute path), `name`, `url` (the download's source URL), `bytes`, `_page`, and `_index`, emitted when the file is saved. Downloads that no such step took SHALL NOT be rows. The table SHALL follow the output stream and row shape rules like any other table: a recipe with no other tables SHALL print a JSON array of download rows, and `--table downloads` SHALL select it.
 
 #### Scenario: Download-only recipe
 - **WHEN** `webscoop run gslides --var id=1Qi | jq -r '.[0].file'` runs and the recipe has no tables and one `download` step
@@ -666,6 +676,10 @@ A recipe with at least one `download` step SHALL have an output table `downloads
 #### Scenario: Recipe with a table and a download
 - **WHEN** a recipe has a table `page` and a `download` step
 - **THEN** stdout is one JSON object with keys `page` and `downloads`
+
+#### Scenario: Agent-only recipe
+- **WHEN** `webscoop run grab-pdf --var url=https://h.test/report | jq -r '.[0].file'` runs and the recipe has no tables and one `agent` step with `until` `download`
+- **THEN** jq prints the absolute path of the saved PDF
 
 ### Requirement: Capture tables output
 Each capture of a recipe SHALL be an output table named after the capture, with the rows defined by the network-captures capability, placed after the recipe's tables in recipe order and before `downloads`. Capture tables SHALL follow the output stream and row shape rules like any other table: a recipe whose only table is one capture SHALL print a JSON array of its rows, `--table <capture>` SHALL select it, `--jsonl` rows SHALL carry `_table` when there are several tables and SHALL be written when the row is made, and `--out <dir>/` SHALL write `<capture>.json`. A capture with no rows SHALL be an empty array.
