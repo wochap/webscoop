@@ -677,3 +677,18 @@ Each capture of a recipe SHALL be an output table named after the capture, with 
 #### Scenario: Table, capture, and download
 - **WHEN** a recipe has a table `page`, a capture `videos`, and a `download` step
 - **THEN** stdout is one JSON object with keys `page`, `videos`, and `downloads`, in that order
+
+### Requirement: PDF flag
+`webscoop run`, `webscoop test`, `webscoop record` (including `record --edit` and `edit`), and `webscoop bench` SHALL accept `--pdf <mode>` with `download` or `view`, with the meaning defined in "PDF handling" of the `browser-launch` capability. Another value SHALL exit 1 naming the two accepted values. The config file MAY declare `browser.pdf` as one of the two values; another value SHALL fail config validation at `$.browser.pdf`. The zsh completion SHALL offer `--pdf` on those subcommands and complete its two values.
+
+#### Scenario: View from the command line
+- **WHEN** `webscoop run shop --pdf view` is executed for a recipe without `browser.pdf`
+- **THEN** the run's browser shows PDFs in the viewer
+
+#### Scenario: Invalid value
+- **WHEN** `webscoop run shop --pdf open` is executed
+- **THEN** stderr names `download` and `view` and the exit code is 1
+
+#### Scenario: Completion of values
+- **WHEN** the user types `webscoop run shop --pdf ` and presses TAB
+- **THEN** `download` and `view` are offered

@@ -173,3 +173,34 @@ A read SHALL NOT serialize the whole document. A read of an element that no long
 #### Scenario: Stale element read fails fast
 - **WHEN** an element is removed from the page after it was resolved and the session reads its text
 - **THEN** the read fails well before the action timeout, with an error naming the element
+
+### Requirement: PDF handling
+A browser session SHALL open with a PDF mode, `download` or `view`. The mode SHALL be the first of these that is set:
+1. the `--pdf <mode>` flag
+2. the recipe's `browser.pdf`
+3. the config's `browser.pdf`
+4. otherwise `download`
+
+With `download`, every PDF a session's windows open (by navigation, by a link with or without a `download` attribute, by a link to a new tab, or by `window.open`) SHALL start a download, saved and reported as defined by the runner's "Downloads in a run", and SHALL NOT be shown in the browser's viewer. With `view`, Chromium SHALL show a PDF in its viewer as it does without this capability.
+
+Before each launch, while the profile lock is held and before the browser starts, the session SHALL set the Chromium preference `plugins.always_open_pdf_externally` in `<profileDir>/Default/Preferences` to `true` for `download` and `false` for `view`, keeping every other key of that file. A missing `Default` directory or `Preferences` file SHALL be created holding only that key. A `Preferences` file that is not valid JSON SHALL be left unchanged, and stderr SHALL warn naming the path; the launch SHALL continue.
+
+#### Scenario: Plain link downloads by default
+- **WHEN** no flag, recipe, or config sets the PDF mode and a `click` step clicks a link whose `href` is a PDF served inline
+- **THEN** the file is saved in the download directory and `download.saved` is emitted
+
+#### Scenario: Popup downloads and closes
+- **WHEN** the mode is `download` and a step clicks a button that calls `window.open` with a PDF URL
+- **THEN** the file is saved, `download.saved` is emitted, and the run continues on its page
+
+#### Scenario: View mode keeps the viewer
+- **WHEN** the recipe sets `browser.pdf` to `view` and the recipe URL is a PDF served inline
+- **THEN** the window shows the PDF and no download is saved
+
+#### Scenario: Existing profile flips
+- **WHEN** a profile's `Preferences` file has `plugins.always_open_pdf_externally` false and other keys, and a run in `download` mode launches it
+- **THEN** after the launch the file has the key true and every other key unchanged
+
+#### Scenario: Corrupt preferences file
+- **WHEN** a profile's `Preferences` file holds text that is not JSON
+- **THEN** stderr warns naming the file, the file is unchanged, and the browser launches

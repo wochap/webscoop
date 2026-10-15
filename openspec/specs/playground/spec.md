@@ -333,3 +333,14 @@ The playground SHALL serve `/video?id=<id>`: a page with a heading naming the le
 #### Scenario: Nothing to capture
 - **WHEN** `/video?id=42&noplay=1` is loaded
 - **THEN** no `/stream/` request is made
+
+### Requirement: PDF page
+`GET /pdf` SHALL answer a small valid PDF with `Content-Type: application/pdf` and no `Content-Disposition`. `GET /pdf?as=attachment` SHALL answer the same bytes with `Content-Disposition: attachment; filename="report.pdf"`, and `GET /pdf?as=octet` with `Content-Type: application/octet-stream`. `GET /pdf-links` SHALL render a page with, each carrying a stable id: a plain link to `/pdf`, a link to `/pdf` with the `download` attribute, a link to `/pdf` with `target="_blank"`, a button whose click calls `window.open('/pdf')`, a link to the attachment variant, and a link to the octet variant.
+
+#### Scenario: Inline PDF
+- **WHEN** `/pdf` is requested
+- **THEN** the response has `Content-Type` `application/pdf`, no `Content-Disposition`, and a body starting with `%PDF`
+
+#### Scenario: Link forms present
+- **WHEN** `/pdf-links` is requested
+- **THEN** the page contains the six controls, each with its id

@@ -22,7 +22,7 @@ Lets many `webscoop run` and `webscoop test` invocations share one warm, headed 
 - **THEN** exactly one daemon process remains and both runs complete
 
 ### Requirement: Browsers per profile
-The daemon SHALL keep at most one browser per profile directory, launched on the first job for that profile, with the profile lock held for as long as the browser is open. Each job SHALL run in its own new tab of that browser and SHALL close its tab, and any popup opened from it, when it ends, except a tab kept as a cold tab as defined by the cooldown capability. A browser SHALL close after it has had no job and no cold tab for `daemon.idleMs` milliseconds (config, default 600000; 0 closes it as soon as its last job ends and its last cold tab closes). Cold tabs SHALL NOT count toward `daemon.concurrency`, SHALL NOT hold attention, and SHALL NOT keep a job that needs other launch settings waiting. When a browser closes for a relaunch, an exclusive command, or `daemon stop`, its cold tabs SHALL close and their recipes SHALL stay cold. The launch settings of a browser are its driver, channel, binary, proxy, timezone, locale, and extra arguments. A job whose launch settings differ from those of its profile's open browser SHALL wait until that browser has no job, then the browser SHALL be closed and relaunched with the job's settings.
+The daemon SHALL keep at most one browser per profile directory, launched on the first job for that profile, with the profile lock held for as long as the browser is open. Each job SHALL run in its own new tab of that browser and SHALL close its tab, and any popup opened from it, when it ends, except a tab kept as a cold tab as defined by the cooldown capability. A browser SHALL close after it has had no job and no cold tab for `daemon.idleMs` milliseconds (config, default 600000; 0 closes it as soon as its last job ends and its last cold tab closes). Cold tabs SHALL NOT count toward `daemon.concurrency`, SHALL NOT hold attention, and SHALL NOT keep a job that needs other launch settings waiting. When a browser closes for a relaunch, an exclusive command, or `daemon stop`, its cold tabs SHALL close and their recipes SHALL stay cold. The launch settings of a browser are its driver, channel, binary, proxy, timezone, locale, PDF mode, and extra arguments. A job whose launch settings differ from those of its profile's open browser SHALL wait until that browser has no job, then the browser SHALL be closed and relaunched with the job's settings.
 
 #### Scenario: Warm browser reused
 - **WHEN** `webscoop run shop` ends and `webscoop run shop --var page=2` starts 10 seconds later
@@ -35,6 +35,10 @@ The daemon SHALL keep at most one browser per profile directory, launched on the
 #### Scenario: Different proxy waits for a relaunch
 - **WHEN** a job with proxy `socks5://a:1080` is running on profile `default` and a job on `default` with no proxy is submitted
 - **THEN** the second job starts after the first ends, in a relaunched browser without the proxy
+
+#### Scenario: Different PDF mode waits for a relaunch
+- **WHEN** a job in PDF mode `download` is running on profile `default` and a job on `default` with `--pdf view` is submitted
+- **THEN** the second job starts after the first ends, in a relaunched browser whose profile preference is false
 
 #### Scenario: Default idle time
 - **WHEN** the config sets no `daemon.idleMs` and the last job on a browser ended 5 minutes ago

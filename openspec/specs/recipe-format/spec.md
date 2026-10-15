@@ -195,12 +195,13 @@ A recipe MAY contain a `browser` block with these optional keys:
 - `timezone`: an IANA timezone identifier
 - `locale`: a BCP 47 language tag
 - `humanize`: a boolean that turns humanized input on or off for runs of this recipe
+- `pdf`: `download` or `view`, the PDF mode for runs of this recipe as defined by the browser-launch capability
 - `profile`: a profile name that the recipe's browser commands use, unless `--profile` is given. A valid profile name starts with a letter or digit, followed by letters, digits, `.`, `_`, or `-`
 
-A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. A non-boolean `humanize` SHALL fail validation naming `browser.humanize`. A `profile` that is not a valid profile name SHALL fail validation naming `browser.profile`. An absent block or key SHALL mean no recipe-level setting for it. The block SHALL NOT change the schema version.
+A proxy URL with user info SHALL fail validation with a message saying that credentials belong in the config or the environment. A non-boolean `humanize` SHALL fail validation naming `browser.humanize`. A `pdf` value other than `download` or `view` SHALL fail validation naming `browser.pdf` and listing both values. A `profile` that is not a valid profile name SHALL fail validation naming `browser.profile`. An absent block or key SHALL mean no recipe-level setting for it. The block SHALL NOT change the schema version.
 
 #### Scenario: Browser block validates
-- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, `locale` `es-ES`, `humanize` `true`, and `profile` `acme`
+- **WHEN** a recipe declares `browser` with `proxy.server` `http://proxy-b:8080`, `timezone` `Europe/Madrid`, `locale` `es-ES`, `humanize` `true`, `pdf` `view`, and `profile` `acme`
 - **THEN** validation succeeds
 
 #### Scenario: Credentials rejected
@@ -214,6 +215,10 @@ A proxy URL with user info SHALL fail validation with a message saying that cred
 #### Scenario: Invalid humanize value
 - **WHEN** a recipe declares `browser.humanize` as `"yes"`
 - **THEN** validation fails naming `browser.humanize`
+
+#### Scenario: Invalid pdf value
+- **WHEN** a recipe declares `browser.pdf` as `"open"`
+- **THEN** validation fails naming `browser.pdf` and listing `download` and `view`
 
 #### Scenario: Invalid profile name
 - **WHEN** a recipe declares `browser.profile` as `../other`
