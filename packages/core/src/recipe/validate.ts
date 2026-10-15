@@ -206,12 +206,26 @@ function flowErrors(input: Record<string, unknown>, declared: ReadonlySet<string
         errors.push({ path: at(), message: `${what} needs a target or a value in milliseconds` });
       }
       if (kind === 'await-user' && step.until === undefined) errors.push({ path: at('until'), message: `${what} needs until: appears or disappears` });
+      if (kind === 'await-user' && step.until === 'download') errors.push({ path: at('until'), message: `${what} needs until: appears or disappears` });
       if (kind !== 'await-user') {
-        for (const key of ['until', 'timeoutMs'] as const) {
-          if (step[key] !== undefined) errors.push({ path: at(key), message: `${what} sets ${key}, which only await-user steps take` });
+        if (step.timeoutMs !== undefined) errors.push({ path: at('timeoutMs'), message: `${what} sets timeoutMs, which only await-user steps take` });
+        if (step.until !== undefined && kind !== 'agent') errors.push({ path: at('until'), message: `${what} sets until, which only await-user and agent steps take` });
+      }
+      if (kind === 'agent') {
+        if (step.target !== undefined) errors.push({ path: at('target'), message: `${what} declares a target; an agent step has no target` });
+        if (typeof step.goal !== 'string' || step.goal.trim() === '') errors.push({ path: at('goal'), message: `${what} needs a goal` });
+        if (step.until !== undefined && step.until !== 'download') errors.push({ path: at('until'), message: `${what} accepts only until: download` });
+      } else {
+        for (const key of ['goal', 'llm', 'maxTurns', 'scope'] as const) {
+          if (step[key] !== undefined) errors.push({ path: at(key), message: `${what} sets ${key}, which only agent steps take` });
         }
       }
-      if ((kind === 'fill' || kind === 'download') && typeof step.value === 'string') {
+      if (kind === 'agent' && typeof step.goal === 'string') {
+        for (const variable of templateVariables(step.goal)) {
+          if (!declared.has(variable)) errors.push({ path: at('goal'), message: `template variable "${variable}" is not declared under vars` });
+        }
+      }
+      if ((kind === 'fill' || kind === 'download' || kind === 'agent') && typeof step.value === 'string') {
         for (const variable of templateVariables(step.value)) {
           if (!declared.has(variable)) errors.push({ path: at('value'), message: `template variable "${variable}" is not declared under vars` });
         }
@@ -234,7 +248,13 @@ export const DOWNLOADS_TABLE = 'downloads';
 /** Whether any flow of a recipe document has a `download` step. */
 export function hasDownloadStep(input: unknown): boolean {
   if (!isRecord(input) || !Array.isArray(input.flows)) return false;
-  return input.flows.some((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.some((step) => isRecord(step) && step.kind === 'download'));
+  return input.flows.some((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.some((step) => isRecord(step) && (step.kind === 'download' || (step.kind === 'agent' && step.until === 'download'))));
+}
+
+/** Whether any flow of a recipe document has an `agent` step. */
+export function hasAgentStep(input: unknown): boolean {
+  if (!isRecord(input) || !Array.isArray(input.flows)) return false;
+  return input.flows.some((flow) => isRecord(flow) && Array.isArray(flow.steps) && flow.steps.some((step) => isRecord(step) && step.kind === 'agent'));
 }
 
 /** Capture checks: the regex compiles, names are unique and clash with no table or `downloads`. */

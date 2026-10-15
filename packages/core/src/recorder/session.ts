@@ -1,6 +1,6 @@
 import { convertValue, defaultAttr } from '../convert';
 import { containersFor, excludeContainers, extractPage, listParent, resolveFirst } from '../extract';
-import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type PageInfo, type RecorderWindow, type RequestEvent, type SavedDownload, type SerializedElement, type StoragePort } from '../ports';
+import { MAIN_WINDOW, type ElementRef, type FilePort, type InteractiveSession, type LlmPort, type PageInfo, type RecorderWindow, type RequestEvent, type SavedDownload, type SerializedElement, type StoragePort } from '../ports';
 import { CaptureSet } from '../captures';
 import type { CaptureRow } from '../events';
 
@@ -136,6 +136,8 @@ export interface RecorderOptions {
   abortOnClose?: boolean;
   /** Host files, to check the paths of path variables. Without it every path reads as missing. */
   files?: FilePort;
+  /** The model of `agent` steps, by the step's `llm` entry name. Without it agent steps cannot run when replayed. */
+  llmFor?: (name?: string) => LlmPort;
 }
 
 /** A one-line toast for a step or flow replay. */
@@ -143,6 +145,7 @@ function describeReplay(flow: string, index: number | null, reports: readonly St
   if (index !== null) {
     const report = reports[0];
     const ok = report?.outcome === 'ok' || report?.outcome === 'healed';
+    if (ok && report!.agent) return `replayed step ${index + 1} (agent): ${report!.agent.end} after ${report!.agent.turns} turn${report!.agent.turns === 1 ? '' : 's'}`;
     return ok ? `replayed step ${index + 1} (${report!.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
   }
   const skipped = reports.filter((r) => r.outcome === 'skipped');
@@ -1228,6 +1231,13 @@ export class RecorderController {
         this.apply({ type: 'addStep', ...(this.draft.flows.length > 0 ? { flow: 0 } : {}), step: { kind: 'download', window: 'same', count: null } });
         const flow = this.draft.flows[0]!;
         this.emitter.emit('recorder.stepAdded', { flow: flow.name, index: flow.steps.length - 1, kind: 'download', target: null });
+        return;
+      }
+      case 'draft.addAgentStep': {
+        const at = msg.flow ?? (this.draft.flows.length > 0 ? this.draft.activeFlow ?? 0 : undefined);
+        this.apply({ type: 'addStep', ...(at !== undefined ? { flow: at } : {}), step: { kind: 'agent', goal: '', window: 'same', count: null } });
+        const flow = this.draft.flows[at ?? this.draft.flows.length - 1]!;
+        this.emitter.emit('recorder.stepAdded', { flow: flow.name, index: flow.steps.length - 1, kind: 'agent', target: null });
         return;
       }
       case 'draft.setUrl':
@@ -3059,7 +3069,7 @@ export class RecorderController {
     const cache = new Map();
     try {
       for (const flow of flows) {
-        await runFlow(validated.recipe, flow, this.raw, { page: 1, windows, vars: values, ...(this.opts.files ? { files: this.opts.files } : {}), timeoutMs: this.opts.timeoutMs ?? 30_000, cache, onEvent });
+        await runFlow(validated.recipe, flow, this.raw, { page: 1, windows, vars: values, ...(this.opts.files ? { files: this.opts.files } : {}), ...(this.opts.llmFor ? { llmFor: this.opts.llmFor } : {}), timeoutMs: this.opts.timeoutMs ?? 30_000, cache, onEvent });
       }
     } finally {
       // Popups a replay opened stay for the user; only the listener goes.

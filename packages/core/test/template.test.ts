@@ -35,6 +35,7 @@ describe('URL template', () => {
 
 describe('template helpers', () => {
   it('reports template problems with the CLI messages', () => {
+    expect(templateProblem('{url}')).toBeNull();
     expect(templateProblem('https://shop.test/c/{category}')).toBeNull();
     expect(templateProblem('https://shop.test/c/{category')).toMatch(/unmatched "\{"/);
     expect(templateProblem('/relative')).toMatch(/not an absolute URL/);

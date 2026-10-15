@@ -153,6 +153,7 @@ describe('protocol', () => {
     { kind: 'draft.setVar', name: 'tier', value: '1' },
     { kind: 'draft.reopen' },
     { kind: 'draft.addDownloadStep' },
+    { kind: 'draft.addAgentStep', flow: 0 },
     { kind: 'draft.setUrl', url: 'http://127.0.0.1:4777/catalog?tier={tier}' },
     { kind: 'draft.addVar', name: 'email' },
     { kind: 'draft.renameVar', from: 'tier', to: 'level' },

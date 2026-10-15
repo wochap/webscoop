@@ -1,3 +1,4 @@
+import { runAgent, type AgentReport, type AgentTurn } from '../agent/loop';
 import { resolveDocumentTarget, resolveFirst, resolveFrame, type TargetResult } from '../extract';
 import type { FrameReport } from '../events';
 import { RunFailure } from '../failure';
@@ -5,8 +6,8 @@ import { candidatesResolver } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type HealOutcome, type HealTarget, type Resolver } from '../healing/types';
 import { downloadNameProblem } from '../downloads';
-import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type PageInfo, type SavedDownload, type Session } from '../ports';
-import type { Flow, Recipe, SelectorCandidate, Step, StepKind } from '../recipe/schema';
+import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type LlmPort, type PageInfo, type SavedDownload, type Session } from '../ports';
+import { DEFAULT_MAX_TURNS, type Flow, type Recipe, type SelectorCandidate, type Step, type StepKind } from '../recipe/schema';
 import { fillText, templateVariables } from '../template';
 import { targetPresent, type RunWindows } from './windows';
 
@@ -34,8 +35,10 @@ export interface StepReport {
   notes?: string[];
   /** How the target's frame resolved, for a target with `frame`. */
   frame?: FrameReport;
-  /** The file a `download` step saved. */
+  /** The file a `download` step or an `agent` step with `until` `download` saved. */
   download?: { file: string; name: string; url: string; bytes: number };
+  /** The turns, end reason, and actions of an `agent` step. */
+  agent?: AgentReport;
 }
 
 /** Selectors steps settled on, for the target and its frame, keyed by `flow:index`, so later runs of a step skip the ladder. */
@@ -86,6 +89,10 @@ export interface FlowContext {
   pollMs?: number;
   /** Called with each file a `download` step took, before the step's report. */
   onDownloadTaken?: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => void;
+  /** The model of an `agent` step, by the step's `llm` entry name. Default: none, so agent steps cannot run. */
+  llmFor?: (name?: string) => LlmPort;
+  /** Called with each turn an `agent` step takes, as it happens. */
+  onAgentTurn?: (step: { flow: string; index: number; label?: string }, turn: AgentTurn) => void;
 }
 
 export interface FlowResult {
@@ -186,14 +193,15 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
       ctx.onEvent?.(report);
       return report;
     };
-    const fail = (why: string, found: Pick<StepReport, 'heal' | 'candidate' | 'frame'> & { notes?: string[] }): never => {
+    const fail = (why: string, found: Pick<StepReport, 'heal' | 'candidate' | 'frame' | 'agent'> & { notes?: string[] }): never => {
       const notes = [...(found.notes ?? []), why];
       const frame = found.frame ? { frame: found.frame } : {};
+      const agent = found.agent ? { agent: found.agent } : {};
       if (step.optional) {
-        finish({ ...base, outcome: 'skipped', heal: found.heal, candidate: found.candidate, notes, ...frame });
+        finish({ ...base, outcome: 'skipped', heal: found.heal, candidate: found.candidate, notes, ...frame, ...agent });
         throw SKIPPED;
       }
-      finish({ ...base, outcome: 'failed', heal: found.heal, candidate: found.candidate, notes, ...frame });
+      finish({ ...base, outcome: 'failed', heal: found.heal, candidate: found.candidate, notes, ...frame, ...agent });
       // Names, never values: a fill's value may hold a secret.
       const uses = step.kind === 'fill' && step.value ? templateVariables(step.value) : [];
       const from = uses.length > 0 ? ` (value from variable${uses.length > 1 ? 's' : ''} ${uses.join(', ')})` : '';
@@ -229,6 +237,14 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
         if (ctx.awaitUser) await ctx.awaitUser(request);
         else await pollUntil(() => awaitUserHolds(ctx.windows, step), step.timeoutMs ?? ctx.timeoutMs, ctx.pollMs ?? WAIT_POLL_MS, sleep, () => fail(`was not satisfied within ${step.timeoutMs ?? ctx.timeoutMs} ms`, { heal: null, candidate: null }));
         finish({ ...base, outcome: 'ok', heal: null, candidate: null });
+        continue;
+      }
+
+      if (step.kind === 'agent') {
+        const agent = await runAgentStep(recipe, flow.name, step, index, session, ctx, sleep);
+        if (agent.info) info = agent.info;
+        if (agent.failure) fail(agent.failure, { heal: null, candidate: null, agent: agent.report });
+        finish({ ...base, outcome: 'ok', heal: null, candidate: null, agent: agent.report, ...(agent.download ? { download: agent.download } : {}) });
         continue;
       }
 
@@ -300,6 +316,65 @@ export async function runFlow(recipe: Recipe, flow: Flow, origin: Session, ctx: 
     }
   }
   return { info, steps: reports };
+}
+
+/** What an `agent` step came to. */
+interface AgentStepResult {
+  report: AgentReport;
+  /** Why the step did not reach its goal, when it did not. */
+  failure?: string;
+  download?: NonNullable<StepReport['download']>;
+  /** The main window's page after the last navigation the step caused. */
+  info?: PageInfo;
+}
+
+/** Run an `agent` step's loop in its window; with `until` `download`, the file it ended on is taken as a `download` step takes one. */
+async function runAgentStep(recipe: Recipe, flow: string, step: Step, index: number, session: Session, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<AgentStepResult> {
+  const who = { flow, index, ...(step.label ? { label: step.label } : {}) };
+  const llm = ctx.llmFor?.(step.llm);
+  if (!llm?.available) {
+    return { report: { turns: 0, end: 'no-llm', actions: [] }, failure: 'could not run: no language model is available (--no-llm, or no endpoint is configured)' };
+  }
+  let downloadName: string | undefined;
+  if (step.value !== undefined) {
+    downloadName = fillText(step.value, recipe.vars, ctx.vars);
+    const problem = downloadNameProblem(downloadName);
+    if (problem) return { report: { turns: 0, end: 'gave-up', actions: [] }, failure: `cannot save its download: value ${JSON.stringify(step.value)}: ${problem}` };
+  }
+  const main = session === ctx.windows.main;
+  let info: PageInfo | undefined;
+  const since = session.downloadMark();
+  const result = await runAgent({
+    llm,
+    session,
+    windows: ctx.windows,
+    goal: fillText(step.goal ?? '', recipe.vars, ctx.vars),
+    maxTurns: step.maxTurns ?? DEFAULT_MAX_TURNS,
+    ...(step.until === 'download' ? { until: 'download' as const } : {}),
+    timeoutMs: ctx.timeoutMs,
+    sleep,
+    ...(main && ctx.onNavigated
+      ? {
+          onNavigated: async (at: PageInfo) => {
+            info = await ctx.onNavigated!(at);
+            return info;
+          },
+        }
+      : {}),
+    onTurn: (turn) => ctx.onAgentTurn?.(who, turn),
+  });
+  const found = info ? { info } : {};
+  if (!result.ok) {
+    return { report: result.report, failure: `ended without reaching its goal (${result.report.end}${result.why ? `: ${result.why}` : ''})`, ...found };
+  }
+  if (step.until !== 'download') return { report: result.report, ...found };
+  try {
+    const saved = await session.nextDownload({ since, timeoutMs: ctx.timeoutMs, ...(downloadName !== undefined ? { name: downloadName } : {}) });
+    ctx.onDownloadTaken?.(saved, who);
+    return { report: result.report, download: { file: saved.file, name: saved.name, url: saved.url, bytes: saved.bytes }, ...found };
+  } catch (error) {
+    return { report: result.report, failure: `saw its download fail: ${error instanceof Error ? error.message : String(error)}`, ...found };
+  }
 }
 
 /** Poll a condition until it holds, or call `timedOut` when the time runs out. */

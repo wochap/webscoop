@@ -120,6 +120,8 @@ export interface Session {
   press(key: string, ref?: ElementRef): Promise<void>;
   /** Scroll the document to its bottom. */
   scrollToBottom(): Promise<void>;
+  /** Scroll the document by one viewport height, down or up. */
+  scrollBy(direction: 'down' | 'up'): Promise<void>;
   /**
    * Wait for the page to settle after an action: for the navigation when one
    * started, else briefly for network idle. Rejects with `TimeoutError` when a
@@ -356,6 +358,8 @@ export interface LlmPort {
   readonly available: boolean;
   /** Configured context window in tokens, for prompt budgets. */
   readonly contextTokens: number;
+  /** Configured output token cap, for prompt budgets; unknown when absent. */
+  readonly maxOutputTokens?: number;
   /** The first choice's message content. Failures reject with an `LlmError`. */
   complete(messages: ChatMessage[], opts?: CompleteOptions): Promise<string>;
   estimateTokens(text: string): number;

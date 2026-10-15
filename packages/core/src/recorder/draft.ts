@@ -90,8 +90,10 @@ export function draftVariables(draft: { url: string; flows: readonly Pick<DraftF
   const names = templateVariables(draft.url);
   for (const flow of draft.flows) {
     for (const step of flow.steps) {
-      if (step.kind !== 'fill' || !step.value) continue;
-      for (const name of templateVariables(step.value)) if (!names.includes(name)) names.push(name);
+      for (const text of step.kind === 'fill' ? [step.value] : step.kind === 'agent' ? [step.goal, step.value] : []) {
+        if (!text) continue;
+        for (const name of templateVariables(text)) if (!names.includes(name)) names.push(name);
+      }
     }
   }
   return names;
@@ -334,6 +336,9 @@ export function draftToRecipe(draft: Draft): RecipeInput {
         ...(s.value !== undefined ? { value: s.value } : {}),
         ...(s.until ? { until: s.until } : {}),
         ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+        ...(s.goal !== undefined ? { goal: s.goal } : {}),
+        ...(s.llm ? { llm: s.llm } : {}),
+        ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
         ...(s.window === 'popup' ? { window: s.window } : {}),
         ...(s.optional ? { optional: true } : {}),
         ...(s.label ? { label: s.label } : {}),
@@ -480,6 +485,9 @@ export function draftFromRecipe(
       ...(s.value !== undefined ? { value: s.value } : {}),
       ...(s.until ? { until: s.until } : {}),
       ...(s.timeoutMs !== undefined ? { timeoutMs: s.timeoutMs } : {}),
+      ...(s.goal !== undefined ? { goal: s.goal } : {}),
+      ...(s.llm ? { llm: s.llm } : {}),
+      ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
       window: s.window,
       optional: s.optional,
       ...(s.label ? { label: s.label } : {}),
@@ -595,7 +603,14 @@ export function varNameError(draft: Pick<Draft, 'vars'>, name: string, except?: 
 
 /** The draft's flows with `rewrite` applied to every `fill` and `download` step value. */
 function rewriteSteps(flows: readonly DraftFlow[], rewrite: (value: string) => string): DraftFlow[] {
-  return flows.map((f) => ({ ...f, steps: f.steps.map((s) => ((s.kind === 'fill' || s.kind === 'download') && s.value ? { ...s, value: rewrite(s.value) } : s)) }));
+  return flows.map((f) => ({
+    ...f,
+    steps: f.steps.map((s) => {
+      const value = (s.kind === 'fill' || s.kind === 'download' || s.kind === 'agent') && s.value ? { value: rewrite(s.value) } : {};
+      const goal = s.kind === 'agent' && s.goal ? { goal: rewrite(s.goal) } : {};
+      return { ...s, ...value, ...goal };
+    }),
+  }));
 }
 
 const FLOW_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -655,6 +670,7 @@ export interface NewDraftStep {
   target?: { selectors: ProtocolCandidate[]; fingerprint?: DraftField['fingerprint']; frame?: FrameTarget };
   value?: string;
   until?: DraftStep['until'];
+  goal?: string;
   window?: DraftStep['window'];
   optional?: boolean;
   count?: number | null;
@@ -778,6 +794,11 @@ function applyStepPatch(step: DraftStep, patch: StepPatch): DraftStep {
   else if (patch.timeoutMs !== undefined) next.timeoutMs = patch.timeoutMs;
   if (patch.value === null) delete next.value;
   else if (patch.value !== undefined) next.value = patch.value;
+  if (patch.goal !== undefined) next.goal = patch.goal;
+  if (patch.llm === null || patch.llm === '') delete next.llm;
+  else if (patch.llm !== undefined) next.llm = patch.llm;
+  if (patch.maxTurns === null) delete next.maxTurns;
+  else if (patch.maxTurns !== undefined) next.maxTurns = patch.maxTurns;
   if (patch.label === null || patch.label === '') delete next.label;
   else if (patch.label !== undefined) next.label = patch.label;
   return next;
@@ -1153,6 +1174,7 @@ export function reduceDraft(draft: Draft, action: DraftAction): Draft {
           : {}),
         ...(s.value !== undefined ? { value: s.value } : {}),
         ...(s.until ? { until: s.until } : {}),
+        ...(s.goal !== undefined ? { goal: s.goal } : {}),
         window: s.window ?? 'same',
         optional: s.optional ?? false,
         count: s.count ?? null,

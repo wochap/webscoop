@@ -23,6 +23,8 @@ It prints a JSON array (nothing when there are no recipes). Each entry has:
 - `vars`: variables, each with `name`, optional `default`, and optional `description`.
 - `tables`: each with `name`, optional `description`, and `fields` (`name`, `type`).
 - `captures` (optional): each with `name` and optional `description`. A capture is a table of request URLs the page loaded, such as video playlist URLs that never appear on the page itself.
+- `agent` (optional, `true`): the recipe has an `agent` step, which drives the page with a language model.
+- `downloads` (optional, `true`): the recipe saves files and has a `downloads` table.
 
 ## 2. Choose a recipe
 
@@ -46,6 +48,16 @@ Stdout has one JSON row per line. Each row has the table's fields plus `_page` (
 
 A capture is a table named after it. Its rows are request URLs seen while the page loaded, each with `url`, `method`, `status`, `mime`, and `frame` (the URL of the frame that made the request), plus `_page` and `_index`. Read `url` for the data, such as a video's playlist URL.
 
+A `downloads` table lists the files a run saved. Each row has `file`, the absolute path of the saved file, plus `name`, `url`, `bytes`, `_page`, and `_index`. A recipe that only downloads has no other table, so its output is just those rows; read `file` and give the user that path.
+
+A recipe with `agent: true` hands a goal to a language model that acts on the page, so a run takes longer, may cost model calls, and the model may not reach the goal. Run it like any other recipe; do not retry it in a loop.
+
+Example: the user asks for the PDF behind a URL and the catalog lists `grab-pdf`, described "download the PDF a page offers", with variable `url` and `agent: true`. Run the command below and read `file` from the `downloads` row:
+
+```sh
+webscoop run grab-pdf --var url=<url> --jsonl --quiet
+```
+
 Example: the user asks for the stream URL of lesson 42 and the catalog lists `lesson-video` with variable `id` and capture `videos` described "HLS playlist URL". Run the command below and read `url` from the `videos` row:
 
 ```sh
@@ -63,7 +75,7 @@ webscoop run bing-search --var query=cats --jsonl --quiet
 - `0`: success. Use the rows.
 - `1`: error. Report it to the user with the stderr text.
 - `2`: the browser needed the user (login or captcha) and nobody answered in time. Ask the user to handle the browser window, then retry the same command.
-- `3`: the page changed and a required field or capture was not found. Tell the user the recipe needs repair with `webscoop edit <recipe>`.
+- `3`: the page changed and a required field or capture was not found. Tell the user the recipe needs repair with `webscoop edit <recipe>`. When the recipe has `agent: true`, exit 3 instead means the model gave up on that page or did not reach the goal (for example, no file was downloaded); tell the user that, since it is not a recipe repair case.
 
 ## Parallel runs and pauses
 

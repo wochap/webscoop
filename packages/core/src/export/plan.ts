@@ -224,6 +224,8 @@ function action(recipe: Recipe, flow: string, step: Step, index: number): PlanAc
       return { kind: 'await-user', until: step.until ?? 'appears', timeoutMs: step.timeoutMs ?? null, label: awaitUserLabel(flow, step, index) };
     case 'download':
       return { kind: 'download', name: step.value ?? null, vars: step.value ? templateVariables(step.value) : [] };
+    case 'agent':
+      throw new Error(`flow "${flow}" step ${index} is an agent step, which needs a language model and cannot be exported`);
   }
 }
 

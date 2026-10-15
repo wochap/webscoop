@@ -1,3 +1,4 @@
+import type { AgentEnd, AgentTurn } from './agent/loop';
 import type { HealOutcome } from './healing/types';
 import type { StopReason } from './pagination/types';
 import type { StepReport } from './flows/replay';
@@ -225,6 +226,10 @@ export interface RunEvents {
   'step.replayed': { page: number; step: StepReport };
   /** An optional step found no target (or could not run) and was left out. */
   'step.skipped': { page: number; step: StepReport };
+  /** An `agent` step took a turn: one action of the model, as soon as it ran. */
+  'agent.action': { page: number; flow: string; index: number; label?: string; turn: AgentTurn };
+  /** An `agent` step's loop ended; `end` says why. Emitted before the step's own `step.replayed` or `step.skipped`. */
+  'agent.ended': { page: number; flow: string; index: number; label?: string; turns: number; end: AgentEnd };
   'field.resolved': { page: number; table: string; field: FieldReport };
   'field.healed': {
     page: number;
@@ -276,6 +281,8 @@ export const RUN_EVENT_NAMES: readonly RunEventName[] = [
   'flow.done',
   'step.replayed',
   'step.skipped',
+  'agent.action',
+  'agent.ended',
   'field.resolved',
   'field.healed',
   'repick.requested',

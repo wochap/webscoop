@@ -1,0 +1,5 @@
+{
+  "responses": [
+    { "match": "[e2] link \"Plain link\" href=/pdf", "reply": { "action": "click", "ref": "e2", "reason": "the plain link opens the PDF" } }
+  ]
+}

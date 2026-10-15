@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "name": "playground-pdf-agent",
+  "description": "Download the PDF a page offers",
+  "url": "{url}",
+  "vars": [{ "name": "url", "type": "string", "raw": true, "description": "address of the page that offers the PDF" }],
+  "flows": [
+    {
+      "name": "grab",
+      "steps": [{ "kind": "agent", "goal": "Download the PDF this page offers.", "until": "download", "maxTurns": 5 }]
+    }
+  ],
+  "sequence": [{ "flow": "grab" }]
+}

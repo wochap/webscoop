@@ -43,7 +43,7 @@ export interface ModelCandidate {
 /** Elements that never render content. */
 const INVISIBLE = new Set(['head', 'script', 'style', 'noscript', 'template', 'meta', 'link', 'title', 'base']);
 
-function selfHidden(node: AnnotatedNode): boolean {
+export function selfHidden(node: AnnotatedNode): boolean {
   if (INVISIBLE.has(node.tag)) return true;
   if ('hidden' in node.attrs || node.attrs['aria-hidden'] === 'true') return true;
   return !!node.bbox && node.bbox.w === 0 && node.bbox.h === 0;
@@ -176,6 +176,7 @@ const STEP_TARGETS: Record<StepKind, string> = {
   wait: 'element the page shows once it is ready',
   'await-user': 'element that appears or disappears once the user is done',
   download: 'button or link the user clicks to download a file',
+  agent: 'element the model acts on',
 };
 
 function describeTarget(target: HealTarget): string[] {

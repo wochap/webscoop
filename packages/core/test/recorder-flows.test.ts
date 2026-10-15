@@ -12,6 +12,7 @@ import {
   type HostMessage,
   type ProtocolCandidate,
 } from '../src';
+import { MockLlm } from '@webscoop/llm';
 import { h } from '../src/testing';
 import { harness, referenceRecipe } from './recorder-helpers';
 import { tier0Snapshot } from './snapshot';
@@ -525,5 +526,71 @@ describe('RecorderController windows', () => {
     await t.send({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 2 }, mode: 'pick' });
     expect(t.controller.state.error).toBe('popup not open — replay steps 1–2 first');
     expect(t.controller.state.targetEdit).toBeNull();
+  });
+});
+
+describe('agent steps in the recorder', () => {
+  const REPORT = 'https://h.test/report';
+  const reportPage = () => ({
+    dom: h('html', {}, h('body', {}, h('a', { id: 'pdf', href: '#' }, 'Get the PDF'))),
+    on: { click: (el: { attrs: Record<string, string> } | null) => (el?.attrs.id === 'pdf' ? { download: { url: '/r.pdf', name: 'r.pdf', bytes: 3 } } : undefined) },
+  });
+
+  it('adds an agent step with an empty goal, which blocks saving with an inline error', async () => {
+    const t = await harness(tier0Snapshot(), withFields());
+    await t.send({ kind: 'draft.addAgentStep' });
+    expect(steps(t.controller.draft)).toEqual([expect.objectContaining({ kind: 'agent', goal: '', window: 'same', optional: false })]);
+    expect(steps(t.controller.draft)[0]!.target).toBeUndefined();
+    expect(steps(t.controller.draft)[0]!.error).toContain('needs a goal');
+    expect(t.events.map((e) => e.name)).toContain('recorder.stepAdded');
+    const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(saved.ok).toBe(false);
+    expect(t.storage.files.size).toBe(0);
+  });
+
+  it('edits the goal, entry, turn cap, until, and save-as value, and saves the step', async () => {
+    const t = await harness(tier0Snapshot(), withFields());
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Download the PDF', until: 'download' } });
+    expect(steps(t.controller.draft)[0]!.error).toBeUndefined();
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { llm: 'smart', maxTurns: 8, value: 'report.pdf' } });
+    const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(saved.ok).toBe(true);
+    const stored = JSON.parse(t.storage.files.get(withFields().name)!);
+    expect(stored.flows[0].steps).toEqual([expect.objectContaining({ kind: 'agent', goal: 'Download the PDF', until: 'download', llm: 'smart', maxTurns: 8, value: 'report.pdf' })]);
+    expect(stored.flows[0].steps[0]).not.toHaveProperty('target');
+    expect(draftFromRecipe(loadRecipe(stored)).flows[0]!.steps[0]).toMatchObject({ kind: 'agent', goal: 'Download the PDF', llm: 'smart', maxTurns: 8 });
+    // Clearing the entry and the cap removes them.
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { llm: null, maxTurns: null } });
+    expect(steps(t.controller.draft)[0]).not.toHaveProperty('llm');
+    expect(steps(t.controller.draft)[0]).not.toHaveProperty('maxTurns');
+  });
+
+  it('declares the variables a goal uses', async () => {
+    const t = await harness(tier0Snapshot(), withFields());
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Find {topic}' } });
+    expect(t.controller.draft.vars.map((v) => v.name)).toContain('topic');
+    expect(draftToRecipe(t.controller.draft).vars?.map((v) => v.name)).toContain('topic');
+  });
+
+  it('replays an agent step on the live page with the host model and reports the end reason', async () => {
+    const llm = new MockLlm({ responses: [{ reply: JSON.stringify({ action: 'click', ref: 'e1', reason: 'the link' }) }] });
+    const draft = emptyDraft({ name: 'grab', url: REPORT, vars: [] });
+    const t = await harness(reportPage().dom, draft, REPORT, { on: reportPage().on }, {}, { llmFor: () => llm });
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Get the PDF', until: 'download' } });
+    const result = (await t.send({ kind: 'draft.replayStep', index: 0 })) as HostMessage & { kind: 'step.replayResult' };
+    expect(result).toMatchObject({ ok: true, message: 'replayed step 1 (agent): download after 1 turn' });
+    expect(llm.requests).toHaveLength(1);
+  });
+
+  it('cannot replay an agent step without a model', async () => {
+    const t = await harness(reportPage().dom, emptyDraft({ name: 'grab', url: REPORT, vars: [] }), REPORT, { on: reportPage().on });
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Get the PDF' } });
+    const result = (await t.send({ kind: 'draft.replayStep', index: 0 })) as HostMessage & { kind: 'step.replayResult' };
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('no language model');
   });
 });

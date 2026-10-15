@@ -10,6 +10,7 @@ import {
   RecorderController,
   RecorderEmitter,
   saveRecipe,
+  type RecorderOptions,
   selectionOf,
   validateDraft,
   type AnnotatedNode,
@@ -62,7 +63,7 @@ export interface Harness {
   send(msg: unknown): Promise<unknown>;
 }
 
-export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG, extra: Omit<FakePage, 'dom'> = {}, pages: Record<string, FakePage> = {}): Promise<Harness> {
+export async function harness(dom: SerializedElement, draft: Draft, url = CATALOG, extra: Omit<FakePage, 'dom'> = {}, pages: Record<string, FakePage> = {}, controllerOpts: Partial<RecorderOptions> = {}): Promise<Harness> {
   const browser = new FakeBrowser({ ...pages, [url]: { dom, ...extra } });
   const session = await browser.open('/profile');
   const storage = new MemoryStorage();
@@ -78,6 +79,7 @@ export async function harness(dom: SerializedElement, draft: Draft, url = CATALO
     emitter,
     now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, 0, (tick += 5))),
     pathFor: (name) => `/recipes/${name}.json`,
+    ...controllerOpts,
   });
   await controller.start();
   const page = annotate(dom);

@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { loadRecipe, RecipeError, saveRecipe, tablesOf, type FieldType, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
+import { hasAgentStep, hasDownloadStep, loadRecipe, RecipeError, saveRecipe, tablesOf, type FieldType, type Recipe, type RecipeSummary, type StoragePort } from '@webscoop/core';
 import { CliError } from './exit';
 
 /** Whether a recipe reference is a path rather than a name in the recipes directory. */
@@ -16,10 +16,14 @@ export interface ListedRecipe extends RecipeSummary {
   tables: { name: string; description?: string; fields: { name: string; type: FieldType }[] }[];
   /** Every capture in recipe order; absent without captures. */
   captures?: { name: string; description?: string }[];
+  /** True when a flow has an `agent` step; absent otherwise. */
+  agent?: true;
+  /** True when the recipe has a `downloads` output table; absent otherwise. */
+  downloads?: true;
 }
 
 /** What a listing shows of a recipe beyond its file: descriptions, variables, and tables. */
-function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 'tables' | 'captures'> {
+function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 'tables' | 'captures' | 'agent' | 'downloads'> {
   return {
     ...(recipe.description ? { description: recipe.description } : {}),
     vars: recipe.vars.map((v) => ({ name: v.name, ...(v.default !== undefined ? { default: v.default } : {}), ...(v.description ? { description: v.description } : {}) })),
@@ -29,6 +33,8 @@ function catalogOf(recipe: Recipe): Pick<ListedRecipe, 'description' | 'vars' | 
       fields: t.fields.map((f) => ({ name: f.name, type: f.type })),
     })),
     ...(recipe.captures ? { captures: recipe.captures.map((c) => ({ name: c.name, ...(c.description ? { description: c.description } : {}) })) } : {}),
+    ...(hasAgentStep(recipe) ? { agent: true as const } : {}),
+    ...(hasDownloadStep(recipe) ? { downloads: true as const } : {}),
   };
 }
 

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  AGENT_SCOPES,
+  DEFAULT_MAX_TURNS,
   DESCRIPTION_MAX,
   FIELD_SCOPES,
   FIELD_TYPES,
@@ -17,7 +19,9 @@ import {
 } from './constants';
 
 export {
+  AGENT_SCOPES,
   DEFAULT_MAX_RETRIES,
+  DEFAULT_MAX_TURNS,
   DESCRIPTION_MAX,
   FIELD_SCOPES,
   FIELD_TYPES,
@@ -151,10 +155,18 @@ export const StepSchema = z.object({
   kind: oneOf('step kind', STEP_KINDS),
   target: TargetSchema.optional(),
   value: z.string().optional(),
-  /** For `await-user`: whether the step waits for its target to appear or to disappear. */
+  /** For `await-user`: whether the step waits for its target to appear or to disappear; for `agent`: `download`. */
   until: oneOf('step until', STEP_UNTILS).optional(),
   /** For `await-user`: a private wait budget instead of the run's guard timeout. */
   timeoutMs: z.number().int().positive().optional(),
+  /** For `agent`: what the language model is to achieve; may use `{var}`. */
+  goal: z.string().optional(),
+  /** For `agent`: name of the LLM entry; the run's entry when absent. */
+  llm: z.string().min(1).optional(),
+  /** For `agent`: most turns the loop takes. Default `DEFAULT_MAX_TURNS`. */
+  maxTurns: z.number().int().positive().optional(),
+  /** For `agent`: how far the model may navigate. Default `page`. */
+  scope: oneOf('agent scope', AGENT_SCOPES).optional(),
   window: oneOf('step window', STEP_WINDOWS).default('same'),
   optional: z.boolean().default(false),
   label: z.string().min(1).optional(),

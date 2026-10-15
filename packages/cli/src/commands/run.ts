@@ -37,6 +37,7 @@ import {
   type StepReport,
   tablesOf,
   templateParts,
+  type LlmPort,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, resolveDownloadDir, type Config } from '../config';
@@ -526,6 +527,16 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
     if (e.reason !== 'limit' && e.reason !== 'none') info(`pagination stopped after page ${e.page}: ${e.reason}`);
   });
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
+  emitter.on('agent.action', (e) => {
+    const { turn } = e;
+    info(`agent: ${turn.action}${turn.target ? ` ${turn.target}` : ''}${turn.reason ? ` (${turn.reason})` : ''}`);
+  });
+  emitter.on('agent.ended', (e) => {
+    const name = e.label ?? `${e.flow}:${e.index}`;
+    // A step that cannot run is told even under --quiet: nothing else would say why nothing happened.
+    if (e.end === 'no-llm') log(io, `agent step ${name} cannot run: no language model is available (--no-llm, or no endpoint is configured)`);
+    else info(`agent: ${name} ended: ${e.end} after ${e.turns} turn${e.turns === 1 ? '' : 's'}`);
+  });
   emitter.on('recipe.saved', (e) => info(`recipe written to ${e.path}`));
   emitter.on('download.saved', (e) => info(`saved ${e.file}`));
   emitter.on('capture.matched', (e) => info(`captured ${e.capture}: ${e.row.url}`));
@@ -541,6 +552,17 @@ export function modelRung(io: CliIo, config: Config, opts: { llm?: boolean | str
   const log = infoLog(io, opts.quiet);
   const llm = resolveLlm(config, io.env, io.cwd, { flag: typeof opts.llm === 'string' ? opts.llm : undefined, log });
   return modelResolver(llm, { enabled: opts.llm !== false, log });
+}
+
+/**
+ * The model of `agent` steps: the entry a step names, else `--llm`, else `default`.
+ * Absent with `--no-llm`, so every agent step fails as missing or is skipped.
+ */
+export function agentLlm(io: CliIo, config: Config, opts: { llm?: boolean | string; quiet?: boolean }): ((name?: string) => LlmPort) | undefined {
+  if (opts.llm === false) return undefined;
+  const log = infoLog(io, opts.quiet);
+  const flag = typeof opts.llm === 'string' ? opts.llm : undefined;
+  return (name) => resolveLlm(config, io.env, io.cwd, { name, flag, log });
 }
 
 /** `WEBSCOOP_E2E_CDP_PORT`: a DevTools port so end-to-end tests can drive the run's own browser. */
@@ -603,6 +625,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
     });
 
     const healing = { ...healingFromFlags(opts), resolvers: [modelRung(io, config, opts)] };
+    const llmFor = agentLlm(io, config, opts);
     const { banner, repick, bypassCSP } = await pageHelpers(io, prepared, opts);
     const save = (promoted: Recipe) => storage.saveTo(prepared.recipePath, promoted);
 
@@ -616,6 +639,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       emitter,
       signal: controller.signal,
       healing,
+      ...(llmFor ? { llmFor } : {}),
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner, prepared.config.notify),
       flows: flowsFromFlags(opts),
@@ -784,6 +808,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
     hooks.attach(emitter, { run: true, browser: false });
     job.watch?.(emitter);
     const { banner, bypassCSP } = await pageHelpers(io, prepared, opts);
+    const llmFor = agentLlm(io, config, opts);
     const runner = new Runner({
       recipe,
       pagination: testPagination(opts),
@@ -795,6 +820,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       emitter,
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
+      ...(llmFor ? { llmFor } : {}),
       guards: guardsFromFlags(io, opts, 0, banner, config.notify),
       flows: flowsFromFlags(opts),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },

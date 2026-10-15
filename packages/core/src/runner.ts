@@ -9,7 +9,7 @@ import { enabledDetectors, type GuardMatch } from './guards/detectors';
 import { applyPromotions } from './healing/apply';
 import type { Promotion } from './healing/promote';
 import { targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
-import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type NotifyPort, type OpenOptions, type SavedDownload, type Session } from './ports';
+import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type LlmPort, type NotifyPort, type OpenOptions, type SavedDownload, type Session } from './ports';
 import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { paginationOf } from './recipe/sequence';
 import { tablesOf } from './recipe/tables';
@@ -85,6 +85,8 @@ export interface RunOptions {
   pagination?: PaginationOverrides;
   /** Guard detection and the pause while a human clears a wall. Default: no guards. */
   guards?: GuardOptions;
+  /** The model of an `agent` step, by the step's `llm` entry name (the run's entry when absent). Default: no model, so agent steps cannot run. */
+  llmFor?: (name?: string) => LlmPort;
   /** Hooks around the browser launch, and the browser's process id for `browser.started`. */
   lifecycle?: LifecyclePort;
   /** Running the recipe's flows. Default: enabled. */
@@ -329,7 +331,10 @@ export class Runner {
       try {
         strategy = createStrategy(recipe, pagination, this.opts.vars);
         // Fill values need their variables too; a missing one fails before the browser opens.
-        for (const flow of recipe.flows) for (const step of flow.steps) if ((step.kind === 'fill' || step.kind === 'download') && step.value) fillText(step.value, recipe.vars, this.opts.vars);
+        for (const flow of recipe.flows) for (const step of flow.steps) {
+          if ((step.kind === 'fill' || step.kind === 'download' || step.kind === 'agent') && step.value) fillText(step.value, recipe.vars, this.opts.vars);
+          if (step.kind === 'agent' && step.goal) fillText(step.goal, recipe.vars, this.opts.vars);
+        }
       } catch (error) {
         if (error instanceof MissingVariableError || error instanceof PaginationInputError) {
           throw new RunFailure('invalid-input', error.message, error.names);
@@ -374,6 +379,7 @@ export class Runner {
         strategy,
         ...(this.opts.vars ? { vars: this.opts.vars } : {}),
         ...(this.opts.files ? { files: this.opts.files } : {}),
+        ...(this.opts.llmFor ? { llmFor: this.opts.llmFor } : {}),
         timeoutMs: this.opts.timeoutMs ?? 30_000,
         limit: this.opts.pagination?.limit ?? pagination.limit,
         cap,

@@ -11,7 +11,7 @@ import { Recheck, waitForClear, type WaitResult } from '../guards/wait';
 import { defaultLadder } from '../healing/ladder';
 import type { Promotion } from '../healing/promote';
 import { isHealed, type Resolver } from '../healing/types';
-import { NoopNotify, type FilePort, type NotifyPort, type PageInfo, type SavedDownload, type Session } from '../ports';
+import { NoopNotify, type FilePort, type LlmPort, type NotifyPort, type PageInfo, type SavedDownload, type Session } from '../ports';
 import { Dedup, evaluateStop, type PageSummary } from '../pagination/dedup';
 import type { PagerContext, PageStrategy, StopReason } from '../pagination/types';
 import type { Block, Flow, InnerBlock, Paginate, Recipe, RecipeTable, SelectorCandidate } from '../recipe/schema';
@@ -51,6 +51,8 @@ export interface SequenceHost {
   needAttention(payload: RunEvents['attention.needed']): void;
   resolveAttention(outcome: AttentionOutcome): void;
   sleep(ms: number): Promise<void>;
+  /** The model of an `agent` step, by the step's `llm` entry name. */
+  llmFor?: (name?: string) => LlmPort;
   /** A `download` step took a saved file on the given page. */
   onDownloadTaken?(page: number, download: SavedDownload, step: { flow: string; index: number; label?: string }): void;
 }
@@ -236,7 +238,10 @@ export class SequenceRun {
         checkpoint: () => this.checkpoint(),
         awaitUser: (request) => this.awaitUser(request),
         ...(host.onDownloadTaken ? { onDownloadTaken: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => host.onDownloadTaken!(page, download, step) } : {}),
+        ...(host.llmFor ? { llmFor: host.llmFor } : {}),
+        onAgentTurn: (who, turn) => host.emitter.emit('agent.action', { page, ...who, turn }),
         onEvent: (step) => {
+          if (step.agent) host.emitter.emit('agent.ended', { page, flow: step.flow, index: step.index, ...(step.label ? { label: step.label } : {}), turns: step.agent.turns, end: step.agent.end });
           entry.steps.push(step);
           host.report.steps.push(step);
           if (step.outcome === 'healed') host.report.healed++;

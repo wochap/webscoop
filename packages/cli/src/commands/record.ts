@@ -28,7 +28,7 @@ import { FsStorage } from '../storage';
 import { releaseProfile } from './daemon';
 import { Redactor } from '../redact';
 import { hostFiles, resolveVars } from '../vars';
-import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings } from './run';
+import { agentLlm, BROWSER_PID_DEADLINE_MS, encodedValueWarnings } from './run';
 
 export interface RecordCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
@@ -240,6 +240,7 @@ export async function recordCommand(outer: CliIo, template: string | undefined, 
       load: (ref) => storage.load(ref),
       save: (r) => write(pinProfile(r, profile, values, config)),
     };
+    const llmFor = agentLlm(io, config, {});
     const controller = new RecorderController({
       session,
       storage: saveTo,
@@ -250,6 +251,7 @@ export async function recordCommand(outer: CliIo, template: string | undefined, 
       pathFor: (n) => target ?? storage.pathFor(n),
       mode,
       files: hostFiles(io.cwd),
+      ...(llmFor ? { llmFor } : {}),
     });
 
     if (mode.kind === 'repick') log(io, `re-picking ${opts.repick} of ${recipe!.name} ${profileNote(resolved)}: ${url}`);

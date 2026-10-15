@@ -1,0 +1,5 @@
+{
+  "responses": [
+    { "match": "[e5] button \"Open with window.open\"", "reply": { "action": "click", "ref": "e5", "reason": "the button opens the PDF" } }
+  ]
+}

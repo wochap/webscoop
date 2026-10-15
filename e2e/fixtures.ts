@@ -20,6 +20,8 @@ export const TABLES_RECIPE = join(root, 'packages/cli/fixtures/playground-tables
 export const HOVER_RECIPE = join(root, 'packages/cli/fixtures/playground-hover.json');
 export const FRAMED_RECIPE = join(root, 'packages/cli/fixtures/playground-framed.json');
 export const VIDEO_RECIPE = join(root, 'packages/cli/fixtures/playground-video.json');
+export const PDF_AGENT_RECIPE = join(root, 'packages/cli/fixtures/playground-pdf-agent.json');
+export const LLM_FIXTURES = join(root, 'packages/cli/fixtures/llm');
 
 export const hasDisplay = Boolean(process.env.WAYLAND_DISPLAY || process.env.DISPLAY);
 

@@ -287,6 +287,12 @@ export const DraftStepSchema = z.object({
   value: z.optional(z.string()),
   until: z.optional(z.enum(STEP_UNTILS)),
   timeoutMs: z.optional(z.int().check(z.positive())),
+  /** For `agent`: what the model is to achieve. */
+  goal: z.optional(z.string()),
+  /** For `agent`: the LLM entry name. */
+  llm: z.optional(z.string()),
+  /** For `agent`: the turn cap. */
+  maxTurns: z.optional(z.int().check(z.positive())),
   window: z._default(z.enum(STEP_WINDOWS), 'same'),
   optional: z.boolean(),
   label: z.optional(z.string()),
@@ -664,6 +670,9 @@ const StepPatchSchema = z.object({
   value: z.optional(z.nullable(z.string())),
   until: z.optional(z.nullable(z.enum(STEP_UNTILS))),
   timeoutMs: z.optional(z.nullable(z.int().check(z.positive()))),
+  goal: z.optional(z.string()),
+  llm: z.optional(z.nullable(z.string())),
+  maxTurns: z.optional(z.nullable(z.int().check(z.positive()))),
   window: z.optional(z.enum(STEP_WINDOWS)),
   optional: z.optional(z.boolean()),
   label: z.optional(z.nullable(z.string())),
@@ -848,6 +857,8 @@ export const PageMessageSchema = z.discriminatedUnion('kind', [
   msg('draft.reopen', {}),
   /** Add a targetless download step to the first flow, creating one when there is none. */
   msg('draft.addDownloadStep', {}),
+  /** Add an `agent` step with an empty goal to a flow (the active one when absent), creating a flow when there is none. */
+  msg('draft.addAgentStep', { flow: z.optional(index()) }),
   /** Replace the URL template; an invalid template is refused into `urlError`. */
   msg('draft.setUrl', { url: z.string() }),
   /** Add a variable that nothing uses yet; a bad or taken name is refused into `varError`. */

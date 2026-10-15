@@ -31,6 +31,8 @@ export async function recipesCommand(io: CliIo, opts: { json?: boolean }): Promi
       vars: r.vars,
       tables: r.tables,
       ...(r.captures ? { captures: r.captures } : {}),
+      ...(r.agent ? { agent: true } : {}),
+      ...(r.downloads ? { downloads: true } : {}),
     }));
     if (out.length > 0) io.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     return ExitCode.Ok;

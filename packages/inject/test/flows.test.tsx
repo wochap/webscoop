@@ -119,6 +119,50 @@ describe('flows section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'pick' });
   });
 
+  it('adds an agent step to a flow and opens its edit state', () => {
+    const p = renderPanel(baseState(withFlows([setup()])));
+    fireEvent.click(p.q('flow-add-agent')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.addAgentStep', flow: 0 });
+  });
+
+  it('shows an agent step by its goal, hides the target editor, and edits goal, entry, turns, until, and save-as', () => {
+    const agent = step('agent', { target: undefined, goal: 'Download the PDF\nof the report', until: 'download', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    expect(p.q('step-goal-text')!.textContent).toBe('Download the PDF');
+    expect(p.q('step-target')).toBeNull();
+    expect(p.q('step-agent-meta')!.textContent).toBe('until download · 20 turns');
+    fireEvent.click(p.q('step-edit-toggle')!);
+    expect(p.q('step-target-edit')).toBeNull();
+    const goal = p.q('step-goal') as HTMLTextAreaElement;
+    fireEvent.change(goal, { target: { value: 'Get the file for {category}' } });
+    fireEvent.blur(goal);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { goal: 'Get the file for {category}' } });
+    goal.setSelectionRange(0, 0);
+    fireEvent.click(p.q('step-goal-var-category')!);
+    expect(p.sent.at(-1)).toMatchObject({ patch: { goal: '{category}Get the file for {category}' } });
+    const entry = p.q('step-llm') as HTMLInputElement;
+    fireEvent.change(entry, { target: { value: 'smart' } });
+    fireEvent.blur(entry);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { llm: 'smart' } });
+    const turns = p.q('step-max-turns') as HTMLInputElement;
+    fireEvent.change(turns, { target: { value: '8' } });
+    fireEvent.blur(turns);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { maxTurns: 8 } });
+    fireEvent.click(p.q('step-agent-until-done')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { until: null } });
+    const saveAs = p.q('step-value') as HTMLInputElement;
+    fireEvent.change(saveAs, { target: { value: '{category}.pdf' } });
+    fireEvent.blur(saveAs);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { value: '{category}.pdf' } });
+  });
+
+  it('shows the inline error of an agent step with an empty goal', () => {
+    const agent = step('agent', { target: undefined, goal: '', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    expect(p.q('step-goal-text')!.textContent).toBe('no goal yet');
+    expect(p.q('step-error')!.textContent).toContain('needs a goal');
+  });
+
   it('turns a literal fill value into a variable', async () => {
     const p = renderPanel(baseState(withFlows([setup([step('fill', { value: 'Example GmbH', label: 'company' })])])));
     fireEvent.click(p.q('step-edit-toggle')!);

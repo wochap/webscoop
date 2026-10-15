@@ -671,7 +671,8 @@ when.
   script frameworks listen to; `press` a key (`Enter`, `Escape`, `Tab`, or one
   character) on an element or on whatever has focus; `wait` a number of
   milliseconds or until an element shows up; `await-user` waits for you (see
-  below).
+  below); `download` takes a file a click starts; `agent` hands a goal to a
+  language model (see [Agent steps](#agent-steps)).
 - The sequence is the run program: `{ "flow": name }` runs a called flow,
   `{ "extract": table }` extracts a table on the main window's current page and
   emits its rows, and one `{ "paginate": { ..., "do": [...] } }` block repeats
@@ -1059,6 +1060,112 @@ What this does not do: no fingerprint spoofing (canvas, WebGL, user agent),
 which the headed real browser does not need and which tends to be detected
 itself, and no humanized input timing, which is a separate option.
 
+### Agent steps
+
+Recorded selectors need one recording per site. An `agent` step hands a goal
+to a language model instead, so one recipe with a `url` variable can serve
+many pages that each look different: "download the PDF this page offers".
+Everything around the step (headed browser, profile, daemon, guards, download
+capture, reports, cooldown) works as for any other step, so an agent step can
+follow a recorded consent click or precede a `download` step.
+
+| Field | Meaning |
+| ----- | ------- |
+| `goal` | what the model is to achieve; required; may use `{variable}` placeholders |
+| `llm` | name of an entry of the config's `llms` (or `default`); without it the run's entry (`--llm`, else `default`) |
+| `maxTurns` | most actions the model may take; default 20 |
+| `scope` | `page`, the only value for now (see below) |
+| `until` | `download`: the step succeeds only when a download is saved |
+| `value` | with `until: download`, the file name to save as, as for a `download` step |
+
+An agent step has no target. `window`, `optional`, and `label` work as usual.
+
+Each turn the runner builds an **outline** of the page, one line per
+interactive element, heading, and text, in document order, each with a ref:
+
+```
+[e1] heading "Quarterly report"
+[e2] link "Download PDF" href=/files/q3.pdf
+[e3] button "Export"
+[e4] textbox "Email" value=""
+```
+
+Refs are the same on an unchanged page and belong to the latest outline only.
+The outline is cut to 40 percent of the entry's `contextTokens` (interactive
+lines first, then headings, then text) and ends with `... n more lines; use
+find` when it was. The model answers one JSON action per turn: `click`,
+`fill`, `press`, `scroll`, `find` (search the whole outline, cut lines
+included), `html` (the HTML of one element), `wait`, `done`, or `give_up`,
+each with a `reason`. Old turns shrink to one line each so a long run fits the
+context.
+
+**Scope.** With `scope: page` the model stays on the page the step started
+on. An action that navigates the window to another document is undone (the
+window goes back to the starting URL, ignoring the fragment) and the model is
+told; a popup that shows a page is closed. A link or popup that starts a file
+download is allowed. The system message states the rule, but the runner
+enforces it.
+
+**Success is decided by the runner, not the model.** With `until: download`
+the step ends `ok` as soon as a download that the step's window started is
+saved, even before the model is asked again. The file is a row of the
+`downloads` table, like a `download` step's, and `done` with no download yet
+gets one "no download has been saved yet" answer; a second such `done` fails
+the step. Without `until`, the model's `done` ends the step `ok`. A step also
+fails on `give_up`, on `maxTurns`, when the endpoint fails after the adapter's
+retries, and after three answers in a row that are not a valid action. A
+failed required step fails the run with `missing-required` and exit 3, a
+failed optional step is skipped.
+
+A guard raised during the step (a captcha after a click) pauses it through the
+usual attention flow, and the model sees a fresh outline afterwards.
+`--no-llm` (or no configured endpoint) makes a required agent step fail as
+missing and an optional one skip, with no request sent. Such a run cannot be
+exported with `webscoop export`.
+
+**Reports.** `step.replayed` and `step.skipped` carry `agent: { turns, end,
+actions }`, where `end` is `download`, `done`, `done-unmet`, `gave-up`,
+`max-turns`, `llm-error`, `invalid-answers`, or `no-llm`, and each action has
+its ref, the outline line of that ref, the model's reason, and the first line
+of the result. `--report` lists the same under the flow run. Stderr prints
+`agent: click [e2] link "Download PDF" href=/files/q3.pdf (the PDF link)` per
+action and `agent: grab:0 ended: download after 1 turn`, unless `--quiet`. No
+other page text is logged, since the page is untrusted.
+
+**Cost.** Every turn is one request carrying the outline, so a run costs up
+to `maxTurns` requests per URL. Lower `maxTurns`, pick a cheaper entry with
+`llm`, or set the entry's `effort` to keep it down. `webscoop recipes --json`
+marks such recipes with `agent: true` so an AI harness knows runs take longer.
+
+A full recipe that downloads the PDF of any page:
+
+```json
+{
+  "schemaVersion": 2,
+  "name": "grab-pdf",
+  "description": "Download the PDF a page offers",
+  "url": "{url}",
+  "vars": [{ "name": "url", "type": "string", "raw": true, "description": "address of the page" }],
+  "flows": [
+    {
+      "name": "grab",
+      "steps": [{ "kind": "agent", "goal": "Download the PDF this page offers.", "until": "download", "maxTurns": 10 }]
+    }
+  ],
+  "sequence": [{ "flow": "grab" }]
+}
+```
+
+```sh
+webscoop run grab-pdf --var url=https://example.com/report | jq -r '.[0].file'
+```
+
+A url template that is one variable alone takes a whole URL as its value;
+declare the variable `raw` so it is not encoded. In the recorder, a flow's
+**Add agent step** opens the goal (with variable chips), the entry name, the
+turn cap, and the `until` toggle; replaying the step runs the loop on the
+live page.
+
 ### Exit codes
 
 | Code | Meaning | Cron should |
@@ -1066,7 +1173,7 @@ itself, and no humanized input timing, which is a separate option.
 | 0 | Success | carry on |
 | 1 | Error to fix or unexpected failure: bad arguments, invalid recipe, missing variable, no display, busy profile, navigation timeout, browser crash, interrupted | fix the setup |
 | 2 | A run paused on a guard (login wall, bot check, interstitial) and nobody cleared it within `--guard-timeout`; rows of completed pages are kept | retry later, or log in to the profile |
-| 3 | A required field matched no element and no healing rung could recover it (`test`: a required field is unresolved) | alert a human |
+| 3 | A required field matched no element and no healing rung could recover it (`test`: a required field is unresolved); for a required `agent` step, the model did not reach its goal | alert a human |
 
 ### Downloads
 
@@ -1075,7 +1182,8 @@ otherwise, which leaves an unattended run with nothing saved. webscoop sets
 the profile preference that sends every PDF to the download manager, so a
 navigation to a PDF, a plain link, a `download` link, a `target="_blank"`
 link, and `window.open` all save the file in the download directory and emit
-`download.saved`.
+`download.saved`. A `download` step, or an `agent` step with `until: download`,
+takes a file for the `downloads` output table.
 
 To get the viewer back, set `browser.pdf` to `view` in the config or in a
 recipe's `browser` block, or pass `--pdf view` to `run`, `test`, `record`,

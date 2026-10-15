@@ -605,6 +605,11 @@ export class PlaywrightSession implements InteractiveSession {
     await this.page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   }
 
+  async scrollBy(direction: 'down' | 'up'): Promise<void> {
+    this.navigationsBefore = this.navigations;
+    await this.page.evaluate((sign) => window.scrollBy(0, sign * window.innerHeight), direction === 'down' ? 1 : -1);
+  }
+
   async settle(opts: SettleOptions): Promise<PageInfo> {
     const deadline = Date.now() + opts.timeoutMs;
     const left = () => Math.max(1, deadline - Date.now());

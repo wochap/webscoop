@@ -19,12 +19,14 @@ export interface MockRequest {
 export class MockLlm implements LlmPort {
   readonly available = true;
   readonly contextTokens: number;
+  readonly maxOutputTokens?: number;
   readonly requests: MockRequest[] = [];
   private readonly responses: MockResponse[];
 
-  constructor(opts: { responses: MockResponse[]; contextTokens?: number }) {
+  constructor(opts: { responses: MockResponse[]; contextTokens?: number; maxOutputTokens?: number }) {
     this.responses = [...opts.responses];
     this.contextTokens = opts.contextTokens ?? DEFAULT_CONTEXT_TOKENS;
+    if (opts.maxOutputTokens !== undefined) this.maxOutputTokens = opts.maxOutputTokens;
   }
 
   estimateTokens(text: string): number {

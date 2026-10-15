@@ -42,6 +42,11 @@ export class RunWindows {
     return newest && !newest.session.isClosed() ? newest.session : null;
   }
 
+  /** Every popup opened after the mark that is still open, oldest first. */
+  openPopupsSince(mark: number): Session[] {
+    return this.popups.filter((p) => p.seq > mark && !p.session.isClosed()).map((p) => p.session);
+  }
+
   /** Whether any popup opened after the mark, open or closed by now. */
   popupOpenedSince(mark: number): boolean {
     return this.popups.some((p) => p.seq > mark);

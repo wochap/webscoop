@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { DEFAULT_MAX_RETRIES, STEP_KINDS, popupClosedReason, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
+import { DEFAULT_MAX_RETRIES, DEFAULT_MAX_TURNS, STEP_KINDS, popupClosedReason, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
 import { ZeroMatchWarning } from './fields';
@@ -21,6 +21,7 @@ const KIND_ICON: Record<StepKind, IconName> = {
   wait: 'circle',
   'await-user': 'hand',
   download: 'download-simple',
+  agent: 'eye',
 };
 
 /** Kinds whose value the user edits, with the placeholder the input shows. */
@@ -29,6 +30,7 @@ const VALUE_HINT: Partial<Record<StepKind, string>> = {
   press: 'Enter, Escape, Tab, or a key',
   wait: 'Milliseconds',
   download: 'File name, {var} allowed; empty keeps the name the server suggests',
+  agent: 'Save the download as, {var} allowed; empty keeps the name the server suggests',
 };
 
 export function KindSelect({ value, onChange }: { value: StepKind; onChange: (kind: StepKind) => void }) {
@@ -76,6 +78,13 @@ function StepMeta({ step }: { step: DraftStep }) {
       <span key="until" className="ws-meta" data-ws="step-until">
         until {step.until ?? '…'}
         {step.label ? ` · “${step.label}”` : ''}
+      </span>,
+    );
+  } else if (step.kind === 'agent') {
+    parts.push(
+      <span key="agent" className="ws-meta" data-ws="step-agent-meta">
+        {step.until === 'download' ? 'until download' : 'until done'} · {step.maxTurns ?? DEFAULT_MAX_TURNS} turns{step.llm ? ` · ${step.llm}` : ''}
+        {step.value ? ` · saved as ${step.value}` : ''}
       </span>,
     );
   } else if (step.value !== undefined && step.value !== '') {
@@ -145,7 +154,7 @@ function ValueField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: Va
         onBlur={() => commit()}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
       />
-      {(step.kind === 'fill' || step.kind === 'download') &&
+      {(step.kind === 'fill' || step.kind === 'download' || step.kind === 'agent') &&
         vars.map((v) => (
           <button key={v.name} type="button" className="ws-chip" onMouseDown={(e) => e.preventDefault()} onClick={() => insert(v.name)} title={`Insert {${v.name}}`} data-ws={`step-var-${v.name}`}>
             {`{${v.name}}`}
@@ -229,6 +238,72 @@ function repickBlocked(step: DraftStep, at: StepRef, host: { popups: number; pop
   return popupClosedReason(at.index);
 }
 
+/** The goal of an `agent` step as a multi-line field; variable chips insert `{name}` at the caret. */
+function GoalField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: VarValue[] }) {
+  const actions = useActions();
+  const [goal, setGoal] = useState(step.goal ?? '');
+  const area = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => setGoal(step.goal ?? ''), [step.goal]);
+  const commit = (next = goal) => {
+    if (next !== (step.goal ?? '')) void actions.send({ kind: 'draft.updateStep', flow: at.flow, index: at.index, patch: { goal: next } });
+  };
+  const insert = (name: string) => {
+    const el = area.current;
+    const from = el?.selectionStart ?? goal.length;
+    const end = el?.selectionEnd ?? from;
+    const next = `${goal.slice(0, from)}{${name}}${goal.slice(end)}`;
+    setGoal(next);
+    commit(next);
+  };
+  return (
+    <div className="ws-col ws-spacer">
+      <textarea
+        ref={area}
+        className={`ws-input ws-input-sm${step.error ? ' ws-invalid' : ''}`}
+        rows={3}
+        value={goal}
+        placeholder="What the model is to achieve, e.g. Download the PDF this page offers. {var} allowed"
+        aria-label="Agent goal"
+        data-ws="step-goal"
+        onChange={(e) => setGoal(e.target.value)}
+        onBlur={() => commit()}
+      />
+      <div className="ws-row ws-wrap">
+        {vars.map((v) => (
+          <button key={v.name} type="button" className="ws-chip" onMouseDown={(e) => e.preventDefault()} onClick={() => insert(v.name)} title={`Insert {${v.name}}`} data-ws={`step-goal-var-${v.name}`}>
+            {`{${v.name}}`}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The LLM entry name and the turn cap of an `agent` step. */
+function AgentLimits({ step, update }: { step: DraftStep; update: (patch: StepPatch) => void }) {
+  const [entry, setEntry] = useState(step.llm ?? '');
+  const [turns, setTurns] = useState(step.maxTurns !== undefined ? String(step.maxTurns) : '');
+  useEffect(() => setEntry(step.llm ?? ''), [step.llm]);
+  useEffect(() => setTurns(step.maxTurns !== undefined ? String(step.maxTurns) : ''), [step.maxTurns]);
+  const commitEntry = () => entry.trim() !== (step.llm ?? '') && update({ llm: entry.trim() || null });
+  const commitTurns = () => {
+    const n = Number(turns);
+    if (turns.trim() === '') update({ maxTurns: null });
+    else if (Number.isInteger(n) && n > 0) update({ maxTurns: n });
+  };
+  return (
+    <>
+      <EditLine label="entry">
+        <input className="ws-input ws-input-sm ws-mono-sm ws-spacer" value={entry} placeholder="LLM entry name; empty uses the run's" aria-label="LLM entry" onChange={(e) => setEntry(e.target.value)} onBlur={commitEntry} onKeyDown={(e) => e.key === 'Enter' && commitEntry()} data-ws="step-llm" />
+      </EditLine>
+      <EditLine label="turns">
+        <input className="ws-input ws-input-sm ws-mono-sm" inputMode="numeric" value={turns} placeholder={String(DEFAULT_MAX_TURNS)} aria-label="Turn cap" onChange={(e) => setTurns(e.target.value)} onBlur={commitTurns} onKeyDown={(e) => e.key === 'Enter' && commitTurns()} data-ws="step-max-turns" />
+        <span className="ws-meta">at most</span>
+      </EditLine>
+    </>
+  );
+}
+
 /** The edit state of a step: target, value, window, frame, optional; label, until, and timeout for await-user. */
 function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; vars: VarValue[]; onDone: () => void }) {
   const actions = useActions();
@@ -256,6 +331,25 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
           <Segmented label="Until" testId="step-until" value={step.until} onChange={(until) => update({ until })} options={[{ value: 'appears', label: 'appears' }, { value: 'disappears', label: 'disappears' }]} />
         </EditLine>
       )}
+      {step.kind === 'agent' && (
+        <>
+          <EditLine label="goal">
+            <GoalField step={step} at={at} vars={vars} />
+          </EditLine>
+          <AgentLimits step={step} update={update} />
+          <EditLine label="until">
+            <Segmented
+              label="Until"
+              testId="step-agent-until"
+              value={step.until === 'download' ? 'download' : 'done'}
+              onChange={(until) => update({ until: until === 'download' ? 'download' : null })}
+              options={[{ value: 'download', label: 'download' }, { value: 'done', label: 'done' }]}
+            />
+            <span className="ws-meta">{step.until === 'download' ? 'succeeds when a download is saved' : 'succeeds when the model says it is done'}</span>
+          </EditLine>
+        </>
+      )}
+      {step.kind !== 'agent' && (
       <EditLine label={step.kind === 'await-user' ? 'element' : 'target'}>
         {step.target || step.kind === 'await-user' || step.kind === 'download' ? (
           <TargetEditor targetRef={{ kind: 'step', ...at }} target={step.target} edit={host?.targetEdit ?? null} disabled={host ? repickBlocked(step, at, host) : null} testId="step-target-edit" />
@@ -263,7 +357,8 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
           <span className="ws-meta">{targetSummary(step)}</span>
         )}
       </EditLine>
-      {step.kind in VALUE_HINT && (
+      )}
+      {step.kind in VALUE_HINT && (step.kind !== 'agent' || step.until === 'download') && (
         <EditLine label="value">
           <ValueField step={step} at={at} vars={vars} />
         </EditLine>
@@ -287,7 +382,7 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
       ) : (
         <EditLine label="optional">
           <Toggle on={step.optional} onChange={(optional) => update({ optional })} label="Optional" testId="step-optional" />
-          <span className="ws-meta">{step.kind === 'download' ? 'skip if no download starts' : 'skip if the target is missing'}</span>
+          <span className="ws-meta">{step.kind === 'download' ? 'skip if no download starts' : step.kind === 'agent' ? 'skip if the goal is not reached' : 'skip if the target is missing'}</span>
         </EditLine>
       )}
       <div className="ws-row">
@@ -346,9 +441,15 @@ export function StepRow({
         </span>
         <Icon name={KIND_ICON[step.kind]} size={11} />
         <KindSelect value={step.kind} onChange={(kind) => update({ kind })} />
-        <span className="ws-meta ws-ellipsis ws-spacer ws-row" title={targetSummary(step)} data-ws="step-target">
-          {targetLabel(step) ?? <SelectorChip candidate={step.target!.selectors[0]!} level="page" />}
-        </span>
+        {step.kind === 'agent' ? (
+          <span className="ws-meta ws-ellipsis ws-spacer" title={step.goal} data-ws="step-goal-text">
+            {(step.goal ?? '').split('\n')[0] || 'no goal yet'}
+          </span>
+        ) : (
+          <span className="ws-meta ws-ellipsis ws-spacer ws-row" title={targetSummary(step)} data-ws="step-target">
+            {targetLabel(step) ?? <SelectorChip candidate={step.target!.selectors[0]!} level="page" />}
+          </span>
+        )}
         {step.target && (
           <span className={`ws-num${step.count === 0 ? ' ws-num-zero' : ''}`} data-ws="step-count" title="Matches of the target on this page">
             {step.count ?? '…'}
@@ -375,7 +476,7 @@ export function StepRow({
           re-picking…
         </span>
       )}
-      {step.count === 0 && !repicking && step.kind !== 'await-user' && (
+      {step.count === 0 && !repicking && step.kind !== 'await-user' && step.kind !== 'agent' && (
         <ZeroMatchWarning
           optional={step.optional}
           onRepick={() => void actions.send({ kind: 'target.edit.start', ref: { kind: 'step', ...at }, mode: 'pick' })}
@@ -615,6 +716,18 @@ function FlowCard({ draft, flow, index }: { draft: Draft; flow: DraftFlow; index
               />
             );
           })}
+          <button
+            type="button"
+            className="ws-btn ws-btn-ghost ws-btn-sm"
+            onClick={() => {
+              void actions.send({ kind: 'draft.addAgentStep', flow: index });
+              actions.setUi({ editingStep: { flow: index, index: flow.steps.length } });
+            }}
+            data-ws="flow-add-agent"
+          >
+            <Icon name="plus" size={11} />
+            Add agent step
+          </button>
           {active && (
             <button type="button" className="ws-dashed" onClick={ui.browsing ? actions.stopBrowsing : actions.startBrowsing} data-ws="flow-add-steps">
               <Icon name="plus" size={11} />

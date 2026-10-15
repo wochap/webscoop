@@ -590,6 +590,39 @@ describe('flows', () => {
     expect(errors[0]!.message).toContain('id');
   });
 
+  it('validates an agent step with a goal variable', () => {
+    const input = withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Download the PDF for {title}', until: 'download', maxTurns: 10 }] }], [{ flow: 'grab' }, { extract: 'items' }]);
+    const result = validateRecipe({ ...input, vars: [{ name: 'title', type: 'string' }, { name: 'category', type: 'string' }] });
+    expect(result.errors).toEqual([]);
+    const recipe = loadRecipe({ ...input, vars: [{ name: 'title', type: 'string' }, { name: 'category', type: 'string' }] });
+    
+    expect(recipe.flows[0]!.steps[0]).toMatchObject({ kind: 'agent', goal: 'Download the PDF for {title}', until: 'download', maxTurns: 10 });
+  });
+
+  it('rejects an undeclared variable in an agent goal', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Find {thing}' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].goal']);
+  });
+
+  it('rejects an agent step with a target', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', target: accept }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].target']);
+    expect(errors[0]!.message).toContain('step 0 (agent)');
+    expect(errors[0]!.message).toContain('no target');
+  });
+
+  it('rejects an agent step without a goal and an agent until other than download', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: ' ', until: 'appears' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path).sort()).toEqual(['$.flows[0].steps[0].goal', '$.flows[0].steps[0].until']);
+  });
+
+  it('rejects goal on a click step, naming the step and goal', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'click', target: accept, goal: 'x' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].goal']);
+    expect(errors[0]!.message).toContain('goal');
+    expect(errors[0]!.message).toContain('click');
+  });
+
   it('reserves the downloads table name in a recipe with a download step', () => {
     const field = { name: 'title', type: 'text' as const, selectors: [{ strategy: 'css' as const, value: 'h1', stability: 'medium' as const }] };
     const input = { ...base(), fields: undefined, tables: [{ name: 'downloads', fields: [field] }], flows: [{ name: 'fetch', steps: [{ kind: 'download' }] }], sequence: [{ flow: 'fetch' }, { extract: 'downloads' }] };

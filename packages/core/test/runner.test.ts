@@ -127,6 +127,7 @@ describe('Runner', () => {
           press: async () => {},
           selectOption: async () => {},
           scrollToBottom: async () => {},
+          scrollBy: async () => {},
           settle: async () => ({ url: '', title: '', status: null }),
           url: async () => '',
           focus: async () => {},

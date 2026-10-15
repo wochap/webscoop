@@ -64,15 +64,20 @@ export function fillText(template: string, vars: readonly RecipeVar[], values: R
   return template.replace(VARIABLE, (_, name: string) => values[name] ?? vars.find((v) => v.name === name)!.default!);
 }
 
+const WHOLE_VARIABLE = /^\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
 /** A valid variable name: a letter or underscore, then letters, digits, or underscores. */
 export const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * Why a URL template cannot be opened, or null: a brace outside a `{name}`
  * variable, or not an absolute http(s) URL once its variables are filled.
+ * A template that is a single variable is accepted as it is.
  * The CLI and the recorder share this rule and its messages.
  */
 export function templateProblem(template: string): string | null {
+  // A template that is one variable alone takes a whole URL as its value (declare it `raw`); it is checked once filled.
+  if (WHOLE_VARIABLE.test(template)) return null;
   // A digit is valid wherever a variable may sit: host, port, path, or query.
   const stripped = template.replace(VARIABLE, '1');
   const brace = stripped.search(/[{}]/);

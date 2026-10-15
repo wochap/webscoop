@@ -520,6 +520,12 @@ export class FakeSession implements Session {
     this.grow('scroll');
   }
 
+  /** Scrolling down takes the next `scroll` step of the page, like a scroll to the bottom; up changes nothing. */
+  async scrollBy(direction: 'down' | 'up'): Promise<void> {
+    this.assertOpen();
+    if (direction === 'down') this.grow('scroll');
+  }
+
   private grow(kind: 'more' | 'scroll'): void {
     const page = this.browser.pages.get(this.currentUrl);
     const counts = page?.[kind];
