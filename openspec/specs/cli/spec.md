@@ -129,7 +129,7 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 - **THEN** its entry holds `tables` `[]` and `captures` `[{ "name": "videos", "description": "HLS playlist URL" }]`
 
 ### Requirement: `doctor` command
-`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, the configured LLM endpoint if any, and the configured hooks as one line per event with its number of commands (or a line saying no hooks are configured). When an endpoint and model are configured, it SHALL probe the endpoint: reachable or not, whether the model is listed, the round-trip time of a one-token completion, and a warning when `contextTokens` is below 8192. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM SHALL be reported as a warning and SHALL NOT change the exit code.
+`webscoop doctor` SHALL report the resolved config, recipes, and profiles paths, whether a display is available, whether the Chromium build Playwright expects is installed, every configured LLM entry (`default` first, then the keys of `llms` in file order) with its endpoint, model, and key source (`apiKey: set`, `apiKeyFile <path>`, `apiKeyCommand`, or none) and never the key itself, and the configured hooks as one line per event with its number of commands (or a line saying no hooks are configured). For each entry with an endpoint and a model, it SHALL probe the endpoint: reachable or not, whether the model is listed, overrides under `models` for ids the endpoint does not list, the round-trip time of a one-token completion, and a warning when the entry's effective `contextTokens` is below 8192. When `WEBSCOOP_LLM_MOCK` is set, the probe SHALL be reported as skipped for every entry. It SHALL exit 1 when Chromium is missing or no display is available; an unreachable or misconfigured LLM entry SHALL be reported as a warning and SHALL NOT change the exit code.
 
 #### Scenario: No display
 - **WHEN** neither `WAYLAND_DISPLAY` nor `DISPLAY` is set
@@ -142,6 +142,10 @@ With `--json` it SHALL print a JSON array with one object per recipe holding `na
 #### Scenario: Endpoint down
 - **WHEN** an endpoint is configured but refuses connections
 - **THEN** doctor prints a warning naming the endpoint and still exits 0 when display and Chromium are fine
+
+#### Scenario: Two entries
+- **WHEN** `llm` is configured and `llms.fast` is configured with `apiKeyFile`
+- **THEN** doctor prints a block for `default` and a block for `fast`, the `fast` block names the key file path, and neither block contains a key value
 
 #### Scenario: Hooks listed
 - **WHEN** the config has two commands for `attention.needed` and one for `browser.started`
@@ -246,6 +250,21 @@ The `record` command SHALL exit 0 when the session ends after a save or with no 
 #### Scenario: Flag disables model
 - **WHEN** `webscoop run shop --no-llm` reaches the model rung
 - **THEN** no request is sent to the endpoint
+
+### Requirement: `--llm` flag
+`webscoop run`, `webscoop test`, and `webscoop bench` SHALL accept `--llm <name>`, which picks the LLM entry (the config's `llm` block as `default`, or a key of `llms`) for that invocation as defined by the llm-adapter capability's "Entry resolution". `--llm` and `--no-llm` together SHALL be a usage error. An unknown name SHALL exit 1 before any browser starts.
+
+#### Scenario: Entry for one run
+- **WHEN** `llms.fast` is defined and `webscoop run shop --llm fast` reaches the model rung
+- **THEN** the request goes to the `fast` entry's endpoint and model
+
+#### Scenario: Default without the flag
+- **WHEN** `webscoop run shop` reaches the model rung
+- **THEN** the `default` entry is used
+
+#### Scenario: Both flags
+- **WHEN** `webscoop run shop --llm fast --no-llm` is executed
+- **THEN** the command exits 1 with a usage error naming both flags
 
 ### Requirement: `bench` command
 `webscoop bench <recipe> [--tiers <range>] [--seed <n>] [--json]` SHALL run the recipe once per playground tier in the range (default `0-4`) against a playground it starts itself, with write-back disabled, and print a table with one row per tier and field showing the rung that resolved the field (`candidate`, `fuzzy`, `model`, `unresolved`) and the elapsed time per tier. The recipe's `port` variable SHALL be filled with the started playground's port. The command SHALL exit 0 regardless of heal outcomes and 1 on error.
@@ -572,8 +591,9 @@ The CLI package SHALL ship a zsh completion function named `_webscoop`. It SHALL
 - `list` and `clear` for the `cooldown` subcommand
 - recipe names for the `<recipe>` argument of `run`, `test`, `edit`, `export`, `bench`, and `cooldown clear`, and for `record --edit`, alongside ordinary file paths
 - profile names for `--profile`
+- LLM entry names for `--llm`
 
-Recipe names SHALL be the `.json` files in the recipes directory without the extension. Profile names SHALL be the directory names in the profiles directory with any `@<browser>` suffix removed, without duplicates. Both directories SHALL be resolved as the CLI resolves them: `$WEBSCOOP_HOME/{recipes,profiles}` when `WEBSCOOP_HOME` is set, otherwise `${XDG_DATA_HOME:-~/.local/share}/webscoop/{recipes,profiles}`. Completion SHALL NOT start the `webscoop` program or Node. A missing directory SHALL yield no candidates, not an error.
+Recipe names SHALL be the `.json` files in the recipes directory without the extension. Profile names SHALL be the directory names in the profiles directory with any `@<browser>` suffix removed, without duplicates. Both directories SHALL be resolved as the CLI resolves them: `$WEBSCOOP_HOME/{recipes,profiles}` when `WEBSCOOP_HOME` is set, otherwise `${XDG_DATA_HOME:-~/.local/share}/webscoop/{recipes,profiles}`. LLM entry names SHALL be `default` plus the keys of `llms` in the config file, resolved as the CLI resolves it (`$WEBSCOOP_HOME/config.json` when `WEBSCOOP_HOME` is set, otherwise `${XDG_CONFIG_HOME:-~/.config}/webscoop/config.json`), read with `jq` when it is on the `PATH`; without `jq` or without the file, only `default` SHALL be offered. Completion SHALL NOT start the `webscoop` program or Node. A missing directory SHALL yield no candidates, not an error.
 
 #### Scenario: Subcommands
 - **WHEN** the user types `webscoop ` and presses TAB
@@ -581,7 +601,7 @@ Recipe names SHALL be the `.json` files in the recipes directory without the ext
 
 #### Scenario: Flags of a subcommand
 - **WHEN** the user types `webscoop run shop --` and presses TAB
-- **THEN** every option of `run` is offered, including `--no-heal`, `--humanize`, and `--ignore-cooldown`, and `--show` and `--hide` are not offered
+- **THEN** every option of `run` is offered, including `--no-heal`, `--humanize`, `--llm`, and `--ignore-cooldown`, and `--show` and `--hide` are not offered
 
 #### Scenario: Recipe names
 - **WHEN** the recipes directory holds `shop.json` and `news.json` and the user types `webscoop run ` and presses TAB
@@ -594,6 +614,10 @@ Recipe names SHALL be the `.json` files in the recipes directory without the ext
 #### Scenario: Profile names
 - **WHEN** the profiles directory holds `work@chromium`, `work@chrome`, and `default`, and the user types `webscoop run shop --profile ` and presses TAB
 - **THEN** `work` and `default` are offered, each once
+
+#### Scenario: Entry names
+- **WHEN** the config file declares `llms.fast` and `llms.smart`, `jq` is installed, and the user types `webscoop run shop --llm ` and presses TAB
+- **THEN** `default`, `fast`, and `smart` are offered
 
 #### Scenario: WEBSCOOP_HOME
 - **WHEN** `WEBSCOOP_HOME` is set and the user completes a recipe name
