@@ -34,6 +34,7 @@ export {
   PAGE_SIZE,
   productDescription,
   REPORT_CSV,
+  SAMPLE_PDF,
   startPlayground,
   VISITOR_COOKIE,
   type ControlState,

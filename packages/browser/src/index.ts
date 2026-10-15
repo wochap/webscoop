@@ -9,6 +9,7 @@ export {
   PlaywrightBrowser,
   SharedBrowser,
   STEALTH_ARGS,
+  writePdfPreference,
   type Driver,
   type PlaywrightBrowserOptions,
   type TabOptions,

@@ -84,6 +84,11 @@ function humanizeOptions(command: Command): Command {
     .on('option:no-humanize', note('no-humanize'));
 }
 
+/** `--pdf <mode>`: `download` saves PDFs, `view` shows them in the browser's viewer. */
+function pdfOption(command: Command): Command {
+  return command.addOption(new Option('--pdf <mode>', 'PDF handling, replacing the recipe and config (default: download)').choices(['download', 'view']));
+}
+
 /** `--llm <name>` and `--no-llm`, which share the `llm` value and may not be passed together. */
 function llmOptions(command: Command, noLlmHelp: string): Command {
   const seen = new Set<string>();
@@ -134,7 +139,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     })
     .showHelpAfterError('(run webscoop --help for usage)');
 
-  llmOptions(humanizeOptions(proxyOptions(program.command('run'))), 'never ask the language model to locate a field, whatever the config and recipe say')
+  llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('run')))), 'never ask the language model to locate a field, whatever the config and recipe say')
     .description('run a recipe and print the extracted rows')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -211,7 +216,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
-  llmOptions(humanizeOptions(proxyOptions(program.command('test'))), 'never ask the language model to locate a field')
+  llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('test')))), 'never ask the language model to locate a field')
     .description('check a recipe on its first page: heal without saving and print each field\'s status')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -234,7 +239,7 @@ working selector first (unless --no-save).`,
     .addHelpText('after', '\nPrints no rows. Exits 0 when every required field resolved, 3 when one did not, 2 on an uncleared guard, 1 on error.')
     .action(async (recipe: string, opts: TestCommandOptions) => setCode(await testCommand(io, recipe, opts)));
 
-  proxyOptions(program.command('record'))
+  pdfOption(proxyOptions(program.command('record')))
     .description('record a recipe by clicking in a browser window')
     .argument('[url-template]', 'page to record; {name} marks a variable, e.g. "https://shop.test/c/{category}"')
     .option('--name <recipe>', 'recipe name (default: proposed from the URL host and path)')
@@ -254,7 +259,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (template: string | undefined, opts: RecordCommandOptions) => setCode(await recordCommand(io, template, opts)));
 
-  proxyOptions(program.command('edit'))
+  pdfOption(proxyOptions(program.command('edit')))
     .description('edit an existing recipe in a browser window (same as record --edit)')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--repick <field>', 'pick a new location for one field (table.field, or a name one table has), save, and exit')
@@ -296,7 +301,7 @@ and export again when the site changes. Needs no display.`,
     )
     .action(async (recipe: string, opts: ExportCommandOptions) => setCode(await exportCommand(io, recipe, opts, VERSION)));
 
-  llmOptions(humanizeOptions(proxyOptions(program.command('bench'))), 'never ask the language model to locate a field')
+  llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('bench')))), 'never ask the language model to locate a field')
     .description('run a playground recipe on every playground tier and report which rung resolved each field')
     .argument('<recipe>', 'recipe with a {port} variable, e.g. the playground-catalog fixture')
     .option('--tiers <range>', 'tiers to run, e.g. 0-4, 3, or 0,3-4', '0-4')

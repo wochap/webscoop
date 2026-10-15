@@ -65,10 +65,13 @@ _webscoop() {
   local curcontext=$curcontext state line ret=1
   typeset -A opt_args
 
-  local -a proxy_opts humanize_opts timeout_opts job_opts exclusive_opts
+  local -a proxy_opts pdf_opts humanize_opts timeout_opts job_opts exclusive_opts
   proxy_opts=(
     '(--no-proxy)--proxy[route the browser through this proxy]:url:_urls'
     '(--proxy)--no-proxy[connect directly, whatever the recipe and config say]'
+  )
+  pdf_opts=(
+    '--pdf[PDF handling, replacing the recipe and config]:mode:(download view)'
   )
   humanize_opts=(
     '(--no-humanize)--humanize[move, type, and scroll like a person (slower)]'
@@ -116,7 +119,7 @@ _webscoop() {
         # command: run
         run)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts $job_opts \
+            $proxy_opts $pdf_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
             '*--var-file[set a variable from a file]:name=path:' \
@@ -147,7 +150,7 @@ _webscoop() {
         # command: test
         test)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts $job_opts \
+            $proxy_opts $pdf_opts $humanize_opts $timeout_opts $job_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '*--var[set a URL template variable]:name=value:' \
             '*--var-file[set a variable from a file]:name=path:' \
@@ -171,7 +174,7 @@ _webscoop() {
         # command: record
         record)
           _arguments \
-            $proxy_opts $timeout_opts $exclusive_opts \
+            $proxy_opts $pdf_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--name[recipe name]:recipe:' \
             '*--var[set a URL template variable]:name=value:' \
@@ -186,7 +189,7 @@ _webscoop() {
         # command: edit
         edit)
           _arguments \
-            $proxy_opts $timeout_opts $exclusive_opts \
+            $proxy_opts $pdf_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--repick[pick a new location for one field]:field:' \
             '*--var[set a URL template variable]:name=value:' \
@@ -214,7 +217,7 @@ _webscoop() {
         # command: bench
         bench)
           _arguments \
-            $proxy_opts $humanize_opts $timeout_opts $exclusive_opts \
+            $proxy_opts $pdf_opts $humanize_opts $timeout_opts $exclusive_opts \
             '(-h --help)'{-h,--help}'[show help]' \
             '--tiers[tiers to run]:range:(0-4 0 1 2 3 4 0,3-4)' \
             '--seed[playground seed]:n:' \

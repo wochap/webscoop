@@ -262,6 +262,8 @@ export const RecipeBrowserSchema = z.object({
   locale: LocaleSchema.optional(),
   /** Humanized input for runs of this recipe. */
   humanize: z.boolean().optional(),
+  /** PDF mode for runs of this recipe. */
+  pdf: z.enum(['download', 'view'], { error: 'expected "download" or "view"' }).optional(),
   /** Profile name the recipe's browser commands use unless `--profile` is given. */
   profile: z.string().regex(PROFILE_NAME, 'invalid profile name: start with a letter or digit, then letters, digits, ., _, or -').optional(),
 });

@@ -747,6 +747,13 @@ describe('recipe browser block', () => {
     expect(errors.map((e) => e.path)).toEqual(['$.browser.humanize']);
   });
 
+  it('accepts download and view for browser.pdf and rejects another value, listing both', () => {
+    for (const pdf of ['download', 'view']) expect(validateRecipe(base({ browser: { pdf: pdf as 'view' } })).ok).toBe(true);
+    const errors = errorsOf(base({ browser: { pdf: 'open' as unknown as 'view' } }));
+    expect(errors.map((e) => e.path)).toEqual(['$.browser.pdf']);
+    expect(errors[0]!.message).toMatch(/download.*view/);
+  });
+
   it('rejects credentials in the proxy server, naming the path', () => {
     const errors = errorsOf(base({ browser: { proxy: { server: 'http://user:pass@proxy-b:8080' } } }));
     expect(errors).toHaveLength(1);

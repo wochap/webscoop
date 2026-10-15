@@ -13,6 +13,7 @@ import {
   type RecorderMode,
   type Session,
   type StoragePort,
+  type PdfMode,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, settingsOptions } from '../browser';
 import { loadConfig, resolveDownloadDir, type Config } from '../config';
@@ -32,6 +33,8 @@ import { BROWSER_PID_DEADLINE_MS, encodedValueWarnings } from './run';
 export interface RecordCommandOptions {
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
+  /** `--pdf <mode>`. */
+  pdf?: PdfMode;
   name?: string;
   var: string[];
   varFile?: string[];

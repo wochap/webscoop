@@ -142,6 +142,8 @@ export const ConfigSchema = z.object({
       locale: LocaleSchema.optional(),
       /** Humanized input by default for `run`, `test`, and `bench`. */
       humanize: z.boolean().optional(),
+      /** PDF mode by default: `download` (default) saves PDFs, `view` shows them in the viewer. */
+      pdf: z.enum(['download', 'view'], { error: 'expected "download" or "view"' }).optional(),
       /** Extra Chromium arguments for every launch, e.g. `--class=webscoop` for a window manager rule. */
       args: z.array(z.string().min(1)).optional(),
     })

@@ -32,6 +32,9 @@ export interface PageInfo {
   download?: true;
 }
 
+/** How a session treats PDFs: save them as downloads, or show them in the browser's viewer. */
+export type PdfMode = 'download' | 'view';
+
 export interface OpenOptions {
   /** Extra Chromium arguments, appended to the adapter defaults. */
   args?: string[];
@@ -47,6 +50,8 @@ export interface OpenOptions {
   locale?: string;
   /** Humanized input: curved pointer paths, typing rhythm, wheel scrolling, think times, and a page dwell. */
   humanize?: boolean;
+  /** PDF handling, written into the profile before launch. Default `download`. */
+  pdf?: PdfMode;
   /** Absolute directory where the session saves downloads; created on the first save. */
   downloadDir?: string;
 }

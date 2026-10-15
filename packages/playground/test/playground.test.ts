@@ -706,3 +706,30 @@ describe('/video?popup=1', () => {
     expect(doc.querySelector('#open-player')!.getAttribute('onclick')).toContain('/video/player?id=7');
   });
 });
+
+describe('pdf', () => {
+  it('serves an inline PDF without a disposition', async () => {
+    const pg = await start();
+    const res = await fetch(`${pg.url}/pdf`);
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(res.headers.get('content-disposition')).toBeNull();
+    expect((await res.text()).startsWith('%PDF')).toBe(true);
+  });
+
+  it('serves the attachment and octet-stream variants', async () => {
+    const pg = await start();
+    const attachment = await fetch(`${pg.url}/pdf?as=attachment`);
+    expect(attachment.headers.get('content-disposition')).toBe('attachment; filename="report.pdf"');
+    expect(attachment.headers.get('content-type')).toBe('application/pdf');
+    expect((await attachment.text()).startsWith('%PDF')).toBe(true);
+    const octet = await fetch(`${pg.url}/pdf?as=octet`);
+    expect(octet.headers.get('content-type')).toBe('application/octet-stream');
+    expect((await octet.text()).startsWith('%PDF')).toBe(true);
+  });
+
+  it('renders the six controls on /pdf-links', async () => {
+    const pg = await start();
+    const html = await (await fetch(`${pg.url}/pdf-links`)).text();
+    for (const id of ['pdf-plain', 'pdf-download-attr', 'pdf-blank', 'pdf-open', 'pdf-attachment', 'pdf-octet']) expect(html).toContain(`id="${id}"`);
+  });
+});

@@ -233,6 +233,23 @@ describe('Scheduler', () => {
     await Promise.all([a.done, b.done]);
   });
 
+  it('holds a job in the other PDF mode until the browser is idle, then relaunches', async () => {
+    const port = fakePort();
+    const scheduler = new Scheduler();
+    const a = fakeJob(port, 'a', { key: 'pdf download', concurrency: { total: 3, recipes: {} }, idleMs: 60_000 });
+    const b = fakeJob(port, 'b', { key: 'pdf view', concurrency: { total: 3, recipes: {} } });
+    scheduler.submit(a);
+    await a.running;
+    scheduler.submit(b);
+    await tick();
+    expect(b.events).toEqual(['queued 1']);
+    a.end();
+    await b.running;
+    expect(port.log.filter((l) => !l.startsWith('release'))).toEqual(['launch 1 /profiles/default pdf download', 'close 1', 'launch 2 /profiles/default pdf view']);
+    b.end();
+    await b.done;
+  });
+
   it('relaunches for other launch settings once the browser is idle', async () => {
     const port = fakePort();
     const scheduler = new Scheduler();

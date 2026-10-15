@@ -8,6 +8,7 @@ import { ExitCode, main } from '../src';
 import { browserSettings, maskProxy, resolveBrowser, resolveHumanize, type BrowserChoice } from '../src/browser';
 import { ConfigSchema, type Config } from '../src/config';
 import { MARKER_FILE, profileDirFor, profileWarnings } from '../src/profiles';
+import { launchKey, type Prepared } from '../src/commands/run';
 import { tempDir, testIo } from './helpers';
 
 const DISPLAY = { WAYLAND_DISPLAY: 'wayland-1' };
@@ -138,6 +139,47 @@ async function home(opts: { config?: Record<string, unknown>; recipe?: RecipeInp
 const page = () => new FakeBrowser({ [PAGE]: h('html', {}, h('body', {}, h('h1', {}, 'Shop'))) });
 const CHROME: Partial<BrowserChoice> = { driver: 'playwright', channel: 'chrome', id: 'chrome', path: '/usr/bin/google-chrome-stable', source: 'chrome' };
 
+describe('pdf mode', () => {
+  it('takes the flag, then the recipe, then the config, then download', () => {
+    const view = { browser: { pdf: 'view' as const } };
+    expect(browserSettings(config(), undefined, {}, {}).pdf).toBe('download');
+    expect(browserSettings(config({ pdf: 'view' }), undefined, {}, {}).pdf).toBe('view');
+    expect(browserSettings(config({ pdf: 'view' }), { browser: { pdf: 'download' } }, {}, {}).pdf).toBe('download');
+    expect(browserSettings(config(), view, {}, {}).pdf).toBe('view');
+    expect(browserSettings(config({ pdf: 'download' }), view, { pdf: 'download' }, {}).pdf).toBe('download');
+  });
+
+  it('rejects another config value at browser.pdf, naming both values', () => {
+    const result = ConfigSchema.safeParse({ browser: { pdf: 'open' } });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['browser', 'pdf']);
+    expect(result.error?.issues[0]?.message).toMatch(/download.*view/);
+  });
+
+  it('reaches the browser from --pdf view', async () => {
+    const dir = await home();
+    const browser = page();
+    expect(await main(['run', 'shop', '--pdf', 'view'], testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser }))).toBe(ExitCode.Ok);
+    expect(browser.openOptions[0]).toMatchObject({ pdf: 'view' });
+  });
+
+  it('exits 1 naming both values on an invalid --pdf', async () => {
+    const dir = await home();
+    const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['run', 'shop', '--pdf', 'open'], t)).toBe(ExitCode.Error);
+    expect(t.err()).toMatch(/download.*view/);
+    expect(t.browserCreated()).toBe(0);
+  });
+});
+
+describe('launchKey', () => {
+  it('differs by PDF mode, and treats an absent mode as download', () => {
+    const prepared = { browser: { driver: 'playwright', channel: 'chromium', path: '/chrome' } } as unknown as Prepared;
+    expect(launchKey(prepared, { pdf: 'view' })).not.toBe(launchKey(prepared, { pdf: 'download' }));
+    expect(launchKey(prepared, {})).toBe(launchKey(prepared, { pdf: 'download' }));
+  });
+});
+
 describe('resolveHumanize', () => {
   it('takes the flag, then the recipe, then the config, then off', () => {
     const on = { browser: { humanize: true } };
@@ -157,7 +199,7 @@ describe('humanize flags', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--humanize'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ humanize: true, bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
+    expect(browser.openOptions[0]).toEqual({ humanize: true, bypassCSP: true, pdf: 'download', downloadDir: '/home/test/Downloads/webscoop' });
     expect(t.err()).toContain('(no proxy, humanized input)');
     const plain = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: page() });
     expect(await main(['run', 'shop'], plain)).toBe(ExitCode.Ok);
@@ -169,7 +211,7 @@ describe('humanize flags', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop', '--no-humanize'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
+    expect(browser.openOptions[0]).toEqual({ bypassCSP: true, pdf: 'download', downloadDir: '/home/test/Downloads/webscoop' });
     const test = page();
     expect(await main(['test', 'shop'], testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: test }))).toBe(ExitCode.Ok);
     expect(test.openOptions[0]).toMatchObject({ humanize: true });
@@ -202,7 +244,7 @@ describe('run with browser settings', () => {
     const browser = page();
     const t = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser });
     expect(await main(['run', 'shop'], t)).toBe(ExitCode.Ok);
-    expect(browser.openOptions[0]).toEqual({ proxy: { server: 'http://proxy-a:8080', username: 'user', password: 'secret' }, timezone: 'Europe/Madrid', bypassCSP: true, downloadDir: '/home/test/Downloads/webscoop' });
+    expect(browser.openOptions[0]).toEqual({ proxy: { server: 'http://proxy-a:8080', username: 'user', password: 'secret' }, timezone: 'Europe/Madrid', bypassCSP: true, pdf: 'download', downloadDir: '/home/test/Downloads/webscoop' });
     expect(t.err()).toContain('(proxy http://***@proxy-a:8080)');
     expect(t.err()).not.toContain('secret');
   });

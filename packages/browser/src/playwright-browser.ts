@@ -1,6 +1,6 @@
-import { access, mkdir, rename, stat } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   classifyFillElement,
   DEFAULT_DOWNLOAD_SUBDIR,
@@ -22,6 +22,7 @@ import {
   type GotoOptions,
   type InteractiveSession,
   type OpenOptions,
+  type PdfMode,
   PAGE_TEXT_LIMIT,
   type PageInfo,
   type ReadOptions,
@@ -72,6 +73,38 @@ export interface PlaywrightBrowserOptions {
   actionTimeoutMs?: number;
   /** Driver module loader, injectable for tests. */
   load?: (driver: Driver) => Promise<DriverModule>;
+}
+
+/** Chromium preference that sends PDFs to the download manager instead of the viewer. */
+export const PDF_PREFERENCE = 'always_open_pdf_externally';
+
+/**
+ * Set the PDF preference in the profile's `Default/Preferences`, keeping its
+ * other keys. A file that is not valid JSON is left alone and reported to `warn`.
+ */
+export async function writePdfPreference(profileDir: string, mode: PdfMode, warn: (message: string) => void = (m) => process.stderr.write(`${m}\n`)): Promise<void> {
+  const file = join(profileDir, 'Default', 'Preferences');
+  let prefs: Record<string, unknown> = {};
+  let text: string | undefined;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch {
+    // Missing: created below.
+  }
+  if (text !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      prefs = parsed as Record<string, unknown>;
+    } catch {
+      warn(`warning: ${file} is not valid JSON; leaving it unchanged, so PDF handling follows Chromium's own setting`);
+      return;
+    }
+  }
+  const plugins = prefs.plugins !== null && typeof prefs.plugins === 'object' && !Array.isArray(prefs.plugins) ? (prefs.plugins as Record<string, unknown>) : {};
+  prefs.plugins = { ...plugins, [PDF_PREFERENCE]: mode === 'download' };
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(prefs));
 }
 
 /** `launchPersistentContext` options for a driver and the open options. */
@@ -858,6 +891,7 @@ export class PlaywrightBrowser implements BrowserPort {
   async open(profileDir: string, opts: OpenOptions = {}): Promise<InteractiveSession> {
     const driver = this.options.driver ?? 'playwright';
     const module = await (this.options.load ?? loadDriver)(driver);
+    await writePdfPreference(profileDir, opts.pdf ?? 'download');
     const context = await module.chromium.launchPersistentContext(profileDir, launchOptions(this.options, opts));
     try {
       context.setDefaultTimeout(this.options.actionTimeoutMs ?? 5000);
@@ -909,6 +943,7 @@ export class SharedBrowser {
   static async launch(options: PlaywrightBrowserOptions, profileDir: string, opts: OpenOptions = {}): Promise<SharedBrowser> {
     const driver = options.driver ?? 'playwright';
     const module = await (options.load ?? loadDriver)(driver);
+    await writePdfPreference(profileDir, opts.pdf ?? 'download');
     const context = await module.chromium.launchPersistentContext(profileDir, launchOptions(options, opts));
     try {
       context.setDefaultTimeout(options.actionTimeoutMs ?? 5000);

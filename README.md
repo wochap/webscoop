@@ -170,19 +170,20 @@ directory.
 ## Usage
 
 ```sh
-webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--timeout ms] [--force]
+webscoop record <url-template> [--name recipe] [--var name=value]... [--profile name] [--pdf download|view] [--timeout ms] [--force]
 webscoop record --edit <recipe> [--repick field]
-webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--timeout ms] [--force]
+webscoop edit <recipe> [--repick field] [--var name=value]... [--profile name] [--pdf download|view] [--timeout ms] [--force]
 webscoop run <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]...
                       [--jsonl] [--out path]
                       [--profile name] [--timeout ms] [--queue-timeout ms] [--report] [-q|--quiet]
+                      [--pdf download|view]
                       [--no-heal] [--no-save] [--llm name | --no-llm] [--interactive]
                       [--pages 1|N|all] [--max-pages n] [--delay ms]
                       [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
-webscoop test <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]... [--profile name] [--timeout ms] [--queue-timeout ms] [--json] [--llm name | --no-llm]
+webscoop test <recipe> [--var name=value]... [--var-file name=path]... [--var-command name=cmd]... [--profile name] [--pdf download|view] [--timeout ms] [--queue-timeout ms] [--json] [--llm name | --no-llm]
                        [--pages 1|N|all] [--max-pages n] [--delay ms]
                        [--guard-timeout ms] [--no-guards] [--[no-]notify] [--skip-flows]
-webscoop bench <recipe> [--tiers 0-4] [--seed n] [--json] [--llm name | --no-llm]
+webscoop bench <recipe> [--pdf download|view] [--tiers 0-4] [--seed n] [--json] [--llm name | --no-llm]
 webscoop export <recipe> [--format ts|py] [--out path] [--headless]
 webscoop recipes [--json]
 webscoop browser show|hide [--profile name]
@@ -1006,7 +1007,7 @@ location, or the mismatch gives the proxy away:
 A recipe carries its own settings in an optional block:
 
 ```json
-"browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US", "profile": "personal" }
+"browser": { "proxy": { "server": "http://proxy.example:8080", "bypass": ["localhost"] }, "timezone": "America/New_York", "locale": "en-US", "pdf": "view", "profile": "personal" }
 ```
 
 `browser.profile` pins the recipe to a profile, above the config rules; see
@@ -1067,6 +1068,27 @@ itself, and no humanized input timing, which is a separate option.
 | 2 | A run paused on a guard (login wall, bot check, interstitial) and nobody cleared it within `--guard-timeout`; rows of completed pages are kept | retry later, or log in to the profile |
 | 3 | A required field matched no element and no healing rung could recover it (`test`: a required field is unresolved) | alert a human |
 
+### Downloads
+
+PDFs download by default. Chromium shows a PDF in its viewer unless told
+otherwise, which leaves an unattended run with nothing saved. webscoop sets
+the profile preference that sends every PDF to the download manager, so a
+navigation to a PDF, a plain link, a `download` link, a `target="_blank"`
+link, and `window.open` all save the file in the download directory and emit
+`download.saved`.
+
+To get the viewer back, set `browser.pdf` to `view` in the config or in a
+recipe's `browser` block, or pass `--pdf view` to `run`, `test`, `record`,
+`edit`, or `bench`. The order is the flag, then the recipe, then the config,
+then `download`. A job whose mode differs from the open browser's waits for
+it to go idle, then the browser relaunches, as with a different proxy.
+
+The preference is written into the profile (`Default/Preferences`) on every
+launch, so an existing profile flips on its next launch, and a person using
+the same profile outside webscoop sees the same PDF behavior until a launch
+with `view` writes it back. A `Preferences` file that is not valid JSON is
+left alone with a warning.
+
 ### Files
 
 | What | Location |
@@ -1092,6 +1114,7 @@ Config file, all keys optional:
     "proxy": "http://user:pass@proxy.example:8080",
     "timezone": "Europe/Madrid",
     "locale": "es-ES",
+    "pdf": "download",
     "args": ["--class=webscoop"]
   },
   "daemon": { "concurrency": { "total": 3, "perRecipe": 1, "recipes": { "bing": 2 } }, "idleMs": 60000 },

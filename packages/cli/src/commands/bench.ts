@@ -1,4 +1,4 @@
-import { RunEmitter, Runner, templateVariables, withPaginate, type HealOutcome, type Recipe } from '@webscoop/core';
+import { RunEmitter, Runner, templateVariables, withPaginate, type HealOutcome, type PdfMode, type Recipe } from '@webscoop/core';
 import { browserSettings, resolveHumanize, settingsOptions } from '../browser';
 import { loadConfig } from '../config';
 import { checkLlmName } from '../llm';
@@ -18,6 +18,8 @@ export interface BenchCommandOptions {
   proxy?: string | false;
   /** `--humanize` or `--no-humanize`. */
   humanize?: boolean;
+  /** `--pdf <mode>`. */
+  pdf?: PdfMode;
   tiers: string;
   seed: number;
   json?: boolean;

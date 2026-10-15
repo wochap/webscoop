@@ -32,6 +32,7 @@ import {
   type GuardMatch,
   type RunFailure,
   type RunOptions,
+  type PdfMode,
   type Session,
   type StepReport,
   tablesOf,
@@ -58,6 +59,8 @@ export interface RunCommandOptions {
   proxy?: string | false;
   /** `--humanize` or `--no-humanize`. */
   humanize?: boolean;
+  /** `--pdf <mode>`. */
+  pdf?: PdfMode;
   var: string[];
   varFile?: string[];
   varCommand?: string[];
@@ -371,7 +374,7 @@ export async function prepare(
   io: CliIo,
   command: 'run' | 'test',
   recipeRef: string,
-  opts: VarSources & { resolvedVars?: ResolvedVars; profile?: string; table?: string; proxy?: string | false; humanize?: boolean; quiet?: boolean; downloadDir?: string },
+  opts: VarSources & { resolvedVars?: ResolvedVars; profile?: string; table?: string; proxy?: string | false; pdf?: PdfMode; humanize?: boolean; quiet?: boolean; downloadDir?: string },
   hookOpts: Partial<HookRunnerOptions> = {},
 ): Promise<Prepared> {
   const paths = resolvePaths(io.env, io.homedir);
@@ -415,7 +418,7 @@ export async function launchSettings(io: CliIo, prepared: Prepared): Promise<Ope
 /** Browsers are shared only between jobs whose launch settings are equal. */
 export function launchKey(prepared: Prepared, launch: OpenOptions): string {
   const { driver, channel, path } = prepared.browser;
-  return JSON.stringify({ driver, channel, path, proxy: launch.proxy ?? null, timezone: launch.timezone ?? null, locale: launch.locale ?? null, args: launch.args ?? [], port: launch.remoteDebuggingPort ?? null });
+  return JSON.stringify({ driver, channel, path, proxy: launch.proxy ?? null, timezone: launch.timezone ?? null, locale: launch.locale ?? null, pdf: launch.pdf ?? 'download', args: launch.args ?? [], port: launch.remoteDebuggingPort ?? null });
 }
 
 /** What a job gets from the daemon. */
@@ -649,6 +652,8 @@ export interface TestCommandOptions {
   proxy?: string | false;
   /** `--humanize` or `--no-humanize`. */
   humanize?: boolean;
+  /** `--pdf <mode>`. */
+  pdf?: PdfMode;
   var: string[];
   varFile?: string[];
   varCommand?: string[];

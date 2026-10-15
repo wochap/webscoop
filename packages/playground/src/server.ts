@@ -183,6 +183,44 @@ function filesPage(): string {
 </body></html>`;
 }
 
+/** A one-page PDF that Chromium's viewer opens. */
+export const SAMPLE_PDF = (() => {
+  const stream = 'BT /F1 18 Tf 20 100 Td (Playground PDF) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return out;
+})();
+
+/** A page with the ways a site can hand a PDF to the browser, each control with a stable id. */
+function pdfLinksPage(): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>PDF links</title>
+<style>body{font-family:sans-serif;margin:40px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}</style></head>
+<body>
+<h1>PDF links</h1>
+<a id="pdf-plain" href="/pdf">Plain link</a>
+<a id="pdf-download-attr" href="/pdf" download>Link with download attribute</a>
+<a id="pdf-blank" href="/pdf" target="_blank">Link to a new tab</a>
+<button id="pdf-open" type="button" onclick="window.open('/pdf')">Open with window.open</button>
+<a id="pdf-attachment" href="/pdf?as=attachment">Attachment variant</a>
+<a id="pdf-octet" href="/pdf?as=octet">Octet-stream variant</a>
+</body></html>`;
+}
+
 function focusThiefPage(mode: 'bubble' | 'capture'): string {
   // Bubble mode listens on `document` and checks the event target; capture mode listens on
   // `window` before anyone else and checks `document.activeElement`, like Bing's results page.
@@ -513,6 +551,17 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     if (url.pathname === '/files/report.csv') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="report.csv"', 'cache-control': 'no-store' });
       return void res.end(REPORT_CSV);
+    }
+    if (url.pathname === '/pdf-links') return send(res, 200, pdfLinksPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/pdf') {
+      const as = url.searchParams.get('as');
+      if (as !== null && as !== 'attachment' && as !== 'octet') throw new HttpError(400, `invalid as ${JSON.stringify(as)}, expected attachment or octet`);
+      res.writeHead(200, {
+        'content-type': as === 'octet' ? 'application/octet-stream' : 'application/pdf',
+        ...(as === 'attachment' ? { 'content-disposition': 'attachment; filename="report.pdf"' } : {}),
+        'cache-control': 'no-store',
+      });
+      return void res.end(method === 'HEAD' ? undefined : SAMPLE_PDF);
     }
     if (url.pathname === '/focus-thief') {
       const mode = url.searchParams.get('mode') ?? 'bubble';

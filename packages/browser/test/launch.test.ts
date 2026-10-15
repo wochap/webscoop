@@ -1,5 +1,8 @@
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BACKGROUND_ARGS, DriverMissingError, IGNORED_DEFAULT_ARGS, launchOptions, loadDriver, PlaywrightBrowser, STEALTH_ARGS, type Driver } from '../src';
+import { BACKGROUND_ARGS, DriverMissingError, IGNORED_DEFAULT_ARGS, launchOptions, loadDriver, PlaywrightBrowser, STEALTH_ARGS, writePdfPreference, type Driver } from '../src';
 
 /** A driver module whose `launchPersistentContext` records its arguments and returns a one-page context. */
 function fakeDriver() {
@@ -78,5 +81,54 @@ describe('PlaywrightBrowser driver loading', () => {
 
   it('names the package in DriverMissingError', () => {
     expect(new DriverMissingError('patchright').message).toBe('the patchright package is not installed');
+  });
+});
+
+describe('writePdfPreference', () => {
+  const setup = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'webscoop-pdfpref-'));
+    return { dir, file: join(dir, 'Default', 'Preferences') };
+  };
+  const read = async (file: string) => JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+
+  it('creates the file on a fresh profile with only the key', async () => {
+    const { dir, file } = await setup();
+    await writePdfPreference(dir, 'download');
+    expect(await read(file)).toEqual({ plugins: { always_open_pdf_externally: true } });
+  });
+
+  it('keeps the other keys of an existing file', async () => {
+    const { dir, file } = await setup();
+    await mkdir(join(dir, 'Default'));
+    await writeFile(file, JSON.stringify({ homepage: 'x', plugins: { other: 1 } }));
+    await writePdfPreference(dir, 'download');
+    expect(await read(file)).toEqual({ homepage: 'x', plugins: { other: 1, always_open_pdf_externally: true } });
+  });
+
+  it('flips true to false for view', async () => {
+    const { dir, file } = await setup();
+    await writePdfPreference(dir, 'download');
+    await writePdfPreference(dir, 'view');
+    expect(await read(file)).toEqual({ plugins: { always_open_pdf_externally: false } });
+  });
+
+  it('leaves a corrupt file untouched and warns naming it', async () => {
+    const { dir, file } = await setup();
+    await mkdir(join(dir, 'Default'));
+    await writeFile(file, '{not json');
+    const warnings: string[] = [];
+    await writePdfPreference(dir, 'download', (m) => warnings.push(m));
+    expect(await readFile(file, 'utf8')).toBe('{not json');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(file);
+  });
+
+  it('writes the preference before launching, defaulting to download', async () => {
+    const { dir, file } = await setup();
+    const fake = fakeDriver();
+    await new PlaywrightBrowser({ load: fake.load }).open(dir);
+    expect(await read(file)).toEqual({ plugins: { always_open_pdf_externally: true } });
+    await new PlaywrightBrowser({ load: fake.load }).open(dir, { pdf: 'view' });
+    expect(await read(file)).toEqual({ plugins: { always_open_pdf_externally: false } });
   });
 });

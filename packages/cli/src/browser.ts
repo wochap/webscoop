@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
-import { isLocale, isTimezone, parseProxyUrl, PROXY_SCHEMES, type OpenOptions, type ProxySettings, type Recipe } from '@webscoop/core';
+import { isLocale, isTimezone, parseProxyUrl, PROXY_SCHEMES, type OpenOptions, type PdfMode, type ProxySettings, type Recipe } from '@webscoop/core';
 import type { Config } from './config';
 import { chromiumOverride } from './context';
 import { CliError } from './exit';
@@ -144,11 +144,15 @@ export interface BrowserSettings {
   locale?: string;
   /** Humanized input; set only by `run`, `test`, and `bench`. */
   humanize?: boolean;
+  /** PDF mode: `--pdf`, then recipe, then config; absent means `download`. */
+  pdf?: PdfMode;
   /** Extra Chromium arguments from `browser.args`. */
   args?: string[];
 }
 
 export interface ProxyFlags {
+  /** `--pdf <mode>`. */
+  pdf?: PdfMode;
   /** `--proxy <url>`, or false for `--no-proxy`. */
   proxy?: string | false;
 }
@@ -173,7 +177,7 @@ function proxyFrom(value: string, bypass: string | undefined, credentialsFromUrl
 }
 
 /**
- * Proxy, timezone, and locale for a command. Proxy: flag, then recipe, then
+ * Proxy, timezone, locale, and PDF mode for a command. Proxy: flag, then recipe, then
  * config; `--no-proxy` drops it. Timezone and locale: recipe, then config.
  * Throws a `CliError` on an invalid value, before any browser starts.
  */
@@ -194,6 +198,7 @@ export function browserSettings(config: Config, recipe: Pick<Recipe, 'browser'> 
     settings.proxy = resolved.proxy;
     settings.proxyShown = resolved.shown;
   }
+  settings.pdf = flags.pdf ?? recipe?.browser?.pdf ?? config.browser.pdf ?? 'download';
   const timezone = recipe?.browser?.timezone ?? config.browser.timezone;
   const locale = recipe?.browser?.locale ?? config.browser.locale;
   if (timezone !== undefined) {
@@ -214,6 +219,7 @@ export function settingsOptions(settings: BrowserSettings): OpenOptions {
     ...(settings.timezone ? { timezone: settings.timezone } : {}),
     ...(settings.locale ? { locale: settings.locale } : {}),
     ...(settings.humanize ? { humanize: true } : {}),
+    ...(settings.pdf ? { pdf: settings.pdf } : {}),
     ...(settings.args ? { args: settings.args } : {}),
   };
 }
