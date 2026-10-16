@@ -520,14 +520,34 @@ From a selected element, the panel SHALL offer "Add to flow", which creates a st
 - **THEN** a `click` step is added to the active flow and the tab is not activated
 
 ### Requirement: Steps list editing
-Each flow in the Flows section SHALL list its steps in order with kind, target summary, value, a window badge when `window` is `popup`, a frame badge when the target has a frame, and an optional marker; an `agent` step SHALL show its goal cut to one line instead of a target summary. Selecting a step SHALL open its edit state, where the user can:
+Each flow in the Flows section SHALL list its steps in order, showing for each:
+- its kind, target summary, and value;
+- a window badge when `window` is `popup`;
+- a frame badge when the target has a frame;
+- an optional marker.
+
+An `agent` step SHALL show its goal cut to one line instead of a target summary. Selecting a step SHALL open its edit state, where the user can:
 - edit the value, including inserting a `{var}` chip, or turn a literal value into a variable with "make variable"
 - toggle `window` between `same` and `popup`, and `optional`
 - edit the target with the target editor defined in "Target editor for steps, triggers, and the paginate target", and edit its frame
 - for `await-user`, edit `until`, the label, and a timeout override, shown as "guard budget" by default
-- for `agent`, edit the goal (a multi-line field that accepts `{var}` chips), the LLM entry name, the turn cap, the `until` toggle (download or none), and the save-as value; the target editor SHALL NOT be shown
+- for `agent`, edit:
+  - the goal, a multi-line field that accepts `{var}` chips;
+  - the LLM entry name;
+  - the turn cap;
+  - `until`, as download, appears, disappears, or done (none);
+  - `scope`, as defined in "Agent step scope control";
+  - the save-as value, only with `until` download;
+  - the target, with the target editor, only with `until` appears or disappears.
 
-Each flow SHALL offer "Add agent step", which appends an `agent` step with an empty goal and opens its edit state; a step with an empty goal SHALL block saving with an inline error. The user SHALL be able to reorder steps within a flow with drag or Alt+Up and Alt+Down, delete them, and replay one step on the live page; replaying an `agent` step SHALL run its loop on the live page as a run does and show the end reason in the panel. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
+  Switching `until` away from appears and disappears SHALL drop the target from the step.
+
+Each flow SHALL offer "Add agent step", which appends an `agent` step with an empty goal and opens its edit state. A step with an empty goal SHALL block saving with an inline error, and so SHALL an agent step with `until` appears or disappears and no target. The user SHALL be able to:
+- reorder steps within a flow with drag or Alt+Up and Alt+Down;
+- delete them;
+- replay one step on the live page.
+
+Replaying an `agent` step SHALL run its loop on the live page as a run does and show the end reason in the panel. A step whose target no longer resolves on the current page SHALL show the zero-match warning with re-pick.
 
 #### Scenario: Mark the consent click optional
 - **WHEN** the user toggles `optional` on the consent step and saves
@@ -541,20 +561,29 @@ Each flow SHALL offer "Add agent step", which appends an `agent` step with an em
 - **WHEN** the user adds an agent step, types the goal `Download the PDF`, turns `until` to download, and saves
 - **THEN** the flow's last step is `{ "kind": "agent", "goal": "Download the PDF", "until": "download" }`
 
+#### Scenario: Agent step until a banner appears
+- **WHEN** the user adds an agent step with goal `Send the contact form`, sets `until` to appears, types the selector `.thanks` with Edit selector, sets scope to site, and saves
+- **THEN** the flow's last step has `until` `appears`, a target whose primary candidate is `.thanks`, and `scope` `site`
+
+#### Scenario: Until appears without a target blocks saving
+- **WHEN** the user sets an agent step's `until` to appears and saves without a target
+- **THEN** the panel shows an inline error on the step and the recipe is not written
+
 #### Scenario: Empty goal blocks saving
 - **WHEN** the user adds an agent step and saves without a goal
 - **THEN** the panel shows an inline error on the step and the recipe is not written
 
 ### Requirement: Agent step field hints
-In the edit state of an `agent` step, every field line SHALL show a help hint next to its label. The fields are goal, entry, turns, until, value (when shown), window, optional, and scope. A hint SHALL be a small `?` glyph. It SHALL be reachable with the keyboard, SHALL expose its text as a native tooltip, and SHALL use the same text as its accessible name. The texts SHALL say:
+In the edit state of an `agent` step, every field line SHALL show a help hint next to its label. The fields are goal, entry, turns, until, target (when shown), value (when shown), window, optional, and scope. A hint SHALL be a small `?` glyph. It SHALL be reachable with the keyboard, SHALL expose its text as a native tooltip, and SHALL use the same text as its accessible name. The texts SHALL say:
 - goal: the model reads the goal and a page outline, and `{var}` values are sent to the model;
 - entry: names an entry under `llms` in the config, and empty uses the run's entry;
 - turns: each turn is one model request, and reaching the cap ends the step with `max-turns`;
-- until: download is checked by the runner, done is the model's word and cannot be checked;
+- until: download, appears, and disappears are checked by the runner after every action, while done is the model's word and cannot be checked;
+- target: the element the runner looks for after each action, which should exist only once the goal is reached;
 - value: the file name for the saved download;
 - window: which tab the agent acts in;
 - optional: off fails the run with `missing-required`, on skips the step;
-- scope: the agent stays on its start page; navigation away is undone and popups are closed.
+- scope: page keeps the agent on its start page; site lets it move within the start page's origin and may submit forms there; other sites are undone and popups are closed.
 
 The inline text after the turns input SHALL read "at most · 1 request each". When `until` is done, the inline text SHALL state that success is not checked. Edit states of other step kinds SHALL keep their current lines without hints.
 
@@ -570,12 +599,16 @@ The inline text after the turns input SHALL read "at most · 1 request each". Wh
 - **WHEN** the user opens the edit state of a `click` step
 - **THEN** no `?` hint is shown on its lines
 
-### Requirement: Agent step scope shown read-only
-The edit state of an `agent` step SHALL show a `scope` line with the value `page`, which cannot be edited, and the scope hint. Editing the step SHALL NOT write `scope` to the recipe.
+### Requirement: Agent step scope control
+The edit state of an `agent` step SHALL show a `scope` line with a two-way control, page or site, defaulting to page, and the scope hint. The inline text SHALL read "stays on this page" for page, and "may move within <origin>" for site, where the origin is that of the recipe's URL. Saving SHALL write `scope: site` when site is chosen and SHALL omit `scope` for page.
 
-#### Scenario: Scope line on a new agent step
-- **WHEN** the user adds an agent step
-- **THEN** its edit state shows the scope line `page` with no control to change it, and the saved step has no `scope` key
+#### Scenario: Scope defaults to page
+- **WHEN** the user adds an agent step and saves with a goal
+- **THEN** the saved step has no `scope` key
+
+#### Scenario: Choose site
+- **WHEN** the user switches the scope of an agent step to site on a recipe for `https://shop.test/contact` and saves
+- **THEN** the inline text reads "may move within https://shop.test" and the saved step has `scope: site`
 
 ### Requirement: Secret variable in goal warning
 When the goal of an `agent` step references one or more `secret` variables, the edit state SHALL show an inline warning under the goal. The warning SHALL name each secret variable and state that its value will be sent to the model with the goal. The warning SHALL update as the user types, without waiting for the field to lose focus. It SHALL NOT block saving. When no secret variable is referenced, no warning SHALL be shown.

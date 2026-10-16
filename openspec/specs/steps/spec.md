@@ -14,9 +14,15 @@ A step SHALL be one of:
 - `wait`: wait for the given milliseconds, or until the target resolves, bounded by the navigation timeout.
 - `await-user`: wait for the user until the target appears or disappears, as defined by the flows capability.
 - `download`: with a target, resolve and click it, then wait for the download the click starts; without a target, wait for a download already in progress in the step's window or one that starts there within the navigation timeout. The file SHALL be saved as defined in "Download step".
-- `agent`: hand a goal to a language model that acts on the step's window through the agent-step capability. It SHALL have `goal`, a non-empty string that MAY reference template variables; MAY have `llm`, the name of an LLM entry; `maxTurns`, a positive integer, default 20; `scope`, `page` (the default and only accepted value); `until`, `download`; and `value`, the file name to save a download as, as for `download`. It SHALL NOT have a target.
+- `agent`: hand a goal to a language model that acts on the step's window through the agent-step capability. It SHALL have `goal`, a non-empty string that MAY reference template variables. It MAY have:
+  - `llm`, the name of an LLM entry;
+  - `maxTurns`, a positive integer, default 20;
+  - `scope`, either `page` (the default) or `site`;
+  - `until`, one of `download`, `appears`, or `disappears`;
+  - `target`, the element whose presence ends the step, required with `until` `appears` or `disappears` and rejected otherwise;
+  - `value`, the file name to save a download as, as for `download`.
 
-`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one; `agent` SHALL NOT have one. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables. `goal`, `llm`, `maxTurns`, and `scope` SHALL be rejected on any kind but `agent`, naming the step; `until` on an `agent` step SHALL accept only `download`. A variable used in `goal` SHALL be declared like one used in a step value.
+`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one; `agent` SHALL have one exactly when its `until` is `appears` or `disappears`. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables. `goal`, `llm`, `maxTurns`, and `scope` SHALL be rejected on any kind but `agent`, naming the step. `scope` SHALL accept only `page` or `site`. A variable used in `goal` SHALL be declared like one used in a step value.
 
 Every step MAY have:
 - `window`: `same` (default) or `popup`, as defined by the flows capability
@@ -43,9 +49,21 @@ Every step MAY have:
 - **WHEN** a flow has a step `{ "kind": "agent", "goal": "Download the PDF for {title}", "until": "download", "maxTurns": 10 }` and `title` is declared
 - **THEN** the recipe validates with `scope` `page`
 
-#### Scenario: Agent step with a target
-- **WHEN** an `agent` step declares a `target`
-- **THEN** validation fails naming the step and saying an agent step has no target
+#### Scenario: Agent step with a target and no condition
+- **WHEN** an `agent` step declares a `target` and `until` `download`
+- **THEN** validation fails naming the step and saying an agent step has a target only with until appears or disappears
+
+#### Scenario: Agent step until appears
+- **WHEN** an `agent` step has `goal` "Send the contact form", `scope` `site`, `until` `appears`, and a target for the thank-you banner
+- **THEN** the recipe validates
+
+#### Scenario: Agent until appears without a target
+- **WHEN** an `agent` step has `until` `appears` and no target
+- **THEN** validation fails naming the step and saying it needs a target for until appears
+
+#### Scenario: Unknown agent scope
+- **WHEN** an `agent` step has `scope` `domain`
+- **THEN** validation fails naming the step and the accepted values `page` and `site`
 
 #### Scenario: Goal on a click
 - **WHEN** a `click` step declares `goal`
