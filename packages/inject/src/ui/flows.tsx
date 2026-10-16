@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { DEFAULT_MAX_RETRIES, DEFAULT_MAX_TURNS, STEP_KINDS, popupClosedReason, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
+import { DEFAULT_MAX_RETRIES, DEFAULT_MAX_TURNS, STEP_KINDS, popupClosedReason, templateVariables, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
 import { ZeroMatchWarning } from './fields';
@@ -32,6 +32,18 @@ const VALUE_HINT: Partial<Record<StepKind, string>> = {
   download: 'File name, {var} allowed; empty keeps the name the server suggests',
   agent: 'Save the download as, {var} allowed; empty keeps the name the server suggests',
 };
+
+/** Help texts of the agent step fields, shown behind the `?` next to each label. */
+const AGENT_HINTS = {
+  goal: 'The model reads this goal and an outline of the page, then acts. {var} values are sent to the model as text.',
+  entry: 'Name of an entry under llms in the config. Empty uses --llm, or the default entry.',
+  turns: 'Each turn is one request to the model. When the cap is reached the step ends with max-turns.',
+  until: 'download: the runner checks that a file was saved. done: the model says it is finished, which cannot be checked.',
+  value: 'File name for the saved download. Empty keeps the name the server suggests.',
+  window: 'Which tab the agent acts in. Popup acts in the newest popup opened by an earlier step.',
+  optional: 'Off: if the goal is not reached, the run fails with missing-required (exit 3). On: the step is skipped.',
+  scope: 'The agent stays on its start page. Navigation away is undone and popups are closed.',
+} as const;
 
 export function KindSelect({ value, onChange }: { value: StepKind; onChange: (kind: StepKind) => void }) {
   return (
@@ -183,10 +195,17 @@ export function Segmented<T extends string>({ options, value, onChange, label, t
 }
 
 /** One labelled line of an edit state. */
-function EditLine({ label, children }: { label: string; children: ReactNode }) {
+function EditLine({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="ws-edit-line">
-      <span className="ws-edit-label">{label}</span>
+      <span className="ws-edit-label">
+        {label}
+        {hint && (
+          <span className="ws-hint" tabIndex={0} role="img" title={hint} aria-label={hint} data-ws={`step-hint-${label}`}>
+            ?
+          </span>
+        )}
+      </span>
       <div className="ws-row ws-wrap ws-spacer">{children}</div>
     </div>
   );
@@ -255,6 +274,7 @@ function GoalField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: Var
     setGoal(next);
     commit(next);
   };
+  const secrets = templateVariables(goal).filter((name) => vars.some((v) => v.name === name && v.secret));
   return (
     <div className="ws-col ws-spacer">
       <textarea
@@ -275,6 +295,11 @@ function GoalField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: Var
           </button>
         ))}
       </div>
+      {secrets.length > 0 && (
+        <span className="ws-meta ws-tone-warn-text" data-ws="step-goal-secret-warn">
+          {secrets.map((name) => `{${name}}`).join(', ')} {secrets.length === 1 ? 'is a secret and will' : 'are secrets and will'} be sent to the model with the goal.
+        </span>
+      )}
     </div>
   );
 }
@@ -293,12 +318,12 @@ function AgentLimits({ step, update }: { step: DraftStep; update: (patch: StepPa
   };
   return (
     <>
-      <EditLine label="entry">
+      <EditLine label="entry" hint={AGENT_HINTS.entry}>
         <input className="ws-input ws-input-sm ws-mono-sm ws-spacer" value={entry} placeholder="LLM entry name; empty uses the run's" aria-label="LLM entry" onChange={(e) => setEntry(e.target.value)} onBlur={commitEntry} onKeyDown={(e) => e.key === 'Enter' && commitEntry()} data-ws="step-llm" />
       </EditLine>
-      <EditLine label="turns">
+      <EditLine label="turns" hint={AGENT_HINTS.turns}>
         <input className="ws-input ws-input-sm ws-mono-sm" inputMode="numeric" value={turns} placeholder={String(DEFAULT_MAX_TURNS)} aria-label="Turn cap" onChange={(e) => setTurns(e.target.value)} onBlur={commitTurns} onKeyDown={(e) => e.key === 'Enter' && commitTurns()} data-ws="step-max-turns" />
-        <span className="ws-meta">at most</span>
+        <span className="ws-meta">at most · 1 request each</span>
       </EditLine>
     </>
   );
@@ -333,11 +358,11 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
       )}
       {step.kind === 'agent' && (
         <>
-          <EditLine label="goal">
+          <EditLine label="goal" hint={AGENT_HINTS.goal}>
             <GoalField step={step} at={at} vars={vars} />
           </EditLine>
           <AgentLimits step={step} update={update} />
-          <EditLine label="until">
+          <EditLine label="until" hint={AGENT_HINTS.until}>
             <Segmented
               label="Until"
               testId="step-agent-until"
@@ -345,7 +370,12 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
               onChange={(until) => update({ until: until === 'download' ? 'download' : null })}
               options={[{ value: 'download', label: 'download' }, { value: 'done', label: 'done' }]}
             />
-            <span className="ws-meta">{step.until === 'download' ? 'succeeds when a download is saved' : 'succeeds when the model says it is done'}</span>
+            <span className="ws-meta">{step.until === 'download' ? 'succeeds when a download is saved' : 'succeeds when the model says it is done (not checked)'}</span>
+          </EditLine>
+          <EditLine label="scope" hint={AGENT_HINTS.scope}>
+            <span className="ws-tag" data-ws="step-agent-scope">
+              page
+            </span>
           </EditLine>
         </>
       )}
@@ -359,11 +389,11 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
       </EditLine>
       )}
       {step.kind in VALUE_HINT && (step.kind !== 'agent' || step.until === 'download') && (
-        <EditLine label="value">
+        <EditLine label="value" hint={step.kind === 'agent' ? AGENT_HINTS.value : undefined}>
           <ValueField step={step} at={at} vars={vars} />
         </EditLine>
       )}
-      <EditLine label="window">
+      <EditLine label="window" hint={step.kind === 'agent' ? AGENT_HINTS.window : undefined}>
         <Segmented label="Window" testId="step-window" value={step.window} onChange={(window) => update({ window })} options={[{ value: 'same', label: 'same' }, { value: 'popup', label: 'popup' }]} />
         <span className="ws-meta">{step.window === 'popup' ? 'the newest popup opened by an earlier step' : 'where the flow started'}</span>
       </EditLine>
@@ -380,7 +410,7 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
           </span>
         </>
       ) : (
-        <EditLine label="optional">
+        <EditLine label="optional" hint={step.kind === 'agent' ? AGENT_HINTS.optional : undefined}>
           <Toggle on={step.optional} onChange={(optional) => update({ optional })} label="Optional" testId="step-optional" />
           <span className="ws-meta">{step.kind === 'download' ? 'skip if no download starts' : step.kind === 'agent' ? 'skip if the goal is not reached' : 'skip if the target is missing'}</span>
         </EditLine>

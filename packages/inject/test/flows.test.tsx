@@ -156,6 +156,50 @@ describe('flows section', () => {
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { value: '{category}.pdf' } });
   });
 
+  it('shows a hint on every agent field, and none on a click step', () => {
+    const agent = step('agent', { target: undefined, goal: 'x', until: 'download', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    const hints: Record<string, string> = { goal: 'goal', entry: 'Name of an entry under llms', turns: 'max-turns', until: 'cannot be checked', value: 'File name for the saved download', window: 'Which tab', optional: 'missing-required', scope: 'start page' };
+    for (const [name, text] of Object.entries(hints)) {
+      const hint = p.q(`step-hint-${name}`)!;
+      expect(hint.getAttribute('aria-label'), name).toContain(text);
+      expect(hint.title).toBe(hint.getAttribute('aria-label'));
+      expect(hint.tabIndex).toBe(0);
+    }
+    expect(p.q('step-max-turns')!.parentElement!.textContent).toContain('at most · 1 request each');
+    cleanup();
+    const q = renderPanel(baseState(withFlows([setup([step('click')])])));
+    fireEvent.click(q.q('step-edit-toggle')!);
+    expect(q.container.querySelectorAll('.ws-hint')).toHaveLength(0);
+  });
+
+  it('marks until done as not checked, and shows scope read-only', () => {
+    const agent = step('agent', { target: undefined, goal: 'x', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    expect(p.q('step-agent-until')!.parentElement!.textContent).toContain('succeeds when the model says it is done (not checked)');
+    const scope = p.q('step-agent-scope')!;
+    expect(scope.textContent).toBe('page');
+    expect(scope.querySelector('input, button, select')).toBeNull();
+    expect(p.sent.some((m) => JSON.stringify(m).includes('scope'))).toBe(false);
+  });
+
+  it('warns while typing a secret variable into the goal, without blocking the save', () => {
+    const agent = step('agent', { target: undefined, goal: 'x', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])], { vars: [{ name: 'password', value: '', secret: true }, { name: 'year', value: '2024' }] })));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    const goal = p.q('step-goal') as HTMLTextAreaElement;
+    expect(p.q('step-goal-secret-warn')).toBeNull();
+    fireEvent.change(goal, { target: { value: 'Download the report for {year}' } });
+    expect(p.q('step-goal-secret-warn')).toBeNull();
+    fireEvent.change(goal, { target: { value: 'Log in with {password}' } });
+    expect(p.q('step-goal-secret-warn')!.textContent).toContain('{password}');
+    expect(p.q('step-goal-secret-warn')!.textContent).toContain('sent to the model');
+    fireEvent.blur(goal);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { goal: 'Log in with {password}' } });
+  });
+
   it('shows the inline error of an agent step with an empty goal', () => {
     const agent = step('agent', { target: undefined, goal: '', count: null });
     const p = renderPanel(baseState(withFlows([setup([agent])])));
