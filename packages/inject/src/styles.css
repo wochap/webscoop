@@ -115,7 +115,7 @@
 }
 
 /* Type */
-.ws-count { font-size: 30px; font-weight: 500; line-height: 1.1; }
+.ws-count { font-family: var(--ws-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .ws-prompt { font-size: 18px; font-weight: 500; }
 .ws-title { font-size: 13px; font-weight: 500; }
 .ws-meta { font-size: 11px; color: var(--ws-text-muted); }
