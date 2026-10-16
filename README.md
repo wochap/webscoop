@@ -1074,11 +1074,12 @@ follow a recorded consent click or precede a `download` step.
 | `goal` | what the model is to achieve; required; may use `{variable}` placeholders |
 | `llm` | name of an entry of the config's `llms` (or `default`); without it the run's entry (`--llm`, else `default`) |
 | `maxTurns` | most actions the model may take; default 20 |
-| `scope` | `page`, the only value for now (see below) |
-| `until` | `download`: the step succeeds only when a download is saved |
+| `scope` | `page` (default) or `site` (see below) |
+| `until` | `download`: the step succeeds only when a download is saved; `appears` or `disappears`: when `target` appears or disappears |
+| `target` | with `until: appears` or `disappears`, the element the runner looks for after every action; required with those and rejected otherwise |
 | `value` | with `until: download`, the file name to save as, as for a `download` step |
 
-An agent step has no target. `window`, `optional`, and `label` work as usual.
+`window`, `optional`, and `label` work as usual.
 
 Each turn the runner builds an **outline** of the page, one line per
 interactive element, heading, and text, in document order, each with a ref:
@@ -1095,8 +1096,9 @@ The outline is cut to 40 percent of the entry's `contextTokens` (interactive
 lines first, then headings, then text) and ends with `... n more lines; use
 find` when it was. The model answers one JSON action per turn: `click`,
 `fill`, `press`, `scroll`, `find` (search the whole outline, cut lines
-included), `html` (the HTML of one element), `wait`, `done`, or `give_up`,
-each with a `reason`. Old turns shrink to one line each so a long run fits the
+included), `html` (the HTML of one element), `wait`, `back` (return to the
+previous page), `done`, or `give_up`, each with a `reason`. Every outline
+starts with the window's current `URL:` and `Title:`. Old turns shrink to one line each so a long run fits the
 context.
 
 **Scope.** With `scope: page` the model stays on the page the step started
@@ -1106,12 +1108,28 @@ told; a popup that shows a page is closed. A link or popup that starts a file
 download is allowed. The system message states the rule, but the runner
 enforces it.
 
+With `scope: site` the model may move between pages of the starting URL's
+origin (scheme, host, and port): a form submit, a search with `?q=`, the next
+page of results. The runner keeps a history of the pages visited (at most
+50); a navigation to another origin is undone to the latest page of that
+history, not to the start, and `back` reloads the previous one from its URL
+(a page reached by POST is reloaded with GET). Popups are still closed.
+**`site` lets the agent submit forms on that site**, and nothing asks first,
+so point it at test pages or harmless forms.
+
 **Success is decided by the runner, not the model.** With `until: download`
 the step ends `ok` as soon as a download that the step's window started is
 saved, even before the model is asked again. The file is a row of the
 `downloads` table, like a `download` step's, and `done` with no download yet
 gets one "no download has been saved yet" answer; a second such `done` fails
-the step. Without `until`, the model's `done` ends the step `ok`. A step also
+the step. With `until: appears` or `disappears` the runner checks the target
+(its stored selectors, as `await-user` does, in the step's window) before every
+request and after every action, and ends the step `ok` with end reason
+`condition` as soon as it holds, with no model request at all when it already
+holds at the start. `done` before that gets one answer naming the target, and
+a second fails the step. Pick a target that exists only once the goal is
+reached, such as the thank-you banner. Without `until`, the model's `done`
+ends the step `ok`. A step also
 fails on `give_up`, on `maxTurns`, when the endpoint fails after the adapter's
 retries, and after three answers in a row that are not a valid action. A
 failed required step fails the run with `missing-required` and exit 3, a
@@ -1124,7 +1142,7 @@ missing and an optional one skip, with no request sent. Such a run cannot be
 exported with `webscoop export`.
 
 **Reports.** `step.replayed` and `step.skipped` carry `agent: { turns, end,
-actions }`, where `end` is `download`, `done`, `done-unmet`, `gave-up`,
+actions }`, where `end` is `download`, `condition`, `done`, `done-unmet`, `gave-up`,
 `max-turns`, `llm-error`, `invalid-answers`, or `no-llm`, and each action has
 its ref, the outline line of that ref, the model's reason, and the first line
 of the result. `--report` lists the same under the flow run. Stderr prints
@@ -1163,8 +1181,21 @@ webscoop run grab-pdf --var url=https://example.com/report | jq -r '.[0].file'
 A url template that is one variable alone takes a whole URL as its value;
 declare the variable `raw` so it is not encoded. In the recorder, a flow's
 **Add agent step** opens the goal (with variable chips), the entry name, the
-turn cap, and the `until` toggle; replaying the step runs the loop on the
-live page.
+turn cap, the `until` choice (download, appears, disappears, or done, with the
+target editor for appears and disappears), and the page or site `scope`;
+replaying the step runs the loop on the live page.
+
+A step that sends a contact form and stops on the thank-you banner:
+
+```json
+{
+  "kind": "agent",
+  "goal": "Send the contact form as Ada, email ada@example.test, with the message Hello.",
+  "scope": "site",
+  "until": "appears",
+  "target": { "selectors": [{ "strategy": "css", "value": ".thanks", "stability": "medium" }] }
+}
+```
 
 ### Exit codes
 

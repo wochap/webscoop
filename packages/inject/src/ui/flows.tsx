@@ -38,11 +38,12 @@ const AGENT_HINTS = {
   goal: 'The model reads this goal and an outline of the page, then acts. {var} values are sent to the model as text.',
   entry: 'Name of an entry under llms in the config. Empty uses --llm, or the default entry.',
   turns: 'Each turn is one request to the model. When the cap is reached the step ends with max-turns.',
-  until: 'download: the runner checks that a file was saved. done: the model says it is finished, which cannot be checked.',
+  until: 'download, appears, and disappears are checked by the runner after every action: a file was saved, or the target appeared or disappeared. done: the model says it is finished, which cannot be checked.',
+  target: 'Element the runner looks for after each action; the step succeeds when it appears (or disappears). Pick one that exists only once the goal is reached.',
   value: 'File name for the saved download. Empty keeps the name the server suggests.',
   window: 'Which tab the agent acts in. Popup acts in the newest popup opened by an earlier step.',
   optional: 'Off: if the goal is not reached, the run fails with missing-required (exit 3). On: the step is skipped.',
-  scope: 'The agent stays on its start page. Navigation away is undone and popups are closed.',
+  scope: 'page: the agent stays on its start page. site: it may move within the start page\'s origin, and may submit forms there. Other sites are undone and popups are closed.',
 } as const;
 
 export function KindSelect({ value, onChange }: { value: StepKind; onChange: (kind: StepKind) => void }) {
@@ -95,7 +96,7 @@ function StepMeta({ step }: { step: DraftStep }) {
   } else if (step.kind === 'agent') {
     parts.push(
       <span key="agent" className="ws-meta" data-ws="step-agent-meta">
-        {step.until === 'download' ? 'until download' : 'until done'} · {step.maxTurns ?? DEFAULT_MAX_TURNS} turns{step.llm ? ` · ${step.llm}` : ''}
+        until {step.until ?? 'done'}{step.scope === 'site' ? ' · site' : ''} · {step.maxTurns ?? DEFAULT_MAX_TURNS} turns{step.llm ? ` · ${step.llm}` : ''}
         {step.value ? ` · saved as ${step.value}` : ''}
       </span>,
     );
@@ -329,12 +330,31 @@ function AgentLimits({ step, update }: { step: DraftStep; update: (patch: StepPa
   );
 }
 
+/** Inline text of an agent step's until choice. */
+const UNTIL_TEXT = {
+  download: 'succeeds when a download is saved',
+  appears: 'succeeds when the target appears',
+  disappears: 'succeeds when the target disappears',
+  done: 'succeeds when the model says it is done (not checked)',
+} as const;
+
+/** The origin of a URL, or the URL itself when it has none. */
+function originOf(url: string): string {
+  try {
+    const origin = new URL(url).origin;
+    return origin === 'null' ? url : origin;
+  } catch {
+    return url;
+  }
+}
+
 /** The edit state of a step: target, value, window, frame, optional; label, until, and timeout for await-user. */
 function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; vars: VarValue[]; onDone: () => void }) {
   const actions = useActions();
   const update = (patch: StepPatch) => void actions.send({ kind: 'draft.updateStep', flow: at.flow, index: at.index, patch });
   const { host } = useSnapshot();
   const [label, setLabel] = useState(step.label ?? '');
+  const watches = step.kind === 'agent' && (step.until === 'appears' || step.until === 'disappears');
   useEffect(() => setLabel(step.label ?? ''), [step.label]);
   return (
     <div className="ws-col ws-step-edit" data-ws="step-edit">
@@ -366,15 +386,26 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
             <Segmented
               label="Until"
               testId="step-agent-until"
-              value={step.until === 'download' ? 'download' : 'done'}
-              onChange={(until) => update({ until: until === 'download' ? 'download' : null })}
-              options={[{ value: 'download', label: 'download' }, { value: 'done', label: 'done' }]}
+              value={step.until ?? 'done'}
+              onChange={(until) => update({ until: until === 'done' ? null : until })}
+              options={[
+                { value: 'download', label: 'download' },
+                { value: 'appears', label: 'appears' },
+                { value: 'disappears', label: 'disappears' },
+                { value: 'done', label: 'done' },
+              ]}
             />
-            <span className="ws-meta">{step.until === 'download' ? 'succeeds when a download is saved' : 'succeeds when the model says it is done (not checked)'}</span>
+            <span className="ws-meta">{UNTIL_TEXT[step.until ?? 'done']}</span>
           </EditLine>
+          {watches && (
+            <EditLine label="target" hint={AGENT_HINTS.target}>
+              <TargetEditor targetRef={{ kind: 'step', ...at }} target={step.target} edit={host?.targetEdit ?? null} disabled={host ? repickBlocked(step, at, host) : null} testId="step-agent-target" />
+            </EditLine>
+          )}
           <EditLine label="scope" hint={AGENT_HINTS.scope}>
-            <span className="ws-tag" data-ws="step-agent-scope">
-              page
+            <Segmented label="Scope" testId="step-agent-scope" value={step.scope ?? 'page'} onChange={(scope) => update({ scope })} options={[{ value: 'page', label: 'page' }, { value: 'site', label: 'site' }]} />
+            <span className="ws-meta" data-ws="step-agent-scope-text">
+              {step.scope === 'site' ? `may move within ${originOf(host?.draft.url ?? '')}` : 'stays on this page'}
             </span>
           </EditLine>
         </>

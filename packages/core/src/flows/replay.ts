@@ -328,7 +328,7 @@ interface AgentStepResult {
   info?: PageInfo;
 }
 
-/** Run an `agent` step's loop in its window; with `until` `download`, the file it ended on is taken as a `download` step takes one. */
+/** Run an `agent` step's loop in its window; with `until` `download`, the file it ended on is taken as a `download` step takes one; with `appears` or `disappears`, its target ends the loop. */
 async function runAgentStep(recipe: Recipe, flow: string, step: Step, index: number, session: Session, ctx: FlowContext, sleep: (ms: number) => Promise<void>): Promise<AgentStepResult> {
   const who = { flow, index, ...(step.label ? { label: step.label } : {}) };
   const llm = ctx.llmFor?.(step.llm);
@@ -351,6 +351,14 @@ async function runAgentStep(recipe: Recipe, flow: string, step: Step, index: num
     goal: fillText(step.goal ?? '', recipe.vars, ctx.vars),
     maxTurns: step.maxTurns ?? DEFAULT_MAX_TURNS,
     ...(step.until === 'download' ? { until: 'download' as const } : {}),
+    ...((step.until === 'appears' || step.until === 'disappears') && step.target
+      ? {
+          until: step.until,
+          condition: async () => (await targetPresent(session, step.target!)) === (step.until === 'appears'),
+          conditionLabel: step.target.selectors[0]?.value ?? 'the target',
+        }
+      : {}),
+    scope: step.scope ?? 'page',
     timeoutMs: ctx.timeoutMs,
     sleep,
     ...(main && ctx.onNavigated

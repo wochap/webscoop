@@ -212,9 +212,10 @@ function flowErrors(input: Record<string, unknown>, declared: ReadonlySet<string
         if (step.until !== undefined && kind !== 'agent') errors.push({ path: at('until'), message: `${what} sets until, which only await-user and agent steps take` });
       }
       if (kind === 'agent') {
-        if (step.target !== undefined) errors.push({ path: at('target'), message: `${what} declares a target; an agent step has no target` });
+        const watches = step.until === 'appears' || step.until === 'disappears';
+        if (watches && step.target === undefined) errors.push({ path: at('target'), message: `${what} needs a target for until ${step.until}` });
+        if (!watches && step.target !== undefined) errors.push({ path: at('target'), message: `${what} declares a target; an agent step has a target only with until appears or disappears` });
         if (typeof step.goal !== 'string' || step.goal.trim() === '') errors.push({ path: at('goal'), message: `${what} needs a goal` });
-        if (step.until !== undefined && step.until !== 'download') errors.push({ path: at('until'), message: `${what} accepts only until: download` });
       } else {
         for (const key of ['goal', 'llm', 'maxTurns', 'scope'] as const) {
           if (step[key] !== undefined) errors.push({ path: at(key), message: `${what} sets ${key}, which only agent steps take` });

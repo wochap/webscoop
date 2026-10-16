@@ -4,13 +4,16 @@ import { FillUnresolvedError, TimeoutError, type ElementRef, type PageInfo, type
 import type { AnnotatedNode } from '../selectors/annotated';
 import { refForNode } from '../selectors/xpath';
 import type { Outline } from './outline';
+import type { AgentScope } from '../recipe/schema';
 
 /** Longest outer HTML the `html` action answers with. */
 export const HTML_MAX = 2000;
 /** Longest `wait` action. */
 export const WAIT_MAX_MS = 5000;
+/** Most documents the step's history holds; the start URL is always kept. */
+export const HISTORY_MAX = 50;
 
-export const ACTION_NAMES = ['click', 'fill', 'press', 'scroll', 'find', 'html', 'wait', 'done', 'give_up'] as const;
+export const ACTION_NAMES = ['click', 'fill', 'press', 'scroll', 'find', 'html', 'wait', 'back', 'done', 'give_up'] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];
 
 const reason = z.string().default('');
@@ -25,6 +28,7 @@ const VARIANTS = {
   find: z.object({ action: z.literal('find'), text: z.string().min(1), reason }),
   html: z.object({ action: z.literal('html'), ref, reason }),
   wait: z.object({ action: z.literal('wait'), ms: z.number().int().min(1).max(WAIT_MAX_MS), reason }),
+  back: z.object({ action: z.literal('back'), reason }),
   done: z.object({ action: z.literal('done'), reason }),
   give_up: z.object({ action: z.literal('give_up'), reason }),
 } as const;
@@ -45,6 +49,7 @@ export const ACTION_HELP = [
   '{"action":"find","text":"pdf","reason":"..."}  list outline lines containing the text, also lines cut from the outline',
   '{"action":"html","ref":"e3","reason":"..."}  show the HTML of an element',
   '{"action":"wait","ms":1000,"reason":"..."}  wait 1 to 5000 ms',
+  '{"action":"back","reason":"..."}  return to the previous page',
   '{"action":"done","reason":"..."}  the goal is reached',
   '{"action":"give_up","reason":"..."}  the goal cannot be reached',
 ].join('\n');
@@ -71,7 +76,7 @@ export function invalidAnswerResult(problem: string): string {
 export interface ActionResult {
   /** What happened, for the model. */
   text: string;
-  /** The loop's end condition held during the action; nothing else was done after it. */
+  /** The loop's end condition held after the action; for a download, nothing else was done after it. */
   stopped?: boolean;
 }
 
@@ -80,16 +85,41 @@ export interface ActionContext {
   session: Session;
   windows: RunWindows;
   timeoutMs: number;
-  /** The document the step started on; actions that leave it are undone. */
-  startUrl: string;
+  /** How far actions may navigate: `page` keeps the start document, `site` its origin. */
+  scope: AgentScope;
+  /**
+   * The in-scope documents visited, oldest first, seeded with the start URL.
+   * Actions push and `back` pops; out-of-scope navigations return to the latest.
+   */
+  history: string[];
   sleep: (ms: number) => Promise<void>;
   /** Called with the settled page when an action navigated the step's window (the main window only), for guards. Returns the page to go on with. */
   onNavigated?: (info: PageInfo) => Promise<PageInfo>;
   /** Whether the loop's end condition (a saved download) already holds. */
   stop: () => boolean;
+  /** Whether the step's target condition holds, checked once an action has settled and been gated. */
+  condition?: () => Promise<boolean>;
 }
 
 const stripFragment = (url: string) => url.replace(/#.*$/, '');
+
+const originOf = (url: string): string | null => {
+  try {
+    const origin = new URL(url).origin;
+    return origin === 'null' ? null : origin;
+  } catch {
+    return null;
+  }
+};
+
+/** Whether `url` is within the scope, given the history (never empty). */
+export function inScope(scope: AgentScope, history: readonly string[], url: string): boolean {
+  if (scope === 'site') {
+    const origin = originOf(url);
+    return origin !== null && origin === originOf(history[0]!);
+  }
+  return stripFragment(url) === stripFragment(history.at(-1)!);
+}
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
@@ -126,6 +156,8 @@ export class AgentActions {
       case 'wait':
         await this.ctx.sleep(action.ms);
         return { text: `waited ${action.ms} ms` };
+      case 'back':
+        return this.back();
       case 'click':
       case 'fill':
       case 'press':
@@ -222,26 +254,52 @@ export class AgentActions {
     }
     let info = settled;
     const now = await session.url().catch(() => before);
-    const left = stripFragment(now) !== stripFragment(this.ctx.startUrl);
+    const { history } = this.ctx;
+    const left = !inScope(this.ctx.scope, history, now);
     if (left && !settled?.download) {
       parts.push(`That navigated to ${now}, which is outside this step's scope; the page was restored.`);
       info = await this.restore();
       changes++;
     } else if (now !== previousUrl) {
       changes++;
+      if (!settled?.download && stripFragment(now) !== stripFragment(history.at(-1)!)) this.push(now);
       parts.push(`The page URL is now ${now}${settled?.title ? ` (title ${JSON.stringify(settled.title)})` : ''}.`);
     }
     if (info && this.ctx.onNavigated && (left || info.url !== previousUrl) && !info.download) {
       await this.ctx.onNavigated(info);
     }
     if (changes === 0) parts.push('The URL did not change; see the outline for what the page shows now.');
+    if (await this.ctx.condition?.()) return { text: parts.join(' '), stopped: true };
     return { text: parts.join(' ') };
   }
 
-  /** Back to the document the step started on. */
+  /** Append an in-scope document, dropping the oldest above the start URL past the cap. */
+  private push(url: string): void {
+    const { history } = this.ctx;
+    history.push(url);
+    if (history.length > HISTORY_MAX) history.splice(1, history.length - HISTORY_MAX);
+  }
+
+  /** Pop the latest document and load the one before it. */
+  private async back(): Promise<ActionResult> {
+    const { session, history } = this.ctx;
+    this.previous = null;
+    if (history.length < 2) return { text: 'This is the start page; there is no earlier page.' };
+    history.pop();
+    const url = history.at(-1)!;
+    const info = await this.restore();
+    if (this.ctx.stop()) return { text: '', stopped: true };
+    if (session.isClosed()) return { text: 'The window closed.' };
+    if (info && this.ctx.onNavigated) await this.ctx.onNavigated(info);
+    const title = info?.title ? ` (title ${JSON.stringify(info.title)})` : '';
+    const text = `Went back to ${url}${title}; the page was loaded again from its URL.`;
+    return (await this.ctx.condition?.()) ? { text, stopped: true } : { text };
+  }
+
+  /** Back to the latest in-scope document of the history. */
   private async restore(): Promise<PageInfo | null> {
     try {
-      const info = await this.ctx.session.goto(this.ctx.startUrl, { timeoutMs: this.ctx.timeoutMs });
+      const info = await this.ctx.session.goto(this.ctx.history.at(-1)!, { timeoutMs: this.ctx.timeoutMs });
       return info.download ? null : info;
     } catch {
       return null;

@@ -339,6 +339,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
         ...(s.goal !== undefined ? { goal: s.goal } : {}),
         ...(s.llm ? { llm: s.llm } : {}),
         ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
+        ...(s.kind === 'agent' && s.scope === 'site' ? { scope: s.scope } : {}),
         ...(s.window === 'popup' ? { window: s.window } : {}),
         ...(s.optional ? { optional: true } : {}),
         ...(s.label ? { label: s.label } : {}),
@@ -488,6 +489,7 @@ export function draftFromRecipe(
       ...(s.goal !== undefined ? { goal: s.goal } : {}),
       ...(s.llm ? { llm: s.llm } : {}),
       ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
+      ...(s.scope === 'site' ? { scope: s.scope } : {}),
       window: s.window,
       optional: s.optional,
       ...(s.label ? { label: s.label } : {}),
@@ -790,6 +792,10 @@ function applyStepPatch(step: DraftStep, patch: StepPatch): DraftStep {
   if (patch.optional !== undefined) next.optional = patch.optional;
   if (patch.until === null) delete next.until;
   else if (patch.until !== undefined) next.until = patch.until;
+  // An agent step watches a target only for until appears or disappears.
+  if (next.kind === 'agent' && patch.until !== undefined && next.until !== 'appears' && next.until !== 'disappears') delete next.target;
+  if (patch.scope === 'page') delete next.scope;
+  else if (patch.scope !== undefined) next.scope = patch.scope;
   if (patch.timeoutMs === null) delete next.timeoutMs;
   else if (patch.timeoutMs !== undefined) next.timeoutMs = patch.timeoutMs;
   if (patch.value === null) delete next.value;

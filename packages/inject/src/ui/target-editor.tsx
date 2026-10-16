@@ -58,7 +58,7 @@ export function TargetEditor({
           <button type="button" className="ws-btn ws-btn-sm" disabled={disabled !== null} title={disabled ?? 'Pick the element on the page'} onClick={() => start('pick')} data-ws={`${testId}-repick`}>
             Re-pick
           </button>
-          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" disabled={disabled !== null || !target || own?.phase === 'typing'} title={disabled ?? 'Type a selector'} onClick={() => start('type')} data-ws={`${testId}-type`}>
+          <button type="button" className="ws-btn ws-btn-ghost ws-btn-sm" disabled={disabled !== null || own?.phase === 'typing'} title={disabled ?? 'Type a selector'} onClick={() => start('type')} data-ws={`${testId}-type`}>
             Edit selector
           </button>
         </span>
@@ -68,7 +68,7 @@ export function TargetEditor({
           {disabled}
         </span>
       )}
-      {own?.phase === 'typing' && target && <TypedTarget targetRef={targetRef} initial={textOf(target.selectors[0]!)} testId={testId} />}
+      {own?.phase === 'typing' && <TypedTarget targetRef={targetRef} initial={target ? textOf(target.selectors[0]!) : ''} testId={testId} />}
     </div>
   );
 }

@@ -604,16 +604,41 @@ describe('flows', () => {
     expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].goal']);
   });
 
-  it('rejects an agent step with a target', () => {
-    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', target: accept }] }], [{ flow: 'grab' }, { extract: 'items' }]));
-    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].target']);
-    expect(errors[0]!.message).toContain('step 0 (agent)');
-    expect(errors[0]!.message).toContain('no target');
+  it('rejects an agent step with a target and no watching until', () => {
+    for (const until of [undefined, 'download']) {
+      const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', target: accept, until }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+      expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].target']);
+      expect(errors[0]!.message).toContain('step 0 (agent)');
+      expect(errors[0]!.message).toContain('an agent step has a target only with until appears or disappears');
+    }
   });
 
-  it('rejects an agent step without a goal and an agent until other than download', () => {
-    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: ' ', until: 'appears' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
-    expect(errors.map((e) => e.path).sort()).toEqual(['$.flows[0].steps[0].goal', '$.flows[0].steps[0].until']);
+  it('validates an agent step with until appears or disappears and a target, scoped to site', () => {
+    for (const until of ['appears', 'disappears']) {
+      const input = withFlows([{ name: 'send', steps: [{ kind: 'agent', goal: 'Send the contact form', scope: 'site', until, target: accept }] }], [{ flow: 'send' }, { extract: 'items' }]);
+      expect(validateRecipe(input).errors).toEqual([]);
+      expect(loadRecipe(input).flows[0]!.steps[0]).toMatchObject({ scope: 'site', until });
+    }
+  });
+
+  it('rejects an agent step with until appears or disappears and no target', () => {
+    for (const until of ['appears', 'disappears']) {
+      const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', until }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+      expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].target']);
+      expect(errors[0]!.message).toContain('step 0 (agent)');
+      expect(errors[0]!.message).toContain(`needs a target for until ${until}`);
+    }
+  });
+
+  it('rejects an agent step without a goal', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: ' ', until: 'download' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].goal']);
+  });
+
+  it('rejects scope domain on an agent step, naming page and site', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', scope: 'domain' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].scope']);
+    expect(errors[0]!.message).toContain('page, site');
   });
 
   it('rejects goal on a click step, naming the step and goal', () => {

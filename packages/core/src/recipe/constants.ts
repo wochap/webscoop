@@ -15,8 +15,8 @@ export const GUARD_KINDS = ['login', 'captcha', 'zero-fields'] as const;
 export const STEP_KINDS = ['click', 'fill', 'press', 'wait', 'await-user', 'download', 'agent'] as const;
 export const STEP_WINDOWS = ['same', 'popup'] as const;
 export const STEP_UNTILS = ['appears', 'disappears', 'download'] as const;
-/** Reach of an `agent` step: the page it starts on. */
-export const AGENT_SCOPES = ['page'] as const;
+/** Reach of an `agent` step: the page it starts on, or any page of that page's origin. */
+export const AGENT_SCOPES = ['page', 'site'] as const;
 /** Turns an `agent` step may take unless it says otherwise. */
 export const DEFAULT_MAX_TURNS = 20;
 /** Times a reactive flow may fire between two successful extractions, unless it says otherwise. */

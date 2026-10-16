@@ -658,6 +658,26 @@ describe('forms', () => {
   });
 });
 
+describe('/form', () => {
+  it('serves a contact form posting to /form/sent and a link to the other origin', async () => {
+    const pg = await start();
+    const port = new URL(pg.url).port;
+    const doc = new JSDOM(await (await fetch(`http://127.0.0.1:${port}/form`)).text()).window.document;
+    expect(doc.querySelector('form#contact')?.getAttribute('action')).toBe('/form/sent');
+    expect(doc.querySelector('form#contact')?.getAttribute('method')).toBe('post');
+    for (const selector of ['input#name', 'input#email', 'textarea#message', 'button#send']) expect(doc.querySelector(selector), selector).not.toBeNull();
+    expect(doc.getElementById('partner')?.getAttribute('href')).toBe(`http://localhost:${port}/catalog`);
+    expect(doc.querySelector('.thanks')).toBeNull();
+  });
+
+  it('answers a post with the thank-you banner', async () => {
+    const pg = await start();
+    const res = await fetch(`${pg.url}/form/sent`, { method: 'POST', body: new URLSearchParams({ name: 'Ada', email: 'a@b.c', message: 'Hi' }) });
+    const doc = new JSDOM(await res.text()).window.document;
+    expect(doc.querySelector('.thanks')?.textContent).toContain('Thank you, Ada');
+  });
+});
+
 describe('/video', () => {
   it('embeds the player from the other loopback origin, passing delay and noplay', async () => {
     const pg = await start();

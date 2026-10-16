@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dataset, type Product } from './dataset';
-import { formsPage, formsSubmitPage } from './forms';
+import { contactFormPage, contactSentPage, formsPage, formsSubmitPage } from './forms';
 import {
   CHROME_MODES,
   escapeHtml,
@@ -541,6 +541,10 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       const ttl = intParam(url.searchParams.get('ttl'), 'ttl', 1) ?? null;
       return send(res, 200, spaPage(products, { loggedIn: spaLoggedIn(cookies(req).get(SPA_COOKIE)), ttl, seed: control.seed }), 'text/html; charset=utf-8');
     }
+    if (url.pathname === '/form/sent' && method === 'POST') {
+      const form = new URLSearchParams(await readBody(req));
+      return send(res, 200, contactSentPage(form.get('name') ?? ''), 'text/html; charset=utf-8');
+    }
     if (url.pathname === '/forms/submit' && method === 'POST') {
       const form = new URLSearchParams(await readBody(req));
       return send(res, 200, formsSubmitPage(form.get('payload') ?? '{}'), 'text/html; charset=utf-8');
@@ -584,6 +588,7 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
       return void res.end(stream.body);
     }
     if (url.pathname === '/forms') return send(res, 200, formsPage(), 'text/html; charset=utf-8');
+    if (url.pathname === '/form') return send(res, 200, contactFormPage(otherOrigin(req.headers.host, host)), 'text/html; charset=utf-8');
     if (url.pathname === '/input-events') return send(res, 200, inputEventsPage(), 'text/html; charset=utf-8');
     if (url.pathname === '/csp') {
       // A strict policy: no inline or injected script or style runs unless CSP is bypassed.

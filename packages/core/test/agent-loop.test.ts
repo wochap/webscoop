@@ -121,6 +121,67 @@ describe('agent loop', () => {
     const { result } = await agent(llm);
     expect(result.report.end).toBe('done-unmet');
   });
+
+  /** A contact page whose Send link loads a thank-you page showing `.thanks`. */
+  const contact = (): Record<string, FakePage> => ({
+    [START]: { dom: body(h('input', { type: 'text', placeholder: 'Email' }), h('a', { href: '/report/thanks' }, 'Send')) },
+    'https://docs.test/report/thanks': { dom: body(h('p', { class: 'thanks' }, 'Thank you')) },
+  });
+  const thanksShown = (session: FakeInteractiveSession) => async () => (await session.url()).endsWith('/thanks');
+
+  it('ends on the condition right after the action that met it', async () => {
+    const llm = new MockLlm({ responses: [say({ action: 'fill', ref: 'e1', value: 'a@b.c' }), say({ action: 'click', ref: 'e2', reason: 'send' })] });
+    const { session } = await open(contact());
+    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', scope: 'site', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
+    expect(result).toMatchObject({ ok: true, report: { end: 'condition', turns: 2 } });
+    expect(llm.requests).toHaveLength(2);
+    expect(result.report.actions[1]).toMatchObject({ action: 'click', result: '.thanks appeared' });
+  });
+
+  it('makes no request when the condition holds at the start', async () => {
+    const llm = new MockLlm({ responses: [] });
+    const { result } = await agent(llm, { until: 'disappears', condition: async () => true, conditionLabel: '#cookies' });
+    expect(result).toMatchObject({ ok: true, report: { end: 'condition', turns: 0, actions: [] } });
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it('answers done before the condition naming the target, and fails a second one', async () => {
+    const llm = new MockLlm({ responses: [say({ action: 'done' }), say({ action: 'done' })] });
+    const { result } = await agent(llm, { until: 'appears', condition: async () => false, conditionLabel: '.thanks' });
+    expect(result).toMatchObject({ ok: false, report: { end: 'done-unmet', turns: 2 } });
+    expect(llm.requests[1]!.prompt).toContain('not seen .thanks appear');
+    expect(result.why).toContain('.thanks');
+  });
+
+  it('does not count a submit undone by page scope as meeting the condition', async () => {
+    const llm = new MockLlm({ responses: [say({ action: 'click', ref: 'e2' }), say({ action: 'give_up' })] });
+    const { session } = await open(contact());
+    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
+    expect(result.report.end).toBe('gave-up');
+    expect(llm.requests[1]!.prompt).toContain("outside this step's scope");
+  });
+
+  it('states the site rule with the origin and back in the system message', async () => {
+    const llm = new MockLlm({ responses: [say({ action: 'done' })] });
+    await agent(llm, { until: undefined, scope: 'site' });
+    const system = llm.requests[0]!.messages[0]!.content;
+    expect(system).toContain('move between pages of https://docs.test');
+    expect(system).toContain('Use back');
+    const page = new MockLlm({ responses: [say({ action: 'done' })] });
+    await agent(page, { until: undefined });
+    expect(page.requests[0]!.messages[0]!.content).toContain('you stay on the page you start on');
+  });
+
+  it('heads every outline message with the current URL and title', async () => {
+    const llm = new MockLlm({ responses: [say({ action: 'click', ref: 'e2' }), say({ action: 'done' })] });
+    await agent(llm, { until: undefined, scope: 'site' }, contact());
+    const first = llm.requests[0]!.messages.at(-1)!.content;
+    expect(first).toContain(`Start URL: ${START}`);
+    expect(first).toContain(`URL: ${START}\nTitle: Report\nOutline:`);
+    const second = llm.requests[1]!.messages.at(-1)!.content;
+    expect(second.startsWith('URL: https://docs.test/report/thanks\nTitle: Report')).toBe(true);
+    expect(second).toContain('Thank you');
+  });
 });
 
 describe('agent step in a flow', () => {
@@ -162,6 +223,20 @@ describe('agent step in a flow', () => {
     expect(log.of('download.saved')).toEqual([expect.objectContaining({ file: '/dl/report.pdf', step: { flow: 'grab', index: 0 } })]);
     expect(result.report.downloads).toHaveLength(1);
     expect([...browser.files.keys()]).toEqual(['/dl/report.pdf']);
+  });
+
+  it('ends a site-scoped step on its until target and reports condition', async () => {
+    const pages: Record<string, FakePage> = {
+      [START]: { dom: body(h('input', { type: 'text', placeholder: 'Email' }), h('a', { href: '/report/thanks' }, 'Send')) },
+      'https://docs.test/report/thanks': { dom: body(h('p', { class: 'thanks' }, 'Thank you')) },
+    };
+    const llm = new MockLlm({ responses: [say({ action: 'fill', ref: 'e1', value: 'a@b.c' }), say({ action: 'click', ref: 'e2' })] });
+    const target = { selectors: [{ strategy: 'css', value: '.thanks', stability: 'medium' }] };
+    const { result, log } = await run({ kind: 'agent', goal: 'Send the form', scope: 'site', until: 'appears', target }, { llmFor: () => llm, pages });
+    expect(result.ok).toBe(true);
+    expect(result.report.steps[0]).toMatchObject({ outcome: 'ok', agent: { turns: 2, end: 'condition' } });
+    expect(log.of('agent.ended')[0]).toMatchObject({ end: 'condition', turns: 2 });
+    expect(llm.requests).toHaveLength(2);
   });
 
   it('uses the step-named entry over the default one', async () => {

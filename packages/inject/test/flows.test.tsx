@@ -174,15 +174,61 @@ describe('flows section', () => {
     expect(q.container.querySelectorAll('.ws-hint')).toHaveLength(0);
   });
 
-  it('marks until done as not checked, and shows scope read-only', () => {
+  it('marks until done as not checked, and offers scope page or site', () => {
     const agent = step('agent', { target: undefined, goal: 'x', count: null });
-    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    const p = renderPanel(baseState(withFlows([setup([agent])], { url: 'https://shop.test/contact' })));
     fireEvent.click(p.q('step-edit-toggle')!);
     expect(p.q('step-agent-until')!.parentElement!.textContent).toContain('succeeds when the model says it is done (not checked)');
-    const scope = p.q('step-agent-scope')!;
-    expect(scope.textContent).toBe('page');
-    expect(scope.querySelector('input, button, select')).toBeNull();
-    expect(p.sent.some((m) => JSON.stringify(m).includes('scope'))).toBe(false);
+    expect(p.q('step-agent-scope-page')!.getAttribute('aria-pressed')).toBe('true');
+    expect(p.q('step-agent-scope-text')!.textContent).toBe('stays on this page');
+    fireEvent.click(p.q('step-agent-scope-site')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { scope: 'site' } });
+    cleanup();
+    const site = renderPanel(baseState(withFlows([setup([{ ...agent, scope: 'site' }])], { url: 'https://shop.test/contact' })));
+    fireEvent.click(site.q('step-edit-toggle')!);
+    expect(site.q('step-agent-scope-site')!.getAttribute('aria-pressed')).toBe('true');
+    expect(site.q('step-agent-scope-text')!.textContent).toBe('may move within https://shop.test');
+    fireEvent.click(site.q('step-agent-scope-page')!);
+    expect(site.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { scope: 'page' } });
+  });
+
+  it('shows the target editor for until appears and disappears only, and keeps the value row for download', () => {
+    const agent = step('agent', { target: undefined, goal: 'Send the contact form', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    expect(p.q('step-agent-target')).toBeNull();
+    expect(p.q('step-value')).toBeNull();
+    for (const until of ['download', 'appears', 'disappears'] as const) {
+      fireEvent.click(p.q(`step-agent-until-${until}`)!);
+      expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { until } });
+    }
+    fireEvent.click(p.q('step-agent-until-done')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { until: null } });
+    cleanup();
+    const appears = step('agent', { target: undefined, goal: 'Send the contact form', until: 'appears', count: null });
+    const q = renderPanel(baseState(withFlows([setup([appears])])));
+    expect(q.q('step-agent-meta')!.textContent).toBe('until appears · 20 turns');
+    expect(q.q('step-error')!.textContent).toContain('needs a target for until appears');
+    fireEvent.click(q.q('step-edit-toggle')!);
+    expect(q.q('step-agent-until')!.parentElement!.textContent).toContain('succeeds when the target appears');
+    expect(q.q('step-agent-target-chip')!.textContent).toBe('none yet');
+    expect(q.q('step-value')).toBeNull();
+    fireEvent.click(q.q('step-agent-target-type')!);
+    expect(q.sent.at(-1)).toEqual({ kind: 'target.edit.start', ref: { kind: 'step', flow: 0, index: 0 }, mode: 'type' });
+    expect(q.q('step-hint-target')!.getAttribute('aria-label')).toContain('the step succeeds when it appears (or disappears)');
+  });
+
+  it('says what until, target, and scope do in their hints', () => {
+    const agent = step('agent', { target: undefined, goal: 'x', until: 'disappears', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    const hint = (name: string) => p.q(`step-hint-${name}`)!.getAttribute('aria-label')!;
+    expect(hint('until')).toContain('download, appears, and disappears are checked by the runner after every action');
+    expect(hint('until')).toContain('cannot be checked');
+    expect(hint('target')).toContain('after each action');
+    expect(hint('scope')).toContain('page: the agent stays on its start page');
+    expect(hint('scope')).toContain('may submit forms');
+    expect(hint('scope')).toContain('popups are closed');
   });
 
   it('warns while typing a secret variable into the goal, without blocking the save', () => {

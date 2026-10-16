@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "name": "playground-form-agent",
+  "description": "Send a contact form and stop once the thank-you banner shows",
+  "url": "{url}",
+  "vars": [{ "name": "url", "type": "string", "raw": true, "description": "address of the contact form" }],
+  "flows": [
+    {
+      "name": "send",
+      "steps": [
+        {
+          "kind": "agent",
+          "goal": "Send the contact form as Ada, email ada@example.test, with the message Hello.",
+          "scope": "site",
+          "until": "appears",
+          "target": { "selectors": [{ "strategy": "css", "value": ".thanks", "stability": "medium" }] },
+          "maxTurns": 8
+        }
+      ]
+    }
+  ],
+  "sequence": [{ "flow": "send" }]
+}

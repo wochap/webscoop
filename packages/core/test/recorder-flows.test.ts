@@ -566,6 +566,32 @@ describe('agent steps in the recorder', () => {
     expect(steps(t.controller.draft)[0]).not.toHaveProperty('maxTurns');
   });
 
+  it('saves until appears with a typed target and scope site; a missing target blocks saving', async () => {
+    const t = await harness(tier0Snapshot(), withFields());
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Send the contact form', until: 'appears', scope: 'site' } });
+    expect(steps(t.controller.draft)[0]!.error).toContain('needs a target for until appears');
+    const blocked = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(blocked.ok).toBe(false);
+    expect(t.storage.files.size).toBe(0);
+    const ref = { kind: 'step', flow: 0, index: 0 } as const;
+    await t.send({ kind: 'target.edit.start', ref, mode: 'type' });
+    await t.send({ kind: 'target.edit.apply', ref, by: 'selector', selector: '.thanks' });
+    expect(steps(t.controller.draft)[0]!.error).toBeUndefined();
+    const saved = (await t.send({ kind: 'save.request' })) as HostMessage & { kind: 'save.result' };
+    expect(saved.ok).toBe(true);
+    const stored = JSON.parse(t.storage.files.get(withFields().name)!);
+    expect(stored.flows[0].steps[0]).toMatchObject({ kind: 'agent', until: 'appears', scope: 'site', target: { selectors: [expect.objectContaining({ value: '.thanks' })] } });
+    expect(draftFromRecipe(loadRecipe(stored)).flows[0]!.steps[0]).toMatchObject({ until: 'appears', scope: 'site' });
+    // Leaving appears drops the target; scope page is not written.
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { until: 'download', scope: 'page' } });
+    expect(steps(t.controller.draft)[0]).not.toHaveProperty('target');
+    expect(steps(t.controller.draft)[0]).not.toHaveProperty('scope');
+    const plain = draftToRecipe(t.controller.draft).flows![0]!.steps[0]!;
+    expect(plain).not.toHaveProperty('scope');
+    expect(plain).not.toHaveProperty('target');
+  });
+
   it('declares the variables a goal uses', async () => {
     const t = await harness(tier0Snapshot(), withFields());
     await t.send({ kind: 'draft.addAgentStep' });

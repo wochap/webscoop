@@ -4,6 +4,7 @@ import { FILL_KINDS } from '../fill-kind';
 import type { SerializedElement } from '../ports';
 import type { FieldScope } from '../recipe/schema';
 import {
+  AGENT_SCOPES,
   FIELD_SCOPES,
   FIELD_TYPES,
   GUARD_KINDS,
@@ -293,6 +294,8 @@ export const DraftStepSchema = z.object({
   llm: z.optional(z.string()),
   /** For `agent`: the turn cap. */
   maxTurns: z.optional(z.int().check(z.positive())),
+  /** For `agent`: how far the model may navigate; absent means `page`. */
+  scope: z.optional(z.enum(AGENT_SCOPES)),
   window: z._default(z.enum(STEP_WINDOWS), 'same'),
   optional: z.boolean(),
   label: z.optional(z.string()),
@@ -673,6 +676,7 @@ const StepPatchSchema = z.object({
   goal: z.optional(z.string()),
   llm: z.optional(z.nullable(z.string())),
   maxTurns: z.optional(z.nullable(z.int().check(z.positive()))),
+  scope: z.optional(z.enum(AGENT_SCOPES)),
   window: z.optional(z.enum(STEP_WINDOWS)),
   optional: z.optional(z.boolean()),
   label: z.optional(z.nullable(z.string())),

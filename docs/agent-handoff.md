@@ -32,7 +32,7 @@ goto(url) -> flow -> agent step
     result   = execute(action) ; settle ; guards ; scope gate (undo cross-document navigation)
     if until=download and a download of this window was saved -> ok (ends at once)
     history  = compress older turns, drop oldest until it fits contextTokens - maxOutputTokens - outline budget
-  end reasons: download | done | done-unmet | gave-up | max-turns | llm-error | invalid-answers | no-llm
+  end reasons: download | condition | done | done-unmet | gave-up | max-turns | llm-error | invalid-answers | no-llm
   required step failed -> missing-required, exit 3 ; optional -> skipped
 ```
 

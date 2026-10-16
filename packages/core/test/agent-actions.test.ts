@@ -1,24 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { estimateTokens } from '../src';
-import { AgentActions, invalidAnswerResult, parseAction, type AgentAction } from '../src/agent/actions';
+import { AgentActions, HISTORY_MAX, invalidAnswerResult, parseAction, type AgentAction } from '../src/agent/actions';
 import { buildOutline, type Outline } from '../src/agent/outline';
 import { RunWindows } from '../src/flows/windows';
+import type { AgentScope } from '../src/recipe/schema';
 import { FakeBrowser, h, type FakeInteractiveSession } from '../src/testing';
 
 const START = 'https://h.test/report';
 
 const page = (...body: unknown[]) => h('html', {}, h('head', {}, h('title', {}, 'Report')), h('body', {}, ...(body as never[])));
 
-async function setup(pages: ConstructorParameters<typeof FakeBrowser>[0]) {
+async function setup(pages: ConstructorParameters<typeof FakeBrowser>[0], scope: AgentScope = 'page') {
   const browser = new FakeBrowser(pages);
   const session = (await browser.open('/p', { downloadDir: '/dl' })) as FakeInteractiveSession;
   await session.goto(START, { timeoutMs: 1000 });
   const windows = new RunWindows(session);
   let stopped = false;
-  const actions = new AgentActions({ session, windows, timeoutMs: 1000, startUrl: START, sleep: async () => {}, stop: () => stopped });
+  const history = [START];
+  const actions = new AgentActions({ session, windows, timeoutMs: 1000, scope, history, sleep: async () => {}, stop: () => stopped });
   const outline = async (): Promise<Outline> => buildOutline(await session.snapshot(), 5000, estimateTokens);
   const run = async (action: AgentAction, at?: Outline) => actions.run(action, at ?? (await outline()));
-  return { browser, session, windows, run, outline, stop: () => (stopped = true) };
+  return { browser, session, windows, run, outline, history, stop: () => (stopped = true) };
 }
 
 const click = (ref: string): AgentAction => ({ action: 'click', ref, reason: '' });
@@ -66,7 +68,7 @@ describe('agent actions', () => {
       },
     });
     await session.goto(START, { timeoutMs: 1000 });
-    const actions = new AgentActions({ session, windows: new RunWindows(session), timeoutMs: 1000, startUrl: START, sleep: async () => {}, stop: () => false });
+    const actions = new AgentActions({ session, windows: new RunWindows(session), timeoutMs: 1000, scope: 'page', history: [START], sleep: async () => {}, stop: () => false });
     const result = await actions.run(click('e1'), buildOutline(await session.snapshot(), 5000, estimateTokens));
     expect(result.text).toContain('A download was saved as r.pdf');
     expect(result.text).not.toContain('popup was closed');
@@ -78,7 +80,7 @@ describe('agent actions', () => {
     const session = (await browser.open('/p')) as FakeInteractiveSession;
     browser.setPage(START, { dom: page(h('button', {}, 'Open')), on: { click: () => ({ popup: '/doc' }) } });
     await session.goto(START, { timeoutMs: 1000 });
-    const actions = new AgentActions({ session, windows: new RunWindows(session), timeoutMs: 1000, startUrl: START, sleep: async () => {}, stop: () => false });
+    const actions = new AgentActions({ session, windows: new RunWindows(session), timeoutMs: 1000, scope: 'page', history: [START], sleep: async () => {}, stop: () => false });
     const result = await actions.run(click('e1'), buildOutline(await session.snapshot(), 5000, estimateTokens));
     expect(result.text).toContain('popup at https://h.test/doc');
     expect(result.text).toContain('closed');
@@ -122,5 +124,82 @@ describe('agent actions', () => {
     stop();
     const result = await run(click('e1'));
     expect(result.stopped).toBe(true);
+  });
+
+  it('keeps a same-origin navigation under site scope and records it', async () => {
+    const { run, session, history } = await setup({ [START]: page(h('a', { href: '/contact/thanks' }, 'Send')), 'https://h.test/contact/thanks': page(h('p', {}, 'Thanks')) }, 'site');
+    const result = await run(click('e1'));
+    expect(result.text).toContain('The page URL is now https://h.test/contact/thanks');
+    expect(result.text).not.toContain('restored');
+    expect(await session.url()).toBe('https://h.test/contact/thanks');
+    expect(history).toEqual([START, 'https://h.test/contact/thanks']);
+  });
+
+  it('undoes another origin under site scope to the latest entry, not the start', async () => {
+    const { run, session, history } = await setup(
+      {
+        [START]: page(h('a', { href: '/cart' }, 'Cart')),
+        'https://h.test/cart': page(h('a', { href: 'https://pay.other.test/' }, 'Pay')),
+        'https://pay.other.test/': page(h('p', {}, 'Pay')),
+      },
+      'site',
+    );
+    await run(click('e1'));
+    const result = await run(click('e1'));
+    expect(result.text).toContain("https://pay.other.test/, which is outside this step's scope");
+    expect(result.text).toContain('restored');
+    expect(await session.url()).toBe('https://h.test/cart');
+    expect(history).toEqual([START, 'https://h.test/cart']);
+  });
+
+  it('keeps page scope unchanged: the history never grows', async () => {
+    const { run, history } = await setup({ [START]: page(h('a', { href: '/about' }, 'About')), 'https://h.test/about': page() });
+    await run(click('e1'));
+    expect(history).toEqual([START]);
+    expect((await run({ action: 'back', reason: '' })).text).toContain('no earlier page');
+  });
+
+  it('goes back to the previous document', async () => {
+    const { run, session, history } = await setup(
+      {
+        [START]: page(h('a', { href: '/search?q=lamp' }, 'Search')),
+        'https://h.test/search?q=lamp': page(h('a', { href: '/item/7' }, 'Lamp')),
+        'https://h.test/item/7': page(h('p', {}, 'Lamp')),
+      },
+      'site',
+    );
+    await run(click('e1'));
+    await run(click('e1'));
+    const result = await run({ action: 'back', reason: '' });
+    expect(result.text).toContain('Went back to https://h.test/search?q=lamp');
+    expect(result.text).toContain('loaded again from its URL');
+    expect(await session.url()).toBe('https://h.test/search?q=lamp');
+    expect(history.at(-1)).toBe('https://h.test/search?q=lamp');
+  });
+
+  it('answers back on the first page without acting', async () => {
+    const { run, session, browser } = await setup({ [START]: page(h('p', {}, 'Hi')) }, 'site');
+    const result = await run({ action: 'back', reason: '' });
+    expect(result.text).toContain('there is no earlier page');
+    expect(await session.url()).toBe(START);
+    expect(browser.clicks).toHaveLength(0);
+  });
+
+  it('caps the history and keeps the start URL', async () => {
+    const pages: Record<string, ReturnType<typeof page>> = {};
+    const count = HISTORY_MAX + 5;
+    pages[START] = page(h('a', { href: '/p/1' }, 'Next'));
+    for (let n = 1; n <= count; n++) pages[`https://h.test/p/${n}`] = page(h('a', { href: `/p/${n + 1}` }, 'Next'));
+    const { run, history } = await setup(pages, 'site');
+    for (let n = 1; n <= count; n++) await run(click('e1'));
+    expect(history).toHaveLength(HISTORY_MAX);
+    expect(history[0]).toBe(START);
+    expect(history.at(-1)).toBe(`https://h.test/p/${count}`);
+  });
+
+  it('does not push a fragment change', async () => {
+    const { run, history } = await setup({ [START]: page(h('a', { href: '#downloads' }, 'Downloads')), [`${START}#downloads`]: page(h('p', {}, 'Downloads')) }, 'site');
+    await run(click('e1'));
+    expect(history).toEqual([START]);
   });
 });

@@ -1,0 +1,8 @@
+{
+  "responses": [
+    { "match": "[e4] textbox \"name\"", "reply": { "action": "fill", "ref": "e4", "value": "Ada", "reason": "the name field" } },
+    { "match": "[e6] textbox \"email\"", "reply": { "action": "fill", "ref": "e6", "value": "ada@example.test", "reason": "the email field" } },
+    { "match": "[e9] button \"Send\"", "reply": { "action": "click", "ref": "e9", "reason": "send the form" } },
+    { "reply": { "action": "give_up", "reason": "the form was not sent" }, "repeat": true }
+  ]
+}

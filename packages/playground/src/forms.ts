@@ -141,3 +141,36 @@ export function formsSubmitPage(payload: string): string {
 <html><head><meta charset="utf-8"><title>Submitted</title></head>
 <body><h1>Submitted</h1><pre id="echo">${escapeHtml(JSON.stringify(values, null, 2))}</pre></body></html>`;
 }
+
+/**
+ * A contact form for the agent step: Name, Email, and Message, posted to
+ * `/form/sent`. A link to the same page on `other` (another origin) lets a
+ * test leave the site.
+ */
+export function contactFormPage(other: string): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Contact</title>
+<style>body{font-family:sans-serif;margin:24px}label{display:block;margin:8px 0}</style></head>
+<body>
+<h1>Contact us</h1>
+<p><a id="partner" href="${escapeHtml(other)}/catalog">Our partner shop</a></p>
+<form id="contact" action="/form/sent" method="post">
+<label>Name <input id="name" name="name"></label>
+<label>Email <input id="email" name="email" type="email"></label>
+<label>Message <textarea id="message" name="message"></textarea></label>
+<button id="send" type="submit">Send</button>
+</form>
+</body></html>`;
+}
+
+/** The page `/form/sent` answers a contact form post with: a `.thanks` banner naming the sender. */
+export function contactSentPage(name: string): string {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Message sent</title>
+<style>body{font-family:sans-serif;margin:24px}.thanks{padding:12px;background:#dfd}</style></head>
+<body>
+<h1>Contact us</h1>
+<p class="thanks">Thank you${name ? `, ${escapeHtml(name)}` : ''}. Your message was sent.</p>
+<p><a href="/form">Send another message</a></p>
+</body></html>`;
+}

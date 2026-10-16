@@ -155,7 +155,7 @@ export const StepSchema = z.object({
   kind: oneOf('step kind', STEP_KINDS),
   target: TargetSchema.optional(),
   value: z.string().optional(),
-  /** For `await-user`: whether the step waits for its target to appear or to disappear; for `agent`: `download`. */
+  /** For `await-user`: whether the step waits for its target to appear or to disappear; for `agent`: also `download`. */
   until: oneOf('step until', STEP_UNTILS).optional(),
   /** For `await-user`: a private wait budget instead of the run's guard timeout. */
   timeoutMs: z.number().int().positive().optional(),
@@ -165,7 +165,7 @@ export const StepSchema = z.object({
   llm: z.string().min(1).optional(),
   /** For `agent`: most turns the loop takes. Default `DEFAULT_MAX_TURNS`. */
   maxTurns: z.number().int().positive().optional(),
-  /** For `agent`: how far the model may navigate. Default `page`. */
+  /** For `agent`: how far the model may navigate: `page` (default) or `site`, the start URL's origin. */
   scope: oneOf('agent scope', AGENT_SCOPES).optional(),
   window: oneOf('step window', STEP_WINDOWS).default('same'),
   optional: z.boolean().default(false),
@@ -337,6 +337,7 @@ export type Fingerprint = z.infer<typeof FingerprintSchema>;
 export type RecipeVar = z.infer<typeof VarSchema>;
 export type RecipeItem = z.infer<typeof ItemSchema>;
 export type FieldScope = (typeof FIELD_SCOPES)[number];
+export type AgentScope = (typeof AGENT_SCOPES)[number];
 /** A field after parsing: `scope` is always set. */
 export type RecipeField = Omit<ParsedField, 'scope'> & { scope: FieldScope };
 export type FieldType = RecipeField['type'];
