@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeBrowser, h } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
-import { ExitCode, main } from '../src';
+import { ExitCode, LOCK_FILE, main } from '../src';
 import { DISPLAY, fakeTty, sharedDaemon, SHOP_PAGE, shopCards, shopHome, testIo, type SharedDaemon, type TestIo } from './helpers';
 
 const LOGIN = 'https://shop.test/login?next=%2Fc%2Fshoes';
@@ -104,6 +104,37 @@ describe('jobs in the daemon', () => {
     expect(quiet.err()).not.toContain('queued on profile');
     first.interrupt();
     expect(await running).toBe(ExitCode.Error);
+  });
+
+  it('says once after 3 s who holds the profile lock, even with --quiet, and proceeds on release', async () => {
+    const fs = await import('node:fs/promises');
+    const dir = await shopHome();
+    const lock = join(dir, 'profiles', 'shop', LOCK_FILE);
+    await fs.mkdir(join(dir, 'profiles', 'shop'), { recursive: true });
+    await fs.writeFile(lock, `${process.pid}\n`);
+    const io = client(dir, sharedDaemon(), { browser: new FakeBrowser({ [SHOP_PAGE]: shopCards(1) }) });
+    const run = main(['run', 'shop', '--quiet'], io);
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(io.err()).not.toContain('is locked by');
+    await until(() => io.err().includes('is locked by'), 5000);
+    expect(io.err().match(/profile "shop" is locked by process \d+/g)).toHaveLength(1);
+    expect(io.err()).toContain('waiting for it');
+    await fs.unlink(lock);
+    expect(await run).toBe(ExitCode.Ok);
+  });
+
+  it('prints nothing about the lock when it is released within 3 s', async () => {
+    const fs = await import('node:fs/promises');
+    const dir = await shopHome();
+    const lock = join(dir, 'profiles', 'shop', LOCK_FILE);
+    await fs.mkdir(join(dir, 'profiles', 'shop'), { recursive: true });
+    await fs.writeFile(lock, `${process.pid}\n`);
+    const io = client(dir, sharedDaemon(), { browser: new FakeBrowser({ [SHOP_PAGE]: shopCards(1) }) });
+    const run = main(['run', 'shop', '--quiet'], io);
+    await new Promise((r) => setTimeout(r, 400));
+    await fs.unlink(lock);
+    expect(await run).toBe(ExitCode.Ok);
+    expect(io.err()).not.toContain('is locked by');
   });
 
   it('cancels only the interrupted job and closes its tab', async () => {

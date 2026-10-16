@@ -74,16 +74,19 @@ export function jobIo(base: CliIo, submit: Submit, send: (m: DaemonMessage) => v
   return io;
 }
 
-/** Wait for the profile lock until the signal aborts, saying once who holds it. */
-async function waitForLock(io: CliIo, profileDir: string, profile: string, signal: AbortSignal, quiet: boolean | undefined) {
+const LOCK_NOTICE_MS = 3000;
+
+/** Wait for the profile lock until the signal aborts, saying once (even when quiet) who holds it after 3 s. */
+async function waitForLock(io: CliIo, profileDir: string, profile: string, signal: AbortSignal) {
+  const started = Date.now();
   let said = false;
   for (;;) {
     if (signal.aborted) throw new Error('aborted');
     try {
       return await acquireProfileLock(profileDir, { timeoutMs: 0, profileName: profile });
     } catch (error) {
-      if (!said) {
-        infoLog(io, quiet)(`${(error as Error).message.replace(/; gave up after .*$/, '')}; waiting for it`);
+      if (!said && Date.now() - started > LOCK_NOTICE_MS) {
+        log(io, `${(error as Error).message.replace(/; gave up after .*$/, '')}; waiting for it`);
         said = true;
       }
     }
@@ -174,7 +177,7 @@ export class DaemonJob implements Job {
 
   async launch(signal: AbortSignal): Promise<LaunchedBrowser> {
     const { prepared, io } = this;
-    const lock = await waitForLock(io, this.profileDir, this.profile, signal, this.quiet);
+    const lock = await waitForLock(io, this.profileDir, this.profile, signal);
     try {
       await this.prepared.hooks.fire('browser.starting');
       const handle = await launchShared(io, prepared, this.launchOptions);

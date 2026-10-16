@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
+import { readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { acquireProfileLock, CliError, ExitCode, LOCK_FILE } from '../src';
@@ -57,5 +57,40 @@ describe('profile lock', () => {
     await writeFile(join(dir, LOCK_FILE), '1\n');
     lock.release();
     expect(existsSync(join(dir, LOCK_FILE))).toBe(true);
+  });
+
+  it('leaves no temp file and never an empty lock', async () => {
+    const dir = await tempDir();
+    const lock = await acquireProfileLock(dir, { timeoutMs: 0 });
+    expect(readdirSync(dir)).toEqual([LOCK_FILE]);
+    expect((await readFile(join(dir, LOCK_FILE), 'utf8')).trim()).not.toBe('');
+    lock.release();
+  });
+
+  it('takes the lock after a death between the temp write and the link', async () => {
+    const dir = await tempDir();
+    await writeFile(join(dir, `${LOCK_FILE}.${process.pid}`), `${process.pid}\n`);
+    const lock = await acquireProfileLock(dir, { timeoutMs: 0 });
+    expect((await readFile(join(dir, LOCK_FILE), 'utf8')).trim()).toBe(String(process.pid));
+    lock.release();
+  });
+
+  it('reclaims an empty lock older than 5 s', async () => {
+    const dir = await tempDir();
+    const path = join(dir, LOCK_FILE);
+    await writeFile(path, '');
+    const old = new Date(Date.now() - 10_000);
+    await utimes(path, old, old);
+    const lock = await acquireProfileLock(dir, { timeoutMs: 0 });
+    expect((await readFile(path, 'utf8')).trim()).toBe(String(process.pid));
+    lock.release();
+  });
+
+  it('treats a fresh empty lock as held by an unknown process', async () => {
+    const dir = await tempDir();
+    await writeFile(join(dir, LOCK_FILE), '');
+    const error = await acquireProfileLock(dir, { timeoutMs: 0, profileName: 'shop' }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as Error).message).toContain('locked by process unknown');
   });
 });

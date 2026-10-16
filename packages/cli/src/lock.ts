@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { linkSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { CliError } from './exit';
 
@@ -37,27 +37,41 @@ function readHolder(path: string): number | null {
   }
 }
 
-function tryCreate(path: string, pid: number): boolean {
-  let fd: number;
+/** Age after which a lock without a readable pid counts as abandoned. */
+const UNREADABLE_GRACE_MS = 5000;
+
+function isStaleUnreadable(path: string): boolean {
   try {
-    fd = openSync(path, 'wx');
+    return Date.now() - statSync(path).mtimeMs > UNREADABLE_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Write the pid to a temp file and link it into place, so the lock is never observable empty. */
+function tryCreate(path: string, pid: number): boolean {
+  const temp = `${path}.${pid}`;
+  writeFileSync(temp, `${pid}\n`);
+  try {
+    linkSync(temp, path);
+    return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw error;
-  }
-  try {
-    writeSync(fd, `${pid}\n`);
   } finally {
-    closeSync(fd);
+    try {
+      unlinkSync(temp);
+    } catch {
+      // Already gone.
+    }
   }
-  return true;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Take the per-profile lock: a pid file created with O_EXCL. A lock whose pid
- * no longer exists is reclaimed. Waits up to `timeoutMs`, then fails with exit
+ * Take the per-profile lock: a pid file created atomically by link. A lock whose
+ * pid no longer exists, or that has no readable pid and is over 5 s old, is reclaimed. Waits up to `timeoutMs`, then fails with exit
  * 1 naming the profile and the holding pid.
  */
 export async function acquireProfileLock(profileDir: string, opts: LockOptions): Promise<ProfileLock> {
@@ -68,8 +82,8 @@ export async function acquireProfileLock(profileDir: string, opts: LockOptions):
   for (;;) {
     if (tryCreate(path, pid)) break;
     const holder = readHolder(path);
-    if (holder !== null && !isAlive(holder)) {
-      // Stale lock from a crashed run. Remove it only if it still names the dead pid.
+    if (holder === null ? isStaleUnreadable(path) : !isAlive(holder)) {
+      // Stale lock from a crashed run. Remove it only if it still names the same holder.
       if (readHolder(path) === holder) {
         try {
           unlinkSync(path);

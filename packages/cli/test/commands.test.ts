@@ -347,7 +347,6 @@ describe('webscoop run', () => {
     await writeFile(join(dir, 'profiles', 'shop', '.webscoop.lock'), `${process.ppid}\n`);
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, browser: new FakeBrowser({ [PAGE]: shopPage(1) }) });
     expect(await main(['run', 'shop', '--queue-timeout', '300'], io)).toBe(ExitCode.Error);
-    expect(io.err()).toContain('profile "shop" is locked by process');
     expect(io.err()).toContain('gave up after 300 ms waiting for profile "shop" (0 jobs ahead, waiting for its browser)');
     expect(io.browserCreated()).toBe(0);
   });
