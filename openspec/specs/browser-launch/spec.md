@@ -105,6 +105,25 @@ The profile lock SHALL apply per profile directory.
 - **WHEN** any command opens a profile
 - **THEN** the profile directory contains `.webscoop-browser.json` naming the driver, channel, binary, and version used
 
+### Requirement: Profile lock reclaim
+The profile lock file SHALL be created atomically: it SHALL never be observable without the holder's pid in it. A lock whose holder process no longer exists SHALL be reclaimed. A lock whose pid cannot be read SHALL be reclaimed once the file is older than 5 seconds; a younger one SHALL be treated as held.
+
+#### Scenario: Empty leftover lock
+- **WHEN** a profile's lock file is empty and was last modified more than 5 seconds ago, and a command takes the lock
+- **THEN** the command reclaims the lock and proceeds
+
+#### Scenario: Fresh unreadable lock
+- **WHEN** a profile's lock file is empty and was modified less than 5 seconds ago, and a command takes the lock with a zero timeout
+- **THEN** the command fails as locked by an unknown process
+
+#### Scenario: Dead holder
+- **WHEN** a profile's lock file names a pid that no longer exists
+- **THEN** the command reclaims the lock and proceeds
+
+#### Scenario: Crash during creation
+- **WHEN** a process is killed while taking the lock
+- **THEN** the profile directory holds either no lock file or one naming that process's pid
+
 ### Requirement: Humanized input
 A browser session SHALL support a humanized input mode. Whether it is on SHALL be decided by the first setting present:
 1. the `--humanize` or `--no-humanize` flag

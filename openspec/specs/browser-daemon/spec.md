@@ -87,6 +87,17 @@ Each browser SHALL run at most `daemon.concurrency.total` jobs at once (config, 
 - **WHEN** one job is running on profile `default`, `daemon.concurrency` is `{}`, and `webscoop run shop --queue-timeout 1000` is started and the running job lasts longer than 1 second
 - **THEN** the command exits 1 with a message naming `default` and 1 job ahead
 
+### Requirement: Lock wait is reported
+A daemon job waiting for its profile's lock SHALL keep waiting until the lock is free. Once it has waited more than 3 seconds it SHALL print once to its stderr that the profile is locked, naming the profile and the holding pid (or `unknown`), even with `--quiet`.
+
+#### Scenario: Quiet run blocked by a lock
+- **WHEN** `webscoop run shop --quiet` is submitted while another live process holds the lock of `shop`'s profile
+- **THEN** after about 3 seconds stderr names the profile and the holding pid and says the job is waiting, and the run proceeds when the lock is released
+
+#### Scenario: Short wait stays silent
+- **WHEN** the lock is released within 3 seconds
+- **THEN** nothing about the lock is printed under `--quiet`
+
 ### Requirement: Jobs behave like local runs
 A job SHALL produce the same rows, stdout, `--out` files, stderr log lines, and exit code as a run without a daemon. A job SHALL use the environment, working directory, config, and recipe files of the command that submitted it, read when the job is submitted. Interrupting the command (SIGINT) or losing its connection SHALL cancel its job, close its tab, and leave other jobs running; the command SHALL exit 1. Recipe write-backs from jobs SHALL be applied one at a time per recipe file.
 
