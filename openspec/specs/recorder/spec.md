@@ -545,6 +545,49 @@ Each flow SHALL offer "Add agent step", which appends an `agent` step with an em
 - **WHEN** the user adds an agent step and saves without a goal
 - **THEN** the panel shows an inline error on the step and the recipe is not written
 
+### Requirement: Agent step field hints
+In the edit state of an `agent` step, every field line SHALL show a help hint next to its label. The fields are goal, entry, turns, until, value (when shown), window, optional, and scope. A hint SHALL be a small `?` glyph. It SHALL be reachable with the keyboard, SHALL expose its text as a native tooltip, and SHALL use the same text as its accessible name. The texts SHALL say:
+- goal: the model reads the goal and a page outline, and `{var}` values are sent to the model;
+- entry: names an entry under `llms` in the config, and empty uses the run's entry;
+- turns: each turn is one model request, and reaching the cap ends the step with `max-turns`;
+- until: download is checked by the runner, done is the model's word and cannot be checked;
+- value: the file name for the saved download;
+- window: which tab the agent acts in;
+- optional: off fails the run with `missing-required`, on skips the step;
+- scope: the agent stays on its start page; navigation away is undone and popups are closed.
+
+The inline text after the turns input SHALL read "at most · 1 request each". When `until` is done, the inline text SHALL state that success is not checked. Edit states of other step kinds SHALL keep their current lines without hints.
+
+#### Scenario: Hint on the turns field
+- **WHEN** the user opens an agent step's edit state and focuses the `?` next to "turns"
+- **THEN** its accessible name states that each turn is one model request and that the step ends with `max-turns` at the cap
+
+#### Scenario: Until done is marked unchecked
+- **WHEN** the user switches an agent step's `until` to done
+- **THEN** the inline text says the step succeeds when the model says it is done, and that this is not checked
+
+#### Scenario: Other kinds unchanged
+- **WHEN** the user opens the edit state of a `click` step
+- **THEN** no `?` hint is shown on its lines
+
+### Requirement: Agent step scope shown read-only
+The edit state of an `agent` step SHALL show a `scope` line with the value `page`, which cannot be edited, and the scope hint. Editing the step SHALL NOT write `scope` to the recipe.
+
+#### Scenario: Scope line on a new agent step
+- **WHEN** the user adds an agent step
+- **THEN** its edit state shows the scope line `page` with no control to change it, and the saved step has no `scope` key
+
+### Requirement: Secret variable in goal warning
+When the goal of an `agent` step references one or more `secret` variables, the edit state SHALL show an inline warning under the goal. The warning SHALL name each secret variable and state that its value will be sent to the model with the goal. The warning SHALL update as the user types, without waiting for the field to lose focus. It SHALL NOT block saving. When no secret variable is referenced, no warning SHALL be shown.
+
+#### Scenario: Password in the goal
+- **WHEN** the recipe has a secret variable `password` and the user types `Log in with {password}` into an agent step's goal
+- **THEN** a warning under the goal names `{password}` and says it will be sent to the model, and the recipe can still be saved
+
+#### Scenario: Plain variable in the goal
+- **WHEN** the user types `Download the report for {year}` and `year` is not secret
+- **THEN** no warning is shown
+
 ### Requirement: Editing the proposal fields
 While the list setup is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. When the list setup has no original selection (opened manually or from Rows > Edit), picking for the item container SHALL accept any element inside the list parent, or anywhere on the page when no list parent is set, and picking for the list parent SHALL accept any element when no item container is set yet. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.
 
