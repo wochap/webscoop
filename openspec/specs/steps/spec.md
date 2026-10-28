@@ -20,9 +20,10 @@ A step SHALL be one of:
   - `scope`, either `page` (the default) or `site`;
   - `until`, one of `download`, `appears`, or `disappears`;
   - `target`, the element whose presence ends the step, required with `until` `appears` or `disappears` and rejected otherwise;
-  - `value`, the file name to save a download as, as for `download`.
+  - `value`, the file name to save a download as, as for `download`;
+  - `submit`, one of `ask` (the default), `allow`, or `stop`, as defined by the agent-step capability's "Submit confirmation".
 
-`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one; `agent` SHALL have one exactly when its `until` is `appears` or `disappears`. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables. `goal`, `llm`, `maxTurns`, and `scope` SHALL be rejected on any kind but `agent`, naming the step. `scope` SHALL accept only `page` or `site`. A variable used in `goal` SHALL be declared like one used in a step value.
+`click`, `fill`, and `await-user` SHALL require a target; `download` MAY have one; `agent` SHALL have one exactly when its `until` is `appears` or `disappears`. `fill` and `press` SHALL require a value. `wait` SHALL have a target or a numeric value. `await-user` SHALL have `until`, either `appears` or `disappears`, and MAY have `timeoutMs`. `download` MAY have a `value`, the file name to save as, which MAY reference template variables. `goal`, `llm`, `maxTurns`, `scope`, and `submit` SHALL be rejected on any kind but `agent`, naming the step. `scope` SHALL accept only `page` or `site`; `submit` SHALL accept only `ask`, `allow`, or `stop`. A variable used in `goal` SHALL be declared like one used in a step value.
 
 Every step MAY have:
 - `window`: `same` (default) or `popup`, as defined by the flows capability
@@ -64,6 +65,14 @@ Every step MAY have:
 #### Scenario: Unknown agent scope
 - **WHEN** an `agent` step has `scope` `domain`
 - **THEN** validation fails naming the step and the accepted values `page` and `site`
+
+#### Scenario: Agent submit policy
+- **WHEN** an `agent` step has `submit` `stop`
+- **THEN** the recipe validates
+
+#### Scenario: Submit on a click
+- **WHEN** a `click` step declares `submit` `allow`
+- **THEN** validation fails naming the step and `submit`
 
 #### Scenario: Goal on a click
 - **WHEN** a `click` step declares `goal`

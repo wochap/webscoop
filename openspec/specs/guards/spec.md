@@ -117,3 +117,19 @@ Where guard detection checks whether a table's item container or required fields
 #### Scenario: Framed items count as present
 - **WHEN** a recipe's only table has `frame` `id=app`, the iframe shows 8 cards, and the top page has a visible password input elsewhere
 - **THEN** the `login` guard is not raised
+
+### Requirement: Submit confirmation banner
+While a run holds attention with reason `confirm-submit`, the banner SHALL show:
+- the headline "Allow the agent to submit?";
+- the action's outline line, for example `button "Place order"`, and the window's URL;
+- the actions Abort and Allow.
+
+Allow SHALL send the continue signal, and the confirmation SHALL clear on that signal without re-checking the page. Abort SHALL end the run with failure reason `aborted`. The countdown, placement, removal, and `guards.banner` rules of "Interactive banner" SHALL apply.
+
+#### Scenario: Allow from the banner
+- **WHEN** an agent step asks to click `button "Place order"` and the user presses Allow in the banner
+- **THEN** the banner is removed and the click runs
+
+#### Scenario: Abort from the banner
+- **WHEN** the user presses Abort on the submit confirmation banner
+- **THEN** the run ends with `aborted` and exit 1, and the button is not clicked

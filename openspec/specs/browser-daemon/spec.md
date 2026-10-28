@@ -181,3 +181,21 @@ When attention resolves by any path, a pending prompt SHALL be withdrawn. The pr
 #### Scenario: Stop with force
 - **WHEN** `webscoop daemon stop --force` is executed while jobs run
 - **THEN** the jobs' commands exit 1, every browser closes, and the daemon exits
+
+### Requirement: Submit confirmation signals
+A job SHALL wait for attention for a submit confirmation as it does for an `await-user` step. The continue signal SHALL allow the submit, and the abort signal SHALL end the run with `aborted`. The signal sources are the banner, `webscoop attention continue|abort`, and the terminal prompt.
+
+When the submitting command's standard error is a terminal, the prompt SHALL read `Allow submit <outline line>? [y/N/a]`:
+- `y` SHALL send continue;
+- `n` or Enter SHALL keep waiting without prompting again;
+- `a` SHALL send abort.
+
+The prompt SHALL be withdrawn when attention resolves by any path, and SHALL be shown even with `--quiet`.
+
+#### Scenario: Enter does not approve
+- **WHEN** a submit confirmation is pending and the user presses Enter at the prompt
+- **THEN** the submit is not allowed and the job keeps waiting
+
+#### Scenario: Allow from the command line
+- **WHEN** a submit confirmation is pending and `webscoop attention continue` is run
+- **THEN** the submit is allowed and the run continues

@@ -574,8 +574,8 @@ Replaying an `agent` step SHALL run its loop on the live page as a run does and 
 - **THEN** the panel shows an inline error on the step and the recipe is not written
 
 ### Requirement: Agent step field hints
-In the edit state of an `agent` step, every field line SHALL show a help hint next to its label. The fields are goal, entry, turns, until, target (when shown), value (when shown), window, optional, and scope. A hint SHALL be a small `?` glyph. It SHALL be reachable with the keyboard, SHALL expose its text as a native tooltip, and SHALL use the same text as its accessible name. The texts SHALL say:
-- goal: the model reads the goal and a page outline, and `{var}` values are sent to the model;
+In the edit state of an `agent` step, every field line SHALL show a help hint next to its label. The fields are goal, entry, turns, until, target (when shown), value (when shown), window, optional, scope, and submit. A hint SHALL be a small `?` glyph. It SHALL be reachable with the keyboard, SHALL expose its text as a native tooltip, and SHALL use the same text as its accessible name. The texts SHALL say:
+- goal: the model reads the goal and a page outline, `{var}` values are sent to the model, and secret variables stay placeholders the model cannot see;
 - entry: names an entry under `llms` in the config, and empty uses the run's entry;
 - turns: each turn is one model request, and reaching the cap ends the step with `max-turns`;
 - until: download, appears, and disappears are checked by the runner after every action, while done is the model's word and cannot be checked;
@@ -583,7 +583,8 @@ In the edit state of an `agent` step, every field line SHALL show a help hint ne
 - value: the file name for the saved download;
 - window: which tab the agent acts in;
 - optional: off fails the run with `missing-required`, on skips the step;
-- scope: page keeps the agent on its start page; site lets it move within the start page's origin and may submit forms there; other sites are undone and popups are closed.
+- scope: page keeps the agent on its start page; site lets it move within the start page's origin and may submit forms there; other sites are undone and popups are closed;
+- submit: what happens when the agent is about to submit a form or press a control such as Pay, Order, Delete, or Send: ask pauses for the user, allow goes ahead, stop ends the step there.
 
 The inline text after the turns input SHALL read "at most · 1 request each". When `until` is done, the inline text SHALL state that success is not checked. Edit states of other step kinds SHALL keep their current lines without hints.
 
@@ -610,16 +611,32 @@ The edit state of an `agent` step SHALL show a `scope` line with a two-way contr
 - **WHEN** the user switches the scope of an agent step to site on a recipe for `https://shop.test/contact` and saves
 - **THEN** the inline text reads "may move within https://shop.test" and the saved step has `scope: site`
 
-### Requirement: Secret variable in goal warning
-When the goal of an `agent` step references one or more `secret` variables, the edit state SHALL show an inline warning under the goal. The warning SHALL name each secret variable and state that its value will be sent to the model with the goal. The warning SHALL update as the user types, without waiting for the field to lose focus. It SHALL NOT block saving. When no secret variable is referenced, no warning SHALL be shown.
+### Requirement: Agent step submit control
+The edit state of an `agent` step SHALL show a `submit` line with a three-way control, ask, allow, or stop, defaulting to ask, and the submit hint. The inline text SHALL read:
+- for ask: "pauses for you before a submit";
+- for allow: "submits without asking";
+- for stop: "stops before a submit (dry run)".
+
+Saving SHALL write `submit` for allow and stop and SHALL omit it for ask.
+
+#### Scenario: Dry run chosen
+- **WHEN** the user sets an agent step's submit to stop and saves
+- **THEN** the saved step has `submit: stop`
+
+#### Scenario: Default not written
+- **WHEN** the user adds an agent step with a goal and saves
+- **THEN** the saved step has no `submit` key
+
+### Requirement: Secret variable in goal note
+When the goal of an `agent` step references one or more `secret` variables, the edit state SHALL show an informational line under the goal. It SHALL name each secret variable and state that the model sees only the placeholder while the runner types the value. The line SHALL update as the user types, without waiting for the field to lose focus, and SHALL NOT block saving. When no secret variable is referenced, no line SHALL be shown.
 
 #### Scenario: Password in the goal
 - **WHEN** the recipe has a secret variable `password` and the user types `Log in with {password}` into an agent step's goal
-- **THEN** a warning under the goal names `{password}` and says it will be sent to the model, and the recipe can still be saved
+- **THEN** a line under the goal names `{password}` and says the model sees only the placeholder, and the recipe can still be saved
 
 #### Scenario: Plain variable in the goal
 - **WHEN** the user types `Download the report for {year}` and `year` is not secret
-- **THEN** no warning is shown
+- **THEN** no line is shown
 
 ### Requirement: Editing the proposal fields
 While the list setup is shown, the user SHALL be able to change the list parent or the item container by picking on the page or by editing the selector text. Picking for the list parent SHALL only accept ancestors of the current item container; picking for the item container SHALL only accept descendants of the current list parent that contain the original selection. When the list setup has no original selection (opened manually or from Rows > Edit), picking for the item container SHALL accept any element inside the list parent, or anywhere on the page when no list parent is set, and picking for the list parent SHALL accept any element when no item container is set yet. After either edit the recorder SHALL recompute the item set inside the list parent, recount, refresh the highlights and samples, and offer candidates for the edited level ranked as defined by the selector-generation capability. Item container candidates offered after an edit SHALL be relative to the list parent in effect. Typed item container selector text SHALL be resolved inside the list parent. A typed selector that resolves nothing SHALL show an inline error and leave the previous value in effect.

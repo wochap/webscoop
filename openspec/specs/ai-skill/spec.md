@@ -47,3 +47,14 @@ The Nix package SHALL install the skill directory at `share/webscoop/skills/webs
 #### Scenario: Home-manager source path
 - **WHEN** the Nix package is built
 - **THEN** `$out/share/webscoop/skills/webscoop-use-recipe/SKILL.md` exists and matches the repository file
+
+### Requirement: Skill explains agent submit confirmations
+The skill body SHALL tell the agent the following:
+- An agent step may pause to ask a person to allow a form submit or a control such as Pay, Order, Delete, or Send.
+- Exit 2 from such a recipe may mean that nobody answered the confirmation.
+- `--submit stop` is a dry run that does not reach the goal.
+- The skill SHALL NOT pass `--submit allow` unless the user asked for the submit to happen.
+
+#### Scenario: Agent does not auto-approve
+- **WHEN** an agent with the skill runs a recipe with an agent step that exits 2 after a submit confirmation timed out
+- **THEN** the skill tells it to ask the user whether to allow the submit, and not to retry with `--submit allow` on its own

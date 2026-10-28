@@ -119,3 +119,15 @@ The CLI SHALL fire `download.saved` for each file a run, test, or recording sess
 #### Scenario: Hook gets the file
 - **WHEN** the config has `"hooks": { "download.saved": "notify-send saved \"$WEBSCOOP_FILE\"" }` and a run saves `deck.pdf`
 - **THEN** the hook runs once with `WEBSCOOP_FILE` set to the path of `deck.pdf`
+
+### Requirement: Submit confirmation attention event
+When an agent step asks the user to allow a submit, `attention.needed` SHALL fire with:
+- reason `confirm-submit`;
+- `WEBSCOOP_URL` set to the URL of the step's window;
+- the action's outline line and the step's label in the JSON details.
+
+It SHALL be followed by exactly one `attention.resolved` when the user allows, aborts, or the run ends.
+
+#### Scenario: Hook sees the confirmation
+- **WHEN** an agent step asks to click `button "Place order"`, and the user allows it
+- **THEN** `attention.needed` fires with reason `confirm-submit` and the line `button "Place order"` in its details, followed by `attention.resolved`

@@ -706,3 +706,18 @@ Each capture of a recipe SHALL be an output table named after the capture, with 
 #### Scenario: Completion of values
 - **WHEN** the user types `webscoop run shop --pdf ` and presses TAB
 - **THEN** `download` and `view` are offered
+
+### Requirement: `--submit` flag
+`run` and `test` SHALL accept `--submit ask|allow|stop`, which sets the submit policy of every agent step of the run as defined by the agent-step capability's "Submit confirmation", overriding the steps' own `submit`. Any other value SHALL exit 1 naming the accepted values. Without the flag, each step's own policy SHALL apply.
+
+#### Scenario: Unattended run allows submits
+- **WHEN** `webscoop run contact --submit allow` runs an agent step whose model clicks `button "Send"`
+- **THEN** the click runs without holding attention
+
+#### Scenario: Dry run of a recipe
+- **WHEN** `webscoop test checkout --submit stop` runs and the model clicks `button "Place order"`
+- **THEN** the button is not clicked and the step's report shows end `ready-to-submit`
+
+#### Scenario: Bad value
+- **WHEN** `webscoop run contact --submit maybe` is executed
+- **THEN** stderr names `ask`, `allow`, and `stop`, and the exit code is 1

@@ -7,7 +7,7 @@ Defines the `agent` step: a bounded loop in which a language model reads a compa
 ## Requirements
 
 ### Requirement: Agent loop
-An `agent` step SHALL run as a loop in the step's window. Each turn the runner SHALL build the page outline defined in "Page outline", send the conversation to the step's language model asking for one JSON action, validate the answer against the action schema of "Agent actions", execute the action, append its result and a fresh outline to the conversation, and continue. The conversation SHALL start with a system message (the runner's role statement, the action schema with one example per action, the scope rule, and the instruction to answer with exactly one action) and a user message holding the goal with variables substituted, the window's URL, and its title. The step's model SHALL be the LLM entry named by the step's `llm`, else the run's entry as defined by the llm-adapter capability's "Entry resolution". Requests SHALL use the entry's effort and output budget and temperature 0.
+An `agent` step SHALL run as a loop in the step's window. Each turn the runner SHALL build the page outline defined in "Page outline", send the conversation to the step's language model asking for one JSON action, validate the answer against the action schema of "Agent actions", execute the action, append its result and a fresh outline to the conversation, and continue. The conversation SHALL start with a system message (the runner's role statement, the action schema with one example per action, the scope rule, and the instruction to answer with exactly one action) and a user message holding the goal with its non-secret variables substituted and its secret variables left as placeholders as defined in "Secret placeholders", the window's URL, and its title. The system message SHALL also explain secret placeholders and how to type them. The step's model SHALL be the LLM entry named by the step's `llm`, else the run's entry as defined by the llm-adapter capability's "Entry resolution". Requests SHALL use the entry's effort and output budget and temperature 0.
 
 Before each request, turns older than the latest SHALL be compressed to their action line and the first line of their result, and the oldest compressed turns SHALL be dropped until the estimated conversation size is at most the entry's effective `contextTokens` minus its effective `maxOutputTokens` minus the outline budget. The latest result SHALL always carry the full outline.
 
@@ -120,6 +120,7 @@ The loop SHALL end, and the step's outcome SHALL be:
 - `ok` as soon as, with `until` `download`, a download that the step's window started during the step is saved, even before the current action's result is built;
 - `ok` as soon as, with `until` `appears` or `disappears`, the step's target resolves (`appears`) or resolves nowhere (`disappears`) in the step's window, checked with the stored selector candidates as `await-user` does, before every request including the first and after every executed action has settled; the end reason SHALL be `condition`, and a condition that holds before the first request SHALL end the step with 0 turns and no model request;
 - `ok` on `done` when the step has no `until`;
+- `ok` with end reason `ready-to-submit` when the effective submit policy is `stop` and the model's action would submit, as defined in "Submit confirmation", without executing the action;
 - on `done` with an `until` not met yet: the loop SHALL continue with a result saying that no download has been saved, or that the target named by its primary candidate has not appeared or disappeared, and that the model may keep going or give up; a second such `done` SHALL end the loop as failed with end reason `done-unmet`;
 - failed on `give_up` (end reason `gave-up`), on reaching `maxTurns` (`max-turns`), on an adapter error after the adapter's own retries (`llm-error`), or on three invalid answers (`invalid-answers`).
 
@@ -141,6 +142,10 @@ A failed required agent step SHALL fail the run with reason `missing-required` n
 - **WHEN** a step has `until` `appears` and the model answers `done` twice while `.thanks` resolves nowhere
 - **THEN** the first result names `.thanks` as not yet appeared, and the step ends failed with end reason `done-unmet`
 
+#### Scenario: Dry run stops before ordering
+- **WHEN** an agent step runs with `--submit stop` and the model clicks `[e9] button "Place order"`
+- **THEN** the button is not clicked and the step ends `ok` with end reason `ready-to-submit`
+
 #### Scenario: Done without a download
 - **WHEN** the step has `until` `download` and the model answers `done` twice without a download
 - **THEN** the step ends failed with end reason `done-unmet`
@@ -158,7 +163,7 @@ A failed required agent step SHALL fail the run with reason `missing-required` n
 - **THEN** the run fails with `missing-required` naming the step, exit 3, and stderr names `--no-llm`
 
 ### Requirement: Agent reporting
-`step.replayed` and `step.skipped` for an agent step SHALL carry `agent` with `turns`, `end` (`download`, `condition`, `done`, `done-unmet`, `gave-up`, `max-turns`, `llm-error`, `invalid-answers`, or `no-llm`), and `actions`, one entry per turn with `turn`, `action`, `ref` and the ref's outline line when the action had one, `reason`, and the first line of the result. The run report SHALL list the same under the flow run. Unless `--quiet` is given, stderr SHALL print one line per action, `agent: <action> <outline line> (<reason>)`, and one line with the end reason and turn count. No other page text SHALL be printed.
+`step.replayed` and `step.skipped` for an agent step SHALL carry `agent` with `turns`, `end` (`download`, `condition`, `ready-to-submit`, `done`, `done-unmet`, `gave-up`, `max-turns`, `llm-error`, `invalid-answers`, or `no-llm`), and `actions`, one entry per turn with `turn`, `action`, `ref` and the ref's outline line when the action had one, `reason`, the first line of the result, and `submit` (`asked`, `allowed`, or `stopped`) when the action was classified as a submit. The run report SHALL list the same under the flow run. Unless `--quiet` is given, stderr SHALL print one line per action, `agent: <action> <outline line> (<reason>)`, and one line with the end reason and turn count. No other page text SHALL be printed.
 
 #### Scenario: Transcript in the report
 - **WHEN** an agent step ends after two clicks and a download
@@ -168,6 +173,68 @@ A failed required agent step SHALL fail the run with reason `missing-required` n
 - **WHEN** an agent step with `until` `appears` ends after a fill and a click that showed its target
 - **THEN** the report lists two actions, `turns` 2, and `end` `condition`
 
+#### Scenario: Asked submit in the transcript
+- **WHEN** the person allows a submit the agent asked for
+- **THEN** that turn's entry has `submit` `asked`
+
 #### Scenario: Quiet run
 - **WHEN** `webscoop run grab-pdf --quiet` runs an agent step
 - **THEN** stderr has no `agent:` lines
+
+### Requirement: Secret placeholders
+A secret variable referenced in an agent step's goal SHALL reach the model only as its placeholder `{name}`, never as its value. When a `fill` action's value contains the placeholder of a secret variable of the run, the runner SHALL replace the placeholder with the variable's value right before filling, and only when both of these hold:
+- the ref is a text field: an `input` other than checkbox, radio, file, submit, button, reset, or image, or a `textarea`;
+- the window's origin equals the step's starting origin.
+
+Otherwise it SHALL fill nothing and answer that a secret placeholder can only be typed into a text field of the starting site. A placeholder in a `press` key SHALL NOT be expanded.
+
+Everything derived from the page that is sent to the model SHALL be masked: the outline, `find` results, and `html` output.
+- A non-empty `value` of an input with `type=password` SHALL be shown as `***`.
+- Every occurrence of a secret value SHALL be replaced with its placeholder, longest value first.
+
+The conversation, the transcript, and the repeat check SHALL hold the model's answer with the placeholder, not the value.
+
+#### Scenario: Log in without exposing the password
+- **WHEN** the goal is `Log in as {user} with {password}`, `password` is secret with value `hunter2`, `user` is not secret with value `alice`, and the model answers `fill e5 "{password}"` on a password input
+- **THEN** the goal sent reads `Log in as alice with {password}`, the field receives `hunter2`, and no request to the model contains `hunter2`
+
+#### Scenario: Password value masked in the outline
+- **WHEN** the outline is built after the password field was filled
+- **THEN** the field's line shows `value="***"`
+
+#### Scenario: Secret echoed on the page
+- **WHEN** `user` is secret with value `alice@x.test` and the page shows `Signed in as alice@x.test`
+- **THEN** the outline line reads `Signed in as {user}`
+
+#### Scenario: Placeholder into a non-text element
+- **WHEN** the model answers `fill e3 "{password}"` and `e3` is a checkbox
+- **THEN** nothing is filled and the result says secret placeholders can only be typed into a text field
+
+### Requirement: Submit confirmation
+Before executing a `click` or `press` action, the runner SHALL decide whether the action would submit:
+- a click on a `button` whose type is absent or `submit`, or on an `input` of type `submit` or `image`, that belongs to a `form` whose `method` is `post`;
+- a press of Enter on a text field that belongs to such a form, or, without a ref, when the last `fill` of the step targeted such a field;
+- a click on an element whose accessible name contains, as a whole word and case-insensitively, one of the runner's risk words: pay, buy, purchase, order, checkout, delete, remove, send, submit, confirm, subscribe, transfer, book, sign up, register, publish, post.
+
+The effective submit policy SHALL be the run's `--submit` value when given, else the step's `submit`, else `ask`. For an action that would submit:
+- with `allow`, the action SHALL be executed;
+- with `stop`, the action SHALL NOT be executed and the step SHALL end as defined in "Termination";
+- with `ask`, the runner SHALL hold attention as the flows capability does for `await-user`, with reason `confirm-submit`, the action's outline line as label, and the run's guard timeout budget, and SHALL execute the action once the user allows it. When the budget runs out the run SHALL fail with reason `paused` and exit 2, and Abort SHALL fail it with `aborted`.
+
+A runner with no way to ask the user SHALL treat `ask` as `stop`. Actions that would not submit SHALL run without a pause.
+
+#### Scenario: Order needs a person
+- **WHEN** an agent step with the default policy clicks `[e9] button "Place order"` inside a POST form, and the user presses Allow in the banner
+- **THEN** the run holds attention with reason `confirm-submit` until Allow, then clicks the button, and the turn's entry has `submit` `asked`
+
+#### Scenario: Search is not a submit
+- **WHEN** the model clicks `button "Search"` in a form with method GET
+- **THEN** the click runs without a pause
+
+#### Scenario: Recipe allows submits
+- **WHEN** a step has `submit` `allow` and the model clicks `button "Send"`
+- **THEN** the click runs without a pause and the turn's entry has `submit` `allowed`
+
+#### Scenario: Nobody answers
+- **WHEN** the policy is `ask`, a submit is asked, and the guard budget runs out
+- **THEN** the button is not clicked and the run fails with `paused` and exit 2
