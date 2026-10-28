@@ -10,7 +10,7 @@ import { applyPromotions } from './healing/apply';
 import type { Promotion } from './healing/promote';
 import { targetName, type HealTarget, type Resolution, type Resolver } from './healing/types';
 import { TimeoutError, type BrowserPort, type ElementRef, type FilePort, type LifecyclePort, type LlmPort, type NotifyPort, type OpenOptions, type SavedDownload, type Session } from './ports';
-import type { Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
+import type { AgentSubmit, Fingerprint, Recipe, SelectorCandidate } from './recipe/schema';
 import { paginationOf } from './recipe/sequence';
 import { tablesOf } from './recipe/tables';
 import { createStrategy } from './pagination/strategies';
@@ -87,6 +87,8 @@ export interface RunOptions {
   guards?: GuardOptions;
   /** The model of an `agent` step, by the step's `llm` entry name (the run's entry when absent). Default: no model, so agent steps cannot run. */
   llmFor?: (name?: string) => LlmPort;
+  /** The submit policy of every `agent` step (`--submit`), over the steps' own `submit`. */
+  submitPolicy?: AgentSubmit;
   /** Hooks around the browser launch, and the browser's process id for `browser.started`. */
   lifecycle?: LifecyclePort;
   /** Running the recipe's flows. Default: enabled. */
@@ -380,6 +382,7 @@ export class Runner {
         ...(this.opts.vars ? { vars: this.opts.vars } : {}),
         ...(this.opts.files ? { files: this.opts.files } : {}),
         ...(this.opts.llmFor ? { llmFor: this.opts.llmFor } : {}),
+        ...(this.opts.submitPolicy ? { submitPolicy: this.opts.submitPolicy } : {}),
         timeoutMs: this.opts.timeoutMs ?? 30_000,
         limit: this.opts.pagination?.limit ?? pagination.limit,
         cap,

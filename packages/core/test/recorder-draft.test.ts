@@ -167,4 +167,39 @@ describe('draft descriptions', () => {
     expect(saved.item).toBeUndefined();
     expect(saved.tables).toEqual([expect.objectContaining({ name: 'items', description: 'product cards' })]);
   });
+
+  it('keeps submit on agent steps through load, edit, and save, and omits ask on save', () => {
+    const loaded = validateRecipe({
+      schemaVersion: 2,
+      name: 'agent-submit',
+      url: 'https://acme.com/',
+      flows: [
+        {
+          name: 'checkout',
+          steps: [
+            { kind: 'agent', goal: 'stop checkout', submit: 'stop' },
+            { kind: 'agent', goal: 'allow checkout', submit: 'allow' },
+            { kind: 'agent', goal: 'ask checkout' },
+          ],
+        },
+      ],
+      fields: [{ name: 'title', type: 'text', scope: 'page', selectors }],
+      sequence: [{ flow: 'checkout' }, { extract: 'items' }],
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const draft = DraftSchema.parse(draftFromRecipe(loaded.recipe));
+    expect(draft.flows[0]!.steps[0]!.submit).toBe('stop');
+    expect(draft.flows[0]!.steps[1]!.submit).toBe('allow');
+    expect(draft.flows[0]!.steps[2]!.submit).toBeUndefined();
+    let saved = draftToRecipe(draft);
+    expect(saved.flows![0]!.steps[0]).toMatchObject({ submit: 'stop' });
+    expect(saved.flows![0]!.steps[1]).toMatchObject({ submit: 'allow' });
+    expect('submit' in saved.flows![0]!.steps[2]!).toBe(false);
+
+    // Edit step 0 to ask
+    const updated = reduceDraft(draft, { type: 'updateStep', flow: 0, index: 0, patch: { submit: 'ask' } });
+    saved = draftToRecipe(updated);
+    expect('submit' in saved.flows![0]!.steps[0]!).toBe(false);
+  });
 });

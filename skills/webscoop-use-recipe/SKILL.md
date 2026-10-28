@@ -50,7 +50,7 @@ A capture is a table named after it. Its rows are request URLs seen while the pa
 
 A `downloads` table lists the files a run saved. Each row has `file`, the absolute path of the saved file, plus `name`, `url`, `bytes`, `_page`, and `_index`. A recipe that only downloads has no other table, so its output is just those rows; read `file` and give the user that path.
 
-A recipe with `agent: true` hands a goal to a language model that acts on the page, so a run takes longer, may cost model calls, and the model may not reach the goal. Run it like any other recipe; do not retry it in a loop.
+A recipe with `agent: true` hands a goal to a language model that acts on the page, so a run takes longer, may cost model calls, and the model may not reach the goal. Run it like any other recipe; do not retry it in a loop. Before submitting a form or clicking a consequential button (such as Pay, Order, Delete, or Send), an agent step pauses to ask a person to allow it. `--submit stop` is a dry run that stops before a submit and does not reach the goal. NEVER pass `--submit allow` on your own; only use it when the user explicitly asked for the submit to go ahead.
 
 Example: the user asks for the PDF behind a URL and the catalog lists `grab-pdf`, described "download the PDF a page offers", with variable `url` and `agent: true`. Run the command below and read `file` from the `downloads` row:
 
@@ -74,7 +74,7 @@ webscoop run bing-search --var query=cats --jsonl --quiet
 
 - `0`: success. Use the rows.
 - `1`: error. Report it to the user with the stderr text.
-- `2`: the browser needed the user (login or captcha) and nobody answered in time. Ask the user to handle the browser window, then retry the same command.
+- `2`: the browser needed the user (login, captcha, or a submit confirmation) and nobody answered in time. When caused by a submit confirmation, ask the user whether to allow the submit; do not pass `--submit allow` on your own. Then retry the command.
 - `3`: the page changed and a required field or capture was not found. Tell the user the recipe needs repair with `webscoop edit <recipe>`. When the recipe has `agent: true`, exit 3 instead means the model gave up on that page or did not reach the goal (for example, no file was downloaded); tell the user that, since it is not a recipe repair case.
 
 ## Parallel runs and pauses
@@ -85,3 +85,4 @@ You may start several runs at once. Webscoop queues or shares them, so no extra 
 
 - Never edit recipe files.
 - Never run `webscoop record`, `webscoop edit`, or `webscoop daemon stop` yourself. These are for the user.
+- Never pass `--submit allow` unless the user explicitly requested it.

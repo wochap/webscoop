@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 2,
+  "name": "playground-login-agent",
+  "description": "Log in with a secret password",
+  "url": "{url}",
+  "vars": [
+    { "name": "url", "type": "string", "raw": true, "description": "address of the login page" },
+    { "name": "password", "type": "string", "secret": true, "description": "user password" }
+  ],
+  "flows": [
+    {
+      "name": "login",
+      "steps": [
+        {
+          "kind": "agent",
+          "goal": "Log in as alice with password {password}",
+          "scope": "site",
+          "submit": "allow",
+          "until": "appears",
+          "target": { "selectors": [{ "strategy": "css", "value": ".ok", "stability": "medium" }] },
+          "maxTurns": 4
+        }
+      ]
+    }
+  ],
+  "sequence": [{ "flow": "login" }]
+}

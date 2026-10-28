@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "name": "playground-checkout-agent",
+  "description": "Place an order on the checkout page",
+  "url": "{url}",
+  "vars": [{ "name": "url", "type": "string", "raw": true, "description": "address of the checkout form" }],
+  "flows": [
+    {
+      "name": "checkout",
+      "steps": [
+        {
+          "kind": "agent",
+          "goal": "Place the order",
+          "scope": "site",
+          "until": "appears",
+          "target": { "selectors": [{ "strategy": "css", "value": ".done", "stability": "medium" }] },
+          "maxTurns": 4
+        }
+      ]
+    }
+  ],
+  "sequence": [{ "flow": "checkout" }]
+}

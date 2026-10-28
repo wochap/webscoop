@@ -1,0 +1,8 @@
+{
+  "responses": [
+    { "match": "textbox \"Username\"", "reply": { "action": "fill", "ref": "e2", "value": "alice", "reason": "the username field" } },
+    { "match": "textbox \"Password\"", "reply": { "action": "fill", "ref": "e3", "value": "{password}", "reason": "the password field" } },
+    { "match": "button \"Sign in\"", "reply": { "action": "click", "ref": "e4", "reason": "sign in" } },
+    { "reply": { "action": "done", "reason": "finished" }, "repeat": true }
+  ]
+}

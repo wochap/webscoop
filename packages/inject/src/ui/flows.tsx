@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { DEFAULT_MAX_RETRIES, DEFAULT_MAX_TURNS, STEP_KINDS, popupClosedReason, templateVariables, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
+import { DEFAULT_MAX_RETRIES, DEFAULT_MAX_TURNS, STEP_KINDS, popupClosedReason, templateVariables, type AgentSubmit, type Draft, type DraftFlow, type DraftStep, type StepPatch, type VarValue } from '@webscoop/core/page';
 import type { StepRef } from '../store';
 import { useActions, useSnapshot } from './context';
 import { ZeroMatchWarning } from './fields';
@@ -35,7 +35,7 @@ const VALUE_HINT: Partial<Record<StepKind, string>> = {
 
 /** Help texts of the agent step fields, shown behind the `?` next to each label. */
 const AGENT_HINTS = {
-  goal: 'The model reads this goal and an outline of the page, then acts. {var} values are sent to the model as text.',
+  goal: 'The model reads this goal and an outline of the page, then acts. {var} values are sent to the model as text, and secret variables stay placeholders the model cannot see.',
   entry: 'Name of an entry under llms in the config. Empty uses --llm, or the default entry.',
   turns: 'Each turn is one request to the model. When the cap is reached the step ends with max-turns.',
   until: 'download, appears, and disappears are checked by the runner after every action: a file was saved, or the target appeared or disappeared. done: the model says it is finished, which cannot be checked.',
@@ -44,7 +44,14 @@ const AGENT_HINTS = {
   window: 'Which tab the agent acts in. Popup acts in the newest popup opened by an earlier step.',
   optional: 'Off: if the goal is not reached, the run fails with missing-required (exit 3). On: the step is skipped.',
   scope: 'page: the agent stays on its start page. site: it may move within the start page\'s origin, and may submit forms there. Other sites are undone and popups are closed.',
+  submit: 'What happens when the agent is about to submit a form or press Pay, Order, Delete, Send…: ask pauses for you, allow goes ahead, stop ends the step there.',
 } as const;
+
+const SUBMIT_TEXT: Record<AgentSubmit, string> = {
+  ask: 'pauses for you before a submit',
+  allow: 'submits without asking',
+  stop: 'stops before a submit (dry run)',
+};
 
 export function KindSelect({ value, onChange }: { value: StepKind; onChange: (kind: StepKind) => void }) {
   return (
@@ -297,8 +304,8 @@ function GoalField({ step, at, vars }: { step: DraftStep; at: StepRef; vars: Var
         ))}
       </div>
       {secrets.length > 0 && (
-        <span className="ws-meta ws-tone-warn-text" data-ws="step-goal-secret-warn">
-          {secrets.map((name) => `{${name}}`).join(', ')} {secrets.length === 1 ? 'is a secret and will' : 'are secrets and will'} be sent to the model with the goal.
+        <span className="ws-meta" data-ws="step-goal-secret-note">
+          {secrets.map((name) => `{${name}}`).join(', ')} {secrets.length === 1 ? 'is secret: the model sees only the placeholder and the runner types the value.' : 'are secret: the model sees only the placeholders and the runner types the values.'}
         </span>
       )}
     </div>
@@ -406,6 +413,22 @@ function StepEditor({ step, at, vars, onDone }: { step: DraftStep; at: StepRef; 
             <Segmented label="Scope" testId="step-agent-scope" value={step.scope ?? 'page'} onChange={(scope) => update({ scope })} options={[{ value: 'page', label: 'page' }, { value: 'site', label: 'site' }]} />
             <span className="ws-meta" data-ws="step-agent-scope-text">
               {step.scope === 'site' ? `may move within ${originOf(host?.draft.url ?? '')}` : 'stays on this page'}
+            </span>
+          </EditLine>
+          <EditLine label="submit" hint={AGENT_HINTS.submit}>
+            <Segmented
+              label="Submit"
+              testId="step-agent-submit"
+              value={step.submit ?? 'ask'}
+              onChange={(submit) => update({ submit: submit as AgentSubmit })}
+              options={[
+                { value: 'ask', label: 'ask' },
+                { value: 'allow', label: 'allow' },
+                { value: 'stop', label: 'stop' },
+              ]}
+            />
+            <span className="ws-meta" data-ws="step-agent-submit-text">
+              {SUBMIT_TEXT[step.submit ?? 'ask']}
             </span>
           </EditLine>
         </>

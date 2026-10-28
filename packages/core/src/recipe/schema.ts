@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AGENT_SCOPES,
+  AGENT_SUBMIT,
   DEFAULT_MAX_TURNS,
   DESCRIPTION_MAX,
   FIELD_SCOPES,
@@ -20,6 +21,7 @@ import {
 
 export {
   AGENT_SCOPES,
+  AGENT_SUBMIT,
   DEFAULT_MAX_RETRIES,
   DEFAULT_MAX_TURNS,
   DESCRIPTION_MAX,
@@ -167,6 +169,8 @@ export const StepSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
   /** For `agent`: how far the model may navigate: `page` (default) or `site`, the start URL's origin. */
   scope: oneOf('agent scope', AGENT_SCOPES).optional(),
+  /** For `agent`: what happens before an action that would submit: `ask` (default), `allow`, or `stop`. */
+  submit: oneOf('agent submit', AGENT_SUBMIT).optional(),
   window: oneOf('step window', STEP_WINDOWS).default('same'),
   optional: z.boolean().default(false),
   label: z.string().min(1).optional(),
@@ -338,6 +342,7 @@ export type RecipeVar = z.infer<typeof VarSchema>;
 export type RecipeItem = z.infer<typeof ItemSchema>;
 export type FieldScope = (typeof FIELD_SCOPES)[number];
 export type AgentScope = (typeof AGENT_SCOPES)[number];
+export type AgentSubmit = (typeof AGENT_SUBMIT)[number];
 /** A field after parsing: `scope` is always set. */
 export type RecipeField = Omit<ParsedField, 'scope'> & { scope: FieldScope };
 export type FieldType = RecipeField['type'];

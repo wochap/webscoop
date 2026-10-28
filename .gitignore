@@ -7,6 +7,7 @@ RTK.md
 .direnv
 .pi
 .agents
+.agent
 webscoop-recorder-ui/
 node_modules/
 dist/

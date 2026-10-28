@@ -1,3 +1,4 @@
+import { MockLlm } from '@webscoop/llm';
 import { describe, expect, it } from 'vitest';
 import {
   loadRecipe,
@@ -468,6 +469,57 @@ describe('await-user', () => {
     const result = await aborted.runner.run();
     expect(result).toMatchObject({ ok: false, reason: 'aborted' });
     expect(aborted.log.of('attention.resolved')).toEqual([{ reason: 'await-user', outcome: 'ended' }]);
+  });
+
+  describe('confirm-submit', () => {
+    const checkout = (): FakePage => ({
+      dom: page(h('form', { method: 'post' }, h('button', { id: 'place' }, 'Place order'))),
+      on: { click: (el) => (el?.attrs.id === 'place' ? page(h('p', { class: 'done' }, 'Order placed')) : undefined) },
+    });
+    const order = () => load({ flows: [{ name: 'buy', steps: [{ kind: 'agent', goal: 'Order it', label: 'Order' }] }], sequence: [{ flow: 'buy' }] });
+    const llm = () => new MockLlm({ responses: [{ reply: JSON.stringify({ action: 'click', ref: 'e1' }) }, { reply: JSON.stringify({ action: 'done' }) }] });
+
+    it('holds attention until Continue allows the submit, then clicks', async () => {
+      const b = banner();
+      const a = attentionPort();
+      const t = setup({ [PAGE]: checkout() }, order(), { llmFor: () => llm(), attention: a.port, guards: { enabled: true, timeoutMs: 60_000, pollMs: 60_000, banner: b.handler } });
+      t.runner.emitter.on('attention.needed', () => void setTimeout(() => a.send('continue'), 10));
+      const result = await t.runner.run();
+      expect(result.ok).toBe(true);
+      expect(t.log.of('attention.needed')).toEqual([{ reason: 'confirm-submit', page: 1, url: PAGE, label: 'Order', flow: 'buy', line: 'button "Place order"' }]);
+      expect(t.log.of('attention.resolved')).toEqual([{ reason: 'confirm-submit', outcome: 'cleared' }]);
+      expect(b.shown).toEqual([expect.objectContaining({ kind: 'confirm-submit', label: 'button "Place order"', url: PAGE })]);
+      expect(t.browser.clicks).toHaveLength(1);
+      expect(result.report.steps[0]).toMatchObject({ agent: { end: 'done', actions: [expect.objectContaining({ submit: 'asked' }), expect.anything()] } });
+      expect(a.released()).toBe(1);
+    });
+
+    it('fails with paused when nobody answers, without clicking', async () => {
+      const t = setup({ [PAGE]: checkout() }, order(), { llmFor: () => llm(), guards: { enabled: true, timeoutMs: 20, pollMs: 5 } });
+      const result = await t.runner.run();
+      expect(result).toMatchObject({ ok: false, reason: 'paused' });
+      expect(result.ok === false && result.message).toContain('Place order');
+      expect(t.browser.clicks).toEqual([]);
+      expect(t.log.of('attention.resolved')).toEqual([{ reason: 'confirm-submit', outcome: 'timeout' }]);
+    });
+
+    it('ends the run with aborted on Abort, resolving attention once', async () => {
+      const b = banner();
+      const t = setup({ [PAGE]: checkout() }, order(), { llmFor: () => llm(), guards: { enabled: true, timeoutMs: 60_000, pollMs: 60_000, banner: b.handler } });
+      t.runner.emitter.on('attention.needed', () => void setTimeout(() => b.abort(), 10));
+      const result = await t.runner.run();
+      expect(result).toMatchObject({ ok: false, reason: 'aborted' });
+      expect(t.browser.clicks).toEqual([]);
+      expect(t.log.of('attention.resolved')).toEqual([{ reason: 'confirm-submit', outcome: 'abort' }]);
+    });
+
+    it('does not ask with the run policy allow', async () => {
+      const t = setup({ [PAGE]: checkout() }, order(), { llmFor: () => llm(), submitPolicy: 'allow', guards: { enabled: true, timeoutMs: 20, pollMs: 5 } });
+      const result = await t.runner.run();
+      expect(result.ok).toBe(true);
+      expect(t.log.of('attention.needed')).toEqual([]);
+      expect(t.browser.clicks).toHaveLength(1);
+    });
   });
 
   it('waits in a popup until the button of the main window disappears, with the banner on the popup', async () => {

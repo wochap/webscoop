@@ -1114,8 +1114,28 @@ page of results. The runner keeps a history of the pages visited (at most
 50); a navigation to another origin is undone to the latest page of that
 history, not to the start, and `back` reloads the previous one from its URL
 (a page reached by POST is reloaded with GET). Popups are still closed.
-**`site` lets the agent submit forms on that site**, and nothing asks first,
-so point it at test pages or harmless forms.
+
+**Submit confirmations and policy.** Before an agent action that would submit
+a form (a click on a submit control of a POST form, Enter in a field of such a
+form, or a click on a control whose accessible name contains a risk word such
+as pay, buy, order, delete, or send), the runner checks the step's policy:
+`submit: ask | allow | stop` (default: `ask`).
+- `ask`: pauses the run for user confirmation in the browser banner, at the
+  terminal prompt `Allow submit <line>? [y/N/a]`, or via
+  `webscoop attention continue|abort`. If nobody allows it within the guard timeout,
+  the run fails with `paused` (exit 2).
+- `allow`: executes the action without pausing.
+- `stop`: ends the step right before the action with outcome `ok` and end reason
+  `ready-to-submit` (a dry run for testing recipes on real sites).
+
+The `--submit <ask|allow|stop>` CLI flag overrides every agent step's policy.
+
+**Secret placeholders.** When a goal references a variable marked `secret: true`,
+the secret value is not sent to the model. The model sees `{password}` as a placeholder
+and is instructed that placeholders represent secret values. When the model types the
+placeholder with `fill`, the runner expands it right before typing into a text field on
+the step's start origin. The outline renders password inputs as `value="***"` and masks
+any echoed secrets.
 
 **Success is decided by the runner, not the model.** With `until: download`
 the step ends `ok` as soon as a download that the step's window started is
@@ -1142,10 +1162,10 @@ missing and an optional one skip, with no request sent. Such a run cannot be
 exported with `webscoop export`.
 
 **Reports.** `step.replayed` and `step.skipped` carry `agent: { turns, end,
-actions }`, where `end` is `download`, `condition`, `done`, `done-unmet`, `gave-up`,
+actions }`, where `end` is `download`, `condition`, `ready-to-submit`, `done`, `done-unmet`, `gave-up`,
 `max-turns`, `llm-error`, `invalid-answers`, or `no-llm`, and each action has
-its ref, the outline line of that ref, the model's reason, and the first line
-of the result. `--report` lists the same under the flow run. Stderr prints
+its ref, the outline line of that ref, the model's reason, the first line
+of the result, and `submit` (`asked`, `allowed`, or `stopped`) when the action was classified as a submit. `--report` lists the same under the flow run. Stderr prints
 `agent: click [e2] link "Download PDF" href=/files/q3.pdf (the PDF link)` per
 action and `agent: grab:0 ended: download after 1 turn`, unless `--quiet`. No
 other page text is logged, since the page is untrusted.

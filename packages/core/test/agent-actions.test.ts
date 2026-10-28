@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estimateTokens } from '../src';
-import { AgentActions, HISTORY_MAX, invalidAnswerResult, parseAction, type AgentAction } from '../src/agent/actions';
+import { AgentActions, HISTORY_MAX, invalidAnswerResult, parseAction, SECRET_REFUSED, type AgentAction } from '../src/agent/actions';
 import { buildOutline, type Outline } from '../src/agent/outline';
 import { RunWindows } from '../src/flows/windows';
 import type { AgentScope } from '../src/recipe/schema';
@@ -10,17 +10,17 @@ const START = 'https://h.test/report';
 
 const page = (...body: unknown[]) => h('html', {}, h('head', {}, h('title', {}, 'Report')), h('body', {}, ...(body as never[])));
 
-async function setup(pages: ConstructorParameters<typeof FakeBrowser>[0], scope: AgentScope = 'page') {
+async function setup(pages: ConstructorParameters<typeof FakeBrowser>[0], scope: AgentScope = 'page', secrets?: Map<string, string>) {
   const browser = new FakeBrowser(pages);
   const session = (await browser.open('/p', { downloadDir: '/dl' })) as FakeInteractiveSession;
   await session.goto(START, { timeoutMs: 1000 });
   const windows = new RunWindows(session);
   let stopped = false;
   const history = [START];
-  const actions = new AgentActions({ session, windows, timeoutMs: 1000, scope, history, sleep: async () => {}, stop: () => stopped });
-  const outline = async (): Promise<Outline> => buildOutline(await session.snapshot(), 5000, estimateTokens);
+  const actions = new AgentActions({ session, windows, timeoutMs: 1000, scope, history, sleep: async () => {}, stop: () => stopped, ...(secrets ? { secrets } : {}) });
+  const outline = async (): Promise<Outline> => buildOutline(await session.snapshot(), 5000, estimateTokens, secrets);
   const run = async (action: AgentAction, at?: Outline) => actions.run(action, at ?? (await outline()));
-  return { browser, session, windows, run, outline, history, stop: () => (stopped = true) };
+  return { browser, session, windows, actions, run, outline, history, stop: () => (stopped = true) };
 }
 
 const click = (ref: string): AgentAction => ({ action: 'click', ref, reason: '' });
@@ -202,4 +202,45 @@ describe('agent actions', () => {
     await run(click('e1'));
     expect(history).toEqual([START]);
   });
+
+  describe('secret placeholders', () => {
+    const secrets = () => new Map([['{password}', 'hunter2']]);
+    const login = () => page(h('input', { type: 'password', placeholder: 'Password' }), h('input', { type: 'checkbox', 'aria-label': 'Remember' }));
+    const fill = (ref: string, value: string): AgentAction => ({ action: 'fill', ref, value, reason: '' });
+
+    it('types the secret value into a text field and keeps it out of what the model reads', async () => {
+      const { run, browser, outline } = await setup({ [START]: login() }, 'page', secrets());
+      const result = await run(fill('e1', '{password}'));
+      expect(result.text).toContain('Filled e1');
+      expect(browser.actions).toContainEqual(expect.objectContaining({ kind: 'fill', value: 'hunter2' }));
+      const after = await outline();
+      expect(after.text).toContain('value="***"');
+      expect(after.text).not.toContain('hunter2');
+      const html = await run({ action: 'html', ref: 'e1', reason: '' }, after);
+      expect(html.text).toContain('value="***"');
+      expect(html.text).not.toContain('hunter2');
+    });
+
+    it('refuses a placeholder into a checkbox and fills nothing', async () => {
+      const { run, browser } = await setup({ [START]: login() }, 'page', secrets());
+      const result = await run(fill('e2', '{password}'));
+      expect(result.text).toBe(SECRET_REFUSED);
+      expect(browser.actions).toEqual([]);
+    });
+
+    it('refuses a placeholder off the start origin', async () => {
+      const { run, session, browser } = await setup({ [START]: page(h('a', { href: 'https://other.test/login' }, 'Elsewhere')), 'https://other.test/login': login() }, 'page', secrets());
+      await session.goto('https://other.test/login', { timeoutMs: 1000 });
+      const result = await run(fill('e1', '{password}'));
+      expect(result.text).toBe(SECRET_REFUSED);
+      expect(browser.actions).toEqual([]);
+    });
+
+    it('does not expand a placeholder in a press key', async () => {
+      const { run, browser } = await setup({ [START]: login() }, 'page', secrets());
+      await run({ action: 'press', key: '{password}', ref: 'e1', reason: '' });
+      expect(JSON.stringify(browser.actions)).not.toContain('hunter2');
+    });
+  });
 });
+

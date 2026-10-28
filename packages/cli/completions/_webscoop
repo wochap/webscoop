@@ -136,6 +136,7 @@ _webscoop() {
             '--interactive[show the re-pick panel when a required field cannot be healed]' \
             '(--no-llm)--llm[LLM entry for the model rung]:entry:_webscoop_llms' \
             '(--llm)--no-llm[never ask the language model to locate a field]' \
+            '--submit[what agent steps do before a submit]:policy:(ask allow stop)' \
             '--pages[pages to walk]:pages:(1 all)' \
             '--max-pages[most pages "all" walks]:n:' \
             '--delay[wait between pages]:ms:' \
@@ -160,6 +161,7 @@ _webscoop() {
             '--json[print the field table as a JSON array]' \
             '(--no-llm)--llm[LLM entry for the model rung]:entry:_webscoop_llms' \
             '(--llm)--no-llm[never ask the language model to locate a field]' \
+            '--submit[what agent steps do before a submit]:policy:(ask allow stop)' \
             '--pages[pages to walk]:pages:(1 all)' \
             '--max-pages[most pages "all" walks]:n:' \
             '--delay[wait between pages]:ms:' \

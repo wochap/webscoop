@@ -1,7 +1,7 @@
 import type { AttentionOutcome, FlowKind, PageReport, Row, RunEmitter, RunEvents, RunReport } from '../events';
 import { countItems, extractTable, resolvePaginationTarget, type ResolvedSelectors, type TableExtraction } from '../extract';
 import { RunFailure } from '../failure';
-import { awaitUserLabel, runFlow, type AwaitUserRequest, type StepCache } from '../flows/replay';
+import { awaitUserLabel, runFlow, type AwaitUserRequest, type ConfirmSubmitRequest, type StepCache } from '../flows/replay';
 import { targetPresent, type RunWindows } from '../flows/windows';
 import type { AttentionLease } from '../guards/attention';
 import type { AttentionKind, GuardBannerHandler, GuardBannerHooks, GuardBannerInfo } from '../guards/banner';
@@ -14,7 +14,7 @@ import { isHealed, type Resolver } from '../healing/types';
 import { NoopNotify, type FilePort, type LlmPort, type NotifyPort, type PageInfo, type SavedDownload, type Session } from '../ports';
 import { Dedup, evaluateStop, type PageSummary } from '../pagination/dedup';
 import type { PagerContext, PageStrategy, StopReason } from '../pagination/types';
-import type { Block, Flow, InnerBlock, Paginate, Recipe, RecipeTable, SelectorCandidate } from '../recipe/schema';
+import type { AgentSubmit, Block, Flow, InnerBlock, Paginate, Recipe, RecipeTable, SelectorCandidate } from '../recipe/schema';
 import { drivingTable, isReactive, maxRetriesOf } from '../recipe/sequence';
 import { primaryTableIndex, tablesOf } from '../recipe/tables';
 
@@ -53,6 +53,8 @@ export interface SequenceHost {
   sleep(ms: number): Promise<void>;
   /** The model of an `agent` step, by the step's `llm` entry name. */
   llmFor?: (name?: string) => LlmPort;
+  /** The run's submit policy for every `agent` step, over the steps' own. */
+  submitPolicy?: AgentSubmit;
   /** A `download` step took a saved file on the given page. */
   onDownloadTaken?(page: number, download: SavedDownload, step: { flow: string; index: number; label?: string }): void;
 }
@@ -237,6 +239,8 @@ export class SequenceRun {
         sleep: (ms) => host.sleep(ms),
         checkpoint: () => this.checkpoint(),
         awaitUser: (request) => this.awaitUser(request),
+        confirmSubmit: (request) => this.confirmSubmit(request),
+        ...(host.submitPolicy ? { submitPolicy: host.submitPolicy } : {}),
         ...(host.onDownloadTaken ? { onDownloadTaken: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => host.onDownloadTaken!(page, download, step) } : {}),
         ...(host.llmFor ? { llmFor: host.llmFor } : {}),
         onAgentTurn: (who, turn) => host.emitter.emit('agent.action', { page, ...who, turn }),
@@ -625,6 +629,42 @@ export class SequenceRun {
     }
   }
 
+  /** An `agent` step's submit: hold the user's attention until they allow it (Continue), on the run's budget. */
+  private async confirmSubmit(request: ConfirmSubmitRequest): Promise<void> {
+    const { host } = this;
+    const { window, line, url } = request;
+    const lease = await host.acquireAttention();
+    try {
+      const page = this.page;
+      host.needAttention({ reason: 'confirm-submit', page, url, label: request.label, flow: request.flow, line });
+      const result = await this.hold({
+        kind: 'confirm-submit',
+        label: line,
+        reason: `the agent wants to submit: ${line}`,
+        window,
+        url,
+        budget: host.budget,
+        lease,
+        notify: `allow the agent to submit ${line}? (page ${page})`,
+        // Nothing on the page clears it: only Continue does.
+        check: async () => true,
+        clearOnContinue: true,
+        settle: async () => this.info,
+        abortMessage: `the run was aborted at the submit confirmation (${line})`,
+      }).catch((error: unknown) => {
+        host.resolveAttention(error instanceof RunFailure && error.reason === 'aborted' ? 'abort' : 'ended');
+        throw error;
+      });
+      if (!result.cleared) {
+        host.resolveAttention('timeout');
+        throw new RunFailure('paused', `agent step "${request.label}" of flow "${request.flow}" asked to submit ${line}, and nobody allowed it within the guard timeout`);
+      }
+      host.resolveAttention('cleared');
+    } finally {
+      lease.release();
+    }
+  }
+
   /**
    * Hold the user's attention: focus the window, notify, show the banner, and
    * wait until `check` clears, Continue re-checks at once, Abort ends the run,
@@ -642,6 +682,8 @@ export class SequenceRun {
     lease: AttentionLease;
     notify: string;
     check: (info: PageInfo) => Promise<unknown>;
+    /** Clear on the first Continue instead of re-checking. */
+    clearOnContinue?: boolean;
     settle?: () => Promise<PageInfo>;
     abortMessage: string;
   }): Promise<WaitResult> {
@@ -662,8 +704,10 @@ export class SequenceRun {
     const banner = host.banner;
     try {
       let continued = false;
+      let allowed = false;
       const onContinue = () => {
         continued = true;
+        if (opts.clearOnContinue) allowed = true;
         recheck.trigger();
       };
       const onAbort = () => {
@@ -689,7 +733,8 @@ export class SequenceRun {
         hooks?.onContinue(onContinue);
         hooks?.onAbort(onAbort);
       }
-      return await waitForClear(opts.check, window, {
+      const check = opts.clearOnContinue ? async (info: PageInfo) => (allowed ? null : opts.check(info)) : opts.check;
+      return await waitForClear(check, window, {
         budget,
         signal: waitAbort.signal,
         recheck,

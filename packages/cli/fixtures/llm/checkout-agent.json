@@ -1,0 +1,6 @@
+{
+  "responses": [
+    { "match": "Place order", "reply": { "action": "click", "ref": "e2", "reason": "place the order" } },
+    { "reply": { "action": "done", "reason": "finished" }, "repeat": true }
+  ]
+}

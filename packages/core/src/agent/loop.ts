@@ -3,15 +3,15 @@ import { RunFailure } from '../failure';
 import type { RunWindows } from '../flows/windows';
 import type { ChatMessage, LlmPort, PageInfo, SavedDownload, SerializedNode, Session } from '../ports';
 import { ACTION_HELP, AgentActions, AnswerSchema, invalidAnswerResult, parseAction, type AgentAction } from './actions';
-import { buildOutline, outlineBudget, type Outline } from './outline';
-import type { AgentScope } from '../recipe/schema';
+import { buildOutline, outlineBudget, type Outline, type Secrets } from './outline';
+import type { AgentScope, AgentSubmit } from '../recipe/schema';
 
 /** Consecutive answers that fail the action schema before the loop gives up. */
 export const MAX_INVALID_ANSWERS = 3;
 /** Output tokens assumed for an adapter that does not say. */
 const DEFAULT_OUTPUT_TOKENS = 1024;
 
-export type AgentEnd = 'download' | 'condition' | 'done' | 'done-unmet' | 'gave-up' | 'max-turns' | 'llm-error' | 'invalid-answers' | 'no-llm';
+export type AgentEnd = 'download' | 'condition' | 'ready-to-submit' | 'done' | 'done-unmet' | 'gave-up' | 'max-turns' | 'llm-error' | 'invalid-answers' | 'no-llm';
 
 /** One turn of the loop as the report shows it. */
 export interface AgentTurn {
@@ -24,6 +24,16 @@ export interface AgentTurn {
   reason: string;
   /** First line of the action's result. */
   result: string;
+  /** For an action that would submit: whether the user allowed it, the policy did, or the step stopped before it. */
+  submit?: 'asked' | 'allowed' | 'stopped';
+}
+
+/** What the loop asks the user to allow before an action that would submit. */
+export interface SubmitRequest {
+  /** The action's outline line without its ref, e.g. `button "Place order"`. */
+  line: string;
+  /** The window's URL. */
+  url: string;
 }
 
 export interface AgentReport {
@@ -45,8 +55,14 @@ export interface AgentLoopOptions {
   /** The step's window. */
   session: Session;
   windows: RunWindows;
-  /** The goal with variables substituted. */
+  /** The goal with non-secret variables substituted; secret ones stay placeholders such as `{password}`. */
   goal: string;
+  /** Secret values by placeholder: typed by `fill`, and masked in everything sent to the model. */
+  secrets?: Secrets;
+  /** What happens before an action that would submit. Default `ask`. */
+  submitPolicy?: AgentSubmit;
+  /** For `ask`: resolves once the user allows the submit, throws a `RunFailure` when they abort or nobody answers. Without it, `ask` acts as `stop`. */
+  confirmSubmit?: (request: SubmitRequest) => Promise<void>;
   maxTurns: number;
   until?: 'download' | 'appears' | 'disappears';
   /** How far the model may navigate. Default `page`. */
@@ -86,6 +102,7 @@ export function systemMessage(scope: AgentScope, startUrl: string): string {
     'Answer with exactly one JSON object per turn and nothing else. The valid answers are:',
     ACTION_HELP,
     scopeRule(scope, startUrl),
+    'Text in braces such as {password} is a placeholder for a secret value you cannot see. To type it, use it as the fill value, e.g. {"action":"fill","ref":"e4","value":"{password}"}.',
     'Work toward the goal. When it is reached, answer done. When it cannot be reached, answer give_up.',
   ].join('\n');
 }
@@ -144,11 +161,15 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
     ...(opts.onNavigated ? { onNavigated: opts.onNavigated } : {}),
     stop: () => wantsDownload && downloaded !== null,
     ...(watches ? { condition: holds } : {}),
+    ...(opts.secrets ? { secrets: opts.secrets } : {}),
   });
+  // Without a way to ask the user, asking is stopping: the safe default.
+  const requested = opts.submitPolicy ?? 'ask';
+  const policy: AgentSubmit = requested === 'ask' && !opts.confirmSubmit ? 'stop' : requested;
   const report: AgentReport = { turns: 0, end: 'max-turns', actions: [] };
   const finish = (end: AgentEnd, why?: string): AgentResult => {
     report.end = end;
-    return { ok: end === 'download' || end === 'condition' || end === 'done', report, ...(why ? { why } : {}) };
+    return { ok: end === 'download' || end === 'condition' || end === 'ready-to-submit' || end === 'done', report, ...(why ? { why } : {}) };
   };
   const label = opts.conditionLabel ?? 'the target';
   const unmet = wantsDownload
@@ -169,7 +190,7 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
       const where = `URL: ${await session.url()}\nTitle: ${titleOf(tree)}`;
       const fixed = estimate(system) + estimate(goalText) + estimate(where);
       const contextTokens = llm.contextTokens;
-      const outline = buildOutline(tree, outlineBudget(contextTokens, fixed), estimate);
+      const outline = buildOutline(tree, outlineBudget(contextTokens, fixed), estimate, opts.secrets);
       const messages = conversation(
         goalText,
         exchanges,
@@ -208,7 +229,7 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
       const action = parsed.action;
       const ref = 'ref' in action ? action.ref : undefined;
       const target = ref !== undefined ? outline.line(ref) : undefined;
-      const entry = { action: action.action, ...(ref !== undefined ? { ref } : {}), ...(target !== undefined ? { target } : {}), reason: action.reason };
+      const entry: Omit<AgentTurn, 'turn' | 'result'> = { action: action.action, ...(ref !== undefined ? { ref } : {}), ...(target !== undefined ? { target } : {}), reason: action.reason };
       const answerText = JSON.stringify(compact(action));
 
       if (action.action === 'give_up') {
@@ -233,6 +254,20 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
         continue;
       }
 
+      if (actions.wouldSubmit(action, outline)) {
+        if (policy === 'stop') {
+          note({ ...entry, submit: 'stopped', result: 'stopped before submitting' });
+          return finish('ready-to-submit');
+        }
+        if (policy === 'ask') {
+          await opts.confirmSubmit!({ line: submitLine(action, target), url: await session.url() });
+          if (opts.signal?.aborted) throw new RunFailure('aborted', 'run was interrupted');
+          entry.submit = 'asked';
+        } else {
+          entry.submit = 'allowed';
+        }
+      }
+
       const outcome = await actions.run(action, outline);
       if (wantsDownload && downloaded) {
         note({ ...entry, result: `a download was saved as ${(downloaded as SavedDownload).name}` });
@@ -249,6 +284,13 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
   } finally {
     off();
   }
+}
+
+/** What a submit confirmation names: the target's outline line without its ref, and the key for a press. */
+function submitLine(action: AgentAction, target: string | undefined): string {
+  const line = target?.replace(/^\[e\d+\] /, '');
+  if (action.action === 'press') return line ? `${action.key} on ${line}` : `${action.key} in the field filled last`;
+  return line ?? action.action;
 }
 
 /** The action without its empty `reason`, as the model wrote it. */

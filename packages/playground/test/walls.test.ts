@@ -161,3 +161,46 @@ describe('wallAfterPage', () => {
     expect((await get(pg, '/catalog?wall=login&wallAfterPage=0')).res.status).toBe(302);
   });
 });
+
+describe('checkout and login pages', () => {
+  it('serves /checkout with a POST form and Place order button, leading to /checkout/done (.done)', async () => {
+    const pg = await start();
+    const { res, html } = await get(pg, '/checkout');
+    expect(res.status).toBe(200);
+    const d = doc(html);
+    const form = d.querySelector('form[method="post"]')!;
+    expect(form).not.toBeNull();
+    expect(form.getAttribute('action')).toBe('/checkout');
+    const button = form.querySelector('button[type="submit"]')!;
+    expect(button.textContent).toContain('Place order');
+
+    const postRes = await fetch(`${pg.url}/checkout`, { method: 'POST', redirect: 'manual' });
+    expect(postRes.status).toBe(302);
+    expect(postRes.headers.get('location')).toBe('/checkout/done');
+
+    const done = await get(pg, '/checkout/done');
+    expect(done.res.status).toBe(200);
+    expect(doc(done.html).querySelector('.done')).not.toBeNull();
+  });
+
+  it('serves /login leading to /login/ok on submit, echoing the username', async () => {
+    const pg = await start();
+    const { res, html } = await get(pg, '/login');
+    expect(res.status).toBe(200);
+    const d = doc(html);
+    expect(d.querySelector('input[type="password"][name="password"]')).not.toBeNull();
+
+    const postRes = await fetch(`${pg.url}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: 'alice', password: 'secretpassword', next: '/login/ok' }).toString(),
+    });
+    expect(postRes.status).toBe(302);
+    expect(postRes.headers.get('location')).toBe('/login/ok?user=alice');
+
+    const ok = await get(pg, '/login/ok?user=alice');
+    expect(ok.res.status).toBe(200);
+    expect(doc(ok.html).body.textContent).toContain('alice');
+  });
+});

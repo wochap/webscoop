@@ -7,7 +7,7 @@ import type { Promotion } from '../healing/promote';
 import { isHealed, type HealOutcome, type HealTarget, type Resolver } from '../healing/types';
 import { downloadNameProblem } from '../downloads';
 import { FillUnresolvedError, type ElementRef, type FilePort, type FillOptions, type LlmPort, type PageInfo, type SavedDownload, type Session } from '../ports';
-import { DEFAULT_MAX_TURNS, type Flow, type Recipe, type SelectorCandidate, type Step, type StepKind } from '../recipe/schema';
+import { DEFAULT_MAX_TURNS, type AgentSubmit, type Flow, type Recipe, type SelectorCandidate, type Step, type StepKind } from '../recipe/schema';
 import { fillText, templateVariables } from '../template';
 import { targetPresent, type RunWindows } from './windows';
 
@@ -57,6 +57,19 @@ export interface AwaitUserRequest {
   stillNeeded(): Promise<boolean>;
 }
 
+/** What an `agent` step asks of the runner before an action that would submit: hold the user's attention until they allow it. */
+export interface ConfirmSubmitRequest {
+  flow: string;
+  index: number;
+  /** The step's label, or `<flow>:<index>`. */
+  label: string;
+  /** The step's window, where the banner shows. */
+  window: Session;
+  /** The action's outline line without its ref, e.g. `button "Place order"`. */
+  line: string;
+  url: string;
+}
+
 export interface FlowContext {
   /** Page number the flow runs on. */
   page: number;
@@ -91,6 +104,10 @@ export interface FlowContext {
   onDownloadTaken?: (download: SavedDownload, step: { flow: string; index: number; label?: string }) => void;
   /** The model of an `agent` step, by the step's `llm` entry name. Default: none, so agent steps cannot run. */
   llmFor?: (name?: string) => LlmPort;
+  /** The run's submit policy for every `agent` step, over the steps' own `submit`. */
+  submitPolicy?: AgentSubmit;
+  /** Holds the user's attention until they allow an `agent` step's submit; throws a `RunFailure` on abort or timeout. Default: none, so `ask` stops before the submit. */
+  confirmSubmit?: (request: ConfirmSubmitRequest) => Promise<void>;
   /** Called with each turn an `agent` step takes, as it happens. */
   onAgentTurn?: (step: { flow: string; index: number; label?: string }, turn: AgentTurn) => void;
 }
@@ -344,11 +361,19 @@ async function runAgentStep(recipe: Recipe, flow: string, step: Step, index: num
   const main = session === ctx.windows.main;
   let info: PageInfo | undefined;
   const since = session.downloadMark();
+  // Secret variables stay placeholders in the goal; the loop types their values and masks them.
+  const secretVars = recipe.vars.filter((v) => v.secret);
+  const placeholders = Object.fromEntries(secretVars.map((v) => [v.name, `{${v.name}}`]));
+  const secrets = new Map(secretVars.flatMap((v) => (ctx.vars?.[v.name] !== undefined ? [[`{${v.name}}`, ctx.vars[v.name]!] as const] : [])));
+  const stepLabel = step.label ?? `${flow}:${index}`;
   const result = await runAgent({
     llm,
     session,
     windows: ctx.windows,
-    goal: fillText(step.goal ?? '', recipe.vars, ctx.vars),
+    goal: fillText(step.goal ?? '', recipe.vars, { ...ctx.vars, ...placeholders }),
+    ...(secrets.size > 0 ? { secrets } : {}),
+    submitPolicy: ctx.submitPolicy ?? step.submit ?? 'ask',
+    ...(ctx.confirmSubmit ? { confirmSubmit: (request: { line: string; url: string }) => ctx.confirmSubmit!({ flow, index, label: stepLabel, window: session, ...request }) } : {}),
     maxTurns: step.maxTurns ?? DEFAULT_MAX_TURNS,
     ...(step.until === 'download' ? { until: 'download' as const } : {}),
     ...((step.until === 'appears' || step.until === 'disappears') && step.target

@@ -38,6 +38,7 @@ import {
   tablesOf,
   templateParts,
   type LlmPort,
+  type AgentSubmit,
 } from '@webscoop/core';
 import { browserSettings, proxyNote, resolveHumanize, settingsOptions, type BrowserSettings } from '../browser';
 import { loadConfig, resolveDownloadDir, type Config } from '../config';
@@ -83,6 +84,8 @@ export interface RunCommandOptions {
   interactive?: boolean;
   /** False with `--no-llm`; the entry name with `--llm <name>`. */
   llm?: boolean | string;
+  /** `--submit`: the submit policy of every agent step. */
+  submit?: AgentSubmit;
   /** `--pages`: replaces the recipe's page limit. */
   pages?: number | 'all';
   /** `--max-pages`: cap on `all`. */
@@ -498,7 +501,7 @@ async function pageHelpers(
 }
 
 /** Log what the runner does on stderr: pages, fields that were not plain hits, healing, re-picks, write-back. */
-function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, settings: BrowserSettings, multi = false, quiet = false): void {
+function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, settings: BrowserSettings, multi = false, quiet = false, submitFlag?: AgentSubmit): void {
   const info = infoLog(io, quiet);
   /** Field names carry their table when the recipe has several. */
   const named = (table: string | undefined, name: string) => (multi && table !== undefined ? `${table}.${name}` : name);
@@ -506,6 +509,9 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('page.loaded', (e) => info(`page ${e.page} loaded: ${e.url} (HTTP ${e.status ?? '?'})`));
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   emitter.on('guard.raised', (e) => log(io, `guard ${e.kind} on page ${e.page}: ${e.reason} (${e.url}); waiting for you in the browser window`));
+  emitter.on('attention.needed', (e) => {
+    if (e.reason === 'confirm-submit') log(io, `agent step ${e.label ?? e.flow ?? ''} wants to submit ${e.line ?? 'a form'} (${e.url}); waiting for you to allow it in the browser window`);
+  });
   emitter.on('guard.cleared', (e) => info(`guard ${e.kind} on page ${e.page} cleared after ${seconds(e.waitedMs)}`));
   emitter.on('guard.timeout', (e) => info(`guard ${e.kind} on page ${e.page} timed out after ${seconds(e.waitedMs)}: ${e.url}`));
   emitter.on('flow.started', (e) => info(`flow ${e.flow} (${e.kind}) on page ${e.page}${e.window !== undefined ? ` in ${e.window}` : ''}`));
@@ -529,6 +535,10 @@ function logRunEvents(io: CliIo, emitter: RunEmitter, profile: ResolvedProfile, 
   emitter.on('repick.requested', (e) => log(io, `waiting for a re-pick of ${named(e.table, e.target)} (was ${selectorText(e.oldSelector)})`));
   emitter.on('agent.action', (e) => {
     const { turn } = e;
+    if (turn.submit === 'stopped') {
+      info(`agent: would submit ${turn.target ?? turn.action}; stopped (${submitFlag === 'stop' ? '--submit stop' : 'submit: stop'})`);
+      return;
+    }
     info(`agent: ${turn.action}${turn.target ? ` ${turn.target}` : ''}${turn.reason ? ` (${turn.reason})` : ''}`);
   });
   emitter.on('agent.ended', (e) => {
@@ -610,7 +620,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
 
   try {
     const emitter = new RunEmitter();
-    logRunEvents(io, emitter, profile, settings, tables.length > 1, opts.quiet);
+    logRunEvents(io, emitter, profile, settings, tables.length > 1, opts.quiet, opts.submit);
     hooks.attach(emitter, { run: true, browser: false });
     job.watch?.(emitter);
     emitter.on('row.emitted', (e) => sink.row(e.table, e.row));
@@ -640,6 +650,7 @@ export async function executeRun(io: CliIo, prepared: Prepared, opts: RunCommand
       signal: controller.signal,
       healing,
       ...(llmFor ? { llmFor } : {}),
+      ...(opts.submit ? { submitPolicy: opts.submit } : {}),
       pagination: paginationFromFlags(opts),
       guards: guardsFromFlags(io, opts, DEFAULT_GUARD_TIMEOUT_MS, banner, prepared.config.notify),
       flows: flowsFromFlags(opts),
@@ -689,6 +700,8 @@ export interface TestCommandOptions {
   json?: boolean;
   /** False with `--no-llm`; the entry name with `--llm <name>`. */
   llm?: boolean | string;
+  /** `--submit`: the submit policy of every agent step. */
+  submit?: AgentSubmit;
   /** `--pages`: walk more than the first page. */
   pages?: number | 'all';
   maxPages?: number;
@@ -804,7 +817,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
   });
   try {
     const emitter = new RunEmitter();
-    logRunEvents(io, emitter, profile, settings);
+    logRunEvents(io, emitter, profile, settings, false, false, opts.submit);
     hooks.attach(emitter, { run: true, browser: false });
     job.watch?.(emitter);
     const { banner, bypassCSP } = await pageHelpers(io, prepared, opts);
@@ -821,6 +834,7 @@ export async function executeTest(io: CliIo, prepared: Prepared, opts: TestComma
       signal: controller.signal,
       healing: { enabled: true, writeBack: false, resolvers: [modelRung(io, config, opts)] },
       ...(llmFor ? { llmFor } : {}),
+      ...(opts.submit ? { submitPolicy: opts.submit } : {}),
       guards: guardsFromFlags(io, opts, 0, banner, config.notify),
       flows: flowsFromFlags(opts),
       openOptions: { ...(settings.humanize ? { humanize: true } : {}), ...(bypassCSP ? { bypassCSP: true } : {}), downloadDir: prepared.downloadDir },

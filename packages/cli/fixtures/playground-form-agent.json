@@ -12,6 +12,7 @@
           "kind": "agent",
           "goal": "Send the contact form as Ada, email ada@example.test, with the message Hello.",
           "scope": "site",
+          "submit": "allow",
           "until": "appears",
           "target": { "selectors": [{ "strategy": "css", "value": ".thanks", "stability": "medium" }] },
           "maxTurns": 8

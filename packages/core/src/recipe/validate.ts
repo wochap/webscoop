@@ -217,7 +217,7 @@ function flowErrors(input: Record<string, unknown>, declared: ReadonlySet<string
         if (!watches && step.target !== undefined) errors.push({ path: at('target'), message: `${what} declares a target; an agent step has a target only with until appears or disappears` });
         if (typeof step.goal !== 'string' || step.goal.trim() === '') errors.push({ path: at('goal'), message: `${what} needs a goal` });
       } else {
-        for (const key of ['goal', 'llm', 'maxTurns', 'scope'] as const) {
+        for (const key of ['goal', 'llm', 'maxTurns', 'scope', 'submit'] as const) {
           if (step[key] !== undefined) errors.push({ path: at(key), message: `${what} sets ${key}, which only agent steps take` });
         }
       }

@@ -126,6 +126,22 @@ describe('HookRunner', () => {
     expect((await readFile(log, 'utf8')).trim().split('\n')).toEqual(['browser.started 7', 'browser.closed 7']);
   });
 
+  it('fires attention.needed for a submit confirmation with the line and label in the details', async () => {
+    const dir = await tempDir();
+    const log = join(dir, 'log');
+    const t = runner({ 'attention.needed': `{ echo "$WEBSCOOP_REASON $WEBSCOOP_URL"; cat; echo; } >> ${log}`, 'attention.resolved': `{ echo "$WEBSCOOP_REASON"; cat; echo; } >> ${log}` });
+    const emitter = new RunEmitter();
+    t.hookRunner.attach(emitter, { run: true });
+    emitter.emit('attention.needed', { reason: 'confirm-submit', page: 1, url: 'https://shop.test/checkout', label: 'Order', flow: 'buy', line: 'button "Place order"' });
+    emitter.emit('attention.resolved', { reason: 'confirm-submit', outcome: 'cleared' });
+    await t.hookRunner.drain();
+    const [head, payload, resolved, resolvedPayload] = (await readFile(log, 'utf8')).split('\n');
+    expect(head).toBe('confirm-submit https://shop.test/checkout');
+    expect(JSON.parse(payload!)).toMatchObject({ event: 'attention.needed', reason: 'confirm-submit', label: 'Order', flow: 'buy', line: 'button "Place order"' });
+    expect(resolved).toBe('confirm-submit');
+    expect(JSON.parse(resolvedPayload!)).toMatchObject({ event: 'attention.resolved', outcome: 'cleared' });
+  });
+
   it('fires download.saved with WEBSCOOP_FILE and the file details', async () => {
     const dir = await tempDir();
     const log = join(dir, 'log');

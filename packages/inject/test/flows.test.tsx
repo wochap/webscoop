@@ -160,7 +160,7 @@ describe('flows section', () => {
     const agent = step('agent', { target: undefined, goal: 'x', until: 'download', count: null });
     const p = renderPanel(baseState(withFlows([setup([agent])])));
     fireEvent.click(p.q('step-edit-toggle')!);
-    const hints: Record<string, string> = { goal: 'goal', entry: 'Name of an entry under llms', turns: 'max-turns', until: 'cannot be checked', value: 'File name for the saved download', window: 'Which tab', optional: 'missing-required', scope: 'start page' };
+    const hints: Record<string, string> = { goal: 'secret variables stay placeholders', entry: 'Name of an entry under llms', turns: 'max-turns', until: 'cannot be checked', value: 'File name for the saved download', window: 'Which tab', optional: 'missing-required', scope: 'start page', submit: 'submit a form or press Pay' };
     for (const [name, text] of Object.entries(hints)) {
       const hint = p.q(`step-hint-${name}`)!;
       expect(hint.getAttribute('aria-label'), name).toContain(text);
@@ -229,21 +229,36 @@ describe('flows section', () => {
     expect(hint('scope')).toContain('page: the agent stays on its start page');
     expect(hint('scope')).toContain('may submit forms');
     expect(hint('scope')).toContain('popups are closed');
+    expect(hint('submit')).toContain('pauses for you');
+    expect(hint('submit')).toContain('allow goes ahead');
+    expect(hint('submit')).toContain('stop ends the step there');
   });
 
-  it('warns while typing a secret variable into the goal, without blocking the save', () => {
+  it('shows an info note while typing a secret variable into the goal, without blocking the save', () => {
     const agent = step('agent', { target: undefined, goal: 'x', count: null });
     const p = renderPanel(baseState(withFlows([setup([agent])], { vars: [{ name: 'password', value: '', secret: true }, { name: 'year', value: '2024' }] })));
     fireEvent.click(p.q('step-edit-toggle')!);
     const goal = p.q('step-goal') as HTMLTextAreaElement;
-    expect(p.q('step-goal-secret-warn')).toBeNull();
+    expect(p.q('step-goal-secret-note')).toBeNull();
     fireEvent.change(goal, { target: { value: 'Download the report for {year}' } });
-    expect(p.q('step-goal-secret-warn')).toBeNull();
+    expect(p.q('step-goal-secret-note')).toBeNull();
     fireEvent.change(goal, { target: { value: 'Log in with {password}' } });
-    expect(p.q('step-goal-secret-warn')!.textContent).toContain('{password}');
-    expect(p.q('step-goal-secret-warn')!.textContent).toContain('sent to the model');
+    expect(p.q('step-goal-secret-note')!.textContent).toBe('{password} is secret: the model sees only the placeholder and the runner types the value.');
+    expect(p.q('step-goal-secret-note')!.className).toBe('ws-meta');
     fireEvent.blur(goal);
     expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { goal: 'Log in with {password}' } });
+  });
+
+  it('changes the submit policy with segmented control and displays inline text', () => {
+    const agent = step('agent', { target: undefined, goal: 'x', count: null });
+    const p = renderPanel(baseState(withFlows([setup([agent])])));
+    fireEvent.click(p.q('step-edit-toggle')!);
+    expect(p.q('step-agent-submit')).not.toBeNull();
+    expect(p.q('step-agent-submit-text')!.textContent).toBe('pauses for you before a submit');
+    fireEvent.click(p.q('step-agent-submit-allow')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { submit: 'allow' } });
+    fireEvent.click(p.q('step-agent-submit-stop')!);
+    expect(p.sent.at(-1)).toEqual({ kind: 'draft.updateStep', flow: 0, index: 0, patch: { submit: 'stop' } });
   });
 
   it('shows the inline error of an agent step with an empty goal', () => {

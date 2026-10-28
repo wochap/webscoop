@@ -20,8 +20,11 @@ import {
 import { SPA_COOKIE, spaLoggedIn, spaLoginPage, spaPage, spaSession } from './spa';
 import {
   challengePage,
+  checkoutDonePage,
+  checkoutPage,
   HUMAN_COOKIE,
   interstitialPage,
+  loginOkPage,
   loginPage,
   safeNext,
   SESSION_COOKIE,
@@ -502,12 +505,37 @@ export async function startPlayground(opts: PlaygroundOptions = {}): Promise<Pla
     if (url.pathname === '/login') {
       if (method === 'POST') {
         const form = new URLSearchParams(await readBody(req));
-        const next = safeNext(form.get('next') ?? url.searchParams.get('next'));
-        res.writeHead(302, { location: next, 'set-cookie': `${SESSION_COOKIE}=1; Path=/; SameSite=Lax`, 'cache-control': 'no-store' });
+        const username = form.get('username') ?? '';
+        let next = form.get('next') ?? url.searchParams.get('next');
+        if (next === '/login/ok' && username) {
+          next = `/login/ok?user=${encodeURIComponent(username)}`;
+        }
+        res.writeHead(302, {
+          location: safeNext(next),
+          'set-cookie': `${SESSION_COOKIE}=1; Path=/; SameSite=Lax`,
+          'cache-control': 'no-store',
+        });
         return void res.end();
       }
       if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
-      return send(res, 200, loginPage(safeNext(url.searchParams.get('next'))), 'text/html; charset=utf-8');
+      return send(res, 200, loginPage(safeNext(url.searchParams.get('next') ?? '/login/ok')), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/login/ok') {
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      const user = url.searchParams.get('user') ?? url.searchParams.get('username') ?? '';
+      return send(res, 200, loginOkPage(user), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/checkout') {
+      if (method === 'POST') {
+        res.writeHead(302, { location: '/checkout/done', 'cache-control': 'no-store' });
+        return void res.end();
+      }
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      return send(res, 200, checkoutPage(), 'text/html; charset=utf-8');
+    }
+    if (url.pathname === '/checkout/done') {
+      if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed');
+      return send(res, 200, checkoutDonePage(), 'text/html; charset=utf-8');
     }
     if (url.pathname === '/logout') {
       res.writeHead(302, { location: '/', 'set-cookie': `${SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`, 'cache-control': 'no-store' });

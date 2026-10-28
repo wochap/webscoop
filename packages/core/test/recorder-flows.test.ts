@@ -619,4 +619,16 @@ describe('agent steps in the recorder', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain('no language model');
   });
+
+  it('replays an agent step that stops before submit and reports "stopped before submit"', async () => {
+    const llm = new MockLlm({ responses: [{ reply: JSON.stringify({ action: 'click', ref: 'e1', reason: 'order' }) }] });
+    const dom = h('html', {}, h('body', {}, h('form', { method: 'post' }, h('button', { id: 'place' }, 'Place order'))));
+    const draft = emptyDraft({ name: 'checkout', url: 'https://shop.test/checkout', vars: [] });
+    const t = await harness(dom, draft, 'https://shop.test/checkout', {}, {}, { llmFor: () => llm });
+    await t.send({ kind: 'draft.addAgentStep' });
+    await t.send({ kind: 'draft.updateStep', index: 0, patch: { goal: 'Place order' } });
+    const result = (await t.send({ kind: 'draft.replayStep', index: 0 })) as HostMessage & { kind: 'step.replayResult' };
+    expect(result).toMatchObject({ ok: true, message: 'stopped before submit' });
+    expect(t.browser.clicks).toHaveLength(0);
+  });
 });

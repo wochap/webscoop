@@ -121,7 +121,7 @@ function loadMock(mock: string, cwd: string): LlmPort {
     throw new CliError(`WEBSCOOP_LLM_MOCK: cannot read ${path}: ${(error as Error).message}`);
   }
   try {
-    return mockFromScript(json);
+    return mockFromScript(json, cwd);
   } catch (error) {
     throw new CliError(`WEBSCOOP_LLM_MOCK: invalid script ${path}: ${(error as Error).message}`);
   }

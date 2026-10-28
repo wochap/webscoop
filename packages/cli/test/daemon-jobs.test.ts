@@ -319,6 +319,69 @@ describe('await-user in the daemon', () => {
   });
 });
 
+describe('submit confirmations in the daemon', () => {
+  const checkoutRecipe = {
+    flows: [{ name: 'buy', steps: [{ kind: 'agent' as const, goal: 'Place the order', label: 'Order' }] }],
+    sequence: [{ flow: 'buy' }, { extract: 'items' }],
+  };
+  const checkout = () => ({
+    dom: h('html', {}, h('body', {}, h('form', { method: 'post' }, h('button', { id: 'place' }, 'Place order')))),
+    on: { click: (el: { attrs: Record<string, string> } | null) => (el?.attrs.id === 'place' ? shopCards(1) : undefined) },
+  });
+  async function home(hooks: Record<string, string> = {}) {
+    const dir = await shopHome({ notify: false, hooks }, checkoutRecipe);
+    const mock = join(dir, 'mock.json');
+    await import('node:fs/promises').then((fs) => fs.writeFile(mock, JSON.stringify([{ reply: { action: 'click', ref: 'e1' } }, { reply: { action: 'done' } }])));
+    return { dir, env: { WEBSCOOP_LLM_MOCK: mock } };
+  }
+
+  it('prompts Allow submit, keeps waiting on Enter, and allows with webscoop attention continue', async () => {
+    const out = join(tmpdir(), `webscoop-submit-${process.pid}-${Date.now()}`);
+    const { dir, env } = await home({ 'attention.needed': `cat > ${out}` });
+    const tty = fakeTty();
+    const daemon = sharedDaemon();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: checkout() });
+    const io = client(dir, daemon, { browser, tty, env });
+    const run = main(['run', 'shop', '--guard-timeout', '600000', '--quiet'], io);
+    await until(() => tty.output().includes('Allow submit button "Place order"? [y/N/a]'));
+    tty.type('');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(browser.clicks).toEqual([]);
+    expect(tty.output().match(/Allow submit/g)).toHaveLength(1);
+    expect(await main(['attention', 'continue'], client(dir, daemon))).toBe(ExitCode.Ok);
+    expect(await run).toBe(ExitCode.Ok);
+    expect(browser.clicks).toHaveLength(1);
+    expect(JSON.parse(io.out())).toHaveLength(1);
+    await until(() => existsSync(out) && statSync(out).size > 0);
+    expect(JSON.parse(await readFile(out, 'utf8'))).toMatchObject({ event: 'attention.needed', reason: 'confirm-submit', url: SHOP_PAGE, label: 'Order', line: 'button "Place order"' });
+  });
+
+  it('allows on y at the prompt', async () => {
+    const { dir, env } = await home();
+    const tty = fakeTty();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: checkout() });
+    const io = client(dir, sharedDaemon(), { browser, tty, env });
+    const run = main(['run', 'shop', '--guard-timeout', '600000'], io);
+    await until(() => tty.output().includes('Allow submit'));
+    tty.type('y');
+    expect(await run).toBe(ExitCode.Ok);
+    expect(browser.clicks).toHaveLength(1);
+  });
+
+  it('ends the run with aborted on webscoop attention abort, without submitting', async () => {
+    const { dir, env } = await home();
+    const daemon = sharedDaemon();
+    const browser = new FakeBrowser({ [SHOP_PAGE]: checkout() });
+    const io = client(dir, daemon, { browser, env });
+    const run = main(['run', 'shop', '--guard-timeout', '600000'], io);
+    await until(() => io.err().includes('Place order'));
+    expect(await main(['attention', 'abort'], client(dir, daemon))).toBe(ExitCode.Ok);
+    expect(await run).toBe(ExitCode.Error);
+    expect(io.err()).toContain('run failed (aborted)');
+    expect(browser.clicks).toEqual([]);
+  });
+});
+
 describe('hooks in the daemon', () => {
   it('gives run and attention hooks the environment of the submitting command', async () => {
     const dir = await shopHome();

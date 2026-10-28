@@ -12,6 +12,7 @@ const KIND_LABEL: Record<GuardContextView['kind'], string> = {
   captcha: 'Bot check',
   'zero-fields': 'Nothing found',
   'await-user': 'Your turn',
+  'confirm-submit': 'confirm-submit',
 };
 
 const KIND_HINT: Record<GuardContextView['kind'], string> = {
@@ -19,10 +20,16 @@ const KIND_HINT: Record<GuardContextView['kind'], string> = {
   captcha: 'Solve the check in this window; the run resumes by itself.',
   'zero-fields': 'Get past the interstitial in this window; the run resumes by itself.',
   'await-user': 'Do this in the browser; the run continues by itself once it is done.',
+  'confirm-submit': 'Allow the agent to submit, or abort the run.',
 };
 
 /** The banner's headline: the step's label for an await-user step, else the guard kind. */
-const headline = (context: GuardContextView) => (context.kind === 'await-user' ? (context.label ?? KIND_LABEL['await-user']) : KIND_LABEL[context.kind]);
+const headline = (context: GuardContextView) =>
+  context.kind === 'confirm-submit'
+    ? 'Allow the agent to submit?'
+    : context.kind === 'await-user'
+      ? (context.label ?? KIND_LABEL['await-user'])
+      : KIND_LABEL[context.kind];
 
 /** The step target as the selector chip writes it, keeping `#` and `.` so ids and classes read as selectors. */
 function targetText(target: NonNullable<GuardContextView['target']>): string {
@@ -37,9 +44,13 @@ export function clockMinutes(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/** The hint under the headline: an await-user step names its condition, else the kind's generic hint. */
+/** The hint under the headline: an await-user step names its condition, a submit confirmation names the line and URL, else the kind's generic hint. */
 export function hint(context: GuardContextView): string {
   if (context.cold) return 'webscoop sends no request to this site meanwhile; clear the check here to warm the recipe up.';
+  if (context.kind === 'confirm-submit') {
+    const line = context.label ?? context.reason;
+    return line ? `${line} · ${context.url}` : context.url;
+  }
   if (context.kind === 'await-user' && context.target && context.until) return `Continues when ${targetText(context.target)} ${context.until}.`;
   return KIND_HINT[context.kind];
 }
@@ -82,11 +93,15 @@ export function GuardBanner({
   const banner = (
     <div id="ws-guard" data-ws="guard-banner" data-kind={context.kind} {...(context.cold ? { 'data-cold': 'true' } : {})} role="alert">
       <span className="ws-badge ws-tone-warn" data-ws="guard-kind">
-        {context.kind === 'await-user' ? 'await-user' : KIND_LABEL[context.kind]}
+        {context.kind === 'await-user' ? 'await-user' : context.kind === 'confirm-submit' ? 'confirm-submit' : KIND_LABEL[context.kind]}
       </span>
       <span className="ws-col ws-spacer ws-guard-text">
         <span className="ws-title ws-ellipsis" data-ws="guard-reason">
-          {context.cold ? `Cold until ${clockMinutes(context.deadline)}` : context.kind === 'await-user' ? headline(context) : `Page ${context.page}: ${context.reason}`}
+          {context.cold
+            ? `Cold until ${clockMinutes(context.deadline)}`
+            : context.kind === 'await-user' || context.kind === 'confirm-submit'
+              ? headline(context)
+              : `Page ${context.page}: ${context.reason}`}
         </span>
         <span className="ws-meta ws-ellipsis" data-ws="guard-hint" title={hint(context)}>
           {hint(context)}
@@ -98,8 +113,14 @@ export function GuardBanner({
           Abort
         </button>
       )}
-      <button type="button" className="ws-btn ws-btn-primary" onClick={onContinue} data-ws="guard-continue" title="Check again now">
-        Continue
+      <button
+        type="button"
+        className="ws-btn ws-btn-primary"
+        onClick={onContinue}
+        data-ws="guard-continue"
+        title={context.kind === 'confirm-submit' ? 'Allow the agent to submit' : 'Check again now'}
+      >
+        {context.kind === 'confirm-submit' ? 'Allow' : 'Continue'}
       </button>
     </div>
   );
@@ -110,7 +131,15 @@ export function GuardBanner({
 export function GuardPanel({ context }: { context: GuardContextView }) {
   return (
     <section className="ws-card ws-col" data-ws="guard-panel">
-      <span className="ws-caps">{context.cold ? `Cold until ${clockMinutes(context.deadline)}` : context.kind === 'await-user' ? 'Waiting for you' : 'Run paused'}</span>
+      <span className="ws-caps">
+        {context.cold
+          ? `Cold until ${clockMinutes(context.deadline)}`
+          : context.kind === 'await-user'
+            ? 'Waiting for you'
+            : context.kind === 'confirm-submit'
+              ? 'Confirm submit'
+              : 'Run paused'}
+      </span>
       <span className="ws-title">{headline(context)}</span>
       <span className="ws-meta">{hint(context)}</span>
       <span className="ws-mono-sm ws-ellipsis" title={context.url}>

@@ -2,13 +2,13 @@ import type { Session } from '../ports';
 import type { STEP_UNTILS } from '../recipe/constants';
 import type { GuardKind, Strategy } from '../recipe/schema';
 
-/** What needs the user: a guard kind, or an `await-user` step. */
-export type AttentionKind = GuardKind | 'await-user';
+/** What needs the user: a guard kind, an `await-user` step, or an agent step's submit to allow. */
+export type AttentionKind = GuardKind | 'await-user' | 'confirm-submit';
 
 /** What the interactive banner shows about a guard or an `await-user` step. */
 export interface GuardBannerInfo {
   kind: AttentionKind;
-  /** The `await-user` step's label, shown in place of the guard kind. */
+  /** The `await-user` step's label, shown in place of the guard kind; for `confirm-submit`, the action's outline line. */
   label?: string;
   /** The `await-user` step's condition: whether the run waits for `target` to appear or disappear. */
   until?: (typeof STEP_UNTILS)[number];

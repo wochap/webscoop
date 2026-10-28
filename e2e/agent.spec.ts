@@ -1,7 +1,8 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RecipeInput } from '@webscoop/core';
-import { expect, FORM_AGENT_RECIPE, hasDisplay, LLM_FIXTURES, PDF_AGENT_RECIPE, test } from './fixtures';
+import { CHECKOUT_AGENT_RECIPE, e2eConfig, expect, FORM_AGENT_RECIPE, hasDisplay, LLM_FIXTURES, LOGIN_AGENT_RECIPE, PDF_AGENT_RECIPE, test } from './fixtures';
 
 test.skip(!hasDisplay, 'the CLI needs WAYLAND_DISPLAY or DISPLAY');
 
@@ -92,4 +93,101 @@ test('fails the same form under page scope because the submit is undone', async 
   expect(result.code, result.stderr).toBe(3);
   expect(result.stderr).toMatch(/agent: send:0 ended: gave-up/);
   expect(result.stderr).toContain('missing-required');
+});
+
+async function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 15_000, intervalMs = 50): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await predicate()) return;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`until timed out after ${timeoutMs} ms`);
+}
+
+async function checkoutSetup(scoop: { writeRecipe(r: RecipeInput): Promise<string>; playground: { port: number } }) {
+  const recipe = JSON.parse(await readFile(CHECKOUT_AGENT_RECIPE, 'utf8')) as RecipeInput;
+  await scoop.writeRecipe(recipe);
+  return `http://127.0.0.1:${scoop.playground.port}/checkout`;
+}
+
+async function loginSetup(scoop: { writeRecipe(r: RecipeInput): Promise<string>; playground: { port: number } }) {
+  const recipe = JSON.parse(await readFile(LOGIN_AGENT_RECIPE, 'utf8')) as RecipeInput;
+  await scoop.writeRecipe(recipe);
+  return `http://127.0.0.1:${scoop.playground.port}/login`;
+}
+
+test('stops before submit on checkout with --submit stop and ends ok with ready-to-submit', async ({ scoop }) => {
+  const url = await checkoutSetup(scoop);
+  const result = await scoop.run(['run', 'playground-checkout-agent', '--var', `url=${url}`, '--submit', 'stop'], mock('checkout-agent'));
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toMatch(/agent: would submit \[e\d+\] button "Place order"; stopped \(--submit stop\)/);
+  expect(result.stderr).toMatch(/agent: checkout:0 ended: ready-to-submit after 1 turn/);
+});
+
+test('allows submit on checkout with --submit allow and reaches the condition', async ({ scoop }) => {
+  const url = await checkoutSetup(scoop);
+  const result = await scoop.run(['run', 'playground-checkout-agent', '--var', `url=${url}`, '--submit', 'allow'], mock('checkout-agent'));
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toMatch(/agent: click \[e\d+\] button "Place order"/);
+  expect(result.stderr).toMatch(/agent: checkout:0 ended: condition/);
+});
+
+test('logs in with a secret password and the mock request log has no secret value', async ({ scoop }) => {
+  const url = await loginSetup(scoop);
+  const logFile = join(scoop.home, 'mock-log.jsonl');
+  const scriptPath = join(scoop.home, 'login-script.json');
+  await writeFile(
+    scriptPath,
+    JSON.stringify({
+      log: logFile,
+      responses: [
+        { match: 'Username', reply: { action: 'fill', ref: 'e2', value: 'alice', reason: 'username' } },
+        { match: 'Password', reply: { action: 'fill', ref: 'e3', value: '{password}', reason: 'password' } },
+        { match: 'Sign in', reply: { action: 'click', ref: 'e4', reason: 'submit' } },
+        { reply: { action: 'done', reason: 'done' }, repeat: true },
+      ],
+    }),
+  );
+  const secret = 'supersecret_token_12345';
+  const result = await scoop.run(['run', 'playground-login-agent', '--no-guards', '--var', `url=${url}`, '--var', `password=${secret}`], {
+    WEBSCOOP_LLM_MOCK: scriptPath,
+    WEBSCOOP_LLM_ENDPOINT: undefined,
+    WEBSCOOP_LLM_MODEL: undefined,
+  });
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toMatch(/agent: login:0 ended: condition/);
+  expect(existsSync(logFile)).toBe(true);
+  const logContent = await readFile(logFile, 'utf8');
+  expect(logContent).not.toContain(secret);
+  expect(logContent).toContain('{password}');
+});
+
+test('pauses for confirm-submit under ask policy, fires hook, and continues on attention continue', async ({ scoop }) => {
+  const url = await checkoutSetup(scoop);
+  const hookLog = join(scoop.home, 'hook-attention.json');
+  await writeFile(
+    join(scoop.home, 'config.json'),
+    `${JSON.stringify(
+      e2eConfig({
+        hooks: {
+          'attention.needed': `cat > ${hookLog}`,
+        },
+      }),
+    )}\n`,
+  );
+  const run = scoop.spawn(['run', 'playground-checkout-agent', '--var', `url=${url}`, '--guard-timeout', '600000'], mock('checkout-agent'));
+  await until(() => existsSync(hookLog) && run.err().includes('wants to submit'));
+  const hookData = JSON.parse(await readFile(hookLog, 'utf8'));
+  expect(hookData).toMatchObject({
+    event: 'attention.needed',
+    reason: 'confirm-submit',
+    label: 'checkout:0',
+  });
+  expect(hookData.line).toMatch(/button "Place order"/);
+  const continueResult = await scoop.run(['attention', 'continue']);
+  expect(continueResult.code).toBe(0);
+  const result = await run.done;
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stderr).toMatch(/agent: click \[e\d+\] button "Place order"/);
+  expect(result.stderr).toMatch(/agent: checkout:0 ended: condition/);
 });

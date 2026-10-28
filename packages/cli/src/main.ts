@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { ReadStream, WriteStream } from 'node:tty';
+import { AGENT_SUBMIT } from '@webscoop/core';
 import { Argument, Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { benchCommand, type BenchCommandOptions } from './commands/bench';
 import { browserCommand, type BrowserCommandOptions } from './commands/browser';
@@ -89,6 +90,13 @@ function pdfOption(command: Command): Command {
   return command.addOption(new Option('--pdf <mode>', 'PDF handling, replacing the recipe and config (default: download)').choices(['download', 'view']));
 }
 
+/** `--submit <policy>`: what agent steps do before an action that would submit, over each step's own `submit`. */
+function submitOption(command: Command): Command {
+  return command.addOption(
+    new Option('--submit <policy>', 'before an agent step submits a form or presses Pay, Order, Delete, Send...: ask pauses for you, allow goes ahead, stop ends the step there (dry run); replaces each step\'s submit').choices([...AGENT_SUBMIT]),
+  );
+}
+
 /** `--llm <name>` and `--no-llm`, which share the `llm` value and may not be passed together. */
 function llmOptions(command: Command, noLlmHelp: string): Command {
   const seen = new Set<string>();
@@ -139,7 +147,7 @@ export function buildProgram(io: CliIo, setCode: (code: Code) => void): Command 
     })
     .showHelpAfterError('(run webscoop --help for usage)');
 
-  llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('run')))), 'never ask the language model to locate a field, whatever the config and recipe say')
+  submitOption(llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('run')))), 'never ask the language model to locate a field, whatever the config and recipe say'))
     .description('run a recipe and print the extracted rows')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])
@@ -216,7 +224,7 @@ working selector first (unless --no-save).`,
     )
     .action(async (recipe: string, opts: RunCommandOptions) => setCode(await runCommand(io, recipe, opts)));
 
-  llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('test')))), 'never ask the language model to locate a field')
+  submitOption(llmOptions(humanizeOptions(pdfOption(proxyOptions(program.command('test')))), 'never ask the language model to locate a field'))
     .description('check a recipe on its first page: heal without saving and print each field\'s status')
     .argument('<recipe>', 'recipe name in the recipes directory, or a path to a recipe file')
     .option('--var <name=value>', 'set a URL template variable (repeatable)', collect, [])

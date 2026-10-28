@@ -43,6 +43,24 @@ export interface Outline {
   find(text: string): string[];
 }
 
+/** Secret values by placeholder, e.g. `{password}` → `hunter2`. */
+export type Secrets = ReadonlyMap<string, string>;
+
+/**
+ * Replaces every secret value in a text with its placeholder, longest value
+ * first so a secret containing another is masked whole. The identity when
+ * there are no secrets.
+ */
+export function masker(secrets: Secrets | undefined): (text: string) => string {
+  const pairs = [...(secrets ?? new Map<string, string>())].filter(([, value]) => value.length > 0).sort((a, b) => b[1].length - a[1].length);
+  if (pairs.length === 0) return (text) => text;
+  return (text) => {
+    let out = text;
+    for (const [placeholder, value] of pairs) out = out.split(value).join(placeholder);
+    return out;
+  };
+}
+
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`);
 const quote = (text: string) => text.replace(/"/g, "'");
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -93,7 +111,12 @@ function textOf(node: AnnotatedNode): string {
   return squash(parts.join(' '));
 }
 
-function render(ref: string, node: AnnotatedNode, group: Group): { line: string; haystack: string } {
+/** The name a control is known by: its accessible name, else its text. */
+export function accessibleName(node: AnnotatedNode): string {
+  return nameOf(node) || textOf(node);
+}
+
+function render(ref: string, node: AnnotatedNode, group: Group, mask: (text: string) => string): { line: string; haystack: string } {
   let role = group === 'text' ? 'text' : (roleOf(node) ?? (isHeading(node) ? 'heading' : node.tag));
   if (group === 'heading') role = 'heading';
   if (node.tag === 'input' && group === 'interactive') {
@@ -103,15 +126,19 @@ function render(ref: string, node: AnnotatedNode, group: Group): { line: string;
   }
   let name = group === 'text' ? directText(node) : group === 'heading' ? (nameOf(node) || textOf(node)) : nameOf(node);
   if (group === 'interactive' && !name && node.tag === 'a') name = textOf(node);
-  name = squash(name);
+  name = mask(squash(name));
   const extras: string[] = [];
   const haystack = [name];
   if (node.tag === 'a' && node.attrs.href !== undefined) {
-    extras.push(`href=${node.attrs.href}`);
-    haystack.push(node.attrs.href);
+    const href = mask(node.attrs.href);
+    extras.push(`href=${href}`);
+    haystack.push(href);
   }
   if (group === 'interactive' && (node.tag === 'input' || node.tag === 'textarea') && role === 'textbox') {
-    extras.push(`value="${quote(clip(squash(node.attrs.value ?? ''), OUTLINE_VALUE_MAX))}"`);
+    const value = squash(node.attrs.value ?? '');
+    // A password never reaches the model, whatever its value.
+    const shown = node.tag === 'input' && node.attrs.type === 'password' && value !== '' ? '***' : mask(value);
+    extras.push(`value="${quote(clip(shown, OUTLINE_VALUE_MAX))}"`);
   }
   if (group === 'interactive' && (role === 'checkbox' || role === 'radio') && 'checked' in node.attrs) extras.push('checked');
   const head = `[${ref}] ${role}`;
@@ -120,11 +147,11 @@ function render(ref: string, node: AnnotatedNode, group: Group): { line: string;
 }
 
 /** The elements an outline keeps, in document order, with refs `e1`, `e2`, ... */
-function collect(root: AnnotatedNode): Entry[] {
+function collect(root: AnnotatedNode, mask: (text: string) => string): Entry[] {
   const entries: Entry[] = [];
   const add = (node: AnnotatedNode, group: Group) => {
     const ref = `e${entries.length + 1}`;
-    entries.push({ ref, node, group, ...render(ref, node, group) });
+    entries.push({ ref, node, group, ...render(ref, node, group, mask) });
   };
   const walk = (node: AnnotatedNode, insideInteractive: boolean) => {
     const container = node.tag === 'html' || node.tag === 'body';
@@ -146,11 +173,12 @@ function collect(root: AnnotatedNode): Entry[] {
  * and text-bearing element, in document order, each with a ref `e<n>` that is
  * the same on an unchanged page. Lines beyond `budgetTokens` are left out,
  * text first, then headings, then interactive elements, and a final line says
- * how many.
+ * how many. Secret values in names, hrefs, and values are shown as their
+ * placeholders, and a password input's value as `***`.
  */
-export function buildOutline(tree: SerializedNode, budgetTokens: number, estimate: (text: string) => number): Outline {
+export function buildOutline(tree: SerializedNode, budgetTokens: number, estimate: (text: string) => number, secrets?: Secrets): Outline {
   if (tree.type !== 'element') return emptyOutline();
-  const entries = collect(annotate(tree as SerializedElement));
+  const entries = collect(annotate(tree as SerializedElement), masker(secrets));
   const trailer = (n: number) => `... ${n} more lines; use find`;
   const room = Math.max(0, budgetTokens - estimate(trailer(entries.length)) - 1);
   const keep = new Set<Entry>();

@@ -22,11 +22,13 @@ export class MockLlm implements LlmPort {
   readonly maxOutputTokens?: number;
   readonly requests: MockRequest[] = [];
   private readonly responses: MockResponse[];
+  private readonly onRequest?: (req: MockRequest) => void;
 
-  constructor(opts: { responses: MockResponse[]; contextTokens?: number; maxOutputTokens?: number }) {
+  constructor(opts: { responses: MockResponse[]; contextTokens?: number; maxOutputTokens?: number; onRequest?: (req: MockRequest) => void }) {
     this.responses = [...opts.responses];
     this.contextTokens = opts.contextTokens ?? DEFAULT_CONTEXT_TOKENS;
     if (opts.maxOutputTokens !== undefined) this.maxOutputTokens = opts.maxOutputTokens;
+    this.onRequest = opts.onRequest;
   }
 
   estimateTokens(text: string): number {
@@ -41,7 +43,9 @@ export class MockLlm implements LlmPort {
   /** The first unconsumed entry whose predicate accepts the prompt answers; entries without one match anything. */
   async complete(messages: ChatMessage[], opts: CompleteOptions = {}): Promise<string> {
     const prompt = messages.map((m) => m.content).join('\n\n');
-    this.requests.push({ messages: [...messages], opts, prompt });
+    const req = { messages: [...messages], opts, prompt };
+    this.requests.push(req);
+    this.onRequest?.(req);
     const index = this.responses.findIndex((r) => !r.match || r.match(prompt));
     if (index === -1) throw new LlmError('invalid-response', 'the mock has no scripted response for this prompt');
     const entry = this.responses[index]!;

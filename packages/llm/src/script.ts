@@ -1,5 +1,7 @@
+import { appendFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
-import { MockLlm, type MockResponse } from './mock';
+import { MockLlm, type MockRequest, type MockResponse } from './mock';
 
 const Entry = z
   .object({
@@ -24,8 +26,12 @@ const Entry = z
   });
 
 export const MockScriptSchema = z.union([
-  z.array(Entry).transform((responses) => ({ responses, contextTokens: undefined })),
-  z.object({ contextTokens: z.number().int().positive().optional(), responses: z.array(Entry) }),
+  z.array(Entry).transform((responses) => ({ responses, contextTokens: undefined, log: undefined })),
+  z.object({
+    contextTokens: z.number().int().positive().optional(),
+    log: z.string().optional(),
+    responses: z.array(Entry),
+  }),
 ]);
 
 export type MockScript = z.input<typeof MockScriptSchema>;
@@ -45,8 +51,14 @@ export function pickCandidate(prompt: string, pattern: RegExp): number | null {
  * A mock adapter from a JSON script, as used by `WEBSCOOP_LLM_MOCK`. The
  * script is an array of responses, or `{ contextTokens?, responses }`.
  */
-export function mockFromScript(json: unknown): MockLlm {
+export function mockFromScript(json: unknown, cwd = process.cwd()): MockLlm {
   const script = MockScriptSchema.parse(json);
+  const logPath = script.log ? resolve(cwd, script.log) : undefined;
+  const onRequest = logPath
+    ? (req: MockRequest) => {
+        appendFileSync(logPath, JSON.stringify(req) + '\n', 'utf8');
+      }
+    : undefined;
   const responses: MockResponse[] = script.responses.map((e) => {
     const match = e.match;
     const base = { ...(match !== undefined ? { match: (prompt: string) => prompt.includes(match) } : {}), ...(e.repeat ? { repeat: true } : {}) };
@@ -63,5 +75,5 @@ export function mockFromScript(json: unknown): MockLlm {
     }
     return { ...base, reply: typeof e.reply === 'string' ? e.reply : JSON.stringify(e.reply) };
   });
-  return new MockLlm({ responses, ...(script.contextTokens ? { contextTokens: script.contextTokens } : {}) });
+  return new MockLlm({ responses, ...(script.contextTokens ? { contextTokens: script.contextTokens } : {}), onRequest });
 }

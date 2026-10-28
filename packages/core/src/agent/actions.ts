@@ -3,7 +3,8 @@ import type { RunWindows } from '../flows/windows';
 import { FillUnresolvedError, TimeoutError, type ElementRef, type PageInfo, type SavedDownload, type Session } from '../ports';
 import type { AnnotatedNode } from '../selectors/annotated';
 import { refForNode } from '../selectors/xpath';
-import type { Outline } from './outline';
+import { masker, type Outline, type Secrets } from './outline';
+import { classifySubmit, isTextField } from './submit';
 import type { AgentScope } from '../recipe/schema';
 
 /** Longest outer HTML the `html` action answers with. */
@@ -99,7 +100,12 @@ export interface ActionContext {
   stop: () => boolean;
   /** Whether the step's target condition holds, checked once an action has settled and been gated. */
   condition?: () => Promise<boolean>;
+  /** Secret values by placeholder: a `fill` expands them into a text field of the start origin, and `html` masks them. */
+  secrets?: Secrets;
 }
+
+/** The answer to a `fill` whose secret placeholder may not be expanded. */
+export const SECRET_REFUSED = 'A secret placeholder can only be typed into a text field of the starting site; nothing was filled.';
 
 const stripFragment = (url: string) => url.replace(/#.*$/, '');
 
@@ -123,13 +129,17 @@ export function inScope(scope: AgentScope, history: readonly string[], url: stri
 
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
-/** Outer HTML of a snapshot node. */
-export function outerHtml(node: AnnotatedNode): string {
+/** Outer HTML of a snapshot node; with `mask`, attribute values and text are masked and a password input's value is `***`. */
+export function outerHtml(node: AnnotatedNode, mask?: (text: string) => string): string {
+  const password = node.tag === 'input' && node.attrs.type === 'password';
   const attrs = Object.entries(node.attrs)
-    .map(([k, v]) => (v === '' ? ` ${k}` : ` ${k}="${v.replace(/"/g, '&quot;')}"`))
+    .map(([k, raw]) => {
+      const v = !mask ? raw : password && k === 'value' && raw !== '' ? '***' : mask(raw);
+      return v === '' ? ` ${k}` : ` ${k}="${v.replace(/"/g, '&quot;')}"`;
+    })
     .join('');
   if (VOID.has(node.tag)) return `<${node.tag}${attrs}>`;
-  const inner = node.children.map((c) => (c.type === 'text' ? c.text.replace(/</g, '&lt;') : outerHtml(c))).join('');
+  const inner = node.children.map((c) => (c.type === 'text' ? (mask ? mask(c.text) : c.text).replace(/</g, '&lt;') : outerHtml(c, mask))).join('');
   return `<${node.tag}${attrs}>${inner}</${node.tag}>`;
 }
 
@@ -138,8 +148,20 @@ const firstLine = (text: string) => text.split('\n', 1)[0]!;
 /** Executes actions in the step's window and says what came of them. */
 export class AgentActions {
   private previous: string | null = null;
+  /** The field the latest successful `fill` typed into, for Enter without a ref. */
+  private lastFill: AnnotatedNode | undefined;
+  private readonly mask: (text: string) => string;
 
-  constructor(private readonly ctx: ActionContext) {}
+  constructor(private readonly ctx: ActionContext) {
+    this.mask = masker(ctx.secrets);
+  }
+
+  /** Whether the action would submit, as `classifySubmit` decides on the outline it was answered from. */
+  wouldSubmit(action: AgentAction, outline: Outline): boolean {
+    if (action.action !== 'click' && action.action !== 'press') return false;
+    const node = action.ref !== undefined ? outline.node(action.ref) : undefined;
+    return classifySubmit(node, action, this.lastFill);
+  }
 
   async run(action: AgentAction, outline: Outline): Promise<ActionResult> {
     switch (action.action) {
@@ -150,7 +172,7 @@ export class AgentActions {
       case 'html': {
         const node = outline.node(action.ref);
         if (!node) return { text: staleRef(action.ref) };
-        const html = outerHtml(node);
+        const html = outerHtml(node, this.mask);
         return { text: html.length > HTML_MAX ? `${html.slice(0, HTML_MAX)}… (cut at ${HTML_MAX} characters)` : html };
       }
       case 'wait':
@@ -176,12 +198,18 @@ export class AgentActions {
     this.previous = key;
     const refName = action.action === 'scroll' ? undefined : action.ref;
     let target: ElementRef | undefined;
+    let node: AnnotatedNode | undefined;
     if (refName !== undefined) {
-      const node = outline.node(refName);
+      node = outline.node(refName);
       if (!node) return { text: staleRef(refName) };
       const found = await refForNode(session, node).catch(() => null);
       if (!found) return { text: staleRef(refName) };
       target = found;
+    }
+    let typed = action.action === 'fill' ? action.value : '';
+    if (action.action === 'fill' && this.hasSecret(action.value)) {
+      if (!isTextField(node!) || originOf(await session.url()) !== originOf(this.ctx.history[0]!)) return { text: SECRET_REFUSED };
+      typed = this.expand(action.value);
     }
 
     const parts: string[] = [];
@@ -200,7 +228,8 @@ export class AgentActions {
             parts.push(`Clicked ${refName}.`);
             break;
           case 'fill':
-            await session.fill(target!, action.value, { timeoutMs: this.ctx.timeoutMs });
+            await session.fill(target!, typed, { timeoutMs: this.ctx.timeoutMs });
+            this.lastFill = node;
             parts.push(`Filled ${refName}.`);
             break;
           case 'press':
@@ -214,7 +243,7 @@ export class AgentActions {
             break;
         }
       } catch (error) {
-        const message = firstLine(error instanceof Error ? error.message : String(error));
+        const message = this.mask(firstLine(error instanceof Error ? error.message : String(error)));
         return { text: `${error instanceof FillUnresolvedError ? 'Found no matching option' : 'The action failed'}: ${message}` };
       }
       if (!session.isClosed()) {
@@ -271,6 +300,18 @@ export class AgentActions {
     if (changes === 0) parts.push('The URL did not change; see the outline for what the page shows now.');
     if (await this.ctx.condition?.()) return { text: parts.join(' '), stopped: true };
     return { text: parts.join(' ') };
+  }
+
+  private hasSecret(value: string): boolean {
+    for (const placeholder of this.ctx.secrets?.keys() ?? []) if (value.includes(placeholder)) return true;
+    return false;
+  }
+
+  /** The value with every secret placeholder replaced by its value. */
+  private expand(value: string): string {
+    let out = value;
+    for (const [placeholder, secret] of this.ctx.secrets ?? []) out = out.split(placeholder).join(secret);
+    return out;
   }
 
   /** Append an in-scope document, dropping the oldest above the start URL past the cap. */

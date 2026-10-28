@@ -209,7 +209,7 @@ export interface RepickInfo {
 }
 
 /** Why a run needs the user in the browser. */
-export type AttentionReason = 'guard' | 'repick' | 'await-user';
+export type AttentionReason = 'guard' | 'repick' | 'await-user' | 'confirm-submit';
 
 /** How an attention need ended: the guard cleared or timed out (or the `await-user` condition held), the re-pick was answered, or the run ended first. */
 export type AttentionOutcome = 'cleared' | 'timeout' | 'picked' | 'skip' | 'abort' | 'ended';
@@ -259,7 +259,7 @@ export interface RunEvents {
   'flow.started': { flow: string; kind: FlowKind; page: number; window?: string };
   'flow.done': { flow: string; kind: FlowKind; page: number; outcome: FlowOutcome };
   /** Right after `guard.raised` or `repick.requested`, or when an `await-user` step waits; `url` is the URL of the window that needs the user. */
-  'attention.needed': { reason: AttentionReason; page: number; url: string; kind?: GuardKind; table?: string; target?: string; label?: string; flow?: string };
+  'attention.needed': { reason: AttentionReason; page: number; url: string; kind?: GuardKind; table?: string; target?: string; label?: string; flow?: string; line?: string };
   /** Exactly once for every `attention.needed`, before `run.done` or `run.failed`. */
   'attention.resolved': { reason: AttentionReason; outcome: AttentionOutcome };
   'run.done': { report: RunReport };

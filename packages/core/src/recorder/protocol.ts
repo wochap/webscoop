@@ -5,6 +5,7 @@ import type { SerializedElement } from '../ports';
 import type { FieldScope } from '../recipe/schema';
 import {
   AGENT_SCOPES,
+  AGENT_SUBMIT,
   FIELD_SCOPES,
   FIELD_TYPES,
   GUARD_KINDS,
@@ -296,6 +297,8 @@ export const DraftStepSchema = z.object({
   maxTurns: z.optional(z.int().check(z.positive())),
   /** For `agent`: how far the model may navigate; absent means `page`. */
   scope: z.optional(z.enum(AGENT_SCOPES)),
+  /** For `agent`: what the step does before a submit; absent means `ask`. */
+  submit: z.optional(z.enum(AGENT_SUBMIT)),
   window: z._default(z.enum(STEP_WINDOWS), 'same'),
   optional: z.boolean(),
   label: z.optional(z.string()),
@@ -565,9 +568,9 @@ export const TargetEditSchema = z.object({
   primary: z._default(index(), 0),
 });
 
-/** What the guard banner shows while an interactive run waits for a human: a guard, or an `await-user` step with its label. */
+/** What the guard banner shows while an interactive run waits for a human: a guard, an `await-user` step with its label, or a submit to allow with the action's outline line as label. */
 export const GuardContextSchema = z.object({
-  kind: z.enum([...GUARD_KINDS, 'await-user'] as const),
+  kind: z.enum([...GUARD_KINDS, 'await-user', 'confirm-submit'] as const),
   label: z.optional(z.string()),
   /** The `await-user` step's condition on its target. */
   until: z.optional(z.enum(STEP_UNTILS)),
@@ -677,6 +680,7 @@ const StepPatchSchema = z.object({
   llm: z.optional(z.nullable(z.string())),
   maxTurns: z.optional(z.nullable(z.int().check(z.positive()))),
   scope: z.optional(z.enum(AGENT_SCOPES)),
+  submit: z.optional(z.enum(AGENT_SUBMIT)),
   window: z.optional(z.enum(STEP_WINDOWS)),
   optional: z.optional(z.boolean()),
   label: z.optional(z.nullable(z.string())),

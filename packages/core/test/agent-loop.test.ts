@@ -60,7 +60,7 @@ describe('agent loop', () => {
 
   it('trims old turns to fit a small context, keeping the latest outline', async () => {
     const waits = Array.from({ length: 12 }, (_, i) => say({ action: 'wait', ms: 1, reason: `step-${i + 1}-end` }));
-    const llm = new MockLlm({ responses: waits, contextTokens: 600, maxOutputTokens: 100 });
+    const llm = new MockLlm({ responses: waits, contextTokens: 700, maxOutputTokens: 100 });
     const { result } = await agent(llm, { maxTurns: 12 });
     expect(result.report.end).toBe('max-turns');
     const last = llm.requests.at(-1)!;
@@ -69,7 +69,7 @@ describe('agent loop', () => {
     expect(last.prompt).toContain('[e1] button "Export"');
     expect(last.prompt).toContain('step-11-end');
     expect(last.prompt).not.toContain('step-1-end');
-    expect(llm.estimateTokens(last.prompt)).toBeLessThanOrEqual(600 - 100 + last.messages.length);
+    expect(llm.estimateTokens(last.prompt)).toBeLessThanOrEqual(700 - 100 + last.messages.length);
     // Older results shrink to their first line; only the latest carries an outline.
     expect(last.messages.filter((m) => m.content.includes('Outline:'))).toHaveLength(1);
   });
@@ -132,7 +132,7 @@ describe('agent loop', () => {
   it('ends on the condition right after the action that met it', async () => {
     const llm = new MockLlm({ responses: [say({ action: 'fill', ref: 'e1', value: 'a@b.c' }), say({ action: 'click', ref: 'e2', reason: 'send' })] });
     const { session } = await open(contact());
-    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', scope: 'site', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
+    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', scope: 'site', submitPolicy: 'allow', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
     expect(result).toMatchObject({ ok: true, report: { end: 'condition', turns: 2 } });
     expect(llm.requests).toHaveLength(2);
     expect(result.report.actions[1]).toMatchObject({ action: 'click', result: '.thanks appeared' });
@@ -156,7 +156,7 @@ describe('agent loop', () => {
   it('does not count a submit undone by page scope as meeting the condition', async () => {
     const llm = new MockLlm({ responses: [say({ action: 'click', ref: 'e2' }), say({ action: 'give_up' })] });
     const { session } = await open(contact());
-    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
+    const result = await runAgent({ llm, session, windows: new RunWindows(session), goal: 'Send', maxTurns: 20, until: 'appears', submitPolicy: 'allow', condition: thanksShown(session), conditionLabel: '.thanks', timeoutMs: 1000, sleep: async () => {} });
     expect(result.report.end).toBe('gave-up');
     expect(llm.requests[1]!.prompt).toContain("outside this step's scope");
   });
@@ -174,7 +174,7 @@ describe('agent loop', () => {
 
   it('heads every outline message with the current URL and title', async () => {
     const llm = new MockLlm({ responses: [say({ action: 'click', ref: 'e2' }), say({ action: 'done' })] });
-    await agent(llm, { until: undefined, scope: 'site' }, contact());
+    await agent(llm, { until: undefined, scope: 'site', submitPolicy: 'allow' }, contact());
     const first = llm.requests[0]!.messages.at(-1)!.content;
     expect(first).toContain(`Start URL: ${START}`);
     expect(first).toContain(`URL: ${START}\nTitle: Report\nOutline:`);
@@ -232,7 +232,7 @@ describe('agent step in a flow', () => {
     };
     const llm = new MockLlm({ responses: [say({ action: 'fill', ref: 'e1', value: 'a@b.c' }), say({ action: 'click', ref: 'e2' })] });
     const target = { selectors: [{ strategy: 'css', value: '.thanks', stability: 'medium' }] };
-    const { result, log } = await run({ kind: 'agent', goal: 'Send the form', scope: 'site', until: 'appears', target }, { llmFor: () => llm, pages });
+    const { result, log } = await run({ kind: 'agent', goal: 'Send the form', scope: 'site', submit: 'allow', until: 'appears', target }, { llmFor: () => llm, pages });
     expect(result.ok).toBe(true);
     expect(result.report.steps[0]).toMatchObject({ outcome: 'ok', agent: { turns: 2, end: 'condition' } });
     expect(log.of('agent.ended')[0]).toMatchObject({ end: 'condition', turns: 2 });
@@ -310,4 +310,97 @@ describe('agent step in a flow', () => {
     // The second request sees the page after the guard check.
     expect(llm.requests[1]!.prompt).toContain('Top of the page');
   });
+
+  describe('submit policy', () => {
+    /** A checkout page whose POST form's Place order button shows `.done`. */
+    const checkout = (): Record<string, FakePage> => ({
+      [START]: {
+        dom: body(h('form', { method: 'post', action: '/order' }, h('button', { id: 'place' }, 'Place order'))),
+        on: { click: (el) => (el?.attrs.id === 'place' ? body(h('p', { class: 'done' }, 'Order placed')) : undefined) },
+      },
+    });
+    const order = () => new MockLlm({ responses: [say({ action: 'click', ref: 'e1', reason: 'order' }), say({ action: 'done' })] });
+
+    it('stops before the submit with ready-to-submit, ok, and the turn tagged stopped', async () => {
+      const llm = order();
+      const { browser, result } = await agent(llm, { until: undefined, submitPolicy: 'stop' }, checkout());
+      expect(result).toMatchObject({ ok: true, report: { end: 'ready-to-submit', turns: 1 } });
+      expect(result.report.actions[0]).toMatchObject({ action: 'click', target: '[e1] button "Place order"', submit: 'stopped' });
+      expect(browser.clicks).toEqual([]);
+    });
+
+    it('acts as stop for ask without a way to ask', async () => {
+      const { browser, result } = await agent(order(), { until: undefined }, checkout());
+      expect(result.report.end).toBe('ready-to-submit');
+      expect(browser.clicks).toEqual([]);
+    });
+
+    it('submits with allow and tags the turn allowed', async () => {
+      const confirm = vi.fn(async () => {});
+      const { browser, result } = await agent(order(), { until: undefined, submitPolicy: 'allow', confirmSubmit: confirm }, checkout());
+      expect(result.report.end).toBe('done');
+      expect(result.report.actions[0]).toMatchObject({ submit: 'allowed' });
+      expect(browser.clicks).toHaveLength(1);
+      expect(confirm).not.toHaveBeenCalled();
+    });
+
+    it('asks, then submits and tags the turn asked', async () => {
+      const confirm = vi.fn(async () => {});
+      const { browser, result } = await agent(order(), { until: undefined, submitPolicy: 'ask', confirmSubmit: confirm }, checkout());
+      expect(confirm).toHaveBeenCalledWith({ line: 'button "Place order"', url: START });
+      expect(result.report.actions[0]).toMatchObject({ submit: 'asked' });
+      expect(browser.clicks).toHaveLength(1);
+    });
+
+    it('does not click when the confirmation fails', async () => {
+      const confirm = vi.fn(async () => {
+        throw new Error('paused');
+      });
+      const { browser, session } = await open(checkout());
+      await expect(runAgent({ llm: order(), session, windows: new RunWindows(session), goal: 'Order', maxTurns: 5, timeoutMs: 1000, sleep: async () => {}, confirmSubmit: confirm })).rejects.toThrow('paused');
+      expect(browser.clicks).toEqual([]);
+    });
+
+    it('leaves actions that would not submit alone', async () => {
+      const confirm = vi.fn(async () => {});
+      const { result } = await agent(new MockLlm({ responses: [say({ action: 'click', ref: 'e1' }), say({ action: 'click', ref: 'e2' })] }), { confirmSubmit: confirm });
+      expect(result.report.end).toBe('download');
+      expect(confirm).not.toHaveBeenCalled();
+      expect(result.report.actions.every((a) => a.submit === undefined)).toBe(true);
+    });
+  });
+
+  describe('secret placeholders', () => {
+    const login = (): Record<string, FakePage> => ({
+      [START]: { dom: body(h('p', {}, 'Welcome back'), h('input', { type: 'text', placeholder: 'User' }), h('input', { type: 'password', placeholder: 'Password' })) },
+    });
+
+    it('keeps the placeholder in the goal, types the value, and never sends it to the model', async () => {
+      const llm = new MockLlm({
+        responses: [say({ action: 'fill', ref: 'e2', value: 'alice' }), say({ action: 'fill', ref: 'e3', value: '{password}' }), say({ action: 'fill', ref: 'e3', value: '{password}' }), say({ action: 'done' })],
+      });
+      const recipe = loadRecipe(input({ kind: 'agent', goal: 'Log in as {user} with {password}' }, { vars: [{ name: 'url', type: 'string', raw: true }, { name: 'user', type: 'string' }, { name: 'password', type: 'string', secret: true }] }));
+      const browser = new FakeBrowser(login());
+      const session = await browser.open('/p');
+      await session.goto(START, { timeoutMs: 1000 });
+      const reports: StepReport[] = [];
+      await runFlow(recipe, recipe.flows[0]!, session, {
+        page: 1,
+        windows: new RunWindows(session),
+        timeoutMs: 1000,
+        cache: new Map(),
+        vars: { url: START, user: 'alice', password: 'hunter2' },
+        llmFor: () => llm,
+        onEvent: (r) => reports.push(r),
+      });
+      expect(llm.requests[0]!.prompt).toContain('Goal: Log in as alice with {password}');
+      expect(llm.requests[0]!.messages[0]!.content).toContain('placeholder for a secret value');
+      expect(browser.actions).toContainEqual(expect.objectContaining({ kind: 'fill', value: 'hunter2' }));
+      for (const request of llm.requests) expect(JSON.stringify(request.messages)).not.toContain('hunter2');
+      // The repeat check compares the placeholder, not the value.
+      expect(llm.requests[3]!.prompt).toContain('You already did exactly this');
+      expect(JSON.stringify(reports)).not.toContain('hunter2');
+    });
+  });
 });
+

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estimateTokens } from '../src';
-import { buildOutline } from '../src/agent/outline';
+import { buildOutline, masker } from '../src/agent/outline';
 import { snapshotFromHtml } from './snapshot';
 
 const outline = (body: string, budget = 5000) => buildOutline(snapshotFromHtml(`<html><head><title>T</title></head><body>${body}</body></html>`), budget, estimateTokens);
@@ -53,5 +53,24 @@ describe('agent outline', () => {
     expect(found).toHaveLength(2);
     expect(found.some((l) => l.includes('pdf inside'))).toBe(true);
     expect(found.some((l) => l.includes('a.PDF'))).toBe(true);
+  });
+
+  it('shows a filled password as *** and an empty one as empty', () => {
+    const o = outline('<input type="password" placeholder="Password" value="hunter2"><input type="password" placeholder="Again" value="">');
+    expect(o.all).toEqual(['[e1] textbox "Password" value="***"', '[e2] textbox "Again" value=""']);
+  });
+
+  it('shows a secret echoed on the page as its placeholder, in lines and find results', () => {
+    const secrets = new Map([['{user}', 'alice@x.test']]);
+    const o = buildOutline(snapshotFromHtml('<html><body><p>Signed in as alice@x.test</p><input type="text" placeholder="Email" value="alice@x.test"><a href="/u/alice@x.test">Profile</a></body></html>'), 5000, estimateTokens, secrets);
+    expect(o.all).toEqual(['[e1] text "Signed in as {user}"', '[e2] textbox "Email" value="{user}"', '[e3] link "Profile" href=/u/{user}']);
+    expect(o.text).not.toContain('alice@x.test');
+    expect(o.find('signed').join('\n')).not.toContain('alice@x.test');
+  });
+
+  it('masks the longest secret first', () => {
+    const mask = masker(new Map([['{a}', 'abc'], ['{b}', 'abcdef']]));
+    expect(mask('abcdef and abc')).toBe('{b} and {a}');
+    expect(masker(undefined)('abc')).toBe('abc');
   });
 });

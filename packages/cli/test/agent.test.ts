@@ -86,6 +86,51 @@ describe('agent steps in run', () => {
   });
 });
 
+describe('--submit', () => {
+  const checkoutRecipe = (extra: Record<string, unknown> = {}): RecipeInput => ({ ...grab(), flows: [{ name: 'grab', steps: [{ kind: 'agent', goal: 'Place the order', ...extra }] }] });
+  const checkout = (): FakePage => ({
+    dom: h('html', {}, h('body', {}, h('form', { method: 'post', action: '/order' }, h('button', { id: 'place' }, 'Place order')))),
+    on: { click: (el) => (el?.attrs.id === 'place' ? h('html', {}, h('body', {}, h('p', { class: 'done' }, 'Order placed'))) : undefined) },
+  });
+  const order = [{ reply: { action: 'click', ref: 'e1', reason: 'order' } }, { reply: { action: 'done' } }];
+
+  it('stops before the submit with --submit stop, exits 0, and reports ready-to-submit', async () => {
+    const dir = await setup(order, checkoutRecipe());
+    const browser = new FakeBrowser({ [URL_]: checkout() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_LLM_MOCK: join(dir, 'mock.json') }, browser });
+    expect(await main(['run', 'grab-pdf', '--var', `url=${URL_}`, '--submit', 'stop', '--report'], io)).toBe(ExitCode.Ok);
+    expect(io.err()).toContain('agent: would submit [e1] button "Place order"; stopped (--submit stop)');
+    expect(io.err()).toContain('ended: ready-to-submit after 1 turn');
+    expect(io.err()).toMatch(/"submit": "stopped"/);
+    expect(browser.clicks).toEqual([]);
+  });
+
+  it('submits without asking with --submit allow, over the step policy', async () => {
+    const dir = await setup(order, checkoutRecipe({ submit: 'stop' }));
+    const browser = new FakeBrowser({ [URL_]: checkout() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_LLM_MOCK: join(dir, 'mock.json') }, browser });
+    expect(await main(['run', 'grab-pdf', '--var', `url=${URL_}`, '--submit', 'allow'], io)).toBe(ExitCode.Ok);
+    expect(browser.clicks).toHaveLength(1);
+    expect(io.err()).toContain('ended: done after 2 turns');
+  });
+
+  it('exits 2 when nobody allows the submit within the guard timeout', async () => {
+    const dir = await setup(order, checkoutRecipe());
+    const browser = new FakeBrowser({ [URL_]: checkout() });
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_LLM_MOCK: join(dir, 'mock.json') }, browser });
+    expect(await main(['test', 'grab-pdf', '--var', `url=${URL_}`], io)).toBe(ExitCode.Paused);
+    expect(io.err()).toContain('Place order');
+    expect(browser.clicks).toEqual([]);
+  });
+
+  it('exits 1 on an unknown value, naming ask, allow, and stop', async () => {
+    const dir = await setup(order, checkoutRecipe());
+    const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir } });
+    expect(await main(['run', 'grab-pdf', '--submit', 'maybe'], io)).toBe(ExitCode.Error);
+    expect(io.err()).toMatch(/ask, allow, stop/);
+  });
+});
+
 describe('recipes --json for agent recipes', () => {
   it('lists agent and downloads as true', async () => {
     const dir = await setup([click]);

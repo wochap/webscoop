@@ -83,9 +83,15 @@ function envOf(io: CliIo): Record<string, string> {
   return Object.fromEntries(Object.entries(io.env).filter((e): e is [string, string] => e[1] !== undefined));
 }
 
-/** The `Solved? [Y/n/a]` prompt on the controlling terminal, while a job holds attention for a guard. */
+/**
+ * The `Solved? [Y/n/a]` prompt on the controlling terminal, while a job holds
+ * attention for a guard; `Allow submit <line>? [y/N/a]` for a submit
+ * confirmation, where only `y` allows.
+ */
 export class AttentionPrompt {
   private runId: string | null = null;
+  /** The outline line of a submit confirmation, or null for a guard. */
+  private submit: string | null = null;
   private showing = false;
   private off: (() => void) | null = null;
 
@@ -94,9 +100,10 @@ export class AttentionPrompt {
     private readonly send: (message: ClientMessage) => void,
   ) {}
 
-  /** The job needs the user: ask. */
-  open(runId: string): void {
+  /** The job needs the user: ask; with `submit`, whether to allow that submit. */
+  open(runId: string, submit?: string): void {
     this.runId = runId;
+    this.submit = submit ?? null;
     this.ask();
   }
 
@@ -112,6 +119,7 @@ export class AttentionPrompt {
   resolved(): void {
     this.withdraw();
     this.runId = null;
+    this.submit = null;
   }
 
   close(): void {
@@ -122,7 +130,7 @@ export class AttentionPrompt {
   private ask(): void {
     this.withdraw();
     this.showing = true;
-    this.tty.write('webscoop: Solved? [Y/n/a] ');
+    this.tty.write(this.submit !== null ? `webscoop: Allow submit ${this.submit}? [y/N/a] ` : 'webscoop: Solved? [Y/n/a] ');
     this.off = this.tty.onLine((line) => this.answer(line.trim().toLowerCase()));
   }
 
@@ -132,7 +140,9 @@ export class AttentionPrompt {
     this.off?.();
     this.off = null;
     this.showing = false;
-    if (answer === '' || answer === 'y' || answer === 'yes') this.send({ type: 'signal', runId, action: 'continue' });
+    // For a submit the default is No: a stray Enter must not approve it.
+    const yes = answer === 'y' || answer === 'yes' || (answer === '' && this.submit === null);
+    if (yes) this.send({ type: 'signal', runId, action: 'continue' });
     else if (answer === 'a' || answer === 'abort') this.send({ type: 'signal', runId, action: 'abort' });
     // `n` keeps waiting without asking again.
   }
@@ -170,8 +180,9 @@ export async function submitJob(io: CliIo, command: JobCommand, recipe: string, 
             io.stderr.write(m.data);
             break;
           case 'attention':
-            // Guards and await-user steps are answered at the terminal; a re-pick only in the browser.
+            // Guards, await-user steps, and submit confirmations are answered at the terminal; a re-pick only in the browser.
             if (m.reason === 'guard' || m.reason === 'await-user') prompt?.open(m.runId);
+            else if (m.reason === 'confirm-submit') prompt?.open(m.runId, m.line ?? 'the form');
             break;
           case 'still-blocked':
             prompt?.stillBlocked();

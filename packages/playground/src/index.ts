@@ -1,6 +1,6 @@
 export { FORM_CITIES, formsPage, formsSubmitPage } from './forms';
 export { dataset, type Product } from './dataset';
-export { challengePage, HUMAN_COOKIE, interstitialPage, loginPage, safeNext, SESSION_COOKIE, WALL_KINDS, type WallKind } from './walls';
+export { challengePage, checkoutDonePage, checkoutPage, HUMAN_COOKIE, interstitialPage, loginOkPage, loginPage, safeNext, SESSION_COOKIE, WALL_KINDS, type WallKind } from './walls';
 export { createRng } from './prng';
 export {
   CHROME_MODES,

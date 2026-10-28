@@ -340,6 +340,7 @@ export function draftToRecipe(draft: Draft): RecipeInput {
         ...(s.llm ? { llm: s.llm } : {}),
         ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
         ...(s.kind === 'agent' && s.scope === 'site' ? { scope: s.scope } : {}),
+        ...(s.kind === 'agent' && s.submit && s.submit !== 'ask' ? { submit: s.submit } : {}),
         ...(s.window === 'popup' ? { window: s.window } : {}),
         ...(s.optional ? { optional: true } : {}),
         ...(s.label ? { label: s.label } : {}),
@@ -490,6 +491,7 @@ export function draftFromRecipe(
       ...(s.llm ? { llm: s.llm } : {}),
       ...(s.maxTurns !== undefined ? { maxTurns: s.maxTurns } : {}),
       ...(s.scope === 'site' ? { scope: s.scope } : {}),
+      ...(s.submit && s.submit !== 'ask' ? { submit: s.submit } : {}),
       window: s.window,
       optional: s.optional,
       ...(s.label ? { label: s.label } : {}),
@@ -796,6 +798,8 @@ function applyStepPatch(step: DraftStep, patch: StepPatch): DraftStep {
   if (next.kind === 'agent' && patch.until !== undefined && next.until !== 'appears' && next.until !== 'disappears') delete next.target;
   if (patch.scope === 'page') delete next.scope;
   else if (patch.scope !== undefined) next.scope = patch.scope;
+  if (patch.submit === 'ask') delete next.submit;
+  else if (patch.submit !== undefined) next.submit = patch.submit;
   if (patch.timeoutMs === null) delete next.timeoutMs;
   else if (patch.timeoutMs !== undefined) next.timeoutMs = patch.timeoutMs;
   if (patch.value === null) delete next.value;

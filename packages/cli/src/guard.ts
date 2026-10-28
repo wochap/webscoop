@@ -37,7 +37,8 @@ export function guardBanner(
       const { popup: _popup, ...context } = info;
       const hooks = await next.showGuard(context);
       await next.attach();
-      log(io, `the page shows the ${info.kind === 'await-user' ? `banner for "${info.label ?? 'await-user'}"` : 'guard banner'}: Continue checks again now, Abort stops the run`);
+      if (info.kind === 'confirm-submit') log(io, `the page asks you to allow the submit: Allow submits ${info.label ?? 'the form'}, Abort stops the run`);
+      else log(io, `the page shows the ${info.kind === 'await-user' ? `banner for "${info.label ?? 'await-user'}"` : 'guard banner'}: Continue checks again now, Abort stops the run`);
       return hooks;
     },
     async hide() {

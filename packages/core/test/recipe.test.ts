@@ -641,6 +641,25 @@ describe('flows', () => {
     expect(errors[0]!.message).toContain('page, site');
   });
 
+  it('validates submit stop on an agent step', () => {
+    const input = withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', submit: 'stop' }] }], [{ flow: 'grab' }, { extract: 'items' }]);
+    expect(validateRecipe(input).errors).toEqual([]);
+    expect(loadRecipe(input).flows[0]!.steps[0]).toMatchObject({ submit: 'stop' });
+  });
+
+  it('rejects submit on a click step, naming the step and submit', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'click', target: accept, submit: 'allow' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].submit']);
+    expect(errors[0]!.message).toContain('submit');
+    expect(errors[0]!.message).toContain('click');
+  });
+
+  it('rejects an unknown submit value, naming ask, allow, and stop', () => {
+    const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'agent', goal: 'Go', submit: 'maybe' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
+    expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].submit']);
+    expect(errors[0]!.message).toContain('ask, allow, stop');
+  });
+
   it('rejects goal on a click step, naming the step and goal', () => {
     const errors = errorsOf(withFlows([{ name: 'grab', steps: [{ kind: 'click', target: accept, goal: 'x' }] }], [{ flow: 'grab' }, { extract: 'items' }]));
     expect(errors.map((e) => e.path)).toEqual(['$.flows[0].steps[0].goal']);

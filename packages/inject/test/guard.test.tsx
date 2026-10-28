@@ -116,3 +116,30 @@ describe('await-user banner', () => {
     expect(p.q('guard-hint')!.textContent).toBe('Do this in the browser; the run continues by itself once it is done.');
   });
 });
+
+describe('confirm-submit banner', () => {
+  it('shows the headline, outline line, URL, Abort, and Allow button with data-ws="guard-continue"', () => {
+    vi.useFakeTimers({ now: NOW });
+    const p = renderPanel(
+      guardState({
+        kind: 'confirm-submit',
+        label: 'button "Place order"',
+        url: 'https://shop.test/checkout',
+        reason: 'the agent wants to submit: button "Place order"',
+      }),
+    );
+    expect(p.q('guard-banner')!.dataset.kind).toBe('confirm-submit');
+    expect(p.q('guard-kind')!.textContent).toBe('confirm-submit');
+    expect(p.q('guard-reason')!.textContent).toBe('Allow the agent to submit?');
+    expect(p.q('guard-hint')!.textContent).toBe('button "Place order" · https://shop.test/checkout');
+    expect(p.q('guard-abort')!.textContent).toBe('Abort');
+    const allow = p.q('guard-continue')!;
+    expect(allow.textContent).toBe('Allow');
+    expect(p.q('guard-panel')!.textContent).toContain('Confirm submit');
+    expect(p.q('guard-panel')!.textContent).toContain('Allow the agent to submit?');
+
+    fireEvent.click(allow);
+    fireEvent.click(p.q('guard-abort')!);
+    expect(p.sent).toEqual([{ kind: 'guard.continue' }, { kind: 'guard.abort' }]);
+  });
+});

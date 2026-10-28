@@ -145,7 +145,10 @@ function describeReplay(flow: string, index: number | null, reports: readonly St
   if (index !== null) {
     const report = reports[0];
     const ok = report?.outcome === 'ok' || report?.outcome === 'healed';
-    if (ok && report!.agent) return `replayed step ${index + 1} (agent): ${report!.agent.end} after ${report!.agent.turns} turn${report!.agent.turns === 1 ? '' : 's'}`;
+    if (ok && report!.agent) {
+      if (report!.agent.end === 'ready-to-submit') return 'stopped before submit';
+      return `replayed step ${index + 1} (agent): ${report!.agent.end} after ${report!.agent.turns} turn${report!.agent.turns === 1 ? '' : 's'}`;
+    }
     return ok ? `replayed step ${index + 1} (${report!.kind})` : `skipped step ${index + 1}: ${report?.notes?.join('; ') ?? 'found no element'}`;
   }
   const skipped = reports.filter((r) => r.outcome === 'skipped');

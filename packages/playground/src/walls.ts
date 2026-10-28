@@ -38,13 +38,44 @@ export function loginPage(next: string): string {
     'Sign in',
     `<main>
 <h1>Sign in</h1>
-<p>Log in to see the catalog. Any username and password work.</p>
 <form id="login-form" method="post" action="/login">
 <input type="hidden" name="next" value="${escapeHtml(next)}">
-<label>Username <input name="username" autocomplete="username"></label>
-<label>Password <input type="password" name="password" autocomplete="current-password"></label>
+<input name="username" aria-label="Username" placeholder="Username" autocomplete="username">
+<input type="password" name="password" aria-label="Password" placeholder="Password" autocomplete="current-password">
 <button type="submit">Sign in</button>
 </form>
+</main>`,
+  );
+}
+
+export function loginOkPage(user: string): string {
+  return page(
+    'Signed in',
+    `<main>
+<h1>Signed in</h1>
+<p class="ok">Signed in as <span class="username">${escapeHtml(user)}</span></p>
+</main>`,
+  );
+}
+
+export function checkoutPage(): string {
+  return page(
+    'Checkout',
+    `<main>
+<h1>Checkout</h1>
+<form method="post" action="/checkout">
+<button type="submit">Place order</button>
+</form>
+</main>`,
+  );
+}
+
+export function checkoutDonePage(): string {
+  return page(
+    'Order placed',
+    `<main>
+<h1>Order placed</h1>
+<p class="done">Your order has been placed.</p>
 </main>`,
   );
 }
