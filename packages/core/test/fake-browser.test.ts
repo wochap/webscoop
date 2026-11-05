@@ -271,4 +271,19 @@ describe('FakeBrowser popups', () => {
     expect(popup.isClosed()).toBe(true);
     expect(session.isClosed()).toBe(false);
   });
+
+  it('reports document title and handles evaluate', async () => {
+    const browser = new FakeBrowser({
+      [MAIN]: { dom: h('html', {}, h('head', {}, h('title', {}, 'Shop Title')), h('body', {}, 'Welcome')), title: 'Shop Title' },
+    });
+    const session = await browser.open('/p');
+    await session.goto(MAIN, { timeoutMs: 1000 });
+    expect(await session.title()).toBe('Shop Title');
+    await session.setTitle('Updated Title');
+    expect(await session.title()).toBe('Updated Title');
+
+    session.nextEvaluateResult = { count: 42, label: 'test' };
+    const res = await session.evaluate('return { count: 42, label: "test" }');
+    expect(res).toEqual({ count: 42, label: 'test' });
+  });
 });

@@ -571,6 +571,12 @@ export class FakeSession implements Session {
     this.titles.push(title);
   }
 
+  async title(): Promise<string> {
+    if (this.closed) throw new Error('session is closed');
+    if (this.titles.length > 0) return this.titles[this.titles.length - 1]!;
+    return this.browser.pages.get(this.currentUrl)?.title ?? '';
+  }
+
   /** Text of `<body>` (or the root), without scripts and styles, whitespace collapsed. */
   async pageText(): Promise<string> {
     const { root } = this.assertOpen();
@@ -691,9 +697,12 @@ export class FakeInteractiveSession extends FakeSession implements InteractiveSe
 
   /** Scripts run in one document with `evaluate`, with the URL they ran on. */
   readonly evaluated: { url: string; source: string }[] = [];
+  /** Configurable return value for `evaluate`. */
+  nextEvaluateResult: unknown = undefined;
 
-  async evaluate(source: string): Promise<void> {
+  async evaluate(source: string): Promise<unknown> {
     this.evaluated.push({ url: this.currentUrl, source });
+    return this.nextEvaluateResult;
   }
 
   async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {

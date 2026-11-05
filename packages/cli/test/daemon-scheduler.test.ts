@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import { loadRecipe, type RecipeInput } from '@webscoop/core';
-import { FakeBrowser, h } from '@webscoop/core/testing';
+import { FakeBrowser, h, type FakeInteractiveSession } from '@webscoop/core/testing';
 import { describe, expect, it } from 'vitest';
 import type { DaemonConcurrency } from '../src/config';
 import { CooldownStore } from '../src/cooldown';
 import type { SharedBrowserHandle } from '../src/context';
-import { AttentionGate, Scheduler, type ColdTrigger, type Job, type LaunchedBrowser } from '../src/daemon/scheduler';
+import { AttentionGate, runWithTabLock, Scheduler, type ColdTrigger, type Job, type LaunchedBrowser } from '../src/daemon/scheduler';
 import { tempDir } from './helpers';
 
 /** A browser port that counts launches and closes. */
@@ -525,6 +525,151 @@ describe('Scheduler cooldowns', () => {
     expect(b!.events).toContain('gone cold');
     b!.end();
     await b!.done;
+    await scheduler.stop(false);
+  });
+});
+
+describe('Scheduler interactive tabs', () => {
+  it('keeps browser open via Slot.held without consuming recipe concurrency slots', async () => {
+    const port = fakePort();
+    const nowTime = 1000;
+    const scheduler = new Scheduler({ now: () => nowTime, idleMs: 100 });
+    const dir = '/profiles/default';
+
+    const fakeBrowser = new FakeBrowser({
+      'https://test.com': { title: 'Page 1', dom: h('html', {}, h('head', {}, h('title', {}, 'Page 1')), h('body', {}, 'test')) },
+    });
+    const sessions: FakeInteractiveSession[] = [];
+    const handle: SharedBrowserHandle = {
+      newSession: async (opts) => {
+        const s = (await fakeBrowser.open(dir, opts)) as FakeInteractiveSession;
+        sessions.push(s);
+        return s;
+      },
+      close: async () => {},
+      onClosed: () => () => {},
+    };
+
+    const tab = await scheduler.openInteractiveTab(dir, 'default', async () => ({
+      handle,
+      pid: 2000,
+      release: () => {},
+    }), { url: 'https://test.com' });
+
+    expect(tab.tabId).toBe('tab_1');
+    expect(tab.title).toBe('Page 1');
+
+    // Slot should be held
+    const usage = scheduler.usage(dir);
+    expect(usage.open).toBe(true);
+    expect(usage.tabs).toBe(1);
+
+    // Recipe job with total concurrency 1 should run without being blocked by interactive tab
+    const job = fakeJob(port, 'run_1', { profile: 'default', concurrency: { total: 1, recipes: {} }, idleMs: 100 });
+    scheduler.submit(job);
+    await job.running;
+    expect(scheduler.usage(dir).running).toBe(1);
+    job.end();
+    await job.done;
+
+    // After job finishes, browser should still stay open because interactive tab holds it
+    expect(scheduler.usage(dir).open).toBe(true);
+
+    // Closing interactive tab should release slot
+    await scheduler.closeTab(tab.tabId);
+    expect(scheduler.usage(dir).tabs).toBeUndefined();
+
+    await scheduler.stop(false);
+  });
+
+  it('serializes operations on the same tab with runWithTabLock', async () => {
+    const dir = '/tmp/profile-lock';
+    const scheduler = new Scheduler();
+    const fakeBrowser = new FakeBrowser();
+    const session = (await fakeBrowser.open(dir)) as FakeInteractiveSession;
+    const slot = scheduler.getOrCreateSlot(dir, 'default');
+
+    const tab = scheduler.registerInteractiveTab(slot, session);
+
+    const log: string[] = [];
+    const p1 = runWithTabLock(tab, async () => {
+      log.push('start 1');
+      await new Promise((r) => setTimeout(r, 20));
+      log.push('end 1');
+    });
+    const p2 = runWithTabLock(tab, async () => {
+      log.push('start 2');
+      log.push('end 2');
+    });
+
+    await Promise.all([p1, p2]);
+    expect(log).toEqual(['start 1', 'end 1', 'start 2', 'end 2']);
+    await scheduler.stop(false);
+  });
+
+  it('automatically registers popups with isPopup: true and openerTabId', async () => {
+    const dir = '/tmp/profile-popups';
+    const scheduler = new Scheduler();
+    const fakeBrowser = new FakeBrowser();
+    const session = (await fakeBrowser.open(dir)) as FakeInteractiveSession;
+    const slot = scheduler.getOrCreateSlot(dir, 'default');
+
+    const tab = scheduler.registerInteractiveTab(slot, session);
+    expect(tab.tabId).toBe('tab_1');
+
+    // Simulate popup
+    const popupSession = (await fakeBrowser.open(dir)) as FakeInteractiveSession;
+    popupSession.setTitle('Popup Page');
+
+    // Trigger onPopup listeners on session
+    for (const listener of (session as unknown as { popupListeners: Set<(popup: FakeInteractiveSession) => void> }).popupListeners) {
+      listener(popupSession);
+    }
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(slot.interactiveTabs.size).toBe(2);
+    const popup = slot.interactiveTabs.get('tab_2');
+    expect(popup).toBeDefined();
+    expect(popup?.isPopup).toBe(true);
+    expect(popup?.openerTabId).toBe('tab_1');
+    expect(popup?.title).toBe('Popup Page');
+
+    await scheduler.stop(false);
+  });
+
+  it('reaps idle tabs past idleTabTimeoutMs and cleans up on daemon stop', async () => {
+    let nowTime = 1000;
+    const scheduler = new Scheduler({ now: () => nowTime, idleTabTimeoutMs: 5000 });
+    const dir = '/tmp/profile-reaper';
+    const fakeBrowser = new FakeBrowser();
+    const session1 = (await fakeBrowser.open(dir)) as FakeInteractiveSession;
+    const session2 = (await fakeBrowser.open(dir)) as FakeInteractiveSession;
+
+    const slot = scheduler.getOrCreateSlot(dir, 'default');
+    const t1 = scheduler.registerInteractiveTab(slot, session1);
+    const t2 = scheduler.registerInteractiveTab(slot, session2);
+
+    expect(slot.interactiveTabs.size).toBe(2);
+
+    // Advance time by 4000ms (not expired)
+    nowTime += 4000;
+    let reaped = await scheduler.reapIdleTabs();
+    expect(reaped).toEqual([]);
+    expect(slot.interactiveTabs.size).toBe(2);
+
+    // Touch t2
+    t2.lastActiveAt = nowTime;
+
+    // Advance time by 2000ms (t1 is at 6000ms > 5000ms, t2 is at 2000ms)
+    nowTime += 2000;
+    reaped = await scheduler.reapIdleTabs();
+    expect(reaped).toEqual([t1.tabId]);
+    expect(slot.interactiveTabs.size).toBe(1);
+    expect(slot.interactiveTabs.has(t2.tabId)).toBe(true);
+    expect(session1.isClosed()).toBe(true);
+
+    // Stop scheduler cleans up remaining tabs
     await scheduler.stop(false);
   });
 });

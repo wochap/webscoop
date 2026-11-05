@@ -134,6 +134,8 @@ export interface Session {
   focus(): Promise<void>;
   /** Set the current document's title, so compositor rules can match the window before the first navigation. */
   setTitle(title: string): Promise<void>;
+  /** Current document title. */
+  title(): Promise<string>;
   /** Visible text of the document body, capped at `PAGE_TEXT_LIMIT` characters. */
   pageText(): Promise<string>;
   /**
@@ -259,7 +261,7 @@ export interface InteractiveSession extends Session {
   /** Run the script in the current page now and in every page loaded afterwards. */
   inject(source: string): Promise<void>;
   /** Run the script in the current document only, in the page's main world. */
-  evaluate(source: string): Promise<void>;
+  evaluate(source: string): Promise<unknown>;
   /**
    * Expose `window[name](msg)` to the page and to its popups; the page receives
    * the handler's result. The handler gets the id of the window that called

@@ -14,6 +14,30 @@ import { exportCommand, type ExportCommandOptions } from './commands/export';
 import { recipesCommand } from './commands/recipes';
 import { recordCommand, type RecordCommandOptions } from './commands/record';
 import { runCommand, testCommand, type RunCommandOptions, type TestCommandOptions } from './commands/run';
+import {
+  tabAttendCommand,
+  tabBackCommand,
+  tabClickCommand,
+  tabCloseCommand,
+  tabDownloadCommand,
+  tabEvalCommand,
+  tabFillCommand,
+  tabFindCommand,
+  tabGotoCommand,
+  tabHtmlCommand,
+  tabOpenCommand,
+  tabOutlineCommand,
+  tabPressCommand,
+  tabsCommand,
+  tabScrollCommand,
+  type TabActionOptions,
+  type TabAttendOptions,
+  type TabCloseOptions,
+  type TabCommonOptions,
+  type TabDownloadOptions,
+  type TabOpenOptions,
+  type TabOutlineOptions,
+} from './commands/tab';
 import { loadRecorderBundle } from './bundle';
 import { probeVersion, resolveBrowser } from './browser';
 import type { CliIo, TtyPort } from './context';
@@ -83,6 +107,20 @@ function humanizeOptions(command: Command): Command {
     .option('--no-humanize', 'act at full speed, whatever the recipe and config say')
     .on('option:humanize', note('humanize'))
     .on('option:no-humanize', note('no-humanize'));
+}
+
+/** `--visual` and `--no-visual`, which share the `visual` value and may not be passed together. */
+function visualOptions(command: Command): Command {
+  const seen = new Set<string>();
+  const note = (flag: string) => () => {
+    seen.add(flag);
+    if (seen.size === 2) command.error('error: option --visual cannot be used with option --no-visual');
+  };
+  return command
+    .option('--visual', 'render visual feedback in browser')
+    .option('--no-visual', 'suppress visual feedback')
+    .on('option:visual', note('visual'))
+    .on('option:no-visual', note('no-visual'));
 }
 
 /** `--pdf <mode>`: `download` saves PDFs, `view` shows them in the browser's viewer. */
@@ -405,6 +443,144 @@ daemon.`,
     .argument('[run-id]', 'the run to answer (default: the only run holding attention)')
     .addHelpText('after', '\nExits 1 listing the run ids when none or several runs hold attention and no run id is given.')
     .action(async (action: 'continue' | 'abort', runId: string | undefined) => setCode(await attentionCommand(io, action, runId)));
+
+  const tab = program
+    .command('tab')
+    .description('interactively control browser tabs and popups through the daemon');
+
+  humanizeOptions(visualOptions(tab.command('open')))
+    .description('open a new interactive tab in a shared profile browser')
+    .argument('[url]', 'initial URL to navigate to')
+    .option('--profile <name>', 'browser profile name')
+    .option('--timeout <ms>', 'navigation timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (url: string | undefined, opts: TabOpenOptions) => setCode(await tabOpenCommand(io, url, opts)));
+
+  tab
+    .command('list')
+    .description('list all active interactive tabs and popups')
+    .option('--profile <name>', 'filter by profile name')
+    .option('--json', 'print JSON output')
+    .action(async (opts: TabCommonOptions) => setCode(await tabsCommand(io, opts)));
+
+  tab
+    .command('goto')
+    .description('navigate a tab to a new URL')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<url>', 'destination URL')
+    .option('--timeout <ms>', 'navigation timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, url: string, opts: TabActionOptions) => setCode(await tabGotoCommand(io, tabId, url, opts)));
+
+  tab
+    .command('back')
+    .description('navigate a tab back in its document history')
+    .argument('<tabId>', 'identifier of the tab')
+    .option('--timeout <ms>', 'settle timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, opts: TabActionOptions) => setCode(await tabBackCommand(io, tabId, opts)));
+
+  tab
+    .command('outline')
+    .description('produce an accessible DOM outline with [e<n>] element references')
+    .argument('<tabId>', 'identifier of the tab')
+    .option('--budget <tokens>', 'token budget for the outline', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, opts: TabOutlineOptions) => setCode(await tabOutlineCommand(io, tabId, opts)));
+
+  tab
+    .command('find')
+    .description('search cached outline lines case-insensitively')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<text>', 'text to search for')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, text: string, opts: TabCommonOptions) => setCode(await tabFindCommand(io, tabId, text, opts)));
+
+  tab
+    .command('html')
+    .description('print outer HTML of target element')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<target>', 'element ref (e<n>) or selector')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, target: string, opts: TabCommonOptions) => setCode(await tabHtmlCommand(io, tabId, target, opts)));
+
+  visualOptions(tab.command('click'))
+    .description('click an element in the tab')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<target>', 'element ref (e<n>) or selector')
+    .option('--timeout <ms>', 'settle timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, target: string, opts: TabActionOptions) => setCode(await tabClickCommand(io, tabId, target, opts)));
+
+  visualOptions(tab.command('fill'))
+    .description('fill form controls or select options in the tab')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<target>', 'element ref (e<n>) or selector')
+    .argument('<value>', 'value to fill')
+    .option('--timeout <ms>', 'settle timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, target: string, value: string, opts: TabActionOptions) => setCode(await tabFillCommand(io, tabId, target, value, opts)));
+
+  visualOptions(tab.command('press'))
+    .description('press a key on an element or the document')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<key>', 'key to press (e.g. Enter, Escape, Tab)')
+    .argument('[target]', 'optional element ref or selector')
+    .option('--timeout <ms>', 'settle timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, key: string, target: string | undefined, opts: TabActionOptions) => setCode(await tabPressCommand(io, tabId, key, target, opts)));
+
+  tab
+    .command('scroll')
+    .description('scroll the tab viewport')
+    .argument('<tabId>', 'identifier of the tab')
+    .addArgument(new Argument('<direction>', 'scroll direction').choices(['down', 'up', 'bottom']))
+    .option('--timeout <ms>', 'settle timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, direction: string, opts: TabActionOptions) => setCode(await tabScrollCommand(io, tabId, direction, opts)));
+
+  tab
+    .command('eval')
+    .description('evaluate JavaScript in the tab main world')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('<expression>', 'expression or script to evaluate')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, expression: string, opts: TabCommonOptions) => setCode(await tabEvalCommand(io, tabId, expression, opts)));
+
+  visualOptions(tab.command('download'))
+    .description('trigger and save a download directly to destination path')
+    .argument('<tabId>', 'identifier of the tab')
+    .argument('[target]', 'element ref or selector to click for download')
+    .requiredOption('--out <path>', 'destination file path (relative to current directory)')
+    .option('--url <url>', 'direct download URL instead of clicking')
+    .option('--timeout <ms>', 'download timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, target: string | undefined, opts: TabDownloadOptions) => setCode(await tabDownloadCommand(io, tabId, target, opts)));
+
+  tab
+    .command('attend')
+    .description('request user attention on an interactive tab')
+    .argument('<tabId>', 'identifier of the tab')
+    .option('--reason <reason>', 'reason message for attention')
+    .option('--timeout <ms>', 'attention timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, opts: TabAttendOptions) => setCode(await tabAttendCommand(io, tabId, opts)));
+
+  tab
+    .command('close')
+    .description('close an interactive tab and its popups')
+    .argument('[tabId]', 'identifier of the tab to close')
+    .option('--all', 'close all interactive tabs')
+    .option('--profile <name>', 'filter by profile name when closing all')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string | undefined, opts: TabCloseOptions) => setCode(await tabCloseCommand(io, tabId, opts)));
+
+  program
+    .command('tabs')
+    .description('list all active interactive tabs and popups across profiles')
+    .option('--profile <name>', 'filter by profile name')
+    .option('--json', 'print JSON output')
+    .action(async (opts: TabCommonOptions) => setCode(await tabsCommand(io, opts)));
 
   program
     .command('doctor')

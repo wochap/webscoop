@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { CliIo, Output } from '../context';
 import { DaemonJob, type DaemonShared } from './job';
-import type { ClientMessage, DaemonMessage, ServerLink } from './protocol';
+import type { ClientMessage, DaemonMessage, ServerLink, TabActionRequest } from './protocol';
 import { Scheduler } from './scheduler';
+import { handleTabAction } from './tab-handler';
 
 export interface DaemonServerOptions {
   /** The daemon's own I/O. */
@@ -64,6 +65,14 @@ export class DaemonServer {
       if (runId && !done) this.scheduler.cancel(runId);
     });
     link.onMessage((m: ClientMessage) => {
+      if (m.type.startsWith('tab.')) {
+        clearTimeout(this.graceTimer);
+        this.everSubmitted = true;
+        void handleTabAction(this.scheduler, this.shared.base, m as TabActionRequest).then((res) => {
+          link.send(res);
+        });
+        return;
+      }
       switch (m.type) {
         case 'hello': {
           const accepted = m.version === this.opts.version && m.programPath === this.opts.programPath;

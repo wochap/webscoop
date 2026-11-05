@@ -100,4 +100,18 @@ describe.skipIf(!hasDisplay)('PlaywrightSession as InteractiveSession (integrati
     await session.close();
     expect(closed).toBe(1);
   });
+
+  it('reports document title and evaluates strings and JSON objects', async () => {
+    const session = await open();
+    await session.goto(`${playground.url}/catalog?tier=0`, { timeoutMs: 10_000 });
+    const title = await session.title();
+    expect(typeof title).toBe('string');
+    expect(title.length).toBeGreaterThan(0);
+
+    const stringVal = await session.evaluate('"hello world"');
+    expect(stringVal).toBe('hello world');
+
+    const jsonVal = await session.evaluate('({ a: 1, b: "two", nested: { list: [1, 2, 3] } })');
+    expect(jsonVal).toEqual({ a: 1, b: 'two', nested: { list: [1, 2, 3] } });
+  });
 });

@@ -32,6 +32,11 @@ export function formatStatus(status: DaemonStatus): string {
     lines.push(`  running: ${runs(b.running)}`);
     lines.push(`  queued: ${runs(b.queued)}`);
     lines.push(`  attention: ${b.attention ?? 'none'}`);
+    if (b.tabs && b.tabs.length > 0) {
+      lines.push(`  tabs: ${b.tabs.map((t) => `${t.tabId}${t.isPopup ? ' (popup)' : ''}: ${t.url || 'about:blank'}${t.title ? ` "${t.title}"` : ''}`).join(', ')}`);
+    } else {
+      lines.push('  tabs: none');
+    }
   }
   return `${lines.join('\n')}\n`;
 }

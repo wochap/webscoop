@@ -1,6 +1,64 @@
 /** Commands a job runs in the daemon. */
 export type JobCommand = 'run' | 'test';
 
+export type TabSummary = {
+  tabId: string;
+  profile: string;
+  url: string;
+  title: string;
+  isPopup: boolean;
+  openerTabId?: string;
+};
+
+export type TabActionRequest =
+  | {
+      type: 'tab.open';
+      url?: string;
+      profile?: string;
+      visual?: boolean;
+      humanize?: boolean;
+      timeoutMs?: number;
+      cwd: string;
+      env: Record<string, string>;
+    }
+  | { type: 'tab.list'; profile?: string }
+  | { type: 'tab.goto'; tabId: string; url: string; timeoutMs?: number }
+  | { type: 'tab.back'; tabId: string; timeoutMs?: number }
+  | { type: 'tab.outline'; tabId: string; budgetTokens?: number }
+  | { type: 'tab.find'; tabId: string; text: string }
+  | { type: 'tab.html'; tabId: string; target: string }
+  | { type: 'tab.click'; tabId: string; target: string; visual?: boolean; timeoutMs?: number }
+  | { type: 'tab.fill'; tabId: string; target: string; value: string; visual?: boolean; timeoutMs?: number }
+  | { type: 'tab.press'; tabId: string; key: string; target?: string; visual?: boolean; timeoutMs?: number }
+  | { type: 'tab.scroll'; tabId: string; direction: 'down' | 'up' | 'bottom'; timeoutMs?: number }
+  | { type: 'tab.eval'; tabId: string; expression: string }
+  | {
+      type: 'tab.download';
+      tabId: string;
+      /** Element ref/selector to click, or omitted when `url` is given. */
+      target?: string;
+      /** Direct download URL to trigger, when not clicking an element. */
+      url?: string;
+      /** Absolute destination file path (resolved against client CWD). */
+      outPath: string;
+      visual?: boolean;
+      timeoutMs?: number;
+    }
+  | { type: 'tab.attend'; tabId: string; reason?: string; timeoutMs?: number }
+  | { type: 'tab.close'; tabId?: string; profile?: string; all?: boolean };
+
+export type TabActionResponse =
+  | { type: 'tab.opened'; tab: TabSummary }
+  | { type: 'tab.list'; tabs: TabSummary[] }
+  | { type: 'tab.page'; tabId: string; url: string; title: string; message: string; newPopups?: TabSummary[] }
+  | { type: 'tab.outline'; tabId: string; url: string; title: string; outline: string; cut: number }
+  | { type: 'tab.find'; tabId: string; matches: string[] }
+  | { type: 'tab.html'; tabId: string; html: string }
+  | { type: 'tab.eval'; tabId: string; result: unknown }
+  | { type: 'tab.download'; tabId: string; file: string; bytes: number; url: string }
+  | { type: 'tab.closed'; closed: string[] }
+  | { type: 'tab.error'; message: string; exitCode?: number };
+
 /** What a client asks the daemon. */
 export type ClientMessage =
   | { type: 'hello'; version: string; programPath: string }
@@ -20,8 +78,8 @@ export type ClientMessage =
   | { type: 'status' }
   | { type: 'stop'; force: boolean }
   | { type: 'release'; profileDir: string; command: string; force: boolean }
-  /** `webscoop cooldown clear` warmed these recipes up: close their cold tabs. */
-  | { type: 'cooldown-clear'; recipes: string[] };
+  | { type: 'cooldown-clear'; recipes: string[] }
+  | TabActionRequest;
 
 /** One browser of the daemon, as `daemon status` shows it. */
 export interface BrowserStatus {
@@ -33,6 +91,7 @@ export interface BrowserStatus {
   queued: { runId: string; recipe: string }[];
   /** Run id holding attention. */
   attention: string | null;
+  tabs?: TabSummary[];
 }
 
 export interface DaemonStatus {
@@ -55,7 +114,8 @@ export type DaemonMessage =
   | { type: 'done'; exitCode: number }
   | { type: 'status'; status: DaemonStatus }
   | { type: 'released'; profile: string; running: number; queued: number; open: boolean }
-  | { type: 'result'; ok: boolean; message?: string };
+  | { type: 'result'; ok: boolean; message?: string }
+  | TabActionResponse;
 
 export type Message = ClientMessage | DaemonMessage;
 

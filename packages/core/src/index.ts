@@ -21,3 +21,5 @@ export * from './flows';
 export * from './selectors';
 export * from './recorder';
 export * from './export';
+export * from './agent/outline';
+export * from './agent/actions';

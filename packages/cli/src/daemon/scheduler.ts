@@ -2,7 +2,41 @@ import type { CooldownSettings, DaemonConcurrency } from '../config';
 import type { SharedBrowserHandle } from '../context';
 import type { ColdGuard, CooldownEntry, CooldownStore } from '../cooldown';
 import { ColdTab, type ColdTabSource } from './cold-tab';
-import type { BrowserStatus } from './protocol';
+import type { BrowserStatus, TabSummary } from './protocol';
+import type { InteractiveSession, Outline } from '@webscoop/core';
+
+export interface InteractiveTab {
+  tabId: string;
+  profile: string;
+  profileDir: string;
+  session: InteractiveSession;
+  visual: boolean;
+  isPopup: boolean;
+  openerTabId?: string;
+  lastOutline: Outline | null;
+  outlineUrl: string | null;
+  history: string[];
+  lastActiveAt: number;
+  lock: Promise<unknown>;
+  title?: string;
+}
+
+export function runWithTabLock<T>(tab: InteractiveTab, fn: () => Promise<T>): Promise<T> {
+  const previous = tab.lock;
+  let release: () => void;
+  tab.lock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return previous
+    .catch(() => {})
+    .then(async () => {
+      tab.lastActiveAt = Date.now();
+      return await fn();
+    })
+    .finally(() => {
+      release();
+    });
+}
 
 /** Cold state a job's recipe is checked against; unset when cooldowns are off. */
 export interface JobCooldown {
@@ -144,6 +178,8 @@ class Slot {
   readonly attention = new AttentionGate();
   /** Walled tabs of cold recipes, by recipe; they keep the browser open but take no job slot. */
   readonly coldTabs = new Map<string, ColdTab>();
+  /** Interactive tabs controlled by external agents. */
+  readonly interactiveTabs = new Map<string, InteractiveTab>();
 
   constructor(
     readonly profile: string,
@@ -154,9 +190,9 @@ class Slot {
     return this.running.size > 0 || this.queue.length > 0;
   }
 
-  /** Busy, or holding a cold tab: the browser must stay open. */
+  /** Busy, or holding a cold tab or interactive tab: the browser must stay open. */
   get held(): boolean {
-    return this.busy || this.coldTabs.size > 0;
+    return this.busy || this.coldTabs.size > 0 || this.interactiveTabs.size > 0;
   }
 
   get open(): boolean {
@@ -175,6 +211,8 @@ export interface SchedulerOptions {
   idleMs?: number;
   /** Interval between re-checks of a cold tab. Default 1000. */
   coldPollMs?: number;
+  /** Idle tab timeout in ms. Default 1800000 (30 min). */
+  idleTabTimeoutMs?: number;
 }
 
 /**
@@ -186,9 +224,15 @@ export interface SchedulerOptions {
 export class Scheduler {
   private readonly slots = new Map<string, Slot>();
   private readonly now: () => number;
+  private nextTabNumber = 0;
+  readonly idleTabTimeoutMs: number;
+  private reaperTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly opts: SchedulerOptions = {}) {
     this.now = opts.now ?? Date.now;
+    this.idleTabTimeoutMs = opts.idleTabTimeoutMs ?? 1_800_000;
+    this.reaperTimer = setInterval(() => void this.reapIdleTabs(), Math.min(this.idleTabTimeoutMs, 60_000));
+    this.reaperTimer.unref?.();
   }
 
   /** No browser open and no job. */
@@ -250,7 +294,7 @@ export class Scheduler {
 
   status(): BrowserStatus[] {
     return [...this.slots.values()]
-      .filter((s) => s.open || s.busy)
+      .filter((s) => s.open || s.busy || s.interactiveTabs.size > 0)
       .map((s) => ({
         profile: s.profile,
         profileDir: s.profileDir,
@@ -258,15 +302,38 @@ export class Scheduler {
         running: [...s.running.values()].filter((e) => e.state === 'running').map((e) => ({ runId: e.job.runId, recipe: e.job.recipe })),
         queued: [...[...s.running.values()].filter((e) => e.state !== 'running'), ...s.queue].map((e) => ({ runId: e.job.runId, recipe: e.job.recipe })),
         attention: s.attention.holder,
+        tabs: [...s.interactiveTabs.values()].map((t) => ({
+          tabId: t.tabId,
+          profile: t.profile,
+          url: t.outlineUrl ?? '',
+          title: t.title ?? '',
+          isPopup: t.isPopup,
+          openerTabId: t.openerTabId,
+        })),
       }));
   }
 
   /** Jobs on a profile's browser: running and queued, and whether a browser is open. */
-  usage(profileDir: string): { profile: string | null; running: number; queued: number; open: boolean } {
+  usage(profileDir: string): { profile: string | null; running: number; queued: number; open: boolean; tabs?: number } {
     const slot = this.slots.get(profileDir);
     if (!slot) return { profile: null, running: 0, queued: 0, open: false };
     const running = [...slot.running.values()].filter((e) => e.state === 'running').length;
-    return { profile: slot.profile, running, queued: slot.running.size - running + slot.queue.length, open: slot.open || slot.busy };
+    return {
+      profile: slot.profile,
+      running,
+      queued: slot.running.size - running + slot.queue.length,
+      open: slot.open || slot.busy,
+      ...(slot.interactiveTabs.size > 0 ? { tabs: slot.interactiveTabs.size } : {}),
+    };
+  }
+
+  getOrCreateSlot(profileDir: string, profile = 'default'): Slot {
+    let slot = this.slots.get(profileDir);
+    if (!slot) {
+      slot = new Slot(profile, profileDir);
+      this.slots.set(profileDir, slot);
+    }
+    return slot;
   }
 
   /**
@@ -283,6 +350,10 @@ export class Scheduler {
       if (entry.state === 'launching') this.dropLaunching(slot, entry, message);
       else entry.job.interrupt(message);
     }
+    for (const tab of [...slot.interactiveTabs.values()]) {
+      await tab.session.close().catch(() => {});
+    }
+    slot.interactiveTabs.clear();
     await this.settled(slot);
     await this.closeBrowser(slot);
     this.schedulePump(slot);
@@ -290,6 +361,7 @@ export class Scheduler {
 
   /** Stop: cancel every job (with `force`) or let them finish, then close every browser. */
   async stop(force: boolean, message = 'stopped by `webscoop daemon stop --force`'): Promise<void> {
+    clearInterval(this.reaperTimer);
     if (force) {
       for (const slot of this.slots.values()) {
         for (const entry of slot.queue.splice(0)) this.drop(slot, entry, message);
@@ -553,6 +625,8 @@ export class Scheduler {
     clearTimeout(slot.idleTimer);
     slot.closing = (async () => {
       await Promise.all([...slot.coldTabs.values()].map((tab) => tab.dispose()));
+      await Promise.all([...slot.interactiveTabs.values()].map((tab) => tab.session.close().catch(() => {})));
+      slot.interactiveTabs.clear();
       slot.browser = null;
       slot.key = null;
       await launched.handle.close().catch(() => {});
@@ -566,6 +640,186 @@ export class Scheduler {
     }
     this.pump(slot);
     this.checkEmpty();
+  }
+
+  registerInteractiveTab(
+    slot: Slot,
+    session: InteractiveSession,
+    opts: {
+      visual?: boolean;
+      isPopup?: boolean;
+      openerTabId?: string;
+      url?: string;
+      title?: string;
+    } = {},
+  ): InteractiveTab {
+    const tabId = `tab_${++this.nextTabNumber}`;
+    const tab: InteractiveTab = {
+      tabId,
+      profile: slot.profile,
+      profileDir: slot.profileDir,
+      session,
+      visual: opts.visual ?? true,
+      isPopup: opts.isPopup ?? false,
+      openerTabId: opts.openerTabId,
+      lastOutline: null,
+      outlineUrl: opts.url ?? null,
+      history: opts.url ? [opts.url] : [],
+      lastActiveAt: this.now(),
+      lock: Promise.resolve(),
+      title: opts.title ?? '',
+    };
+    slot.interactiveTabs.set(tabId, tab);
+
+    session.onPopup((popupSession) => {
+      void (async () => {
+        const pUrl = await popupSession.url().catch(() => '');
+        const pTitle = await popupSession.title().catch(() => '');
+        this.registerInteractiveTab(slot, popupSession as InteractiveSession, {
+          visual: tab.visual,
+          isPopup: true,
+          openerTabId: tabId,
+          url: pUrl,
+          title: pTitle,
+        });
+      })();
+    });
+
+    session.onClosed(() => {
+      if (slot.interactiveTabs.get(tabId) === tab) {
+        slot.interactiveTabs.delete(tabId);
+        if (!slot.closing) this.afterJob(slot);
+      }
+    });
+
+    return tab;
+  }
+
+  async openInteractiveTab(
+    profileDir: string,
+    profile: string,
+    launcher: (signal: AbortSignal) => Promise<LaunchedBrowser>,
+    opts: {
+      url?: string;
+      visual?: boolean;
+      humanize?: boolean;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<InteractiveTab> {
+    let slot = this.slots.get(profileDir);
+    if (!slot) {
+      slot = new Slot(profile, profileDir);
+      this.slots.set(profileDir, slot);
+    }
+    clearTimeout(slot.idleTimer);
+    if (!slot.browser && !slot.launching) {
+      const abort = new AbortController();
+      slot.launchAbort = abort;
+      slot.launching = launcher(abort.signal)
+        .then((launched) => {
+          slot!.browser = launched;
+          launched.handle.onClosed(() => void this.browserGone(slot!, launched));
+          return launched;
+        })
+        .finally(() => {
+          slot!.launching = null;
+          slot!.launchAbort = null;
+        });
+    }
+    const launched = slot.browser ?? (await slot.launching!);
+    const session = (await launched.handle.newSession({
+      bypassCSP: true,
+      humanize: opts.humanize,
+    })) as InteractiveSession;
+
+    let title: string;
+    let currentUrl: string;
+    if (opts.url) {
+      const info = await session.goto(opts.url, { timeoutMs: opts.timeoutMs ?? 30_000 });
+      title = info.title;
+      currentUrl = info.url;
+    } else {
+      title = await session.title().catch(() => '');
+      currentUrl = await session.url().catch(() => '');
+    }
+
+    const tab = this.registerInteractiveTab(slot, session, {
+      visual: opts.visual,
+      url: currentUrl,
+      title,
+    });
+    return tab;
+  }
+
+  getTab(tabId: string): { slot: Slot; tab: InteractiveTab } | undefined {
+    for (const slot of this.slots.values()) {
+      const tab = slot.interactiveTabs.get(tabId);
+      if (tab) return { slot, tab };
+    }
+    return undefined;
+  }
+
+  allTabs(profile?: string): TabSummary[] {
+    const out: TabSummary[] = [];
+    for (const slot of this.slots.values()) {
+      if (profile && slot.profile !== profile) continue;
+      for (const tab of slot.interactiveTabs.values()) {
+        out.push({
+          tabId: tab.tabId,
+          profile: tab.profile,
+          url: tab.outlineUrl ?? '',
+          title: tab.title ?? '',
+          isPopup: tab.isPopup,
+          openerTabId: tab.openerTabId,
+        });
+      }
+    }
+    return out;
+  }
+
+  async closeTab(tabId: string): Promise<boolean> {
+    const found = this.getTab(tabId);
+    if (!found) return false;
+    const { slot, tab } = found;
+    const popups = [...slot.interactiveTabs.values()].filter((t) => t.openerTabId === tabId);
+    for (const p of popups) {
+      slot.interactiveTabs.delete(p.tabId);
+      await p.session.close().catch(() => {});
+    }
+    slot.interactiveTabs.delete(tabId);
+    await tab.session.close().catch(() => {});
+    if (!slot.closing) this.afterJob(slot);
+    return true;
+  }
+
+  async closeAllTabs(profile?: string): Promise<string[]> {
+    const closed: string[] = [];
+    for (const slot of this.slots.values()) {
+      if (profile && slot.profile !== profile) continue;
+      for (const [id, tab] of [...slot.interactiveTabs.entries()]) {
+        closed.push(id);
+        slot.interactiveTabs.delete(id);
+        await tab.session.close().catch(() => {});
+      }
+      if (!slot.closing) this.afterJob(slot);
+    }
+    return closed;
+  }
+
+  async reapIdleTabs(): Promise<string[]> {
+    const now = this.now();
+    const reaped: string[] = [];
+    for (const slot of this.slots.values()) {
+      for (const [tabId, tab] of [...slot.interactiveTabs.entries()]) {
+        if (now - tab.lastActiveAt >= this.idleTabTimeoutMs) {
+          reaped.push(tabId);
+          slot.interactiveTabs.delete(tabId);
+          await tab.session.close().catch(() => {});
+          if (!slot.closing) this.afterJob(slot);
+        }
+      }
+    }
+    return reaped;
   }
 
   /** The user closed the window, or the browser crashed. */

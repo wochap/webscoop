@@ -654,6 +654,10 @@ export class PlaywrightSession implements InteractiveSession {
     }, title);
   }
 
+  async title(): Promise<string> {
+    return this.page.title();
+  }
+
   async pageText(): Promise<string> {
     const text = await this.page.evaluate(() => document.body?.innerText ?? '');
     return text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_LIMIT);
@@ -832,8 +836,8 @@ export class PlaywrightSession implements InteractiveSession {
     }
   }
 
-  async evaluate(source: string): Promise<void> {
-    await this.mainWorldEvaluate(source);
+  async evaluate(source: string): Promise<unknown> {
+    return this.mainWorldEvaluate(source);
   }
 
   async expose(name: string, fn: (msg: unknown, windowId: string) => Promise<unknown>): Promise<void> {

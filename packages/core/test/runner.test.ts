@@ -132,6 +132,7 @@ describe('Runner', () => {
           url: async () => '',
           focus: async () => {},
           setTitle: async () => {},
+          title: async () => '',
           pageText: async () => '',
           onPopup: () => () => {},
           downloadMark: () => 0,

@@ -109,6 +109,8 @@ _webscoop() {
         'daemon:show or stop the background daemon'
         'cooldown:list or clear recipes kept off their site after a wall'
         'attention:answer the run waiting for you in the browser'
+        'tab:interactively control browser tabs and popups through the daemon'
+        'tabs:list all active interactive tabs and popups across profiles'
         'doctor:check paths, display, browser, proxy, profiles, hooks, and LLM'
       )
       _describe -t commands 'webscoop command' commands && ret=0
@@ -264,6 +266,37 @@ _webscoop() {
             '(-h --help)'{-h,--help}'[show help]' \
             '1:action:((continue\:"re-check the guard now" abort\:"end the run"))' \
             '2::run id:' && ret=0
+          ;;
+        # command: tab
+        tab)
+          _arguments -C \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '1:action:((open\:"open a new interactive tab" list\:"list active tabs" goto\:"navigate to URL" back\:"navigate back" outline\:"DOM outline with element refs" find\:"search outline" html\:"outer HTML" click\:"click element" fill\:"fill input" press\:"press key" scroll\:"scroll" eval\:"evaluate JavaScript" download\:"trigger and save download" attend\:"request user attention" close\:"close tab"))' \
+            '*:: :->tab_args' && ret=0
+          case $words[1] in
+            open) _arguments $humanize_opts '--visual[render ripple and flash]' '--profile[browser profile name]:profile:_webscoop_profiles' '--timeout[timeout]:ms:' '--json[print JSON]' '1::url:_urls' && ret=0 ;;
+            list) _arguments '--profile[browser profile name]:profile:_webscoop_profiles' '--json[print JSON]' && ret=0 ;;
+            goto) _arguments '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2:url:_urls' && ret=0 ;;
+            back) _arguments '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' && ret=0 ;;
+            outline) _arguments '--budget[token budget]:tokens:' '--json[print JSON]' '1:tabId:' && ret=0 ;;
+            find) _arguments '--json[print JSON]' '1:tabId:' '2:text:' && ret=0 ;;
+            html) _arguments '--json[print JSON]' '1:tabId:' '2:target:' && ret=0 ;;
+            click) _arguments '--visual[render ripple and flash]' '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2:target:' && ret=0 ;;
+            fill) _arguments '--visual[render ripple and flash]' '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2:target:' '3:value:' && ret=0 ;;
+            press) _arguments '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2:key:' && ret=0 ;;
+            scroll) _arguments '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2:direction:(up down left right)' '3::amount:' && ret=0 ;;
+            eval) _arguments '--json[print JSON]' '1:tabId:' '2:expression:' && ret=0 ;;
+            download) _arguments '--visual[render ripple and flash]' '--out[destination file path]:path:_files' '--url[direct download URL]:url:_urls' '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' '2::target:' && ret=0 ;;
+            attend) _arguments '--reason[reason string]:reason:' '--timeout[timeout]:ms:' '--json[print JSON]' '1:tabId:' && ret=0 ;;
+            close) _arguments '--all[close all interactive tabs]' '--profile[browser profile name]:profile:_webscoop_profiles' '--json[print JSON]' '1::tabId:' && ret=0 ;;
+          esac
+          ;;
+        # command: tabs
+        tabs)
+          _arguments \
+            '(-h --help)'{-h,--help}'[show help]' \
+            '--profile[browser profile name]:profile:_webscoop_profiles' \
+            '--json[print JSON output]' && ret=0
           ;;
         # command: doctor
         doctor)
