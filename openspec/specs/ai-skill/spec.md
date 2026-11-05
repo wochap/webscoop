@@ -42,11 +42,11 @@ A test SHALL fail when the skill mentions a `webscoop` subcommand or a flag of `
 - **THEN** the test suite fails and names `--jsonl`
 
 ### Requirement: Installed with the Nix package
-The Nix package SHALL install the skill directory at `share/webscoop/skills/webscoop-use-recipe/` so that `SKILL.md` is at `share/webscoop/skills/webscoop-use-recipe/SKILL.md` in the package output.
+The Nix package SHALL install the skill directories under `share/webscoop/skills/` so that both `skills/webscoop-use-recipe/SKILL.md` and `skills/webscoop-control-tab/SKILL.md` are present at `share/webscoop/skills/<skill-name>/SKILL.md` in the package output.
 
 #### Scenario: Home-manager source path
 - **WHEN** the Nix package is built
-- **THEN** `$out/share/webscoop/skills/webscoop-use-recipe/SKILL.md` exists and matches the repository file
+- **THEN** `$out/share/webscoop/skills/webscoop-use-recipe/SKILL.md` and `$out/share/webscoop/skills/webscoop-control-tab/SKILL.md` exist and match the repository files
 
 ### Requirement: Skill explains agent submit confirmations
 The skill body SHALL tell the agent the following:
@@ -58,3 +58,29 @@ The skill body SHALL tell the agent the following:
 #### Scenario: Agent does not auto-approve
 - **WHEN** an agent with the skill runs a recipe with an agent step that exits 2 after a submit confirmation timed out
 - **THEN** the skill tells it to ask the user whether to allow the submit, and not to retry with `--submit allow` on its own
+
+### Requirement: Interactive tab control skill file
+The repository SHALL contain `skills/webscoop-control-tab/SKILL.md`, a Markdown file with YAML frontmatter holding `name: webscoop-control-tab` and a `description` explaining how to interactively drive browser tabs with webscoop commands. The body SHALL instruct the agent to:
+- list active tabs with `webscoop tabs --json` and open new tabs with `webscoop tab open <url> --json`;
+- open multiple tabs in parallel to execute concurrent filtering or scraping across independent categories or queries;
+- inspect page structure using `webscoop tab outline <tabId>` and reference bracketed refs `e<n>`;
+- perform interactions using `click`, `fill`, `press`, `scroll`, and `find`;
+- evaluate JavaScript in the tab document context via `webscoop tab eval <tabId> "<expression>"` for fast structured data and table extraction;
+- trigger direct file downloads with `webscoop tab download <tabId> <target> --out <filepath>`;
+- handle login challenges or captchas with `webscoop tab attend <tabId>`;
+- close tabs with `webscoop tab close <tabId>` upon completing a task.
+
+#### Scenario: Tab control skill frontmatter
+- **WHEN** `skills/webscoop-control-tab/SKILL.md` is parsed
+- **THEN** its frontmatter has `name: webscoop-control-tab` and a non-empty `description`
+
+#### Scenario: Tab control CLI validation
+- **WHEN** the CLI test suite validates `skills/webscoop-control-tab/SKILL.md`
+- **THEN** every `webscoop` command, subcommand, and option mentioned in the skill is defined by the CLI parser
+
+### Requirement: Recipe skill suggests tab control fallback
+When `skills/webscoop-use-recipe/SKILL.md` instructs an agent on what to do when no saved recipe fits a request, it SHALL direct the agent to interactively inspect and drive the site using the `webscoop-control-tab` skill instead of giving up.
+
+#### Scenario: Fallback instructions
+- **WHEN** an agent reads `skills/webscoop-use-recipe/SKILL.md` and no recipe matches
+- **THEN** the text suggests using `webscoop-control-tab` to interactively inspect and scrape the page
