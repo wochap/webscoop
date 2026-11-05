@@ -80,7 +80,7 @@ stdenv.mkDerivation {
     installShellCompletion --zsh packages/cli/completions/_webscoop
 
     mkdir -p $out/share/webscoop/skills
-    cp -r skills/webscoop-use-recipe $out/share/webscoop/skills/
+    cp -r skills/* $out/share/webscoop/skills/
 
     runHook postInstall
   '';

@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { buildProgram } from '../src/main';
 import { testIo } from './helpers';
 
-const FILE = fileURLToPath(new URL('../../../skills/webscoop-use-recipe/SKILL.md', import.meta.url));
+const RECIPE_FILE = fileURLToPath(new URL('../../../skills/webscoop-use-recipe/SKILL.md', import.meta.url));
+const TAB_FILE = fileURLToPath(new URL('../../../skills/webscoop-control-tab/SKILL.md', import.meta.url));
 
 /** The `key: value` lines of the YAML frontmatter. */
 function frontmatter(text: string): Map<string, string> {
@@ -16,6 +17,15 @@ function frontmatter(text: string): Map<string, string> {
 /** The skill's code: fenced blocks and inline code spans, where commands are written. */
 function code(text: string): string {
   return [...text.matchAll(/```[^\n]*\n([\s\S]*?)```|`([^`\n]+)`/g)].map((m) => m[1] ?? m[2]).join('\n');
+}
+
+/** Recursively collect long option names defined on a command and its subcommands. */
+function collectOptions(cmd: Command): string[] {
+  const options = cmd.options.map((o) => o.long).filter((x): x is string => Boolean(x));
+  for (const sub of cmd.commands) {
+    options.push(...collectOptions(sub));
+  }
+  return options;
 }
 
 /** Every `webscoop <subcommand> [<subcommand>]` the skill's code mentions that is not defined by the program. */
@@ -33,16 +43,15 @@ export function unknownCommands(text: string, program: Command): string[] {
   return [...unknown];
 }
 
-/** Every `--flag` the skill's code mentions that neither `run` nor `recipes` defines. */
-export function unknownFlags(text: string, program: Command): string[] {
-  const known = new Set(
-    program.commands.filter((c) => c.name() === 'run' || c.name() === 'recipes').flatMap((c) => c.options.map((o) => o.long)),
-  );
+/** Every `--flag` the skill's code mentions that the specified commands (or `run` and `recipes` by default) do not define. */
+export function unknownFlags(text: string, program: Command, commandNames: string[] = ['run', 'recipes']): string[] {
+  const targets = program.commands.filter((c) => commandNames.includes(c.name()));
+  const known = new Set(targets.flatMap(collectOptions));
   return [...new Set([...code(text).matchAll(/(?<![\w-])--[a-z][\w-]*/g)].map((m) => m[0]))].filter((f) => !known.has(f));
 }
 
 describe('webscoop-use-recipe skill', () => {
-  const text = readFileSync(FILE, 'utf8');
+  const text = readFileSync(RECIPE_FILE, 'utf8');
   const program = buildProgram(testIo({}), () => {});
 
   it('has the required frontmatter', () => {
@@ -62,5 +71,29 @@ describe('webscoop-use-recipe skill', () => {
   it('names a flag the CLI does not define', () => {
     expect(unknownFlags(`${text}\n\`webscoop run x --jsonlines\``, program)).toEqual(['--jsonlines']);
     expect(unknownCommands(`${text}\n\`webscoop scrape x\` \`webscoop daemon kill\``, program)).toEqual(['scrape', 'daemon kill']);
+  });
+});
+
+describe('webscoop-control-tab skill', () => {
+  const text = readFileSync(TAB_FILE, 'utf8');
+  const program = buildProgram(testIo({}), () => {});
+
+  it('has the required frontmatter', () => {
+    const meta = frontmatter(text);
+    expect(meta.get('name')).toBe('webscoop-control-tab');
+    expect(meta.get('description')).toBeTruthy();
+  });
+
+  it('mentions only commands the CLI defines', () => {
+    expect(unknownCommands(text, program)).toEqual([]);
+  });
+
+  it('mentions only tab and tabs flags the CLI defines', () => {
+    expect(unknownFlags(text, program, ['tab', 'tabs'])).toEqual([]);
+  });
+
+  it('names a flag the CLI does not define', () => {
+    expect(unknownFlags(`${text}\n\`webscoop tab open --nonexistent\``, program, ['tab', 'tabs'])).toEqual(['--nonexistent']);
+    expect(unknownCommands(`${text}\n\`webscoop tab invalid\``, program)).toEqual(['tab invalid']);
   });
 });

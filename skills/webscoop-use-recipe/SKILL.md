@@ -30,7 +30,7 @@ It prints a JSON array (nothing when there are no recipes). Each entry has:
 
 Match the user's request against each recipe's `description`, its tables' descriptions and field names, its captures' names and descriptions, and its variables' descriptions. The URL helps when descriptions are missing.
 
-When no recipe fits, tell the user so. Do not guess, and do not scrape the site another way unless the user asks. Suggest that the user records a recipe with `webscoop record <url>` (the user runs it; it needs them in the browser).
+When no recipe fits, use the `webscoop-control-tab` skill to interactively inspect and scrape the page. Alternatively, suggest that the user records a recipe with `webscoop record <url>` (the user runs it; it needs them in the browser).
 
 ## 3. Fill the variables
 
