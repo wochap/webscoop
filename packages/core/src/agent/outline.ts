@@ -140,19 +140,19 @@ function matchesCompound(node: AnnotatedNode, sel: string): boolean {
   while (rest.length > 0) {
     if (rest.startsWith('#')) {
       const m = rest.match(/^#([a-zA-Z0-9_-]+)/);
-      if (!m) return false;
+      if (!m || !m[1]) return false;
       if (node.attrs.id !== m[1]) return false;
       rest = rest.slice(m[0].length);
     } else if (rest.startsWith('.')) {
       const m = rest.match(/^\.([a-zA-Z0-9_-]+)/);
-      if (!m) return false;
+      if (!m || !m[1]) return false;
       const classes = (node.attrs.class ?? '').split(/\s+/);
       if (!classes.includes(m[1])) return false;
       rest = rest.slice(m[0].length);
     } else if (rest.startsWith('[')) {
       const m = rest.match(/^\[([a-zA-Z0-9_-]+)(?:=("[^"]*"|'[^']*'|[^\]]+))?\]/);
-      if (!m) return false;
-      const attr = m[1]!;
+      if (!m || !m[1]) return false;
+      const attr = m[1];
       let val = m[2];
       if (val !== undefined) {
         if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
@@ -202,7 +202,7 @@ export function matchesSelector(node: AnnotatedNode, selector: string): boolean 
     } else {
       const ancestorToken = tokens[i]!;
       let found = false;
-      for (let p = currNode.parent; p; p = p.parent) {
+      for (let p: AnnotatedNode | null | undefined = currNode.parent; p; p = p.parent) {
         if (matchesCompound(p, ancestorToken)) {
           currNode = p;
           found = true;
@@ -329,9 +329,9 @@ export function buildOutline(
 ): Outline {
   if (tree.type !== 'element') return emptyOutline();
   const options: OutlineOptions =
-    optionsOrSecrets instanceof Map
-      ? { secrets: optionsOrSecrets }
-      : (optionsOrSecrets ?? {});
+    optionsOrSecrets && 'get' in optionsOrSecrets && typeof (optionsOrSecrets as any).get === 'function'
+      ? { secrets: optionsOrSecrets as Secrets }
+      : ((optionsOrSecrets as OutlineOptions) ?? {});
   const secrets = options.secrets;
   const entries = collect(annotate(tree as SerializedElement), masker(secrets), options);
   const trailer = (n: number) => `... ${n} more lines; use find`;
