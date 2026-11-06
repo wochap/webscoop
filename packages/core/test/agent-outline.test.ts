@@ -19,7 +19,7 @@ describe('agent outline', () => {
 
   it('describes inputs, headings and text', () => {
     const o = outline('<h1>Report</h1><input type="text" placeholder="Email" value="a@b.c"><input type="checkbox" aria-label="Agree" checked><p>Published 2026-03-01</p><input type="hidden" name="x">');
-    expect(o.all).toEqual(['[e1] heading "Report"', '[e2] textbox "Email" value="a@b.c"', '[e3] checkbox "Agree" checked', '[e4] text "Published 2026-03-01"']);
+    expect(o.all).toEqual(['[e1] heading "Report"', '[e2] textbox "Email" value="a@b.c" placeholder="Email"', '[e3] checkbox "Agree" checked', '[e4] text "Published 2026-03-01"']);
   });
 
   it('numbers the same refs on an unchanged page', () => {
@@ -57,13 +57,13 @@ describe('agent outline', () => {
 
   it('shows a filled password as *** and an empty one as empty', () => {
     const o = outline('<input type="password" placeholder="Password" value="hunter2"><input type="password" placeholder="Again" value="">');
-    expect(o.all).toEqual(['[e1] textbox "Password" value="***"', '[e2] textbox "Again" value=""']);
+    expect(o.all).toEqual(['[e1] textbox "Password" value="***" placeholder="Password"', '[e2] textbox "Again" value="" placeholder="Again"']);
   });
 
   it('shows a secret echoed on the page as its placeholder, in lines and find results', () => {
     const secrets = new Map([['{user}', 'alice@x.test']]);
     const o = buildOutline(snapshotFromHtml('<html><body><p>Signed in as alice@x.test</p><input type="text" placeholder="Email" value="alice@x.test"><a href="/u/alice@x.test">Profile</a></body></html>'), 5000, estimateTokens, secrets);
-    expect(o.all).toEqual(['[e1] text "Signed in as {user}"', '[e2] textbox "Email" value="{user}"', '[e3] link "Profile" href=/u/{user}']);
+    expect(o.all).toEqual(['[e1] text "Signed in as {user}"', '[e2] textbox "Email" value="{user}" placeholder="Email"', '[e3] link "Profile" href=/u/{user}']);
     expect(o.text).not.toContain('alice@x.test');
     expect(o.find('signed').join('\n')).not.toContain('alice@x.test');
   });

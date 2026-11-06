@@ -246,4 +246,263 @@ describe('Target resolution and TabHandler', () => {
     await rm(join(tmpdir(), `webscoop-dl-test-${Date.now()}`), { recursive: true, force: true }).catch(() => {});
     await scheduler.stop(false);
   });
+
+  it('supports memorable labels and dual identifier resolution (Task 2.1)', async () => {
+    const fakeBrowser = new FakeBrowser({
+      'https://music.test/': {
+        title: 'Music Home',
+        dom: h('html', {}, h('body', {}, h('h1', {}, 'Music Tracks'))),
+      },
+    });
+
+    const scheduler = new Scheduler();
+    const session = (await fakeBrowser.open('/profile')) as FakeInteractiveSession;
+    await session.goto('https://music.test/', { timeoutMs: 1000 });
+
+    const slot = scheduler.getOrCreateSlot('/profile', 'default');
+    const tab = scheduler.registerInteractiveTab(slot, session, {
+      url: 'https://music.test/',
+      label: 'calm',
+    });
+
+    // 1. Look up by label in getTab
+    const foundByLabel = scheduler.getTab('calm');
+    expect(foundByLabel).toBeDefined();
+    expect(foundByLabel?.tab.tabId).toBe(tab.tabId);
+    expect(foundByLabel?.tab.label).toBe('calm');
+
+    // 2. Look up by tabId in getTab
+    const foundById = scheduler.getTab(tab.tabId);
+    expect(foundById).toBeDefined();
+    expect(foundById?.tab.label).toBe('calm');
+
+    // 3. allTabs includes label
+    const summaries = scheduler.allTabs();
+    expect(summaries.find((s) => s.tabId === tab.tabId)?.label).toBe('calm');
+
+    // 4. Commands accept label instead of tabId
+    const evalRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.eval',
+      tabId: 'calm',
+      expression: '1 + 1',
+    });
+    expect(evalRes).toEqual({
+      type: 'tab.eval',
+      tabId: tab.tabId,
+      result: undefined,
+    });
+
+    // 5. Close by label
+    const closeRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.close',
+      tabId: 'calm',
+    });
+    expect(closeRes).toEqual({
+      type: 'tab.closed',
+      closed: [tab.tabId],
+    });
+    expect(scheduler.getTab('calm')).toBeUndefined();
+
+    await scheduler.stop(false);
+  });
+
+  it('retrieves text, attributes, and input values via tab.get (Task 2.2)', async () => {
+    const fakeBrowser = new FakeBrowser({
+      'https://shop.test/': {
+        title: 'Product Catalog',
+        dom: h('html', {}, h('body', {},
+          h('a', { id: 'item-link', href: '/products/123', 'data-sku': 'SKU-99' }, 'Wireless Headphones'),
+          h('input', { id: 'qty-input', type: 'text', value: '5' }),
+        )),
+      },
+    });
+
+    const scheduler = new Scheduler();
+    const session = (await fakeBrowser.open('/profile')) as FakeInteractiveSession;
+    await session.goto('https://shop.test/', { timeoutMs: 1000 });
+
+    const slot = scheduler.getOrCreateSlot('/profile', 'default');
+    const tab = scheduler.registerInteractiveTab(slot, session, { url: 'https://shop.test/' });
+
+    // get text
+    const textRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.get',
+      tabId: tab.tabId,
+      mode: 'text',
+      target: '#item-link',
+    });
+    expect(textRes).toEqual({
+      type: 'tab.get',
+      tabId: tab.tabId,
+      value: 'Wireless Headphones',
+    });
+
+    // get attr
+    const attrRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.get',
+      tabId: tab.tabId,
+      mode: 'attr',
+      target: '#item-link',
+      attr: 'data-sku',
+    });
+    expect(attrRes).toEqual({
+      type: 'tab.get',
+      tabId: tab.tabId,
+      value: 'SKU-99',
+    });
+
+    // get value
+    const valRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.get',
+      tabId: tab.tabId,
+      mode: 'value',
+      target: '#qty-input',
+    });
+    expect(valRes).toEqual({
+      type: 'tab.get',
+      tabId: tab.tabId,
+      value: '5',
+    });
+
+    await scheduler.stop(false);
+  });
+
+  it('executes batch commands sequentially in daemon (Task 2.3)', async () => {
+    const fakeBrowser = new FakeBrowser({
+      'https://shop.test/': {
+        title: 'Catalog',
+        dom: h('html', {}, h('body', {},
+          h('input', { id: 'search', type: 'text', value: '' }),
+          h('button', { id: 'btn' }, 'Submit'),
+        )),
+      },
+    });
+
+    const scheduler = new Scheduler();
+    const session = (await fakeBrowser.open('/profile')) as FakeInteractiveSession;
+    await session.goto('https://shop.test/', { timeoutMs: 1000 });
+
+    const slot = scheduler.getOrCreateSlot('/profile', 'default');
+    const tab = scheduler.registerInteractiveTab(slot, session, { url: 'https://shop.test/' });
+
+    const batchRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.batch',
+      tabId: tab.tabId,
+      actions: [
+        'fill #search "phone"',
+        'click #btn',
+        'get value #search',
+      ],
+    });
+
+    expect(batchRes.type).toBe('tab.batch');
+    if (batchRes.type === 'tab.batch') {
+      expect(batchRes.results).toHaveLength(3);
+      expect(batchRes.results[0]!.type).toBe('tab.page');
+      expect(batchRes.results[1]!.type).toBe('tab.page');
+      expect(batchRes.results[2]).toEqual({
+        type: 'tab.get',
+        tabId: tab.tabId,
+        value: 'phone',
+      });
+      expect(batchRes.error).toBeUndefined();
+    }
+
+    // Batch stops on error
+    const batchFail = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.batch',
+      tabId: tab.tabId,
+      actions: [
+        'click #btn',
+        'click #nonexistent-element',
+        'click #btn',
+      ],
+    });
+    expect(batchFail.type).toBe('tab.batch');
+    if (batchFail.type === 'tab.batch') {
+      expect(batchFail.results).toHaveLength(1);
+      expect(batchFail.error).toContain('target not found');
+    }
+
+    await scheduler.stop(false);
+  });
+
+  it('supports semantic waits via tab.wait (Task 2.4)', async () => {
+    const fakeBrowser = new FakeBrowser({
+      'https://shop.test/': {
+        title: 'Catalog',
+        dom: h('html', {}, h('body', {}, h('h1', {}, 'Ready to Shop'))),
+      },
+    });
+
+    const scheduler = new Scheduler();
+    const session = (await fakeBrowser.open('/profile')) as FakeInteractiveSession;
+    await session.goto('https://shop.test/', { timeoutMs: 1000 });
+
+    const slot = scheduler.getOrCreateSlot('/profile', 'default');
+    const tab = scheduler.registerInteractiveTab(slot, session, { url: 'https://shop.test/' });
+
+    // wait ms
+    const waitMs = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.wait',
+      tabId: tab.tabId,
+      ms: 10,
+    });
+    expect(waitMs.type).toBe('tab.page');
+
+    // wait text
+    const waitText = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.wait',
+      tabId: tab.tabId,
+      text: 'Ready to Shop',
+      timeoutMs: 1000,
+    });
+    expect(waitText.type).toBe('tab.page');
+
+    // wait url
+    const waitUrl = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.wait',
+      tabId: tab.tabId,
+      url: 'shop.test',
+      timeoutMs: 1000,
+    });
+    expect(waitUrl.type).toBe('tab.page');
+
+    await scheduler.stop(false);
+  });
+
+  it('supports route and unroute for network aborting (Task 2.6)', async () => {
+    const fakeBrowser = new FakeBrowser({
+      'https://shop.test/': {
+        title: 'Catalog',
+        dom: h('html', {}, h('body', {}, h('h1', {}, 'Shop'))),
+      },
+    });
+
+    const scheduler = new Scheduler();
+    const session = (await fakeBrowser.open('/profile')) as FakeInteractiveSession;
+    await session.goto('https://shop.test/', { timeoutMs: 1000 });
+
+    const slot = scheduler.getOrCreateSlot('/profile', 'default');
+    const tab = scheduler.registerInteractiveTab(slot, session, { url: 'https://shop.test/' });
+
+    const routeRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.route',
+      tabId: tab.tabId,
+      pattern: '*analytics*',
+      abort: true,
+    });
+    expect(routeRes.type).toBe('tab.page');
+    expect(session.routes.has('*analytics*')).toBe(true);
+
+    const unrouteRes = await handleTabAction(scheduler, testIo(), {
+      type: 'tab.unroute',
+      tabId: tab.tabId,
+      pattern: '*analytics*',
+    });
+    expect(unrouteRes.type).toBe('tab.page');
+    expect(session.routes.has('*analytics*')).toBe(false);
+
+    await scheduler.stop(false);
+  });
 });

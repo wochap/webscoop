@@ -10,6 +10,7 @@ export interface TabCommonOptions {
 }
 
 export interface TabOpenOptions extends TabCommonOptions {
+  label?: string;
   visual?: boolean;
   humanize?: boolean;
   timeout?: number;
@@ -22,7 +23,29 @@ export interface TabActionOptions extends TabCommonOptions {
 
 export interface TabOutlineOptions extends TabCommonOptions {
   budget?: number;
+  interactive?: boolean;
+  scope?: string;
+  depth?: number;
 }
+
+export interface TabGetOptions extends TabCommonOptions {}
+
+export interface TabBatchOptions extends TabCommonOptions {
+  visual?: boolean;
+  timeout?: number;
+}
+
+export interface TabWaitOptions extends TabCommonOptions {
+  text?: string;
+  url?: string;
+  timeout?: number;
+}
+
+export interface TabRouteOptions extends TabCommonOptions {
+  abort?: boolean;
+}
+
+export interface TabUnrouteOptions extends TabCommonOptions {}
 
 export interface TabDownloadOptions extends TabCommonOptions {
   out: string;
@@ -80,6 +103,7 @@ export async function tabOpenCommand(
   const res = await sendTabRequest(io, {
     type: 'tab.open',
     url,
+    label: opts.label,
     profile: opts.profile,
     visual: opts.visual,
     humanize: opts.humanize,
@@ -91,7 +115,8 @@ export async function tabOpenCommand(
   if (opts.json) {
     io.stdout.write(`${JSON.stringify(res.tab, null, 2)}\n`);
   } else {
-    io.stdout.write(`${res.tab.tabId}  ${res.tab.url || 'about:blank'}  ${res.tab.title ? `"${res.tab.title}"` : ''}\n`);
+    const labelStr = res.tab.label ? `[${res.tab.label}] ` : '';
+    io.stdout.write(`${res.tab.tabId}  ${labelStr}${res.tab.url || 'about:blank'}  ${res.tab.title ? `"${res.tab.title}"` : ''}\n`);
   }
   return ExitCode.Ok;
 }
@@ -169,6 +194,9 @@ export async function tabOutlineCommand(
     type: 'tab.outline',
     tabId,
     budgetTokens: opts.budget,
+    interactive: opts.interactive,
+    scope: opts.scope,
+    depth: opts.depth,
   });
   if (res.type !== 'tab.outline') return ExitCode.Error;
   if (opts.json) {
@@ -411,6 +439,140 @@ export async function tabCloseCommand(
     } else {
       io.stdout.write('no tabs closed\n');
     }
+  }
+  return ExitCode.Ok;
+}
+
+export async function tabGetCommand(
+  io: CliIo,
+  mode: string,
+  tabId: string,
+  target: string,
+  attr: string | undefined,
+  opts: TabGetOptions,
+): Promise<Code> {
+  const normMode = mode.toLowerCase();
+  if (normMode !== 'text' && normMode !== 'attr' && normMode !== 'value') {
+    throw new CliError('get mode must be "text", "attr", or "value"');
+  }
+  if (normMode === 'attr' && !attr) {
+    throw new CliError('get attr requires an attribute name: webscoop tab get attr <tab> <target> <attr>');
+  }
+  const res = await sendTabRequest(io, {
+    type: 'tab.get',
+    tabId,
+    mode: normMode as 'text' | 'attr' | 'value',
+    target,
+    attr,
+  });
+  if (res.type !== 'tab.get') return ExitCode.Error;
+  if (opts.json) {
+    io.stdout.write(`${JSON.stringify({ tabId: res.tabId, value: res.value }, null, 2)}\n`);
+  } else {
+    io.stdout.write(`${res.value ?? ''}\n`);
+  }
+  return ExitCode.Ok;
+}
+
+export async function tabBatchCommand(
+  io: CliIo,
+  tabId: string,
+  actions: string[],
+  opts: TabBatchOptions,
+): Promise<Code> {
+  if (actions.length === 0) {
+    throw new CliError('tab batch requires at least one action command');
+  }
+  const res = await sendTabRequest(io, {
+    type: 'tab.batch',
+    tabId,
+    actions,
+    visual: opts.visual,
+    timeoutMs: opts.timeout,
+  });
+  if (res.type !== 'tab.batch') return ExitCode.Error;
+  if (opts.json) {
+    io.stdout.write(`${JSON.stringify({ tabId: res.tabId, results: res.results, ...(res.error ? { error: res.error } : {}) }, null, 2)}\n`);
+  } else {
+    if (res.error) {
+      io.stderr.write(`batch error: ${res.error}\n`);
+    }
+    for (const r of res.results) {
+      if (r.type === 'tab.page') io.stdout.write(`${r.message}\n`);
+      else if (r.type === 'tab.get') io.stdout.write(`${r.value ?? ''}\n`);
+      else if (r.type === 'tab.error') io.stderr.write(`error: ${r.message}\n`);
+    }
+  }
+  return res.error ? ExitCode.Error : ExitCode.Ok;
+}
+
+export async function tabWaitCommand(
+  io: CliIo,
+  tabId: string,
+  msOrTarget: string | undefined,
+  opts: TabWaitOptions,
+): Promise<Code> {
+  let ms: number | undefined;
+  if (msOrTarget !== undefined) {
+    const parsed = Number(msOrTarget);
+    if (!Number.isNaN(parsed)) {
+      ms = parsed;
+    }
+  }
+  const res = await sendTabRequest(io, {
+    type: 'tab.wait',
+    tabId,
+    ms,
+    text: opts.text,
+    url: opts.url,
+    timeoutMs: opts.timeout,
+  });
+  if (res.type !== 'tab.page') return ExitCode.Error;
+  if (opts.json) {
+    io.stdout.write(`${JSON.stringify({ tabId: res.tabId, url: res.url, title: res.title, message: res.message }, null, 2)}\n`);
+  } else {
+    io.stdout.write(`${res.message}\n`);
+  }
+  return ExitCode.Ok;
+}
+
+export async function tabRouteCommand(
+  io: CliIo,
+  tabId: string,
+  pattern: string,
+  opts: TabRouteOptions,
+): Promise<Code> {
+  const res = await sendTabRequest(io, {
+    type: 'tab.route',
+    tabId,
+    pattern,
+    abort: opts.abort ?? true,
+  });
+  if (res.type !== 'tab.page') return ExitCode.Error;
+  if (opts.json) {
+    io.stdout.write(`${JSON.stringify({ tabId: res.tabId, message: res.message }, null, 2)}\n`);
+  } else {
+    io.stdout.write(`${res.message}\n`);
+  }
+  return ExitCode.Ok;
+}
+
+export async function tabUnrouteCommand(
+  io: CliIo,
+  tabId: string,
+  pattern: string | undefined,
+  opts: TabUnrouteOptions,
+): Promise<Code> {
+  const res = await sendTabRequest(io, {
+    type: 'tab.unroute',
+    tabId,
+    pattern,
+  });
+  if (res.type !== 'tab.page') return ExitCode.Error;
+  if (opts.json) {
+    io.stdout.write(`${JSON.stringify({ tabId: res.tabId, message: res.message }, null, 2)}\n`);
+  } else {
+    io.stdout.write(`${res.message}\n`);
   }
   return ExitCode.Ok;
 }

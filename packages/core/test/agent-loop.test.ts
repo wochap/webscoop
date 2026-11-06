@@ -325,7 +325,7 @@ describe('agent step in a flow', () => {
       const llm = order();
       const { browser, result } = await agent(llm, { until: undefined, submitPolicy: 'stop' }, checkout());
       expect(result).toMatchObject({ ok: true, report: { end: 'ready-to-submit', turns: 1 } });
-      expect(result.report.actions[0]).toMatchObject({ action: 'click', target: '[e1] button "Place order"', submit: 'stopped' });
+      expect(result.report.actions[0]).toMatchObject({ action: 'click', target: '  [e1] button "Place order"', submit: 'stopped' });
       expect(browser.clicks).toEqual([]);
     });
 

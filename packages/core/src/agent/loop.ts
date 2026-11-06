@@ -288,7 +288,7 @@ export async function runAgent(opts: AgentLoopOptions): Promise<AgentResult> {
 
 /** What a submit confirmation names: the target's outline line without its ref, and the key for a press. */
 function submitLine(action: AgentAction, target: string | undefined): string {
-  const line = target?.replace(/^\[e\d+\] /, '');
+  const line = target?.trimStart().replace(/^\[e\d+\] /, '');
   if (action.action === 'press') return line ? `${action.key} on ${line}` : `${action.key} in the field filled last`;
   return line ?? action.action;
 }

@@ -1,5 +1,5 @@
 import type { SerializedNode, SerializedElement } from '../ports';
-import { annotate, type AnnotatedNode } from '../selectors/annotated';
+import { annotate, descendantsOf, type AnnotatedNode } from '../selectors/annotated';
 import { directText, selfHidden } from '../healing/model';
 
 /** Longest outline line, ref included. */
@@ -45,6 +45,18 @@ export interface Outline {
 
 /** Secret values by placeholder, e.g. `{password}` → `hunter2`. */
 export type Secrets = ReadonlyMap<string, string>;
+
+/** Options to filter or scope outline generation. */
+export interface OutlineOptions {
+  /** Include only interactive elements, omitting plain text and headings without interactive children. */
+  interactive?: boolean;
+  /** Scope the outline to elements within the first subtree matching this selector. */
+  scope?: string;
+  /** Stop recursing into children when node depth is at or beyond this depth. */
+  depth?: number;
+  /** Secret values to mask. */
+  secrets?: Secrets;
+}
 
 /**
  * Replaces every secret value in a text with its placeholder, longest value
@@ -116,7 +128,100 @@ export function accessibleName(node: AnnotatedNode): string {
   return nameOf(node) || textOf(node);
 }
 
-function render(ref: string, node: AnnotatedNode, group: Group, mask: (text: string) => string): { line: string; haystack: string } {
+function matchesCompound(node: AnnotatedNode, sel: string): boolean {
+  sel = sel.trim();
+  if (!sel || sel === '*') return true;
+  let rest = sel;
+  const tagMatch = rest.match(/^[a-zA-Z0-9_-]+/);
+  if (tagMatch) {
+    if (node.tag.toLowerCase() !== tagMatch[0].toLowerCase()) return false;
+    rest = rest.slice(tagMatch[0].length);
+  }
+  while (rest.length > 0) {
+    if (rest.startsWith('#')) {
+      const m = rest.match(/^#([a-zA-Z0-9_-]+)/);
+      if (!m) return false;
+      if (node.attrs.id !== m[1]) return false;
+      rest = rest.slice(m[0].length);
+    } else if (rest.startsWith('.')) {
+      const m = rest.match(/^\.([a-zA-Z0-9_-]+)/);
+      if (!m) return false;
+      const classes = (node.attrs.class ?? '').split(/\s+/);
+      if (!classes.includes(m[1])) return false;
+      rest = rest.slice(m[0].length);
+    } else if (rest.startsWith('[')) {
+      const m = rest.match(/^\[([a-zA-Z0-9_-]+)(?:=("[^"]*"|'[^']*'|[^\]]+))?\]/);
+      if (!m) return false;
+      const attr = m[1]!;
+      let val = m[2];
+      if (val !== undefined) {
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (node.attrs[attr] !== val) return false;
+      } else {
+        if (!(attr in node.attrs)) return false;
+      }
+      rest = rest.slice(m[0].length);
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function matchesSelector(node: AnnotatedNode, selector: string): boolean {
+  const rawTokens = selector.trim().split(/\s+/);
+  const tokens: string[] = [];
+  for (const t of rawTokens) {
+    if (t === '>') tokens.push('>');
+    else if (t.includes('>')) {
+      const sub = t.split('>');
+      for (let i = 0; i < sub.length; i++) {
+        if (i > 0) tokens.push('>');
+        if (sub[i]) tokens.push(sub[i]!);
+      }
+    } else {
+      tokens.push(t);
+    }
+  }
+  if (tokens.length === 0) return true;
+  const last = tokens[tokens.length - 1]!;
+  if (!matchesCompound(node, last)) return false;
+
+  let currNode: AnnotatedNode | null = node;
+  let i = tokens.length - 2;
+
+  while (i >= 0 && currNode) {
+    if (tokens[i] === '>') {
+      const parentToken = tokens[i - 1];
+      if (!parentToken) return false;
+      currNode = currNode.parent ?? null;
+      if (!currNode || !matchesCompound(currNode, parentToken)) return false;
+      i -= 2;
+    } else {
+      const ancestorToken = tokens[i]!;
+      let found = false;
+      for (let p = currNode.parent; p; p = p.parent) {
+        if (matchesCompound(p, ancestorToken)) {
+          currNode = p;
+          found = true;
+          break;
+        }
+      }
+      if (!found) return false;
+      i--;
+    }
+  }
+  return i < 0;
+}
+
+function findScopedNode(root: AnnotatedNode, selector: string): AnnotatedNode | undefined {
+  const all = descendantsOf(root);
+  return all.find((n) => matchesSelector(n, selector));
+}
+
+function render(ref: string, node: AnnotatedNode, group: Group, mask: (text: string) => string, depth: number): { line: string; haystack: string } {
   let role = group === 'text' ? 'text' : (roleOf(node) ?? (isHeading(node) ? 'heading' : node.tag));
   if (group === 'heading') role = 'heading';
   if (node.tag === 'input' && group === 'interactive') {
@@ -141,30 +246,70 @@ function render(ref: string, node: AnnotatedNode, group: Group, mask: (text: str
     extras.push(`value="${quote(clip(shown, OUTLINE_VALUE_MAX))}"`);
   }
   if (group === 'interactive' && (role === 'checkbox' || role === 'radio') && 'checked' in node.attrs) extras.push('checked');
+  if (node.attrs['aria-expanded'] === 'true' || node.attrs['aria-expanded'] === 'false') {
+    extras.push(`aria-expanded="${node.attrs['aria-expanded']}"`);
+  }
+  if (node.attrs.disabled !== undefined || node.attrs['aria-disabled'] === 'true') {
+    extras.push('disabled');
+  }
+  if ((node.tag === 'input' || node.tag === 'textarea') && node.attrs.placeholder) {
+    const ph = mask(squash(node.attrs.placeholder));
+    extras.push(`placeholder="${quote(clip(ph, OUTLINE_VALUE_MAX))}"`);
+    haystack.push(ph);
+  }
   const head = `[${ref}] ${role}`;
-  const line = [head, ...(name ? [`"${quote(name)}"`] : []), ...extras].join(' ');
+  const indent = '  '.repeat(Math.min(8, Math.max(0, depth)));
+  const line = `${indent}${[head, ...(name ? [`"${quote(name)}"`] : []), ...extras].join(' ')}`;
   return { line: clip(line, OUTLINE_LINE_MAX), haystack: haystack.join(' ').toLowerCase() };
 }
 
 /** The elements an outline keeps, in document order, with refs `e1`, `e2`, ... */
-function collect(root: AnnotatedNode, mask: (text: string) => string): Entry[] {
+function collect(root: AnnotatedNode, mask: (text: string) => string, options: OutlineOptions = {}): Entry[] {
   const entries: Entry[] = [];
-  const add = (node: AnnotatedNode, group: Group) => {
+  const add = (node: AnnotatedNode, group: Group, depth: number) => {
     const ref = `e${entries.length + 1}`;
-    entries.push({ ref, node, group, ...render(ref, node, group, mask) });
+    entries.push({ ref, node, group, ...render(ref, node, group, mask, depth) });
   };
-  const walk = (node: AnnotatedNode, insideInteractive: boolean) => {
-    const container = node.tag === 'html' || node.tag === 'body';
-    if (!container && selfHidden(node)) return;
-    const isInteractive = !container && interactive(node);
-    if (isInteractive) add(node, 'interactive');
-    else if (!container && isHeading(node)) add(node, 'heading');
-    else if (!container && !insideInteractive && directText(node).length >= MIN_TEXT) add(node, 'text');
-    // Text inside a link, button, or heading is already its name.
-    const inside = insideInteractive || isInteractive || isHeading(node);
-    for (const c of node.children) if (c.type === 'element') walk(c, inside);
+
+  let targetRoot: AnnotatedNode = root;
+  if (options.scope) {
+    const scoped = findScopedNode(root, options.scope);
+    if (!scoped) return [];
+    targetRoot = scoped;
+  }
+
+  const isScopeRoot = targetRoot !== root;
+
+  const walk = (node: AnnotatedNode, insideInteractive: boolean, depth: number) => {
+    const isDocContainer = node.tag === 'html' || node.tag === 'body';
+    if (!isDocContainer && selfHidden(node)) return;
+
+    const isInteractive = !isDocContainer && interactive(node);
+    const isHeadingNode = !isDocContainer && isHeading(node);
+    const isContainerOnly = isScopeRoot && node === targetRoot && !isInteractive && !isHeadingNode && directText(node).length < MIN_TEXT;
+
+    if (!isContainerOnly) {
+      if (isInteractive) {
+        add(node, 'interactive', depth);
+      } else if (!options.interactive) {
+        if (isHeadingNode) add(node, 'heading', depth);
+        else if (!insideInteractive && directText(node).length >= MIN_TEXT) add(node, 'text', depth);
+      }
+    }
+
+    if (options.depth !== undefined && depth >= options.depth) {
+      return;
+    }
+
+    const inside = insideInteractive || isInteractive || isHeadingNode;
+    const nextDepth = isDocContainer || isContainerOnly ? 0 : depth + 1;
+
+    for (const c of node.children) {
+      if (c.type === 'element') walk(c, inside, nextDepth);
+    }
   };
-  walk(root, false);
+
+  walk(targetRoot, false, 0);
   return entries;
 }
 
@@ -176,9 +321,19 @@ function collect(root: AnnotatedNode, mask: (text: string) => string): Entry[] {
  * how many. Secret values in names, hrefs, and values are shown as their
  * placeholders, and a password input's value as `***`.
  */
-export function buildOutline(tree: SerializedNode, budgetTokens: number, estimate: (text: string) => number, secrets?: Secrets): Outline {
+export function buildOutline(
+  tree: SerializedNode,
+  budgetTokens: number,
+  estimate: (text: string) => number,
+  optionsOrSecrets?: Secrets | OutlineOptions,
+): Outline {
   if (tree.type !== 'element') return emptyOutline();
-  const entries = collect(annotate(tree as SerializedElement), masker(secrets));
+  const options: OutlineOptions =
+    optionsOrSecrets instanceof Map
+      ? { secrets: optionsOrSecrets }
+      : (optionsOrSecrets ?? {});
+  const secrets = options.secrets;
+  const entries = collect(annotate(tree as SerializedElement), masker(secrets), options);
   const trailer = (n: number) => `... ${n} more lines; use find`;
   const room = Math.max(0, budgetTokens - estimate(trailer(entries.length)) - 1);
   const keep = new Set<Entry>();

@@ -23,6 +23,11 @@ import {
   tabEvalCommand,
   tabFillCommand,
   tabFindCommand,
+  tabGetCommand,
+  tabBatchCommand,
+  tabWaitCommand,
+  tabRouteCommand,
+  tabUnrouteCommand,
   tabGotoCommand,
   tabHtmlCommand,
   tabOpenCommand,
@@ -35,6 +40,11 @@ import {
   type TabCloseOptions,
   type TabCommonOptions,
   type TabDownloadOptions,
+  type TabGetOptions,
+  type TabBatchOptions,
+  type TabWaitOptions,
+  type TabRouteOptions,
+  type TabUnrouteOptions,
   type TabOpenOptions,
   type TabOutlineOptions,
 } from './commands/tab';
@@ -451,6 +461,7 @@ daemon.`,
   humanizeOptions(visualOptions(tab.command('open')))
     .description('open a new interactive tab in a shared profile browser')
     .argument('[url]', 'initial URL to navigate to')
+    .option('--label <name>', 'memorable label for the tab')
     .option('--profile <name>', 'browser profile name')
     .option('--timeout <ms>', 'navigation timeout in ms', positiveInt)
     .option('--json', 'print JSON output')
@@ -484,6 +495,9 @@ daemon.`,
     .command('outline')
     .description('produce an accessible DOM outline with [e<n>] element references')
     .argument('<tabId>', 'identifier of the tab')
+    .option('-i, --interactive', 'include only interactive elements')
+    .option('-s, --scope <selector>', 'scope outline to a CSS selector subtree')
+    .option('-d, --depth <n>', 'limit nesting depth', positiveInt)
     .option('--budget <tokens>', 'token budget for the outline', positiveInt)
     .option('--json', 'print JSON output')
     .action(async (tabId: string, opts: TabOutlineOptions) => setCode(await tabOutlineCommand(io, tabId, opts)));
@@ -565,6 +579,62 @@ daemon.`,
     .option('--timeout <ms>', 'attention timeout in ms', positiveInt)
     .option('--json', 'print JSON output')
     .action(async (tabId: string, opts: TabAttendOptions) => setCode(await tabAttendCommand(io, tabId, opts)));
+
+  tab
+    .command('get')
+    .description('get text, attribute, or value of target element')
+    .argument('<mode>', 'what to get: text, attr, or value')
+    .argument('<tabId>', 'identifier or label of the tab')
+    .argument('<target>', 'element ref (e<n>) or selector')
+    .argument('[attr]', 'attribute name when mode is attr')
+    .option('--json', 'print JSON output')
+    .action(async (mode: string, tabId: string, target: string, attr: string | undefined, opts: TabGetOptions) =>
+      setCode(await tabGetCommand(io, mode, tabId, target, attr, opts)),
+    );
+
+  visualOptions(tab.command('batch'))
+    .description('execute a sequence of tab commands under a single tab lock')
+    .argument('<tabId>', 'identifier or label of the tab')
+    .argument('<actions...>', 'action commands to execute sequentially')
+    .option('--timeout <ms>', 'action timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, actions: string[], opts: TabBatchOptions) =>
+      setCode(await tabBatchCommand(io, tabId, actions, opts)),
+    );
+
+  tab
+    .command('wait')
+    .description('wait for milliseconds, text, or a URL pattern')
+    .argument('<tabId>', 'identifier or label of the tab')
+    .argument('[ms]', 'milliseconds to sleep')
+    .option('--text <string>', 'wait for text to appear on page')
+    .option('--url <pattern>', 'wait for URL to match pattern')
+    .option('--timeout <ms>', 'wait timeout in ms', positiveInt)
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, ms: string | undefined, opts: TabWaitOptions) =>
+      setCode(await tabWaitCommand(io, tabId, ms, opts)),
+    );
+
+  tab
+    .command('route')
+    .description('intercept and abort network requests matching pattern')
+    .argument('<tabId>', 'identifier or label of the tab')
+    .argument('<pattern>', 'URL pattern or glob to intercept')
+    .option('--abort', 'abort matching requests (default: true)')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, pattern: string, opts: TabRouteOptions) =>
+      setCode(await tabRouteCommand(io, tabId, pattern, opts)),
+    );
+
+  tab
+    .command('unroute')
+    .description('remove route interception on tab')
+    .argument('<tabId>', 'identifier or label of the tab')
+    .argument('[pattern]', 'URL pattern to remove, or omit to remove all')
+    .option('--json', 'print JSON output')
+    .action(async (tabId: string, pattern: string | undefined, opts: TabUnrouteOptions) =>
+      setCode(await tabUnrouteCommand(io, tabId, pattern, opts)),
+    );
 
   tab
     .command('close')

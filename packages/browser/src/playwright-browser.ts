@@ -474,6 +474,26 @@ export class PlaywrightSession implements InteractiveSession {
     this.downloadsBefore = this.downloadCount;
     if (this.humanizer) return this.humanizer.click(locator);
     await locator.scrollIntoViewIfNeeded();
+
+    const occlusion = await locator.first().evaluate((target: HTMLElement) => {
+      const rect = target.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const topEl = document.elementFromPoint(cx, cy);
+      if (topEl && !target.contains(topEl) && !topEl.contains(target)) {
+        const style = window.getComputedStyle(topEl);
+        if (style.pointerEvents !== 'none') {
+          const id = topEl.id ? `#${topEl.id}` : '';
+          return { covered: true, selector: `<${topEl.tagName.toLowerCase()}${id}>` };
+        }
+      }
+      return { covered: false, selector: '' };
+    }).catch(() => ({ covered: false, selector: '' }));
+
+    if (occlusion.covered) {
+      throw new Error(`click failed: target covered by ${occlusion.selector}`);
+    }
+
     await locator.click();
   }
 
@@ -890,6 +910,38 @@ export class PlaywrightSession implements InteractiveSession {
     // Page coordinates, so an element inside an iframe is measured from the top viewport.
     const box = await (ref as PwRef).locator.boundingBox({ timeout: 1000 }).catch(() => null);
     return box ? { x: box.x, y: box.y, w: box.width, h: box.height } : { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  private readonly activeRoutes = new Set<string>();
+
+  async route(pattern: string, action: 'abort'): Promise<void> {
+    this.activeRoutes.add(pattern);
+    await this.page.route(pattern, (r) => r.abort());
+  }
+
+  async unroute(pattern?: string): Promise<void> {
+    if (pattern) {
+      this.activeRoutes.delete(pattern);
+      await this.page.unroute(pattern).catch(() => {});
+    } else {
+      for (const p of this.activeRoutes) {
+        await this.page.unroute(p).catch(() => {});
+      }
+      this.activeRoutes.clear();
+    }
+  }
+
+  async wait(opts: { text?: string; url?: string; ms?: number; timeoutMs?: number }): Promise<void> {
+    const timeout = opts.timeoutMs ?? 30_000;
+    if (opts.ms !== undefined) {
+      await new Promise((r) => setTimeout(r, opts.ms));
+    }
+    if (opts.url !== undefined) {
+      await this.page.waitForURL(opts.url, { timeout });
+    }
+    if (opts.text !== undefined) {
+      await this.page.locator(`text=${opts.text}`).first().waitFor({ timeout });
+    }
   }
 }
 

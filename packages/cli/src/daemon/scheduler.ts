@@ -7,6 +7,7 @@ import type { InteractiveSession, Outline } from '@webscoop/core';
 
 export interface InteractiveTab {
   tabId: string;
+  label?: string;
   profile: string;
   profileDir: string;
   session: InteractiveSession;
@@ -651,11 +652,13 @@ export class Scheduler {
       openerTabId?: string;
       url?: string;
       title?: string;
+      label?: string;
     } = {},
   ): InteractiveTab {
     const tabId = `tab_${++this.nextTabNumber}`;
     const tab: InteractiveTab = {
       tabId,
+      ...(opts.label ? { label: opts.label } : {}),
       profile: slot.profile,
       profileDir: slot.profileDir,
       session,
@@ -701,6 +704,7 @@ export class Scheduler {
     launcher: (signal: AbortSignal) => Promise<LaunchedBrowser>,
     opts: {
       url?: string;
+      label?: string;
       visual?: boolean;
       humanize?: boolean;
       timeoutMs?: number;
@@ -747,14 +751,20 @@ export class Scheduler {
       visual: opts.visual,
       url: currentUrl,
       title,
+      label: opts.label,
     });
     return tab;
   }
 
-  getTab(tabId: string): { slot: Slot; tab: InteractiveTab } | undefined {
+  getTab(tabIdOrLabel: string): { slot: Slot; tab: InteractiveTab } | undefined {
     for (const slot of this.slots.values()) {
-      const tab = slot.interactiveTabs.get(tabId);
+      const tab = slot.interactiveTabs.get(tabIdOrLabel);
       if (tab) return { slot, tab };
+    }
+    for (const slot of this.slots.values()) {
+      for (const tab of slot.interactiveTabs.values()) {
+        if (tab.label === tabIdOrLabel) return { slot, tab };
+      }
     }
     return undefined;
   }
@@ -766,6 +776,7 @@ export class Scheduler {
       for (const tab of slot.interactiveTabs.values()) {
         out.push({
           tabId: tab.tabId,
+          ...(tab.label ? { label: tab.label } : {}),
           profile: tab.profile,
           url: tab.outlineUrl ?? '',
           title: tab.title ?? '',
@@ -777,10 +788,11 @@ export class Scheduler {
     return out;
   }
 
-  async closeTab(tabId: string): Promise<boolean> {
-    const found = this.getTab(tabId);
+  async closeTab(tabIdOrLabel: string): Promise<boolean> {
+    const found = this.getTab(tabIdOrLabel);
     if (!found) return false;
     const { slot, tab } = found;
+    const tabId = tab.tabId;
     const popups = [...slot.interactiveTabs.values()].filter((t) => t.openerTabId === tabId);
     for (const p of popups) {
       slot.interactiveTabs.delete(p.tabId);

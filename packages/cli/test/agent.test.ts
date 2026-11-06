@@ -99,7 +99,7 @@ describe('--submit', () => {
     const browser = new FakeBrowser({ [URL_]: checkout() });
     const io = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir, WEBSCOOP_LLM_MOCK: join(dir, 'mock.json') }, browser });
     expect(await main(['run', 'grab-pdf', '--var', `url=${URL_}`, '--submit', 'stop', '--report'], io)).toBe(ExitCode.Ok);
-    expect(io.err()).toContain('agent: would submit [e1] button "Place order"; stopped (--submit stop)');
+    expect(io.err()).toMatch(/agent: would submit\s+\[e1\] button "Place order"; stopped \(--submit stop\)/);
     expect(io.err()).toContain('ended: ready-to-submit after 1 turn');
     expect(io.err()).toMatch(/"submit": "stopped"/);
     expect(browser.clicks).toEqual([]);

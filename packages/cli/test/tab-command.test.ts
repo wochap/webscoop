@@ -115,4 +115,98 @@ describe('webscoop tab and tabs CLI commands', () => {
     expect(formatted).toContain('tab_1: https://incompetech.com/ "Royalty Free Music"');
     expect(formatted).toContain('tab_2 (popup): https://login.test/ "Login"');
   });
+
+  it('provides CLI help and executes enhanced subcommands: label, outline filters, get, batch, wait, route (Task 3.1)', async () => {
+    const dir = await tempDir();
+    await mkdir(join(dir, 'profiles'), { recursive: true });
+
+    // 1. Verify CLI help for tab subcommands
+    const ioHelp = testIo({});
+    const codeHelp = await main(['tab', '--help'], ioHelp);
+    expect(codeHelp).toBe(ExitCode.Ok);
+    const helpText = ioHelp.out();
+    expect(helpText).toContain('get');
+    expect(helpText).toContain('batch');
+    expect(helpText).toContain('wait');
+    expect(helpText).toContain('route');
+    expect(helpText).toContain('unroute');
+
+    const fakeBrowser = new FakeBrowser({
+      'https://catalog.test/': {
+        title: 'Catalog',
+        dom: h('html', {}, h('body', {},
+          h('div', { id: 'results' },
+            h('h2', {}, 'Items'),
+            h('a', { id: 'item1', href: '/item/1', 'data-sku': 'SKU-001' }, 'First Item'),
+            h('input', { id: 'search-box', type: 'text', value: 'shoes' }),
+            h('button', { id: 'buy-btn' }, 'Buy Now'),
+          ),
+        )),
+      },
+    });
+
+    const daemon = sharedDaemon();
+    const io = testIo({
+      env: { ...DISPLAY, WEBSCOOP_HOME: dir },
+      browser: fakeBrowser,
+      daemon,
+    });
+
+    // 2. Open tab with --label
+    const codeOpen = await main(['tab', 'open', 'https://catalog.test/', '--label', 'store', '--json'], io);
+    expect(codeOpen).toBe(ExitCode.Ok);
+    const opened = JSON.parse(io.out());
+    expect(opened.tabId).toBe('tab_1');
+    expect(opened.label).toBe('store');
+
+    // 3. Outline with filters (-i, -s) using label identifier
+    const ioOutline = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeOutline = await main(['tab', 'outline', 'store', '-i', '-s', '#results'], ioOutline);
+    expect(codeOutline).toBe(ExitCode.Ok);
+    const outlineOut = ioOutline.out();
+    expect(outlineOut).toContain('link "First Item"');
+    expect(outlineOut).toContain('button "Buy Now"');
+    // Non-interactive heading 'Items' should be filtered out by -i
+    expect(outlineOut).not.toContain('heading "Items"');
+
+    // 4. Tab get: text, attr, value using label
+    const ioGetText = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    await main(['tab', 'get', 'text', 'store', '#item1'], ioGetText);
+    expect(ioGetText.out().trim()).toBe('First Item');
+
+    const ioGetAttr = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    await main(['tab', 'get', 'attr', 'store', '#item1', 'data-sku'], ioGetAttr);
+    expect(ioGetAttr.out().trim()).toBe('SKU-001');
+
+    const ioGetVal = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    await main(['tab', 'get', 'value', 'store', '#search-box'], ioGetVal);
+    expect(ioGetVal.out().trim()).toBe('shoes');
+
+    // 5. Tab wait using label
+    const ioWait = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeWait = await main(['tab', 'wait', 'store', '10'], ioWait);
+    expect(codeWait).toBe(ExitCode.Ok);
+
+    // 6. Tab route and unroute using label
+    const ioRoute = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeRoute = await main(['tab', 'route', 'store', '*.ads.*', '--abort'], ioRoute);
+    expect(codeRoute).toBe(ExitCode.Ok);
+
+    const ioUnroute = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeUnroute = await main(['tab', 'unroute', 'store', '*.ads.*'], ioUnroute);
+    expect(codeUnroute).toBe(ExitCode.Ok);
+
+    // 7. Tab batch using label
+    const ioBatch = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeBatch = await main(['tab', 'batch', 'store', 'click #buy-btn', 'get text #buy-btn'], ioBatch);
+    expect(codeBatch).toBe(ExitCode.Ok);
+    expect(ioBatch.out()).toContain('Buy Now');
+
+    // 8. Close by label
+    const ioClose = testIo({ env: { ...DISPLAY, WEBSCOOP_HOME: dir }, daemon });
+    const codeClose = await main(['tab', 'close', 'store', '--json'], ioClose);
+    expect(codeClose).toBe(ExitCode.Ok);
+    const closeJson = JSON.parse(ioClose.out());
+    expect(closeJson.closed).toEqual(['tab_1']);
+  });
 });

@@ -666,6 +666,23 @@ export class FakeSession implements Session {
     return html ? new FakeRef(html, `${frame.description} >> frame`) : null;
   }
 
+  readonly routes = new Set<string>();
+
+  async route(pattern: string, action: 'abort'): Promise<void> {
+    this.routes.add(pattern);
+  }
+
+  async unroute(pattern?: string): Promise<void> {
+    if (pattern) this.routes.delete(pattern);
+    else this.routes.clear();
+  }
+
+  async wait(opts: { text?: string; url?: string; ms?: number; timeoutMs?: number }): Promise<void> {
+    if (opts.ms !== undefined) {
+      await new Promise((r) => setTimeout(r, opts.ms));
+    }
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;

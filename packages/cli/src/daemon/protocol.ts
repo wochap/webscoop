@@ -3,6 +3,7 @@ export type JobCommand = 'run' | 'test';
 
 export type TabSummary = {
   tabId: string;
+  label?: string;
   profile: string;
   url: string;
   title: string;
@@ -14,6 +15,7 @@ export type TabActionRequest =
   | {
       type: 'tab.open';
       url?: string;
+      label?: string;
       profile?: string;
       visual?: boolean;
       humanize?: boolean;
@@ -24,13 +26,18 @@ export type TabActionRequest =
   | { type: 'tab.list'; profile?: string }
   | { type: 'tab.goto'; tabId: string; url: string; timeoutMs?: number }
   | { type: 'tab.back'; tabId: string; timeoutMs?: number }
-  | { type: 'tab.outline'; tabId: string; budgetTokens?: number }
+  | { type: 'tab.outline'; tabId: string; budgetTokens?: number; interactive?: boolean; scope?: string; depth?: number }
   | { type: 'tab.find'; tabId: string; text: string }
   | { type: 'tab.html'; tabId: string; target: string }
+  | { type: 'tab.get'; tabId: string; mode: 'text' | 'attr' | 'value'; target: string; attr?: string }
   | { type: 'tab.click'; tabId: string; target: string; visual?: boolean; timeoutMs?: number }
   | { type: 'tab.fill'; tabId: string; target: string; value: string; visual?: boolean; timeoutMs?: number }
   | { type: 'tab.press'; tabId: string; key: string; target?: string; visual?: boolean; timeoutMs?: number }
   | { type: 'tab.scroll'; tabId: string; direction: 'down' | 'up' | 'bottom'; timeoutMs?: number }
+  | { type: 'tab.wait'; tabId: string; text?: string; url?: string; ms?: number; timeoutMs?: number }
+  | { type: 'tab.batch'; tabId: string; actions: string[]; visual?: boolean; timeoutMs?: number }
+  | { type: 'tab.route'; tabId: string; pattern: string; abort?: boolean }
+  | { type: 'tab.unroute'; tabId: string; pattern?: string }
   | { type: 'tab.eval'; tabId: string; expression: string }
   | {
       type: 'tab.download';
@@ -54,6 +61,8 @@ export type TabActionResponse =
   | { type: 'tab.outline'; tabId: string; url: string; title: string; outline: string; cut: number }
   | { type: 'tab.find'; tabId: string; matches: string[] }
   | { type: 'tab.html'; tabId: string; html: string }
+  | { type: 'tab.get'; tabId: string; value: string | null }
+  | { type: 'tab.batch'; tabId: string; results: TabActionResponse[]; error?: string }
   | { type: 'tab.eval'; tabId: string; result: unknown }
   | { type: 'tab.download'; tabId: string; file: string; bytes: number; url: string }
   | { type: 'tab.closed'; closed: string[] }

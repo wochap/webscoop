@@ -169,6 +169,12 @@ export interface Session {
    * its response arrives or it fails. Returns an unsubscribe function.
    */
   onRequest(listener: (event: RequestEvent) => void): () => void;
+  /** Wait for text to appear, a URL pattern to match, or a duration. */
+  wait?(opts: { text?: string; url?: string; ms?: number; timeoutMs?: number }): Promise<void>;
+  /** Intercept network requests matching pattern and abort them. */
+  route?(pattern: string, action: 'abort'): Promise<void>;
+  /** Remove route interceptors for pattern, or all if omitted. */
+  unroute?(pattern?: string): Promise<void>;
   close(): Promise<void>;
 }
 

@@ -114,4 +114,46 @@ describe.skipIf(!hasDisplay)('PlaywrightSession as InteractiveSession (integrati
     const jsonVal = await session.evaluate('({ a: 1, b: "two", nested: { list: [1, 2, 3] } })');
     expect(jsonVal).toEqual({ a: 1, b: 'two', nested: { list: [1, 2, 3] } });
   });
+
+  it('detects element occlusion and throws descriptive error (Task 2.5)', async () => {
+    const session = await open();
+    await session.goto(`${playground.url}/catalog?tier=0`, { timeoutMs: 10_000 });
+    // Inject a button and an overlay modal covering it
+    await session.evaluate(`
+      const btn = document.createElement('button');
+      btn.id = 'hidden-target';
+      btn.textContent = 'Click Target';
+      btn.style.cssText = 'position: fixed; top: 100px; left: 100px; width: 100px; height: 50px; z-index: 10;';
+      document.body.appendChild(btn);
+
+      const overlay = document.createElement('div');
+      overlay.id = 'cookie-banner';
+      overlay.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000;';
+      document.body.appendChild(overlay);
+    `);
+
+    const refs = await session.resolve({ strategy: 'css', value: '#hidden-target', stability: 'stable' });
+    expect(refs.length).toBeGreaterThan(0);
+    const targetRef = refs[0]!;
+
+    await expect(session.click(targetRef)).rejects.toThrow(/covered by <div#cookie-banner>/);
+  });
+
+  it('aborts and unroutes network requests (Task 2.6)', async () => {
+    const session = await open();
+    await session.goto(`${playground.url}/catalog?tier=0`, { timeoutMs: 10_000 });
+
+    if (session.route) {
+      await session.route('**/*blocked-endpoint*', 'abort');
+
+      const failed = await session.evaluate(`
+        fetch('/blocked-endpoint').then(() => false).catch(() => true);
+      `);
+      expect(failed).toBe(true);
+
+      if (session.unroute) {
+        await session.unroute('**/*blocked-endpoint*');
+      }
+    }
+  });
 });
