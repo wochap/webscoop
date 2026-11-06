@@ -723,19 +723,35 @@ Each capture of a recipe SHALL be an output table named after the capture, with 
 - **THEN** stderr names `ask`, `allow`, and `stop`, and the exit code is 1
 
 ### Requirement: `tab` subcommands
-The CLI SHALL provide a `tab` command suite accepting subcommands for interactive tab actions: `open`, `goto`, `back`, `outline`, `find`, `html`, `click`, `fill`, `press`, `scroll`, `eval`, `download`, `attend`, and `close`. Each subcommand SHALL communicate with the local browser daemon over its domain socket, starting a background daemon when one is not already running (except `close` when no daemon runs, which SHALL exit cleanly). The commands SHALL support `--profile <name>`, `--json`, `--timeout <ms>`, and visual feedback toggles (`--visual` and `--no-visual`). Target parameters SHALL accept outline references (`e<n>`), CSS selectors, and XPath selectors.
+The CLI SHALL provide a `tab` command suite accepting subcommands for interactive tab actions: `open`, `goto`, `back`, `outline`, `find`, `html`, `click`, `fill`, `press`, `scroll`, `get`, `wait`, `batch`, `route`, `unroute`, `eval`, `download`, `attend`, and `close`. Each subcommand SHALL communicate with the local browser daemon over its domain socket, starting a background daemon when one is not already running (except `close` when no daemon runs, which SHALL exit cleanly). The commands SHALL support `--profile <name>`, `--json`, `--timeout <ms>`, and visual feedback toggles (`--visual` and `--no-visual`). `open` SHALL accept `--label <name>` to assign an identifier. `outline` SHALL accept `-i, --interactive`, `-s, --scope <selector>`, and `-d, --depth <n>`. Target parameters SHALL accept outline references (`e<n>`), CSS selectors, and XPath selectors, and tab parameters SHALL accept either a `tabId` or an assigned label.
 
 #### Scenario: Opening a tab via CLI
 - **WHEN** `webscoop tab open "https://example.com" --json` is run
 - **THEN** stdout prints JSON containing the new tab's `tabId`, `url`, `title`, and `profile`, and the process exits 0
 
+#### Scenario: Opening a tab via CLI with a label
+- **WHEN** `webscoop tab open "https://example.com" --label main --json` is run
+- **THEN** stdout prints JSON containing the new tab's `tabId`, `label`, `url`, `title`, and `profile`, and the process exits 0
+
 #### Scenario: Taking an accessible outline via CLI
 - **WHEN** `webscoop tab outline tab_1` is run
 - **THEN** stdout prints the page URL, title, and compact `[e<n>]` outline lines, and exits 0
 
+#### Scenario: Taking an accessible outline via CLI with filters
+- **WHEN** `webscoop tab outline main -i -s "#content"` is run
+- **THEN** stdout prints an indented outline containing only interactive elements within `#content`, and exits 0
+
 #### Scenario: Downloading to direct output path via CLI
 - **WHEN** `webscoop tab download tab_1 "button.download" --out "./output/file.mp3"` is run
 - **THEN** the target element is clicked, the download is captured and saved at `./output/file.mp3`, and the final file path and byte count are reported
+
+#### Scenario: Getting an attribute via CLI
+- **WHEN** `webscoop tab get attr main e4 data-url` is run
+- **THEN** stdout prints the attribute value and exits 0
+
+#### Scenario: Batching actions via CLI
+- **WHEN** `webscoop tab batch main "click #toggle" "wait 500"` is run
+- **THEN** both actions execute in the daemon in order and the command exits 0
 
 ### Requirement: `tabs` command
 The CLI SHALL provide a `tabs` command (and alias `tab list`) that queries the browser daemon and lists all currently open interactive tabs and popups across profiles. When `--json` is passed, the output SHALL be a JSON array of tab summary objects.

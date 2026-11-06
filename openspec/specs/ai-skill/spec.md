@@ -61,14 +61,18 @@ The skill body SHALL tell the agent the following:
 
 ### Requirement: Interactive tab control skill file
 The repository SHALL contain `skills/webscoop-control-tab/SKILL.md`, a Markdown file with YAML frontmatter holding `name: webscoop-control-tab` and a `description` explaining how to interactively drive browser tabs with webscoop commands. The body SHALL instruct the agent to:
-- list active tabs with `webscoop tabs --json` and open new tabs with `webscoop tab open <url> --json`;
-- open multiple tabs in parallel to execute concurrent filtering or scraping across independent categories or queries;
-- inspect page structure using `webscoop tab outline <tabId>` and reference bracketed refs `e<n>`;
+- list active tabs with `webscoop tabs --json` and open new tabs with `webscoop tab open <url> [--label <name>] --json`;
+- open multiple tabs in parallel to execute concurrent filtering or scraping across independent categories or queries, addressing tabs by id or label;
+- inspect page structure using `webscoop tab outline <tab>` with optional `-i` (interactive only) and `-s` (scope selector), referencing bracketed refs `e<n>`;
 - perform interactions using `click`, `fill`, `press`, `scroll`, and `find`;
-- evaluate JavaScript in the tab document context via `webscoop tab eval <tabId> "<expression>"` for fast structured data and table extraction;
-- trigger direct file downloads with `webscoop tab download <tabId> <target> --out <filepath>`;
-- handle login challenges or captchas with `webscoop tab attend <tabId>`;
-- close tabs with `webscoop tab close <tabId>` upon completing a task.
+- extract element text, attributes, and input values directly via `webscoop tab get text|attr|value <tab> <target>`;
+- batch sequential commands via `webscoop tab batch <tab> "<cmd1>" "<cmd2>"`;
+- await text or URL milestones using `webscoop tab wait <tab> --text|--url`;
+- block heavy ads or trackers with `webscoop tab route <tab> <pattern> --abort`;
+- evaluate JavaScript in the tab document context via `webscoop tab eval <tab> "<expression>"` for structured data and table extraction;
+- trigger direct file downloads with `webscoop tab download <tab> <target> --out <filepath>`;
+- handle login challenges or captchas with `webscoop tab attend <tab>`;
+- close tabs with `webscoop tab close <tab>` upon completing a task.
 
 #### Scenario: Tab control skill frontmatter
 - **WHEN** `skills/webscoop-control-tab/SKILL.md` is parsed

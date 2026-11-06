@@ -7,7 +7,7 @@ Enables external AI coding agents to discover, open, inspect, navigate, manipula
 ## Requirements
 
 ### Requirement: Interactive tab lifecycle and multi-tab concurrency
-The system SHALL support opening, tracking, and closing interactive browser tabs keyed by unique identifier (`tabId`). Multiple interactive tabs SHALL be capable of remaining open simultaneously within a single browser profile. Interactive tabs SHALL remain open across multiple command invocations until explicitly closed by the agent, until the daemon is stopped, or until an idle timeout of `daemon.idleTabTimeoutMs` (default: 1800000 ms / 30 min) expires without activity. Interactive tabs SHALL NOT count toward `daemon.concurrency.total` while waiting between commands.
+The system SHALL support opening, tracking, and closing interactive browser tabs keyed by unique identifier (`tabId`) or user-assigned label (`--label <name>`). Multiple interactive tabs SHALL be capable of remaining open simultaneously within a single browser profile. An agent SHALL be able to address tabs interchangeably using either their `tabId` or assigned label across all tab commands. Interactive tabs SHALL remain open across multiple command invocations until explicitly closed by the agent, until the daemon is stopped, or until an idle timeout of `daemon.idleTabTimeoutMs` (default: 1800000 ms / 30 min) expires without activity. Interactive tabs SHALL NOT count toward `daemon.concurrency.total` while waiting between commands.
 
 #### Scenario: Agent opens multiple tabs for concurrent work
 - **WHEN** an agent opens `tab_1` and then opens `tab_2` in the same profile
@@ -17,8 +17,12 @@ The system SHALL support opening, tracking, and closing interactive browser tabs
 - **WHEN** an agent issues a close command for `tab_1`
 - **THEN** `tab_1` is closed and removed from active tab tracking while other open tabs remain unaffected
 
+#### Scenario: Opening and addressing a tab by label
+- **WHEN** an agent opens a tab with `--label calm` and later issues a command targeting `calm`
+- **THEN** the system resolves `calm` to that tab and executes the action
+
 ### Requirement: Stateful outline reference caching
-The system SHALL take snapshots of an interactive tab's document upon request, produce a compact accessible outline matching the `agent-step` format with bracketed element references (`[e1]`, `[e2]`, ...), and cache the resulting node mapping in the daemon for that tab. When a subsequent action command specifies a reference in the form `e<n>` or `[e<n>]`, the system SHALL resolve the reference against the tab's cached outline. If the tab's document has navigated or mutated such that the reference cannot be resolved, the system SHALL return a distinct error indicating that references are stale and instructing the agent to refresh the outline.
+The system SHALL take snapshots of an interactive tab's document upon request, produce an accessible outline with bracketed element references (`[e1]`, `[e2]`, ...), and cache the resulting node mapping in the daemon for that tab. The outline output SHALL be formatted as an indented hierarchy with 2 spaces of indentation per tree depth level. The outline SHALL include element states when present: `aria-expanded="true|false"`, `disabled`, and `placeholder="..."`. The outline command SHALL accept `-i, --interactive` to output only actionable elements, `-s, --scope <selector>` to scope the outline to a specific DOM subtree, and `-d, --depth <n>` to limit maximum tree depth. When a subsequent action command specifies a reference in the form `e<n>` or `[e<n>]`, the system SHALL resolve the reference against the tab's cached outline. If the tab's document has navigated or mutated such that the reference cannot be resolved, the system SHALL return a distinct error indicating that references are stale and instructing the agent to refresh the outline.
 
 #### Scenario: Action referencing cached outline element
 - **WHEN** an agent requests an outline for a tab and then issues a click command specifying reference `e14`
@@ -28,8 +32,16 @@ The system SHALL take snapshots of an interactive tab's document upon request, p
 - **WHEN** a tab navigates to a new page and the agent attempts an action using a reference from the previous page's outline
 - **THEN** the action fails with an error indicating the reference is stale and prompt for a fresh outline
 
+#### Scenario: Indented outline with interactive filter
+- **WHEN** an agent requests an outline with `--interactive`
+- **THEN** the output contains only interactive elements formatted with 2-space indentation reflecting their parent-child relationships
+
+#### Scenario: Outline scoped to selector
+- **WHEN** an agent requests an outline with `--scope "#results"`
+- **THEN** only elements within the matched container are included in the outline
+
 ### Requirement: Tab actions and DOM evaluation
-The system SHALL provide interactive tab actions corresponding to standard automation primitives: `goto`, `back`, `click`, `fill`, `press`, `scroll`, `find`, `html`, and `eval`. Targets for interaction SHALL support outline references (`e<n>`), CSS selectors, and XPath expressions. `eval` SHALL execute JavaScript in the tab's main document context and serialize the return value as JSON. Interactive tab actions targeting the same tab SHALL serialize operations to prevent race conditions, while actions targeting different tabs SHALL execute concurrently.
+The system SHALL provide interactive tab actions corresponding to standard automation primitives: `goto`, `back`, `click`, `fill`, `press`, `scroll`, `find`, `html`, `get`, `wait`, `batch`, and `eval`. Targets for interaction SHALL support outline references (`e<n>`), CSS selectors, and XPath expressions. `get` SHALL support retrieving element `text`, an attribute value (`attr <name>`), or an input `value` without writing JavaScript expressions. `wait` SHALL support awaiting text (`--text`), URL patterns (`--url`), or explicit milliseconds. `batch` SHALL execute an array of action commands sequentially within the daemon in a single client round trip. Before dispatching a pointer click, the system SHALL verify that the target element is not obscured at the click coordinate; if another element intercepts the click, the action SHALL fail immediately reporting the covering element. `eval` SHALL execute JavaScript in the tab's main document context and serialize the return value as JSON. Interactive tab actions targeting the same tab SHALL serialize operations to prevent race conditions, while actions targeting different tabs SHALL execute concurrently.
 
 #### Scenario: Evaluating JavaScript in a tab
 - **WHEN** an agent evaluates `document.title` on an interactive tab
@@ -38,6 +50,18 @@ The system SHALL provide interactive tab actions corresponding to standard autom
 #### Scenario: Filling form controls and dropdowns
 - **WHEN** an agent fills an input or selects a dropdown option by target selector and value
 - **THEN** the element is updated according to its control type and the page settles
+
+#### Scenario: Getting an attribute directly
+- **WHEN** an agent runs `get attr e4 data-url` on an interactive tab
+- **THEN** the system returns the value of the `data-url` attribute
+
+#### Scenario: Command batching in a single invocation
+- **WHEN** an agent submits a batch of three actions for a tab
+- **THEN** the daemon executes them sequentially on the tab and returns results for the batch
+
+#### Scenario: Element occlusion detection
+- **WHEN** an agent attempts to click an element covered by an overlay modal
+- **THEN** the click fails immediately with an error indicating the covering element
 
 ### Requirement: Direct destination download routing
 The system SHALL support downloading files directly from an interactive tab to a specified filesystem destination via `--out <filepath>`. The system SHALL resolve the destination path relative to the client's working directory, create any missing parent directories, await the completion of the download, move the resulting file to the exact target path, and return confirmation metadata including final path, byte count, and source URL.
@@ -66,3 +90,11 @@ The system SHALL allow an agent to request user attention on an interactive tab 
 #### Scenario: Agent requests user attention for captcha
 - **WHEN** an agent issues an attend command on an interactive tab facing a challenge
 - **THEN** the browser window surfaces, the attention banner is displayed, and the command waits for user completion
+
+### Requirement: Network route aborting
+The system SHALL support intercepting and aborting network requests on an interactive tab matching specified URL patterns via `route <tab> <pattern> --abort`, and removing routes via `unroute <tab> [pattern]`. Requests matching an active abort route SHALL be blocked by the browser.
+
+#### Scenario: Aborting tracking requests
+- **WHEN** an agent routes `*analytics*` with `--abort` on a tab
+- **THEN** subsequent requests matching the pattern are blocked by the browser session
+
